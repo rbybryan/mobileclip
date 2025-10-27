@@ -7,7 +7,7 @@ Our paper is available in [MobileViCLIP](https://arxiv.org/abs/2508.07312)
 [2025.10.8] The code is updated. <br>
 [2023.6.28] Our MobileViCLIP has been accepted by ICCV2025. The code will be updated soon. <br>
 
-###Environment preparation
+### Environment preparation
 
 **1:  Create environment**
 
@@ -21,7 +21,7 @@ conda env create -f requirements/mobileviclip.yml
 conda activate mobileviclip
 ```
 
-##Data preparation
+### Data preparation
 
 **1:  Download videos**
 
