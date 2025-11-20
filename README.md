@@ -5,7 +5,7 @@ Our paper is available in [MobileViCLIP](https://arxiv.org/abs/2508.07312)
 ### News
 
 [2025.10.8] The code is updated. <br>
-[2023.6.28] Our MobileViCLIP has been accepted by ICCV2025. The code will be updated soon. <br>
+[2025.6.28] Our MobileViCLIP has been accepted by ICCV2025. The code will be updated soon. <br>
 
 ### Environment preparation
 
