@@ -1,20 +1,28 @@
 # Python
 __pycache__/
 *.py[cod]
+*.pyo
+.Python
 *.egg-info/
 .ipynb_checkpoints/
 .venv/
 venv/
 
-# Data / checkpoints / logs
+# Data / checkpoints / annotations
 data/
 datasets/
+checkpoints/
+anno_downstream/
+
+# Model artifacts
 *.pth
 *.pt
 *.ckpt
 *.onnx
 *.tar
 *.zip
+
+# Logs / outputs
 logs/
 runs/
 wandb/

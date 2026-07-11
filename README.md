@@ -11,13 +11,27 @@ Replication and improvement of **MobileViCLIP** — *An Efficient Video-Text Mod
 - Original code: [MCG-NJU/MobileViCLIP](https://github.com/MCG-NJU/MobileViCLIP)
 
 ## Layout
+This repo is seeded with the **upstream MobileViCLIP code** as the working base:
 ```
-configs/     experiment / model configs
-data/        dataset prep and manifests (gitignored contents)
-models/      model definitions
-scripts/     training / eval / benchmarking entry points
-notes/       replication log, ablations, ideas
+configs/         upstream configs
+models/          model definitions (MobileCLIP backbone, InternVideo2, BERT, BEATs)
+scripts/         training / evaluation entry points
+tasks/ tasks_clip/  training + eval task loops
+dataset/ preprocess/ tools/ utils/  data + helpers
+mobileviclip.yml conda environment
+docs/UPSTREAM_README.md  original README
+notes/           replication log, ablations, ideas
+CHECKPOINTS.md   download links for weights, annotations, videos
+```
+
+## Getting the weights & data
+Weights, annotations, and videos live on external hosting (not committed). See **[CHECKPOINTS.md](CHECKPOINTS.md)** for all download links and target paths.
+
+## Environment
+```bash
+conda env create -f mobileviclip.yml
+conda activate mobileviclip
 ```
 
 ## Status
-Project scaffold. See `notes/` for the replication plan and progress log.
+Upstream code imported. Next: reproduce environment, download checkpoints, replicate zero-shot eval. See `notes/replication-plan.md`.
