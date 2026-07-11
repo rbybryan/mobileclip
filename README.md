@@ -33,5 +33,8 @@ conda env create -f mobileviclip.yml
 conda activate mobileviclip
 ```
 
+## Commands
+All setup / download / train / eval command lines are in **[COMMANDS.md](COMMANDS.md)**.
+
 ## Status
 Upstream code imported. Next: reproduce environment, download checkpoints, replicate zero-shot eval. See `notes/replication-plan.md`.
