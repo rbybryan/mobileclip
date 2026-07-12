@@ -69,6 +69,13 @@
   p{max-width:70ch}
   h3.subhead{font-size:18px;font-weight:700;margin:32px 0 6px;border-top:1px solid var(--hairline);padding-top:24px}
   .dd-kick{display:block;font-family:var(--font-mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent-ink);font-weight:600;margin-bottom:7px}
+  pre.code{background:var(--surface-2);border:1px solid var(--hairline);border-radius:10px;padding:13px 15px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.6;color:var(--ink-2);margin:16px 0;white-space:pre}
+  pre.code .c{color:var(--muted)}
+  code.fileref,.fileref{font-family:var(--font-mono);font-size:.88em;color:var(--accent-ink);background:var(--accent-wash);padding:1px 6px;border-radius:5px;white-space:nowrap}
+  ul.tight{margin:12px 0;padding-left:20px;max-width:72ch}
+  ul.tight li{margin:7px 0;font-size:15px;color:var(--ink-2)}
+  ul.tight li b{color:var(--ink)}
+  ul.tight code{font-family:var(--font-mono);font-size:.86em;background:var(--surface-2);padding:1px 5px;border-radius:4px;color:var(--ink)}
 
   /* ---------- trend cards ---------- */
   .grid5{display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:14px;margin-top:8px}
@@ -385,7 +392,34 @@
       <div class="tcard"><div class="tag">Base</div><h3>骨干 = MobileCLIP</h3><p><b>Tiny</b> 基于 MobileCLIP-S0,<b>Small</b> 基于 MobileCLIP-S2。这正是本仓库可复用为"视频化"起点的原因。</p></div>
       <div class="tcard"><div class="tag">Specs</div><h3>端侧规格</h3><p>Tiny 53.9M / ~12.4 ms;Small 99.4M / ~37.8 ms(iPad Air 2020)。Small K400 零样本 63.1,Tiny 56.2。</p></div>
     </div>
-    <div class="callout"><strong>对本仓库的启示:</strong>MobileViCLIP 提供了把 MobileCLIP-S0/S2 低成本"视频化"用于端侧视频检索的现成范式 —— 若要在此仓库基础上做视频,这是最直接的路径参考。</div>
+    <div class="callout"><strong>对本仓库的启示:</strong>MobileViCLIP 提供了把 MobileCLIP-S0/S2 低成本"视频化"用于端侧视频检索的现成范式 —— 若要在此仓库基础上做视频,这是最直接的路径参考。下面据本仓库源码把两处关键实现拆开看。</div>
+
+    <h3 class="subhead"><span class="dd-kick">深挖 A · 源码级</span>时间维结构重参数化(本仓库实现)</h3>
+    <p>本仓库 <code class="fileref">models/mobileviclip_small.py</code> 揭示了"时间维结构重参数化"的真实做法:把 MobileCLIP 的 <b>RepMixer</b>(空间 2D 令牌混合器)并联一条 <b>1D 时间分支</b> —— 训练时是多分支,推理时折叠成单个卷积。</p>
+    <ul class="tight">
+      <li><b>双分支 RepMixer</b>(L482–695):训练态同时有空间 <code>mixer/norm</code>(2D MobileOneBlock)与时间 <code>mixer_1d/norm_1d</code>(1D),各带独立 <code>layer_scale</code> / <code>layer_scale_1d</code>;前向<b>先时间混合、再空间混合</b>。</li>
+      <li><b>推理折叠</b>(<code>reparameterize()</code>,L624–695):2D 分支折进一个 <code>reparam_conv</code>(Conv2d)、1D 时间分支折进一个 <code>reparam_conv_1d</code>(Conv1d),删除训练态多分支 —— <b>推理零额外分支</b>,这正是"结构重参数化"省延迟的核心。</li>
+      <li><b>注意力阶段的时间嵌入</b>(L1028):最后的 attention stage 加入可学习 <code>temporal_embedding</code>(8 帧),MHSA 在 <code>N=T·H·W</code> 上做联合时空注意力(L397–423)。</li>
+      <li><b>冻结骨干、只训时间分支</b>(L54–62):<code>freeze_vision</code> 下,除 <code>mixer_1d / norm_1d / layer_scale_1d</code> 外全部冻结 —— 即"冻结的 MobileCLIP 图像骨干 + 只训练注入的时间分支"。</li>
+      <li><b>最终时序平均</b>(<code>FastViT.forward</code>,L1280–1292):T 折进 batch 跑完各 stage,再对 8 帧做均值池化("时序暴力平均")。</li>
+    </ul>
+    <pre class="code"><span class="c"># models/mobileviclip_small.py · RepMixer.reparameterize()  (L663–684)</span>
+self.reparam_conv    = nn.Conv2d(dim, dim, k, groups=dim, bias=True)   <span class="c"># 空间</span>
+self.reparam_conv_1d = nn.Conv1d(dim, dim, k, groups=dim, bias=True)   <span class="c"># 时间</span>
+self.reparam_conv.weight.data    = w      <span class="c"># 由 mixer / norm 折叠而来</span>
+self.reparam_conv_1d.weight.data = w_1d   <span class="c"># 由 mixer_1d / norm_1d 折叠而来</span>
+<span class="c"># 随后 __delattr__ 掉 mixer / norm / mixer_1d / norm_1d —— 推理只剩两个卷积</span></pre>
+
+    <h3 class="subhead"><span class="dd-kick">深挖 B · 源码级</span>图文 → 视频适配 与 InternVid-10M-FLT 数据管线</h3>
+    <p>另一半是"怎么把图像 CLIP 喂成视频 CLIP",以及数据从哪来。</p>
+    <ul class="tight">
+      <li><b>预训练数据 = InternVid-10M-FLT</b>(<code class="fileref">configs/data.py</code> L6–88):切成 <b>11 个分片</b>(<code>internvid_v1…v11</code>,每片一份 <code>InternVid-10M-flt_N.json</code> 标注 + 视频根目录),合并为 <code>internvid_all</code>;<code>media_type="video"</code>、<code>jump_filter=True</code>(跳过字幕长度过滤)。</li>
+      <li><b>图文 → 视频适配</b>(<code>load_checkpoint()</code>,L203–262):从 MobileCLIP 检查点抽取 <code>image_encoder.model.*</code> 权重装入 <code>vision_encoder</code> 并冻结,只训时间分支 —— 把图像 CLIP "升维"成视频 CLIP。</li>
+      <li><b>数据集 / 加载</b>:<code>ImgTxtPtTrainDataset</code>(<code class="fileref">dataset/pt_dataset.py</code>)读 JSON、支持字幕最短长度过滤与多字幕均匀采样;视频用 decord 解码(<code>VIDEO_READER_FUNCS</code>),时间维硬编码 <b>T=8 帧</b>。</li>
+      <li><b>损失</b>:标准视频-文本对比 <code>VTC_VTM_Loss.vtc_loss</code>(L89、L124),温度 <code>temp</code> 初值同 ViCLIP(1/100)。</li>
+      <li><b>零样本评测语料</b>(configs/data.py L90–143):MSR-VTT-1k / DiDeMo / ActivityNet 检索 + K400 / UCF101 / HMDB51 / SSv2 动作识别(带 kinetics / imagenet prompt 模板)。</li>
+    </ul>
+    <div class="callout"><strong>与复现计划对齐:</strong>这两点正是 <code class="fileref">notes/replication-plan.md</code> 的 Phase 2 待办("时间维结构重参数化模块"、"图文→视频适配与训练数据管线")。可切入的改进方向:① 更强时序建模(超越 8 帧均值 + 1D 卷积);② 更强文本塔;③ 端侧延迟实测与量化 / token 裁剪。</div>
   </section>
 
   <!-- 7 · 视频全景 + 数据训练 -->

@@ -174,6 +174,35 @@ MobileCLIP2 的精度红利几乎全部来自**数据侧的离线蒸馏**,而非
 
 > **对本仓库的启示:** MobileViCLIP 提供了把 MobileCLIP-S0/S2 低成本"视频化"用于端侧视频检索的现成范式 —— 也正是本仓库复现与改进的目标。InternVideo2-6B(55.9 / 微调 62.8)是精度天花板参照。
 
+### 深挖 A · 时间维结构重参数化(本仓库源码)
+
+本仓库 `models/mobileviclip_small.py` 揭示了"时间维结构重参数化"的真实做法:把 MobileCLIP 的 **RepMixer**(空间 2D 令牌混合器)并联一条 **1D 时间分支** —— 训练时是多分支,推理时折叠成单个卷积。
+
+- **双分支 RepMixer**(L482–695):训练态同时有空间 `mixer/norm`(2D MobileOneBlock)与时间 `mixer_1d/norm_1d`(1D),各带独立 `layer_scale` / `layer_scale_1d`;前向**先时间混合、再空间混合**。
+- **推理折叠**(`reparameterize()`,L624–695):2D 分支折进一个 `reparam_conv`(Conv2d)、1D 时间分支折进一个 `reparam_conv_1d`(Conv1d),删除训练态多分支 —— **推理零额外分支**,这正是"结构重参数化"省延迟的核心。
+- **注意力阶段的时间嵌入**(L1028):最后的 attention stage 加入可学习 `temporal_embedding`(8 帧),MHSA 在 `N=T·H·W` 上做联合时空注意力(L397–423)。
+- **冻结骨干、只训时间分支**(L54–62):`freeze_vision` 下,除 `mixer_1d / norm_1d / layer_scale_1d` 外全部冻结 —— 即"冻结的 MobileCLIP 图像骨干 + 只训练注入的时间分支"。
+- **最终时序平均**(`FastViT.forward`,L1280–1292):T 折进 batch 跑完各 stage,再对 8 帧做均值池化("时序暴力平均")。
+
+```python
+# models/mobileviclip_small.py · RepMixer.reparameterize()  (L663–684)
+self.reparam_conv    = nn.Conv2d(dim, dim, k, groups=dim, bias=True)   # 空间
+self.reparam_conv_1d = nn.Conv1d(dim, dim, k, groups=dim, bias=True)   # 时间
+self.reparam_conv.weight.data    = w      # 由 mixer / norm 折叠而来
+self.reparam_conv_1d.weight.data = w_1d   # 由 mixer_1d / norm_1d 折叠而来
+# 随后 __delattr__ 掉 mixer / norm / mixer_1d / norm_1d —— 推理只剩两个卷积
+```
+
+### 深挖 B · 图文 → 视频适配 与 InternVid-10M-FLT 数据管线(本仓库源码)
+
+- **预训练数据 = InternVid-10M-FLT**(`configs/data.py` L6–88):切成 **11 个分片**(`internvid_v1…v11`,每片一份 `InternVid-10M-flt_N.json` 标注 + 视频根目录),合并为 `internvid_all`;`media_type="video"`、`jump_filter=True`(跳过字幕长度过滤)。
+- **图文 → 视频适配**(`load_checkpoint()`,L203–262):从 MobileCLIP 检查点抽取 `image_encoder.model.*` 权重装入 `vision_encoder` 并冻结,只训时间分支 —— 把图像 CLIP "升维"成视频 CLIP。
+- **数据集 / 加载**:`ImgTxtPtTrainDataset`(`dataset/pt_dataset.py`)读 JSON、支持字幕最短长度过滤与多字幕均匀采样;视频用 decord 解码(`VIDEO_READER_FUNCS`),时间维硬编码 **T=8 帧**。
+- **损失**:标准视频-文本对比 `VTC_VTM_Loss.vtc_loss`(L89、L124),温度 `temp` 初值同 ViCLIP(1/100)。
+- **零样本评测语料**(`configs/data.py` L90–143):MSR-VTT-1k / DiDeMo / ActivityNet 检索 + K400 / UCF101 / HMDB51 / SSv2 动作识别(带 kinetics / imagenet prompt 模板)。
+
+> **与复现计划对齐:** 这两点正是 `notes/replication-plan.md` 的 Phase 2 待办("时间维结构重参数化模块"、"图文→视频适配与训练数据管线")。可切入的改进方向:① 更强时序建模(超越 8 帧均值 + 1D 卷积);② 更强文本塔;③ 端侧延迟实测与量化 / token 裁剪。
+
 ---
 
 ## 7 · 视频全景 · 数据与训练方法

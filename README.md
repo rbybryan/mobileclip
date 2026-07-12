@@ -10,6 +10,11 @@ Replication and improvement of **MobileViCLIP** — *An Efficient Video-Text Mod
 - Paper: [arXiv:2508.07312](https://arxiv.org/abs/2508.07312) · [ICCV 2025 Open Access](https://openaccess.thecvf.com/content/ICCV2025/html/Yang_MobileViCLIP_An_Efficient_Video-Text_Model_for_Mobile_Devices_ICCV_2025_paper.html)
 - Original code: [MCG-NJU/MobileViCLIP](https://github.com/MCG-NJU/MobileViCLIP)
 
+## Background — 2025 image/video CLIP landscape
+A survey report situating MobileViCLIP in the 2025 CLIP landscape (on-device ↔ frontier), covering MobileCLIP2, SigLIP 2, MetaCLIP 2, Perception Encoder, and more — plus a **source-level walk-through of this repo's** temporal structural reparameterization and InternVid-10M-FLT data pipeline.
+- **[docs/clip-2025-progress-report.md](docs/clip-2025-progress-report.md)** — Markdown, renders on GitHub
+- Interactive version with charts (light/dark): [shareable report](https://claude.ai/code/artifact/4e34bc69-c8bf-46a6-ade1-0f11b23c8288)
+
 ## Layout
 This repo is seeded with the **upstream MobileViCLIP code** as the working base:
 ```
@@ -19,7 +24,7 @@ scripts/         training / evaluation entry points
 tasks/ tasks_clip/  training + eval task loops
 dataset/ preprocess/ tools/ utils/  data + helpers
 mobileviclip.yml conda environment
-docs/UPSTREAM_README.md  original README
+docs/            UPSTREAM_README.md + clip-2025-progress-report (landscape survey)
 notes/           replication log, ablations, ideas
 CHECKPOINTS.md   download links for weights, annotations, videos
 ```
