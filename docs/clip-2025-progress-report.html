@@ -1,0 +1,629 @@
+<title>2025 图像·视频 CLIP 研究进展报告</title>
+<style>
+  :root{
+    --plane:#f5f6f9; --surface:#ffffff; --surface-2:#f1f4f8;
+    --ink:#111725; --ink-2:#48526420; --ink-2:#485264; --muted:#8b93a3;
+    --hairline:#e4e8ef; --grid:#edf0f5;
+    --accent:#2a6fd6; --accent-ink:#1c5cab; --accent-wash:rgba(42,111,214,.08);
+    --series-blue:#2a78d6; --series-orange:#eb6834; --series-aqua:#1baf7a;
+    --bar-neutral:#c4cbd6; --ref:#a4abb9; --good:#0a7a3f;
+    --font-sans:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+    --font-mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --maxw:1000px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --plane:#0b0c0f; --surface:#15171c; --surface-2:#1b1e25;
+      --ink:#eef1f6; --ink-2:#a7b0be; --muted:#79818f;
+      --hairline:#282c34; --grid:#22262e;
+      --accent:#5b9bef; --accent-ink:#93bcf6; --accent-wash:rgba(91,155,239,.12);
+      --series-blue:#3987e5; --series-orange:#e0703a; --series-aqua:#199e70;
+      --bar-neutral:#39414f; --ref:#5b6472; --good:#3fca7d;
+    }
+  }
+  :root[data-theme="light"]{
+    --plane:#f5f6f9; --surface:#ffffff; --surface-2:#f1f4f8;
+    --ink:#111725; --ink-2:#485264; --muted:#8b93a3;
+    --hairline:#e4e8ef; --grid:#edf0f5;
+    --accent:#2a6fd6; --accent-ink:#1c5cab; --accent-wash:rgba(42,111,214,.08);
+    --series-blue:#2a78d6; --series-orange:#eb6834; --series-aqua:#1baf7a;
+    --bar-neutral:#c4cbd6; --ref:#a4abb9; --good:#0a7a3f;
+  }
+  :root[data-theme="dark"]{
+    --plane:#0b0c0f; --surface:#15171c; --surface-2:#1b1e25;
+    --ink:#eef1f6; --ink-2:#a7b0be; --muted:#79818f;
+    --hairline:#282c34; --grid:#22262e;
+    --accent:#5b9bef; --accent-ink:#93bcf6; --accent-wash:rgba(91,155,239,.12);
+    --series-blue:#3987e5; --series-orange:#e0703a; --series-aqua:#199e70;
+    --bar-neutral:#39414f; --ref:#5b6472; --good:#3fca7d;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--plane);color:var(--ink);font-family:var(--font-sans);
+    line-height:1.6;-webkit-font-smoothing:antialiased;font-size:16px}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 22px}
+  a{color:var(--accent-ink);text-decoration:none;border-bottom:1px solid var(--hairline)}
+  a:hover{border-color:var(--accent)}
+  h1,h2,h3{text-wrap:balance;line-height:1.2;margin:0}
+  .kicker{font-family:var(--font-mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent-ink)}
+
+  /* ---------- masthead ---------- */
+  header.mast{border-bottom:1px solid var(--hairline);background:
+    radial-gradient(120% 140% at 88% -20%,var(--accent-wash),transparent 60%)}
+  .mast .wrap{padding-top:46px;padding-bottom:38px}
+  .mast .eye{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:20px}
+  .mast .eye .dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}
+  h1.title{font-size:clamp(30px,5.4vw,50px);font-weight:760;letter-spacing:-.02em}
+  h1.title .sub{display:block;font-size:clamp(15px,2.4vw,19px);font-weight:500;color:var(--ink-2);letter-spacing:0;margin-top:14px;max-width:60ch}
+  .metarow{display:flex;flex-wrap:wrap;gap:8px;margin-top:26px}
+  .chip{font-family:var(--font-mono);font-size:12px;color:var(--ink-2);background:var(--surface);
+    border:1px solid var(--hairline);border-radius:999px;padding:5px 11px;display:inline-flex;gap:7px;align-items:center}
+  .chip b{color:var(--ink);font-weight:600}
+
+  /* ---------- section scaffolding ---------- */
+  section{padding:52px 0 8px}
+  .sec-head{display:flex;gap:14px;align-items:baseline;margin-bottom:20px;border-top:1px solid var(--hairline);padding-top:26px}
+  .sec-head .no{font-family:var(--font-mono);font-size:13px;color:var(--muted);font-weight:600;flex:none}
+  h2{font-size:clamp(21px,3.2vw,28px);font-weight:700;letter-spacing:-.01em}
+  .lead{color:var(--ink-2);font-size:17px;max-width:66ch}
+  p{max-width:70ch}
+  h3.subhead{font-size:18px;font-weight:700;margin:32px 0 6px;border-top:1px solid var(--hairline);padding-top:24px}
+  .dd-kick{display:block;font-family:var(--font-mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent-ink);font-weight:600;margin-bottom:7px}
+
+  /* ---------- trend cards ---------- */
+  .grid5{display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:14px;margin-top:8px}
+  .tcard{background:var(--surface);border:1px solid var(--hairline);border-radius:14px;padding:18px 18px 20px}
+  .tcard .tag{font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-ink);font-weight:600}
+  .tcard h3{font-size:17px;font-weight:680;margin:9px 0 7px}
+  .tcard p{font-size:14.5px;color:var(--ink-2);margin:0}
+
+  /* ---------- figures / charts ---------- */
+  figure{margin:26px 0 8px;background:var(--surface);border:1px solid var(--hairline);border-radius:16px;padding:20px 20px 8px;overflow:hidden}
+  figure .fhead{margin-bottom:6px}
+  figure .ftitle{font-size:16px;font-weight:680}
+  figure .fsub{font-size:13.5px;color:var(--ink-2);margin-top:3px;max-width:74ch}
+  .legend{display:flex;flex-wrap:wrap;gap:16px;margin:4px 0 12px;font-size:13px;color:var(--ink-2)}
+  .legend .k{display:inline-flex;gap:7px;align-items:center}
+  .legend .sw{width:22px;height:4px;border-radius:2px;display:inline-block}
+  .legend .swd{width:11px;height:11px;border-radius:50%;display:inline-block}
+  .chart-scroll{overflow-x:auto}
+  svg.chart{display:block;width:100%;height:auto;min-width:520px}
+  figcaption{font-size:13px;color:var(--muted);padding:10px 2px 12px;border-top:1px solid var(--hairline);margin-top:6px}
+  figcaption b{color:var(--ink-2);font-weight:600}
+
+  /* SVG chart primitives (marks carry series color; text wears ink tokens) */
+  svg.chart text{font-family:var(--font-mono)}
+  .ax-label{fill:var(--muted);font-size:12px;font-weight:500}
+  .ax-title{fill:var(--ink-2);font-size:12px;font-weight:600;font-family:var(--font-sans)}
+  .val-label{fill:var(--ink);font-size:12.5px;font-weight:600}
+  .val-label-sm{fill:var(--ink-2);font-size:11px;font-weight:500}
+  .grid-line{stroke:var(--grid);stroke-width:1}
+  .axis-line{stroke:var(--hairline);stroke-width:1}
+  .ref-line{stroke:var(--ref);stroke-width:1.5;stroke-dasharray:5 4}
+  .mark-blue{fill:var(--series-blue)}
+  .mark-orange{fill:var(--series-orange)}
+  .mark-neutral{fill:var(--bar-neutral)}
+  .mark-ref{fill:var(--ref)}
+  .line-blue{fill:none;stroke:var(--series-blue);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+  .line-orange{fill:none;stroke:var(--series-orange);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+  .line-v1{fill:none;stroke:var(--bar-neutral);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+  .dot-ring{stroke:var(--surface);stroke-width:2}
+
+  /* ---------- tables ---------- */
+  .tbl-scroll{overflow-x:auto;margin:20px 0 6px;border:1px solid var(--hairline);border-radius:14px}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:560px}
+  th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--hairline);vertical-align:top}
+  thead th{font-family:var(--font-mono);font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);font-weight:600;background:var(--surface-2);position:sticky;top:0}
+  tbody tr:last-child td{border-bottom:none}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--font-mono)}
+  tr.hi td{background:var(--accent-wash)}
+  .pill{font-family:var(--font-mono);font-size:11px;padding:2px 7px;border-radius:6px;background:var(--surface-2);border:1px solid var(--hairline);color:var(--ink-2);white-space:nowrap}
+  .pill.dev{background:var(--accent-wash);border-color:transparent;color:var(--accent-ink)}
+  .yes{color:var(--good);font-weight:600}
+  .no{color:var(--muted)}
+
+  /* ---------- callout ---------- */
+  .callout{background:var(--surface);border:1px solid var(--hairline);border-left:3px solid var(--accent);border-radius:12px;padding:16px 18px;margin:22px 0;font-size:15px;color:var(--ink-2)}
+  .callout b,.callout strong{color:var(--ink)}
+  .note{background:var(--surface-2);border:1px solid var(--hairline);border-radius:12px;padding:14px 16px;font-size:14px;color:var(--ink-2)}
+  .note .h{font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:6px}
+
+  /* ---------- decision guide ---------- */
+  .decide{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:16px}
+  .dcard{background:var(--surface);border:1px solid var(--hairline);border-radius:12px;padding:15px 16px}
+  .dcard .q{font-size:14px;font-weight:640;margin-bottom:6px}
+  .dcard .a{font-size:13.5px;color:var(--ink-2)}
+  .dcard .a b{color:var(--accent-ink)}
+
+  /* ---------- timeline ---------- */
+  .tl{margin:18px 0 6px;padding-left:4px}
+  .tl-row{display:grid;grid-template-columns:78px 1fr;gap:14px;padding:11px 0;border-bottom:1px solid var(--hairline)}
+  .tl-row:last-child{border-bottom:none}
+  .tl-date{font-family:var(--font-mono);font-size:12.5px;color:var(--accent-ink);font-weight:600;padding-top:1px}
+  .tl-body{font-size:14.5px}
+  .tl-body b{font-weight:660}
+  .tl-body .lab{font-family:var(--font-mono);font-size:11.5px;color:var(--muted)}
+
+  /* ---------- refs ---------- */
+  .refs{columns:2;column-gap:34px;font-size:13px;color:var(--ink-2);margin-top:8px}
+  .refs .rg{break-inside:avoid;margin-bottom:14px}
+  .refs .rg .rt{font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:4px}
+  .refs code{font-family:var(--font-mono);font-size:12px;color:var(--ink)}
+  @media (max-width:640px){.refs{columns:1}}
+
+  footer{border-top:1px solid var(--hairline);margin-top:40px;padding:28px 0 60px;color:var(--muted);font-size:13px}
+  footer .wrap{display:flex;flex-direction:column;gap:6px}
+
+  /* ---------- tooltip ---------- */
+  #tt{position:fixed;pointer-events:none;z-index:50;opacity:0;transition:opacity .1s;
+    background:var(--ink);color:var(--surface);font-family:var(--font-mono);font-size:12px;
+    padding:7px 10px;border-radius:8px;box-shadow:0 6px 22px rgba(0,0,0,.28);max-width:250px;line-height:1.45}
+  #tt .tn{font-weight:700}
+  :root[data-theme="dark"] #tt,@media (prefers-color-scheme:dark){#tt{background:#f2f3f5;color:#15171c}}
+  .mark{cursor:pointer}
+  .mark:focus{outline:2px solid var(--accent);outline-offset:2px}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<header class="mast">
+  <div class="wrap">
+    <div class="eye kicker"><span class="dot"></span>深度研究报告 · Deep Research</div>
+    <h1 class="title">2025 年图像 · 视频 CLIP 研究进展
+      <span class="sub">从端侧高效模型(MobileCLIP2)到前沿通用骨干(SigLIP 2 / Perception Encoder)—— 对比语言-图像/视频模型的架构、数据、训练目标与基准全景。</span>
+    </h1>
+    <div class="metarow">
+      <span class="chip">📅 <b>数据截至</b> 2026-07</span>
+      <span class="chip">🧭 视角锚定 <b>Apple MobileCLIP</b> 仓库</span>
+      <span class="chip">🤖 <b>5 个并行研究智能体</b></span>
+      <span class="chip">📚 一手来源 arXiv / 实验室博客 / HF</span>
+    </div>
+    <div class="note" style="margin-top:22px;max-width:74ch">
+      <div class="h">读数须知</div>
+      下文绝大多数指标为<strong style="color:var(--ink)">论文 / 官方模型卡自报数</strong>(author-reported),几乎没有独立第三方复现;跨模型比较需谨慎(评测协议、prompt、分辨率、数据划分常不一致)。已知易误引之处已在第 9 节纠正。所有图表数值在下方均配有数据表。
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- 1 · 五大趋势 -->
+  <section>
+    <div class="sec-head"><span class="no">§ 01</span><h2>执行摘要:五条主线</h2></div>
+    <p class="lead">2025 年,CLIP 家族已从"单纯的对比学习编码器"演变为<strong>多目标训练的通用视觉骨干</strong>。五条趋势同时推进。</p>
+    <div class="grid5">
+      <div class="tcard"><div class="tag">Backbone</div><h3>编码器沦为 VLM 骨干</h3><p>研究重心从"训练编码器"转向"被大模型冻结复用"。零样本 ImageNet 退居次位,下游 VQA / OCR 才是主战场。<b>SigLIP 2 已是 2025 事实上的默认多模态骨干</b>(Qwen3-VL、Gemma 3)。</p></div>
+      <div class="tcard"><div class="tag">Saturation</div><h3>零样本 ImageNet 饱和</h3><p>开源前沿卡在 <b>~85%</b>;CoCa 于 2022 创下的 <b>86.3%</b>(闭源)至今未被零样本超越。年增益从 +10 分掉到不足 1 分。</p></div>
+      <div class="tcard"><div class="tag">Multilingual</div><h3>世界级数据,无"英语税"</h3><p>MetaCLIP 2 证明:从零在 300+ 语言全球数据上训练,反而<b>提升</b>英语零样本(81.3% &gt; 80.5%),打破"多语言诅咒"。</p></div>
+      <div class="tcard"><div class="tag">Objective</div><h3>训练目标"大杂烩化"</h3><p>对比损失叠加字幕生成、自蒸馏、掩码预测;更激进者(AIMv2、OpenVision 2)<b>彻底弃对比,只用自回归/字幕生成</b>。</p></div>
+      <div class="tcard"><div class="tag">On-device</div><h3>蒸馏即数据 · 端侧爆发</h3><p>Apple 把教师嵌入+合成字幕<b>离线烘焙进数据集</b>;DeepMind 证明"主动筛选=隐式蒸馏"。~30–300M 小模型已能在手机上跑到 77–82% 零样本 ImageNet。</p></div>
+    </div>
+  </section>
+
+  <!-- 2 · Pareto hero -->
+  <section>
+    <div class="sec-head"><span class="no">§ 02</span><h2>核心论点:端侧正在逼近前沿</h2></div>
+    <p class="lead">在一部 2020 年的手机(iPhone 12 Pro Max)上,MobileCLIP2 用 ≤27&nbsp;ms 的图+文编码延迟,把零样本 ImageNet 推到 <strong>81.9%</strong> —— 距离需要 1–2B/18B 参数或服务器 GPU 才能达到的 ~85% 开源前沿,仅差约 3 分。</p>
+
+    <figure>
+      <div class="fhead">
+        <div class="ftitle">精度–延迟帕累托前沿:MobileCLIP → MobileCLIP2</div>
+        <div class="fsub">纵轴 = 零样本 ImageNet-1k Top-1;横轴 = 端侧图+文编码延迟(iPhone 12 Pro Max)。虚线为服务器级模型的精度天花板(无端侧延迟)。</div>
+      </div>
+      <div class="legend">
+        <span class="k"><span class="sw" style="background:var(--series-blue)"></span>MobileCLIP2(2025.08)</span>
+        <span class="k"><span class="sw" style="background:var(--bar-neutral)"></span>MobileCLIP v1(2024)</span>
+        <span class="k"><span class="sw" style="background:var(--ref);height:0;border-top:2px dashed var(--ref)"></span>前沿精度天花板</span>
+      </div>
+      <div class="chart-scroll"><svg class="chart" id="c-pareto" viewBox="0 0 720 430" role="img" aria-label="精度延迟帕累托图"></svg></div>
+      <figcaption><b>读法:</b>同一延迟点上,v2 曲线整体抬升 —— S0 在 ~5&nbsp;ms 处 +3.7 分(67.8→71.5),S4 在 26&nbsp;ms 处达 81.9%。红利主要来自更强的离线蒸馏数据(DFNDR),架构基本未变。</figcaption>
+    </figure>
+    <div class="callout"><strong>一句话:</strong>「多模态强化训练」把一个大 CLIP 集成的知识离线蒸馏进小学生模型,让精度/延迟帕累托曲线大幅平移 —— 这正是本仓库(MobileCLIP)路线在 2025 年被验证成功的核心。</div>
+  </section>
+
+  <!-- 3 · 前沿图文 -->
+  <section>
+    <div class="sec-head"><span class="no">§ 03</span><h2>前沿通用图文 CLIP</h2></div>
+    <p class="lead">2025 年前沿由四家定义:<strong>SigLIP 2</strong>(多语言 sigmoid + NaFlex)、<strong>Perception Encoder</strong>(中间层特征最优)、<strong>MetaCLIP 2</strong>(全球无过滤)、<strong>AIMv2</strong>(自回归)。</p>
+
+    <figure>
+      <div class="fhead">
+        <div class="ftitle">2025 零样本 ImageNet-1k 排行(点图)</div>
+        <div class="fsub">点图而非柱状:各模型精度都在 79–86% 的窄带内,截断柱会夸大差异,点在非零刻度上更诚实。</div>
+      </div>
+      <div class="legend">
+        <span class="k"><span class="swd" style="background:var(--series-blue)"></span>Apple MobileCLIP2(端侧)</span>
+        <span class="k"><span class="swd" style="background:var(--bar-neutral)"></span>前沿开源编码器</span>
+        <span class="k"><span class="swd" style="background:var(--ref);opacity:.7"></span>参考(2022 闭源)</span>
+      </div>
+      <div class="chart-scroll"><svg class="chart" id="c-lead" viewBox="0 0 720 400" role="img" aria-label="零样本ImageNet排行点图"></svg></div>
+      <figcaption><b>注:</b>EVA-CLIP-18B 真实 IN-1k 为 <b>83.8%</b>(常被误引的 80.7% 是 27 数据集均值);AIMv2 的 89.5% 是<b>冻结探针</b>而非零样本,故不在此榜。</figcaption>
+    </figure>
+
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>模型</th><th>机构</th><th>时间</th><th class="num">零样本 IN-1k</th><th>关键思想</th></tr></thead>
+        <tbody>
+          <tr><td>Perception Encoder-G</td><td>Meta FAIR</td><td>2025.04</td><td class="num">85.4</td><td>「最好的特征不在输出层」,取中间层 + 语言/空间对齐</td></tr>
+          <tr><td>SigLIP 2-g</td><td>Google DeepMind</td><td>2025.02</td><td class="num">84.5</td><td>Sigmoid + 字幕 + 自蒸馏 + 在线筛选;多语言;NaFlex 变分辨率</td></tr>
+          <tr><td>DFN5B-CLIP-H/14</td><td>Apple</td><td>2023→24</td><td class="num">84.4</td><td>小型数据过滤网络筛选数十亿对(MobileCLIP2 的数据引擎)</td></tr>
+          <tr><td>EVA-CLIP-18B</td><td>BAAI</td><td>2024.02</td><td class="num">83.8</td><td>最大开源 CLIP,纯公开 2B 数据暴力扩参</td></tr>
+          <tr><td>MetaCLIP 2-H/14</td><td>Meta FAIR</td><td>2025.07</td><td class="num">81.3</td><td>全球 300+ 语言「无过滤」,破多语言诅咒</td></tr>
+          <tr class="hi"><td>MobileCLIP2-S4</td><td>Apple</td><td>2025.08</td><td class="num">81.9</td><td><span class="pill dev">端侧</span> 逼近前沿的高效学生模型(见 §5)</td></tr>
+          <tr><td>AIMv2-3B</td><td>Apple</td><td>2024.11</td><td class="num">—<span class="pill" style="margin-left:6px">探针 89.5</span></td><td>自回归生成图像块+文本;无文本塔(零样本需 LiT,~77%)</td></tr>
+          <tr><td>OpenVision / 2</td><td>UCSC-VLAA</td><td>2025.05 / 09</td><td class="num">≤80.4</td><td>全开源(数据+配方+权重);v2 弃文本塔纯字幕生成,训练快 1.5×</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 4 · 移动端 -->
+  <section>
+    <div class="sec-head"><span class="no">§ 04</span><h2>移动端 / 高效 CLIP(与本仓库最相关)</h2></div>
+    <p class="lead"><strong>MobileCLIP2</strong>(Apple,TMLR 2025.08,arXiv 2508.20691)是本仓库模型的<strong>直接继任者</strong>。架构家族沿用 MobileCLIP 的 MCi 混合卷积-Transformer 可重参编码器;升级集中在<strong>数据侧</strong>。</p>
+
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>变体</th><th class="num">零样本 IN-1k</th><th class="num">延迟 图+文</th><th class="num">参数 图+文</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr class="hi"><td>MobileCLIP2-S0</td><td class="num">71.5</td><td class="num">~4.8 ms</td><td class="num">11.4+63.4 M</td><td>比 v1-S0(67.8)+3.7 分</td></tr>
+          <tr><td>MobileCLIP2-S2</td><td class="num">77.2</td><td class="num">6.9 ms</td><td class="num">35.7+63.4 M</td><td>—</td></tr>
+          <tr class="hi"><td>MobileCLIP2-B</td><td class="num">79.4</td><td class="num">13.7 ms</td><td class="num">86.3+63.4 M</td><td>比 v1-B +2.2 分</td></tr>
+          <tr><td>MobileCLIP2-S3</td><td class="num">80.7</td><td class="num">14.6 ms</td><td class="num">125+124 M</td><td>—</td></tr>
+          <tr class="hi"><td>MobileCLIP2-S4</td><td class="num">81.9</td><td class="num">26.2 ms</td><td class="num">322+124 M</td><td>≈ SigLIP-SO400M 精度,参数少 ~2×;比 DFN ViT-L/14 延迟低 ~2.5×</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>升级要点:用更强的 <b>DFN 训练的 CLIP 教师集成</b> + 微调 <b>CoCa 字幕器</b> 构成新的 <b>DFNDR</b>(DFN 数据强化)数据集;论文强调<b>对比蒸馏中的温度调优</b>是关键杠杆。旁支:<b>ACED</b>(DeepMind,CVPR 2025)与 <b>FastVLM/FastViTHD</b>(Apple,CVPR 2025,同谱系端侧 VLM 编码器)。下面把两条最相关的线各深挖一层。</p>
+
+    <h3 class="subhead"><span class="dd-kick">深挖 A · 训练配方</span>MobileCLIP2 的 DFNDR 数据强化配方</h3>
+    <p>MobileCLIP2 的精度红利几乎全部来自<strong>数据侧的离线蒸馏</strong>,而非架构 —— 核心是把 v1 的 <b>DataCompDR</b> 换成更强的 <b>DFNDR</b>(DFN 数据强化)。所谓"强化",是把教师模型的嵌入与合成字幕<b>离线预算、烘焙进数据集</b>,训练时当作廉价的知识蒸馏回放。</p>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>维度</th><th>DataCompDR · MobileCLIP v1</th><th>DFNDR · MobileCLIP2</th></tr></thead>
+        <tbody>
+          <tr><td>基底数据</td><td>DataComp</td><td>DFN-2B(更干净的过滤数据)</td></tr>
+          <tr><td>合成字幕器</td><td>CoCa ViT-L/14</td><td>CoCa ViT-L/14(DFN-2B 预训练 + MSCOCO-38k 微调)</td></tr>
+          <tr><td>每样本合成字幕</td><td class="num">5 条</td><td class="num">5 条</td></tr>
+          <tr><td>教师集成</td><td>ViT-L/14(DataComp-13B)+ OpenAI ViT-L/14</td><td>DFN2B-CLIP-ViT-L/14-s39b(logit 70.0)+ DFN2B-CLIP-ViT-L/14(logit 60.0)</td></tr>
+          <tr><td>图像增强</td><td class="num">30×(1B)/ 10×(12M)</td><td class="num">30×</td></tr>
+          <tr><td>存储量级</td><td>DataCompDR-1B ~140 TB(嵌入 bf16)</td><td>DFN-2B 规模(嵌入 bf16 存储)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>论文点名的三个关键杠杆:<br>
+      · <b>教师集成配对</b>(logit scale 70.0 + 60.0)带来 <b>+2.8% ImageNet</b>(相对最佳单教师);<br>
+      · <b>对比蒸馏中的温度调优</b>被强调为核心可调项;<br>
+      · <b>字幕器微调</b>(MSCOCO-38k 默认,DOCCI 略优 +0.8%)提升字幕多样性,且<b>多模型字幕组合是可加的</b>。<br>
+      净效果:MobileCLIP2-B 在架构与延迟不变下,比 v1-B <b>+2.2 分</b>(76.8 → 79.4)。</p>
+
+    <h3 class="subhead"><span class="dd-kick">深挖 B · 效率之争</span>ACED ⟷ MobileCLIP:两种蒸馏哲学</h3>
+    <p>同样是"把大 CLIP 塞进小模型",Apple 与 Google DeepMind 走了<strong>相反</strong>的路 —— 一个<b>离线显式</b>存嵌入,一个<b>在线隐式</b>靠数据筛选。</p>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>维度</th><th>MobileCLIP · 离线 / 显式</th><th>ACED · 在线 / 隐式</th></tr></thead>
+        <tbody>
+          <tr><td>机制</td><td>预算教师嵌入 + 合成字幕,<b>烘焙进数据集</b>,训练时廉价回放</td><td>按"可学习性"对<b>整批</b>在线选样,对齐大型<b>冻结参考模型</b></td></tr>
+          <tr><td>核心主张</td><td>存一次,训练极省;可复现</td><td>"<b>主动筛选 = 隐式蒸馏</b>",无需额外损失项即胜过显式 KD</td></tr>
+          <tr><td>存储</td><td class="no">巨大(~140 TB / 1B 对)</td><td class="yes">无需存嵌入</td></tr>
+          <tr><td>训练额外开销</td><td class="yes">低(读预算嵌入)</td><td class="no">参考模型在线推理</td></tr>
+          <tr><td>代表结果</td><td>MobileCLIP2-S4 <b>81.9%</b>(端侧)</td><td>ACED-F0 <b>68.5%</b> @3.3 GFLOPs;F1 74.9;F2 76.9</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout"><strong>裁决?尚无定论。</strong>ACED 自报在 <b>27 任务均值</b>上以更低 FLOP 超过 MobileCLIP-S0/S1/S2(<b>注意:是 27 任务均值,非 ImageNet 单项</b>)。两条路线也并非对立 —— ACED 本身 = 主动筛选(ACID)+ <b>轻量</b>显式 KD,JEST 是其前身。选择取决于瓶颈:<b>存储/可复现优先 → 离线(MobileCLIP 路线)</b>;<b>存储受限、愿付在线算力 → 在线(ACED 路线)</b>。对本仓库(MobileViCLIP 复现)而言,MobileCLIP 的离线强化数据是现成、可复现的起点。</div>
+  </section>
+
+  <!-- 5 · DEEP DIVE: SigLIP2 vs MobileCLIP2 -->
+  <section>
+    <div class="sec-head"><span class="no">§ 05 · 深度对比</span><h2>SigLIP 2 ⟷ MobileCLIP2:该怎么选?</h2></div>
+    <p class="lead">两者常被放在一起比较,但<strong>定位正交</strong>:MobileCLIP2 是端侧优先的高效学生模型,SigLIP 2 是服务器级的多语言通用骨干。理解差异,才能选对。</p>
+
+    <figure>
+      <div class="fhead">
+        <div class="ftitle">同等视觉编码器参数下的精度对位</div>
+        <div class="fsub">横轴为视觉编码器参数量(对数);纵轴零样本 ImageNet。关键发现:在 <b>86M</b> 视觉参数这一档,MobileCLIP2-B(79.4)与 SigLIP 2-B(79.1)基本打平 —— 但 MobileCLIP2 用的是可重参混合架构,端侧延迟远低于纯 ViT。</div>
+      </div>
+      <div class="legend">
+        <span class="k"><span class="swd" style="background:var(--series-blue)"></span>MobileCLIP2(Apple)</span>
+        <span class="k"><span class="swd" style="background:var(--series-orange)"></span>SigLIP 2(Google)</span>
+      </div>
+      <div class="chart-scroll"><svg class="chart" id="c-vs" viewBox="0 0 720 430" role="img" aria-label="参数-精度对位散点图"></svg></div>
+      <figcaption><b>读法:</b>小参数端,MobileCLIP2 曲线明显左移(更省参数);高参数端两者收敛。SigLIP 2 的天花板更高(g 档 84.5),且带来多语言与更强稠密特征;MobileCLIP2 的独特价值在<b>同参数下的端侧延迟</b>与官方给出的手机实测。</figcaption>
+    </figure>
+
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>维度</th><th>MobileCLIP2 · Apple</th><th>SigLIP 2 · Google DeepMind</th></tr></thead>
+        <tbody>
+          <tr><td>发布</td><td>2025.08 · TMLR(2508.20691)</td><td>2025.02 · arXiv 2502.14786</td></tr>
+          <tr><td>定位</td><td><span class="pill dev">端侧优先</span> 高效图文检索 / 零样本</td><td><span class="pill">服务器级</span> 多语言通用骨干 / VLM 视觉塔</td></tr>
+          <tr><td>图像编码器</td><td>MCi 混合卷积-Transformer(FastViT 谱系,<b>结构重参数化</b>)</td><td>标准 ViT(+ NaFlex 变分辨率)</td></tr>
+          <tr><td>训练范式</td><td>多模态强化训练:离线蒸馏,教师集成嵌入 + 合成字幕烘焙进 DFNDR</td><td>统一配方:sigmoid 对比 + 字幕解码 + 自蒸馏 + 掩码预测 + 在线筛选</td></tr>
+          <tr><td>多语言</td><td class="no">以英语为主</td><td class="yes">✓ 原生 109 语言</td></tr>
+          <tr><td>可变分辨率</td><td class="no">固定(多为 224/256)</td><td class="yes">✓ NaFlex 原生长宽比</td></tr>
+          <tr><td>稠密 / 空间特征</td><td>检索/分类导向,一般</td><td class="yes">✓ 自蒸馏带来更强稠密/定位特征</td></tr>
+          <tr><td>规模档位</td><td>S0 / S2 / B / S3 / S4(端侧 → 445M)</td><td>B 86M / L 303M / So400m 400M / g 1B</td></tr>
+          <tr><td>零样本 IN-1k</td><td class="num">71.5 → 81.9</td><td class="num">79.1 → 84.5</td></tr>
+          <tr><td>端侧延迟</td><td class="yes">✓ 4.8–26 ms(iPhone 官方实测)</td><td class="no">✗ 无官方端侧延迟(面向 GPU)</td></tr>
+          <tr><td>部署 / 生态</td><td>Core ML / 手机 / 边缘</td><td>GPU 服务器;Qwen3-VL、Gemma 3 的视觉塔</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="margin:26px 0 2px;font-size:17px">选型建议</h3>
+    <div class="decide">
+      <div class="dcard"><div class="q">📱 端侧 / 手机 / 隐私 / 低延迟</div><div class="a"><b>MobileCLIP2</b> —— 轻量选 S0/S2,兼顾精度选 B/S4</div></div>
+      <div class="dcard"><div class="q">🌏 多语言 / 非英语场景</div><div class="a"><b>SigLIP 2</b> 或 MetaCLIP 2(原生世界级数据)</div></div>
+      <div class="dcard"><div class="q">🧠 作为 VLM / 大模型视觉塔</div><div class="a"><b>SigLIP 2</b>(生态最成熟),或 AIMv2 / Perception Encoder</div></div>
+      <div class="dcard"><div class="q">📄 文档 / OCR / 高分辨率</div><div class="a"><b>SigLIP 2 NaFlex</b>(原生可变分辨率)</div></div>
+      <div class="dcard"><div class="q">🎬 端侧视频检索</div><div class="a"><b>MobileViCLIP</b>(直接基于 MobileCLIP,见 §6)</div></div>
+      <div class="dcard"><div class="q">⚖️ 精度天花板优先</div><div class="a"><b>SigLIP 2-g / Perception Encoder-G</b>(~85%)</div></div>
+    </div>
+    <div class="callout"><strong>结论:</strong>不是"谁更强",而是"部署在哪"。若产品跑在<strong>设备上</strong> → MobileCLIP2;若跑在<strong>服务器</strong>、需要<strong>多语言</strong>或要当<strong>大模型视觉塔</strong> → SigLIP 2。在 86M 视觉参数这一档两者精度打平,MobileCLIP2 的差异化护城河是<strong>端侧延迟</strong>。</div>
+  </section>
+
+  <!-- 6 · DEEP DIVE: MobileViCLIP -->
+  <section>
+    <div class="sec-head"><span class="no">§ 06 · 深度对比</span><h2>端侧视频 CLIP:MobileViCLIP</h2></div>
+    <p class="lead"><strong>MobileViCLIP</strong>(ICCV 2025,arXiv 2508.07312,南京大学 / 蚂蚁 / 上海 AI Lab)是 2025 年——大概也是唯一——真正可在手机上运行的视频-CLIP,而且它<strong>直接以 Apple MobileCLIP 为骨干</strong>,与本仓库天然衔接。</p>
+
+    <figure>
+      <div class="fhead">
+        <div class="ftitle">视频-文本检索:MSR-VTT 零样本 T2V R@1</div>
+        <div class="fsub">柱从 0 起(R@1 本身是从零的量级,诚实可比)。端侧模型以蓝色标出,服务器级为灰色。</div>
+      </div>
+      <div class="legend">
+        <span class="k"><span class="sw" style="background:var(--series-blue)"></span>端侧(MobileViCLIP)</span>
+        <span class="k"><span class="sw" style="background:var(--bar-neutral)"></span>服务器级基础模型</span>
+      </div>
+      <div class="chart-scroll"><svg class="chart" id="c-video" viewBox="0 0 720 330" role="img" aria-label="视频检索R@1柱状图"></svg></div>
+      <figcaption><b>注:</b>InternVideo2-6B(55.9)仍是开源检索天花板。MobileViCLIP-Small 以 ~99M 参数 / ~38 ms 达 42.5,<b>比 InternVideo2-L14 快约 55×</b> 而检索质量相近。跨论文的 Kinetics/MSR-VTT 分片与协议不一,数字仅供近似对比。</figcaption>
+    </figure>
+
+    <div class="grid5" style="grid-template-columns:repeat(auto-fit,minmax(230px,1fr))">
+      <div class="tcard"><div class="tag">How</div><h3>时间维结构重参数化</h3><p>训练时建立时序结构,推理时<b>折叠掉</b> —— 沿用 MobileCLIP 的 RepMixer 思路,几乎零额外推理开销,在 InternVid-10M-FLT 上训练。</p></div>
+      <div class="tcard"><div class="tag">Base</div><h3>骨干 = MobileCLIP</h3><p><b>Tiny</b> 基于 MobileCLIP-S0,<b>Small</b> 基于 MobileCLIP-S2。这正是本仓库可复用为"视频化"起点的原因。</p></div>
+      <div class="tcard"><div class="tag">Specs</div><h3>端侧规格</h3><p>Tiny 53.9M / ~12.4 ms;Small 99.4M / ~37.8 ms(iPad Air 2020)。Small K400 零样本 63.1,Tiny 56.2。</p></div>
+    </div>
+    <div class="callout"><strong>对本仓库的启示:</strong>MobileViCLIP 提供了把 MobileCLIP-S0/S2 低成本"视频化"用于端侧视频检索的现成范式 —— 若要在此仓库基础上做视频,这是最直接的路径参考。</div>
+  </section>
+
+  <!-- 7 · 视频全景 + 数据训练 -->
+  <section>
+    <div class="sec-head"><span class="no">§ 07</span><h2>视频 CLIP 全景 · 数据与训练方法</h2></div>
+    <p class="lead">检索天花板仍是 2024 年的 <strong>InternVideo2-6B</strong>;2025 的动作在<strong>数据/训练方法</strong>与<strong>喂给视频大模型</strong>。</p>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:10px" class="two">
+      <div>
+        <h3 style="font-size:16px;margin-bottom:8px">视频侧要点</h3>
+        <p style="font-size:14.5px">· <b>InternVideo2-6B</b>:MSR-VTT 零样本 55.9 / 微调 62.8,仍是开源天花板。<br>
+        · <b>VideoPrism-g</b>(Google,检索权重 2025.07 放出)52.7;<b>PE-Core-G</b> 51.2、K400 76.9。<br>
+        · <b>InternVideo2.5</b>(2025.01)是视频<b>MLLM</b>,用 LRC 把处理帧数扩到 ~10k 帧。<br>
+        · 两种时序哲学:显式时间注意力 vs PE 的"数据胜过架构"(帧平均池化即可)。</p>
+      </div>
+      <div>
+        <h3 style="font-size:16px;margin-bottom:8px">数据 / 训练方法</h3>
+        <p style="font-size:14.5px">· <b>数据筛选</b>:DFN、MetaCLIP(质胜于量)、JEST(算力省 ~10×)、ACID(筛选=蒸馏)。<br>
+        · <b>合成字幕</b>:CLIPS 的"反效应"—— <b>短</b>字幕优于完整长字幕;Recap-DataComp 重写 13 亿图。<br>
+        · <b>训练目标</b>:sigmoid 损失(省显存)、纯生成式(OpenVision 2)、掩码(FLIP)、NeuCLIP(小 batch 归一化)。</p>
+      </div>
+    </div>
+
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>模型(端侧标注)</th><th>机构</th><th>时间</th><th class="num">MSR-VTT 零样本 R@1</th><th class="num">K400 零样本</th></tr></thead>
+        <tbody>
+          <tr><td>InternVideo2-6B</td><td>OpenGVLab</td><td>2024.03</td><td class="num">55.9</td><td class="num">72.7</td></tr>
+          <tr><td>VideoPrism-g</td><td>Google</td><td>2024 / 25.07 放出</td><td class="num">52.7</td><td class="num">76.4</td></tr>
+          <tr><td>Perception Encoder-G</td><td>Meta</td><td>2025.04</td><td class="num">51.2</td><td class="num">76.9</td></tr>
+          <tr><td>VideoCLIP-XL</td><td>华南理工 / 阿里</td><td>2024.10</td><td class="num">50.1</td><td class="num">—</td></tr>
+          <tr class="hi"><td>MobileViCLIP-Small <span class="pill dev">端侧</span></td><td>南大 / 蚂蚁 / 上海AI</td><td>2025.08</td><td class="num">42.5</td><td class="num">63.1</td></tr>
+          <tr class="hi"><td>MobileViCLIP-Tiny <span class="pill dev">端侧</span></td><td>南大 / 蚂蚁 / 上海AI</td><td>2025.08</td><td class="num">38.7</td><td class="num">56.2</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 8 · 时间线 -->
+  <section>
+    <div class="sec-head"><span class="no">§ 08</span><h2>2025 关键发布时间线</h2></div>
+    <div class="tl">
+      <div class="tl-row"><div class="tl-date">2025.01</div><div class="tl-body"><b>InternVideo2.5</b> —— 视频 MLLM,长富上下文(~10k 帧) <span class="lab">OpenGVLab</span></div></div>
+      <div class="tl-row"><div class="tl-date">2025.02</div><div class="tl-body"><b>SigLIP 2</b> —— 多语言 sigmoid + NaFlex,成 2025 默认 VLM 骨干 <span class="lab">Google DeepMind</span></div></div>
+      <div class="tl-row"><div class="tl-date">2025.03</div><div class="tl-body"><b>TULIP</b> —— 对比 + 重建 + 生成增强,补细粒度短板 <span class="lab">UC Berkeley</span></div></div>
+      <div class="tl-row"><div class="tl-date">2025.04</div><div class="tl-body"><b>Perception Encoder</b> —— 中间层特征最优,图/视频/稠密 SOTA <span class="lab">Meta FAIR</span></div></div>
+      <div class="tl-row"><div class="tl-date">2025.05</div><div class="tl-body"><b>OpenVision</b> —— 全开源编码器族(5.9M–632M) <span class="lab">UCSC-VLAA</span></div></div>
+      <div class="tl-row"><div class="tl-date">2025.07</div><div class="tl-body"><b>MetaCLIP 2</b> 全球无过滤 · <b>VideoPrism</b> 检索权重放出 <span class="lab">Meta · Google</span></div></div>
+      <div class="tl-row"><div class="tl-date">2025.08</div><div class="tl-body"><b>MobileCLIP2</b>(TMLR)· <b>MobileViCLIP</b>(ICCV)—— 端侧图文与视频双双落地 <span class="lab">Apple · 南大</span></div></div>
+      <div class="tl-row"><div class="tl-date">2025.09</div><div class="tl-body"><b>OpenVision 2</b> —— 弃文本塔与对比损失,纯字幕生成 <span class="lab">UCSC-VLAA</span></div></div>
+      <div class="tl-row"><div class="tl-date">2025.11</div><div class="tl-body"><b>NeuCLIP</b> 小 batch 归一化优化 · <b>D4C</b> 数据无关量化 <span class="lab">TAMU · —</span></div></div>
+    </div>
+  </section>
+
+  <!-- 9 · caveats -->
+  <section>
+    <div class="sec-head"><span class="no">§ 09</span><h2>重要提醒:读数与纠正</h2></div>
+    <div class="grid5" style="grid-template-columns:repeat(auto-fit,minmax(255px,1fr))">
+      <div class="tcard"><div class="tag" style="color:var(--good)">Correction</div><h3>EVA-CLIP-18B = 83.8%</h3><p>真实零样本 IN-1k 是 83.8%;常被误引的 <b>80.7% 实为 27 数据集平均值</b>。</p></div>
+      <div class="tcard"><div class="tag" style="color:var(--good)">Correction</div><h3>AIMv2 89.5 ≠ 零样本</h3><p>89.5% 是<b>冻结骨干 + attentive probe</b>;其零样本(LiT)约 77%。</p></div>
+      <div class="tcard"><div class="tag" style="color:var(--good)">Caution</div><h3>视频数字不可直接比</h3><p>MSR-VTT(1K-A vs full)、Kinetics 的 prompt/协议跨论文不一致,仅近似。</p></div>
+      <div class="tcard"><div class="tag" style="color:var(--good)">Caution</div><h3>SigLIP 2 检索 R@1</h3><p>自动抽取曾出现错位,检索数应视为近似;其 ImageNet 数可靠。</p></div>
+      <div class="tcard"><div class="tag" style="color:var(--good)">Skeptical</div><h3>DatologyAI 省算力宣称</h3><p>公司博客、<b>无论文无权重</b>,属营销口径,本报告未采信。</p></div>
+    </div>
+    <div class="note" style="margin-top:16px">全部头部数字均为<b style="color:var(--ink)">自报</b>,未见独立第三方审计;OpenCLIP / CLIP_benchmark 是常用交叉校验,量级排序与上表大体吻合。CoCa 的 86.3% 基于闭源 JFT-3B,未被复现,仅作天花板参照。</div>
+  </section>
+
+  <!-- 10 · refs -->
+  <section>
+    <div class="sec-head"><span class="no">§ 10</span><h2>参考文献(arXiv 编号)</h2></div>
+    <div class="refs">
+      <div class="rg"><div class="rt">前沿图文编码器</div>
+        SigLIP 2 <code>2502.14786</code> · MetaCLIP 2 <code>2507.22062</code> · Perception Encoder <code>2504.13181</code> · AIMv2 <code>2411.14402</code> · EVA-CLIP-18B <code>2402.04252</code> · OpenVision <code>2505.04601</code> / v2 <code>2509.01644</code> · TULIP <code>2503.15485</code> · LLM2CLIP <code>2411.04997</code>
+      </div>
+      <div class="rg"><div class="rt">移动端 / 高效</div>
+        MobileCLIP2 <code>2508.20691</code> · MobileCLIP <code>2311.17049</code> · ACID/ACED <code>2411.18674</code> · TinyCLIP <code>2309.12314</code> · FastVLM <code>2412.13303</code> · D4C 量化 <code>2511.15411</code>
+      </div>
+      <div class="rg"><div class="rt">视频</div>
+        InternVideo2 <code>2403.15377</code> · InternVideo2.5 <code>2501.12386</code> · MobileViCLIP <code>2508.07312</code> · VideoPrism <code>2402.13217</code> · VideoCLIP-XL <code>2410.00741</code>
+      </div>
+      <div class="rg"><div class="rt">数据 / 训练</div>
+        DFN <code>2309.17425</code> · JEST <code>2406.17711</code> · CLIPS <code>2411.16828</code> · Recap-DataComp <code>2406.08478</code> · SigLIP <code>2303.15343</code> · NeuCLIP <code>2511.08417</code>
+      </div>
+      <div class="rg"><div class="rt">综述</div>
+        VLM 2.6 万篇分析 <code>2510.09586</code> · 高效 VLM 综述 <code>2504.09724</code>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>本报告由 5 个并行研究智能体基于一手来源(arXiv、实验室博客、Hugging Face 模型卡)检索与交叉验证生成。</div>
+    <div>数值均为作者自报,非独立复现;跨模型对比仅供参考。生成日期 2026-07-12。</div>
+  </div>
+</footer>
+
+<div id="tt" role="tooltip" aria-hidden="true"></div>
+
+<script>
+(function(){
+  const NS="http://www.w3.org/2000/svg";
+  const tt=document.getElementById("tt");
+  function el(t,a,p){const e=document.createElementNS(NS,t);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e;}
+  function text(x,y,s,cls,anchor,p){const t=el("text",{x:x,y:y,class:cls||"ax-label"},p);if(anchor)t.setAttribute("text-anchor",anchor);t.textContent=s;return t;}
+  function showTT(e,html){tt.innerHTML=html;tt.style.opacity=1;tt.setAttribute("aria-hidden","false");moveTT(e);}
+  function moveTT(e){const pad=14;let x=e.clientX+pad,y=e.clientY+pad;const r=tt.getBoundingClientRect();
+    if(x+r.width>window.innerWidth-8)x=e.clientX-r.width-pad;if(y+r.height>window.innerHeight-8)y=e.clientY-r.height-pad;
+    tt.style.left=x+"px";tt.style.top=y+"px";}
+  function hideTT(){tt.style.opacity=0;tt.setAttribute("aria-hidden","true");}
+  function bind(node,html){node.classList.add("mark");node.setAttribute("tabindex","0");
+    node.addEventListener("mouseenter",e=>showTT(e,html));node.addEventListener("mousemove",moveTT);
+    node.addEventListener("mouseleave",hideTT);
+    node.addEventListener("focus",e=>{const b=node.getBoundingClientRect();showTT({clientX:b.left+b.width/2,clientY:b.top},html);});
+    node.addEventListener("blur",hideTT);}
+  // rounded-right-end horizontal bar path (square at x0 baseline)
+  function barPath(x0,x1,y,h,r){r=Math.min(r,(x1-x0),h/2);if(x1-x0<=0.5)return `M${x0},${y} H${x1} V${y+h} H${x0} Z`;
+    return `M${x0},${y} H${x1-r} Q${x1},${y} ${x1},${y+r} V${y+h-r} Q${x1},${y+h} ${x1-r},${y+h} H${x0} Z`;}
+
+  /* ---------- 1. PARETO ---------- */
+  (function(){
+    const svg=document.getElementById("c-pareto");if(!svg)return;
+    const W=720,H=430,m={t:26,r:150,b:52,l:52};
+    const x0=m.l,x1=W-m.r,y0=H-m.b,y1=m.t;
+    const xmin=0,xmax=30,ymin=66,ymax=87;
+    const sx=v=>x0+(v-xmin)/(xmax-xmin)*(x1-x0);
+    const sy=v=>y0+(v-ymin)/(ymax-ymin)*(y1-y0);
+    // gridlines + y ticks
+    for(let v=68;v<=86;v+=2){const y=sy(v);el("line",{x1:x0,y1:y,x2:x1,y2:y,class:"grid-line"},svg);text(x0-9,y+4,v+"",'ax-label','end',svg);}
+    // x ticks
+    for(let v=0;v<=30;v+=5){const x=sx(v);el("line",{x1:x,y1:y0,x2:x,y2:y0+5,class:"axis-line"},svg);text(x,y0+20,v+"",'ax-label','middle',svg);}
+    text((x0+x1)/2,H-8,"端侧图+文编码延迟 (ms) · iPhone 12 Pro Max",'ax-title','middle',svg);
+    el("line",{x1:x0,y1:y0,x2:x1,y2:y0,class:"axis-line"},svg);
+    // reference ceilings (one clean right-side label each)
+    [["CoCa 2022 · 86.3",86.3],["2025 前沿 ≈85",85.0]].forEach(([lab,v])=>{
+      const y=sy(v);el("line",{x1:x0,y1:y,x2:x1,y2:y,class:"ref-line"},svg);
+      text(x1+9,y+4,lab,'val-label-sm','start',svg);
+    });
+    const v1=[["S0",3.1,67.8],["S2",6.9,74.4],["B",13.7,76.8],["S3",14.6,78.3],["S4",26.2,79.4]];
+    const v2=[["S0",4.8,71.5],["S2",6.9,77.2],["B",13.7,79.4],["S3",14.6,80.7],["S4",26.2,81.9]];
+    function drawLine(data,cls,ver){
+      let d="";data.forEach((p,i)=>{d+=(i?"L":"M")+sx(p[1])+","+sy(p[2]);});
+      el("path",{d:d,class:cls},svg);
+      data.forEach(p=>{
+        const c=el("circle",{cx:sx(p[1]),cy:sy(p[2]),r:5,class:(ver==2?"mark-blue":"mark-neutral")+" dot-ring"},svg);
+        bind(c,`<span class="tn">MobileCLIP${ver==2?'2':' v1'}-${p[0]}</span><br>零样本 IN-1k ${p[2]}%<br>延迟 ${p[1]} ms`);
+      });
+    }
+    drawLine(v1,"line-v1",1);drawLine(v2,"line-blue",2);
+    // endpoint labels for v2
+    text(sx(4.8)-8,sy(71.5)+4,"S0 71.5",'val-label','end',svg);
+    text(sx(26.2)+9,sy(81.9)+4,"S4 81.9",'val-label','start',svg);
+  })();
+
+  /* ---------- 2. LEADERBOARD DOT PLOT ---------- */
+  (function(){
+    const svg=document.getElementById("c-lead");if(!svg)return;
+    const rows=[
+      ["CoCa (2022 闭源)",86.3,"ref"],
+      ["Perception Encoder-G",85.4,"n"],
+      ["SigLIP 2-g",84.5,"n"],
+      ["DFN5B-CLIP-H/14",84.4,"n"],
+      ["EVA-CLIP-18B",83.8,"n"],
+      ["SigLIP 2-So400m",83.2,"n"],
+      ["MobileCLIP2-S4",81.9,"hi"],
+      ["MetaCLIP 2-H/14",81.3,"n"],
+      ["MobileCLIP2-B",79.4,"hi"],
+      ["SigLIP 2-B",79.1,"n"]
+    ];
+    const W=720,H=400,m={t:14,r:54,b:40,l:186};
+    const x0=m.l,x1=W-m.r;const xmin=78,xmax=87;
+    const sx=v=>x0+(v-xmin)/(xmax-xmin)*(x1-x0);
+    const rh=(H-m.t-m.b)/rows.length;
+    for(let v=78;v<=87;v+=1){const x=sx(v);el("line",{x1:x,y1:m.t,x2:x,y2:H-m.b,class:"grid-line"},svg);text(x,H-m.b+18,v+"",'ax-label','middle',svg);}
+    text((x0+x1)/2,H-6,"零样本 ImageNet-1k Top-1 (%)",'ax-title','middle',svg);
+    rows.forEach((r,i)=>{
+      const y=m.t+rh*i+rh/2;
+      text(x0-12,y+4,r[0],'val-label-sm','end',svg);
+      el("line",{x1:x0,y1:y,x2:sx(r[1]),y2:y,class:"grid-line"},svg);
+      const cls=r[2]=="hi"?"mark-blue":r[2]=="ref"?"mark-ref":"mark-neutral";
+      const c=el("circle",{cx:sx(r[1]),cy:y,r:6,class:cls+" dot-ring"},svg);
+      if(r[2]=="ref")c.setAttribute("opacity","0.72");
+      bind(c,`<span class="tn">${r[0]}</span><br>零样本 IN-1k ${r[1]}%`);
+      text(sx(r[1])+12,y+4,r[1].toFixed(1),'val-label','start',svg);
+    });
+  })();
+
+  /* ---------- 3. VS SCATTER (log x) ---------- */
+  (function(){
+    const svg=document.getElementById("c-vs");if(!svg)return;
+    const W=720,H=430,m={t:20,r:26,b:54,l:52};
+    const x0=m.l,x1=W-m.r,y0=H-m.b,y1=m.t;
+    const lx=v=>Math.log10(v);const xmin=lx(10),xmax=lx(1100);
+    const ymin=70,ymax=86;
+    const sx=v=>x0+(lx(v)-xmin)/(xmax-xmin)*(x1-x0);
+    const sy=v=>y0+(v-ymin)/(ymax-ymin)*(y1-y0);
+    for(let v=72;v<=86;v+=2){const y=sy(v);el("line",{x1:x0,y1:y,x2:x1,y2:y,class:"grid-line"},svg);text(x0-9,y+4,v+"",'ax-label','end',svg);}
+    [10,20,50,100,200,500,1000].forEach(v=>{const x=sx(v);el("line",{x1:x,y1:y0,x2:x,y2:y0+5,class:"axis-line"},svg);text(x,y0+20,v+"",'ax-label','middle',svg);});
+    text((x0+x1)/2,H-8,"视觉编码器参数量 (M) · 对数刻度",'ax-title','middle',svg);
+    el("line",{x1:x0,y1:y0,x2:x1,y2:y0,class:"axis-line"},svg);
+    const mc=[["S0",11.4,71.5],["S2",35.7,77.2],["B",86.3,79.4],["S3",125.1,80.7],["S4",321.6,81.9]];
+    const sg=[["B",86,79.1],["L",303,82.5],["So400m",400,83.2],["g",1000,84.5]];
+    function series(data,cls,name,ver){
+      let d="";data.forEach((p,i)=>{d+=(i?"L":"M")+sx(p[1])+","+sy(p[2]);});
+      el("path",{d:d,class:cls,opacity:.55},svg);
+      data.forEach(p=>{const c=el("circle",{cx:sx(p[1]),cy:sy(p[2]),r:5.5,class:(ver==2?"mark-blue":"mark-orange")+" dot-ring"},svg);
+        bind(c,`<span class="tn">${name}-${p[0]}</span><br>零样本 IN-1k ${p[2]}%<br>视觉参数 ${p[1]} M`);});
+    }
+    series(mc,"line-blue","MobileCLIP2",2);series(sg,"line-orange","SigLIP 2",1);
+    // annotate the iso-param tie at ~86M
+    text(sx(86.3),sy(79.4)-12,"两者 @86M 打平",'val-label-sm','middle',svg);
+    text(sx(321.6)+2,sy(81.9)+16,"S4",'val-label-sm','middle',svg);
+    text(sx(1000)-2,sy(84.5)-10,"g",'val-label-sm','middle',svg);
+    text(sx(11.4)+4,sy(71.5)+15,"S0",'val-label-sm','middle',svg);
+  })();
+
+  /* ---------- 4. VIDEO BARS ---------- */
+  (function(){
+    const svg=document.getElementById("c-video");if(!svg)return;
+    const rows=[
+      ["InternVideo2-6B",55.9,"n"],["VideoPrism-g",52.7,"n"],["Perception Encoder-G",51.2,"n"],
+      ["VideoCLIP-XL",50.1,"n"],["MobileViCLIP-Small",42.5,"hi"],["MobileViCLIP-Tiny",38.7,"hi"]
+    ];
+    const W=720,H=330,m={t:12,r:48,b:40,l:186};
+    const x0=m.l,x1=W-m.r;const xmax=60;
+    const sx=v=>x0+v/xmax*(x1-x0);
+    const rh=(H-m.t-m.b)/rows.length,bh=Math.min(22,rh-10);
+    for(let v=0;v<=60;v+=10){const x=sx(v);el("line",{x1:x,y1:m.t,x2:x,y2:H-m.b,class:"grid-line"},svg);text(x,H-m.b+18,v+"",'ax-label','middle',svg);}
+    text((x0+x1)/2,H-6,"MSR-VTT 零样本 Text→Video R@1",'ax-title','middle',svg);
+    el("line",{x1:x0,y1:m.t,x2:x0,y2:H-m.b,class:"axis-line"},svg);
+    rows.forEach((r,i)=>{
+      const y=m.t+rh*i+(rh-bh)/2;
+      text(x0-12,y+bh/2+4,r[0],'val-label-sm','end',svg);
+      const cls=r[2]=="hi"?"mark-blue":"mark-neutral";
+      const p=el("path",{d:barPath(x0,sx(r[1]),y,bh,4),class:cls},svg);
+      bind(p,`<span class="tn">${r[0]}</span><br>MSR-VTT 零样本 T2V R@1 ${r[1]}`);
+      text(sx(r[1])+9,y+bh/2+4,r[1].toFixed(1),'val-label','start',svg);
+    });
+  })();
+})();
+</script>
