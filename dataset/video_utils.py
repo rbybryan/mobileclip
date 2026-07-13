@@ -7,7 +7,6 @@ import io
 import av
 import cv2
 import decord
-import imageio
 from decord import VideoReader
 import torch
 import numpy as np
@@ -104,9 +103,10 @@ def read_frames_av(video_path, num_frames, sample='rand', fix_start=None, max_nu
 
 
 def read_frames_gif(
-        video_path, num_frames, sample='rand', fix_start=None, 
+        video_path, num_frames, sample='rand', fix_start=None,
          max_num_frames=-1, client=None, trimmed30=False,
     ):
+    import imageio  # lazy import: only needed for GIF reading
     if 's3://' in video_path:
         video_bytes = client.get(video_path)
         gif = imageio.get_reader(io.BytesIO(video_bytes))
