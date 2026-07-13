@@ -456,6 +456,33 @@ self.reparam_conv_1d.weight.data = w_1d   <span class="c"># 由 mixer_1d / norm_
         </tbody>
       </table>
     </div>
+
+    <h3 class="subhead"><span class="dd-kick">专题 · 2025–2026</span>video-CLIP 新进展:七条新线</h3>
+    <p>本报告初版后,video-CLIP 的动作主要在<b>方法与工程</b>,而非新的大编码器。先记一句<b>可比性警告</b>:下表混着四种<b>不可直接比</b>的口径 —— CLIP 双编码器<b>零样本</b> / <b>微调</b> / <b>MLLM-embedder</b>(7B 级)/ <b>top-K 重排</b>。⚠️ = 2026 预印本,未独立复核。</p>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>工作</th><th>机构</th><th>时间</th><th>方向</th><th>关键点(自报)</th></tr></thead>
+        <tbody>
+          <tr><td>VLM2Vec-V2</td><td>TIGER-Lab</td><td>2025.07</td><td>MLLM-embedder</td><td>统一 image/video/doc;提出 MMEB-V2 基准</td></tr>
+          <tr><td>GVE</td><td>阿里通义</td><td>2025.10</td><td>MLLM-embedder</td><td>Modality Pyramid + 155 万合成对;提出 UVRB(avg 0.573)</td></tr>
+          <tr><td>CaRe-DPO</td><td>高丽大 / KAIST</td><td>2025.09</td><td>字幕优化</td><td>Dual-Group DPO 优化字幕;MSR-VTT 64.1(MLLM 口径)</td></tr>
+          <tr><td>VidVec ⚠️</td><td>—</td><td>2026.02</td><td>MLLM-embedder</td><td>纯文本对齐、零视觉监督;ZS MSR-VTT 52.1</td></tr>
+          <tr><td>Vote-in-Context ⚠️</td><td>KAUST</td><td>CVPR 2026</td><td>LLM 重排 / 融合</td><td>top-K 融合 87.1(<b>非</b>双编码器检索)</td></tr>
+          <tr class="hi"><td>PE-AV</td><td>Meta FAIR</td><td>2025.12</td><td>音视频编码器</td><td>audio+video+text,10 对比目标;K400 ZS 78.9</td></tr>
+          <tr><td>VideoPrism-LvT</td><td>Google</td><td>2025.07 放出</td><td>视频-文本编码器</td><td>冻结塔 + LiT 文本头;K400 72.4 / MSR-VTT 50.1</td></tr>
+          <tr><td>Cosmos-Embed1</td><td>NVIDIA</td><td>2025.06</td><td>领域(物理 AI)</td><td>1B,机器人 / 自动驾驶视频 embedder</td></tr>
+          <tr class="hi"><td>ProCLIP</td><td>清华 / 中南</td><td>2025.07</td><td>端侧高效</td><td>prompt-aware 帧采样 + 两阶段 + 蒸馏;−75% 延迟</td></tr>
+          <tr class="hi"><td>TempMe</td><td>清华 + 京东</td><td>ICLR 2025</td><td>token 裁剪</td><td>渐进时序 token 合并;−95% token、1.8× 加速</td></tr>
+          <tr class="hi"><td>LEViL ⚠️</td><td>—</td><td>2026.06</td><td>蒸馏</td><td>InternVideo2-CLIP → 3D-ResNet-18 软标签蒸馏</td></tr>
+          <tr class="hi"><td>ReSpec</td><td>首尔大 / LG / AI2</td><td>2025.04</td><td>数据筛选</td><td>Relevance+Specificity;27.5% 数据达 49.1 avg</td></tr>
+          <tr><td>VideoComp</td><td>Google</td><td>CVPR 2025</td><td>时序对比</td><td>事件重排 / 换词等时序难负样本</td></tr>
+          <tr><td>Video-ColBERT</td><td>JHU</td><td>CVPR 2025</td><td>late-interaction</td><td>token 级 MaxSim,细粒度且可索引</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><b>暗线 · 时序理解:</b>多项诊断(TVBench、TemporalBench〔GPT-4o ~38.5%〕、VITATECS、Dynamic Reflections〔ICLR 2026〕)显示 CLIP 视频模型普遍"顺序盲"——打乱 / 倒放几乎同分;对比侧修复靠硬时序负样本、late-interaction 与时序 grounding 损失(Sim-DETR、CVA)。<b>新基准</b>(MMEB-V2 / UVRB / MomentSeeker / LoVR)正取代趋于饱和的 MSR-VTT。<b>新数据集:</b>Koala-36M(快手,3600 万)、OpenVid-1M、OVid、CaReBench。<br>
+    <b>勿混为 video-CLIP:</b>V-JEPA 2(自监督)、AIMv2(自回归)、InternVideo3(生成式 agent)、MetaCLIP 2(图像)。</p>
+    <div class="callout"><strong>对本仓库的空白机会(可作"改进"卖点):</strong>三处几乎无人发表 —— ① <b>视频-CLIP 双编码器的量化</b>(现仅有通用 VLM-edge 量化);② <b>流式 / 实时检索双编码器</b>(所有流式工作都是生成式);③ <b>端侧超越 MobileViCLIP</b>(ProCLIP 是系统级,尚无更强紧凑编码器)。数据侧可直接把 <b>ReSpec 筛选</b> 或 <b>PE / GVE 式 MLLM 重描述</b> 叠到 InternVid-10M-FLT 管线。</div>
   </section>
 
   <!-- 8 · 时间线 -->
@@ -470,7 +497,9 @@ self.reparam_conv_1d.weight.data = w_1d   <span class="c"># 由 mixer_1d / norm_
       <div class="tl-row"><div class="tl-date">2025.07</div><div class="tl-body"><b>MetaCLIP 2</b> 全球无过滤 · <b>VideoPrism</b> 检索权重放出 <span class="lab">Meta · Google</span></div></div>
       <div class="tl-row"><div class="tl-date">2025.08</div><div class="tl-body"><b>MobileCLIP2</b>(TMLR)· <b>MobileViCLIP</b>(ICCV)—— 端侧图文与视频双双落地 <span class="lab">Apple · 南大</span></div></div>
       <div class="tl-row"><div class="tl-date">2025.09</div><div class="tl-body"><b>OpenVision 2</b> —— 弃文本塔与对比损失,纯字幕生成 <span class="lab">UCSC-VLAA</span></div></div>
+      <div class="tl-row"><div class="tl-date">2025.10</div><div class="tl-body"><b>GVE</b> 通用视频 embedder + <b>UVRB</b> 基准 · <b>VLM2Vec-V2</b>(MMEB-V2)<span class="lab">阿里 · TIGER-Lab</span></div></div>
       <div class="tl-row"><div class="tl-date">2025.11</div><div class="tl-body"><b>NeuCLIP</b> 小 batch 归一化优化 · <b>D4C</b> 数据无关量化 <span class="lab">TAMU · —</span></div></div>
+      <div class="tl-row"><div class="tl-date">2025.12</div><div class="tl-body"><b>PE-AV</b> 音视频统一编码器(audio+video+text,驱动 SAM Audio)<span class="lab">Meta FAIR</span></div></div>
     </div>
   </section>
 
@@ -499,6 +528,9 @@ self.reparam_conv_1d.weight.data = w_1d   <span class="c"># 由 mixer_1d / norm_
       </div>
       <div class="rg"><div class="rt">视频</div>
         InternVideo2 <code>2403.15377</code> · InternVideo2.5 <code>2501.12386</code> · MobileViCLIP <code>2508.07312</code> · VideoPrism <code>2402.13217</code> · VideoCLIP-XL <code>2410.00741</code>
+      </div>
+      <div class="rg"><div class="rt">视频 · 2025–2026 新进展</div>
+        PE-AV <code>2512.19687</code> · GVE / UVRB <code>2510.27571</code> · VLM2Vec-V2 <code>2507.04590</code> · ProCLIP <code>2507.15491</code> · TempMe <code>2409.01156</code> · ReSpec <code>2504.14875</code> · Video-ColBERT <code>2503.19009</code> · VideoComp <code>2504.03970</code> · CaRe-DPO <code>2509.16560</code> · Koala-36M <code>2410.08260</code> · Dynamic Reflections <code>2511.02767</code> · Vote-in-Context <code>2511.01617</code>
       </div>
       <div class="rg"><div class="rt">数据 / 训练</div>
         DFN <code>2309.17425</code> · JEST <code>2406.17711</code> · CLIPS <code>2411.16828</code> · Recap-DataComp <code>2406.08478</code> · SigLIP <code>2303.15343</code> · NeuCLIP <code>2511.08417</code>
