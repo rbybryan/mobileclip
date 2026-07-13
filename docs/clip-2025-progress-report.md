@@ -215,6 +215,33 @@ self.reparam_conv_1d.weight.data = w_1d   # 由 mixer_1d / norm_1d 折叠而来
 - **合成字幕:** CLIPS 的"反效应"—— **短**字幕优于完整长字幕;Recap-DataComp 用 LLaMA-3 重写 13 亿图;LaCLIP / VeCLIP / DreamLIP。
 - **训练目标:** sigmoid 损失(省显存,batch 解耦)、纯生成式(OpenVision 2)、掩码(FLIP,>3× 提速)、CLIPA(反尺度律,$10k 训到 81.1%)、NeuCLIP(小 batch 归一化优化)。
 
+### 2025–2026 新进展:video-CLIP 七条新线
+
+本报告初版后,video-CLIP 的动作主要在**方法与工程**,而非新的大编码器。**可比性警告**:下表混着四种**不可直接比**的口径 —— CLIP 双编码器**零样本** / **微调** / **MLLM-embedder**(7B 级)/ **top-K 重排**。⚠️ = 2026 预印本,未独立复核。
+
+| 工作 | 机构 | 时间 | 方向 | 关键点(自报) |
+|---|---|---|---|---|
+| VLM2Vec-V2 | TIGER-Lab | 2025.07 | MLLM-embedder | 统一 image/video/doc;提出 MMEB-V2 基准 |
+| GVE | 阿里通义 | 2025.10 | MLLM-embedder | Modality Pyramid + 155 万合成对;提出 UVRB(avg 0.573) |
+| CaRe-DPO | 高丽大 / KAIST | 2025.09 | 字幕优化 | Dual-Group DPO 优化字幕;MSR-VTT 64.1(MLLM 口径) |
+| VidVec ⚠️ | — | 2026.02 | MLLM-embedder | 纯文本对齐、零视觉监督;ZS MSR-VTT 52.1 |
+| Vote-in-Context ⚠️ | KAUST | CVPR 2026 | LLM 重排 / 融合 | top-K 融合 87.1(**非**双编码器检索) |
+| **PE-AV** | Meta FAIR | 2025.12 | 音视频编码器 | audio+video+text,10 对比目标;K400 ZS 78.9 |
+| VideoPrism-LvT | Google | 2025.07 放出 | 视频-文本编码器 | 冻结塔 + LiT 文本头;K400 72.4 / MSR-VTT 50.1 |
+| Cosmos-Embed1 | NVIDIA | 2025.06 | 领域(物理 AI) | 1B,机器人 / 自动驾驶视频 embedder |
+| **ProCLIP** | 清华 / 中南 | 2025.07 | 端侧高效 | prompt-aware 帧采样 + 两阶段 + 蒸馏;−75% 延迟 |
+| **TempMe** | 清华 + 京东 | ICLR 2025 | token 裁剪 | 渐进时序 token 合并;−95% token、1.8× 加速 |
+| **LEViL** ⚠️ | — | 2026.06 | 蒸馏 | InternVideo2-CLIP → 3D-ResNet-18 软标签蒸馏 |
+| **ReSpec** | 首尔大 / LG / AI2 | 2025.04 | 数据筛选 | Relevance+Specificity;27.5% 数据达 49.1 avg |
+| VideoComp | Google | CVPR 2025 | 时序对比 | 事件重排 / 换词等时序难负样本 |
+| Video-ColBERT | JHU | CVPR 2025 | late-interaction | token 级 MaxSim,细粒度且可索引 |
+
+**暗线 · 时序理解:** 多项诊断(TVBench、TemporalBench〔GPT-4o ~38.5%〕、VITATECS、Dynamic Reflections〔ICLR 2026〕)显示 CLIP 视频模型普遍"顺序盲"——打乱 / 倒放几乎同分;对比侧修复靠硬时序负样本、late-interaction 与时序 grounding 损失(Sim-DETR、CVA)。**新基准**(MMEB-V2 / UVRB / MomentSeeker / LoVR)正取代趋于饱和的 MSR-VTT。**新数据集:** Koala-36M(快手,3600 万)、OpenVid-1M、OVid、CaReBench。
+
+**勿混为 video-CLIP:** V-JEPA 2(自监督)、AIMv2(自回归)、InternVideo3(生成式 agent)、MetaCLIP 2(图像)。
+
+> **对本仓库的空白机会(可作"改进"卖点):** 三处几乎无人发表 —— ① **视频-CLIP 双编码器的量化**(现仅有通用 VLM-edge 量化);② **流式 / 实时检索双编码器**(所有流式工作都是生成式);③ **端侧超越 MobileViCLIP**(ProCLIP 是系统级,尚无更强紧凑编码器)。数据侧可直接把 **ReSpec 筛选** 或 **PE / GVE 式 MLLM 重描述** 叠到 InternVid-10M-FLT 管线。
+
 ---
 
 ## 8 · 2025 关键发布时间线
@@ -229,7 +256,9 @@ self.reparam_conv_1d.weight.data = w_1d   # 由 mixer_1d / norm_1d 折叠而来
 | 2025.07 | **MetaCLIP 2** 全球无过滤 · **VideoPrism** 检索权重放出 · Meta / Google |
 | 2025.08 | **MobileCLIP2**(TMLR)· **MobileViCLIP**(ICCV)—— 端侧图文与视频双双落地 · Apple / 南大 |
 | 2025.09 | **OpenVision 2** —— 弃文本塔与对比损失,纯字幕生成 · UCSC-VLAA |
+| 2025.10 | **GVE** 通用视频 embedder + **UVRB** 基准 · **VLM2Vec-V2**(MMEB-V2)· 阿里 / TIGER-Lab |
 | 2025.11 | **NeuCLIP** 小 batch 归一化优化 · **D4C** 数据无关量化 |
+| 2025.12 | **PE-AV** 音视频统一编码器(audio+video+text,驱动 SAM Audio)· Meta FAIR |
 
 ---
 
@@ -254,6 +283,9 @@ MobileCLIP2 `2508.20691` · MobileCLIP `2311.17049` · ACID/ACED `2411.18674` ·
 
 **视频**
 InternVideo2 `2403.15377` · InternVideo2.5 `2501.12386` · **MobileViCLIP `2508.07312`** · VideoPrism `2402.13217` · VideoCLIP-XL `2410.00741`
+
+**视频 · 2025–2026 新进展**
+PE-AV `2512.19687` · GVE / UVRB `2510.27571` · VLM2Vec-V2 `2507.04590` · ProCLIP `2507.15491` · TempMe `2409.01156` · ReSpec `2504.14875` · Video-ColBERT `2503.19009` · VideoComp `2504.03970` · CaRe-DPO `2509.16560` · Koala-36M `2410.08260` · Dynamic Reflections `2511.02767` · Vote-in-Context `2511.01617`
 
 **数据 / 训练**
 DFN `2309.17425` · JEST `2406.17711` · CLIPS `2411.16828` · Recap-DataComp `2406.08478` · SigLIP `2303.15343` · NeuCLIP `2511.08417`
