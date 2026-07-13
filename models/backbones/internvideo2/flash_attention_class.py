@@ -3,8 +3,16 @@ import torch.nn as nn
 
 from einops import rearrange
 
-from flash_attn.flash_attn_interface import flash_attn_varlen_qkvpacked_func
-from flash_attn.bert_padding import unpad_input, pad_input
+try:
+    from flash_attn.flash_attn_interface import flash_attn_varlen_qkvpacked_func
+    from flash_attn.bert_padding import unpad_input, pad_input
+except ImportError:
+    # flash-attn is only used by the InternVideo2 / InternVL vision backbones,
+    # which MobileViCLIP tiny/small do not instantiate. Allow this module to be
+    # imported on GPUs where flash-attn is unavailable (e.g. V100 / non-Ampere).
+    # FlashAttention.forward will raise only if it is actually called.
+    flash_attn_varlen_qkvpacked_func = None
+    unpad_input = pad_input = None
 
 
 class FlashAttention(nn.Module):

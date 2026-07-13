@@ -12,8 +12,16 @@ try:
     from .flash_attention_class import FlashAttention
 except:
     from flash_attention_class import FlashAttention
-from flash_attn.modules.mlp import FusedMLP
-from flash_attn.ops.rms_norm import DropoutAddRMSNorm
+try:
+    from flash_attn.modules.mlp import FusedMLP
+    from flash_attn.ops.rms_norm import DropoutAddRMSNorm
+except ImportError:
+    # Optional: only needed when this InternVL vision backbone is built with
+    # use_fused_mlp / use_fused_rmsnorm. MobileViCLIP tiny/small use the MobileCLIP
+    # (FastViT) backbone instead, so this import is not required to run them on
+    # GPUs where flash-attn is unavailable (e.g. V100 / non-Ampere).
+    FusedMLP = None
+    DropoutAddRMSNorm = None
 
 
 MODEL_PATH ='your_model_path/internvl'
