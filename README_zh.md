@@ -225,7 +225,7 @@ checkpoints/
 ## 6. 下载视频数据集
 
 视频文件很大，需要从各数据集**官网**自行下载，放到 `data/` 下。目录名要与
-`configs/data.py` 里配置的一致：
+`configs/data.py` 里配置的 `data_root` 一致：
 
 ```
 data/
@@ -238,10 +238,149 @@ data/
 └── ssv2/20bn-something-something-v2/  # SSv2-MC
 ```
 
-> 建议先只下载 **MSR-VTT**（体量最小），把评测流程完整跑通一次，再按需下载其它数据集。
-> 每个数据集对应的标注 JSON 已在第 5 步随 `anno_downstream/` 一起下载好。
+> 建议先只下载 **MSR-VTT**（体量最小、且有直链），把评测流程完整跑通一次，再按需下载其它数据集。
+> 每个数据集对应的标注 JSON 已在第 5 步随 `anno_downstream/` 一起下载好，这里只下**视频文件**。
 
-各数据集对应关系可在 `configs/data.py` 中查到（`data_root` 字段）。
+> ⚠️ **诚实提醒**：除 MSR-VTT / UCF101 / HMDB51 有公开直链外，**ActivityNet、Kinetics-400、
+> DiDeMo、SSv2 都需要申请表单、走 YouTube 抓取脚本，或注册后才能下载**，无法用一条 `wget` 搞定。
+> 下面给出每个数据集的**官方入口 + 准确命令**；带 `⚠️` 的步骤表示需要人工申请/额外预处理。
+> 仓库用的是**验证/测试集**（如 `*_val_*` / `*_test*`），一般无需下载庞大的训练集。
+
+### 6.1 MSR-VTT（检索，最小，推荐先跑）
+
+用 Frozen-in-Time 的公开镜像（约 6.7 GB，含全部 10000 个视频）：
+
+```bash
+mkdir -p data
+cd data
+wget https://www.robots.ox.ac.uk/~maxbain/frozen-in-time/data/MSRVTT.zip
+unzip MSRVTT.zip
+# 解压后视频在 MSRVTT/videos/all/videoXXXX.mp4，重命名/软链成仓库要求的目录：
+ln -s "$(pwd)/MSRVTT/videos/all" "$(pwd)/MSRVTT_Videos"
+cd ..
+# 验证：应能看到 video0.mp4 ... video9999.mp4
+ls data/MSRVTT_Videos/ | head
+```
+
+> 标注 `anno_downstream/msrvtt_1k_test.json` 用的是 1K-A 测试划分，视频文件名形如 `videoXXXX.mp4`，
+> 与上面解压出来的命名一致。若 `ln -s` 不方便也可 `mv MSRVTT/videos/all MSRVTT_Videos`。
+
+### 6.2 UCF101（分类，有直链）
+
+官网 [CRCV/UCF101](https://www.crcv.ucf.edu/data/UCF101.php) 提供整包 `UCF101.rar`（约 6.5 GB）：
+
+```bash
+mkdir -p data/ucf101
+cd data/ucf101
+wget --no-check-certificate https://www.crcv.ucf.edu/data/UCF101/UCF101.rar
+sudo apt-get install -y unrar   # 若无 unrar
+unrar x UCF101.rar              # 解压出 UCF-101/<类别>/*.avi
+# 仓库期望所有视频平铺在 data/ucf101/videos/ 下：
+mkdir -p videos
+find UCF-101 -name '*.avi' -exec mv {} videos/ \;
+cd ../..
+ls data/ucf101/videos/ | head
+```
+
+### 6.3 HMDB51（分类，有直链）
+
+官网 [Serre Lab / HMDB51](https://serre-lab.clps.brown.edu/resource/hmdb-a-large-human-motion-database/) 提供 `hmdb51_org.rar`（约 2 GB，内部还是按类别打包的 rar）：
+
+```bash
+mkdir -p data/hmdb51
+cd data/hmdb51
+wget --no-check-certificate http://serre-lab.clps.brown.edu/wp-content/uploads/2013/10/hmdb51_org.rar
+unrar x hmdb51_org.rar          # 解出每个类别一个 .rar
+# 逐个解开类别 rar，再把测试集视频平铺到 videos_test/
+for f in *.rar; do [ "$f" = hmdb51_org.rar ] || unrar x "$f"; done
+mkdir -p videos_test
+find . -name '*.avi' -exec mv {} videos_test/ \;
+cd ../..
+ls data/hmdb51/videos_test/ | head
+```
+
+> HMDB51 的官方 test 划分由 `anno_downstream/hmdb51_act_test.json` 指定；上面把全部 `.avi`
+> 平铺进 `videos_test/`，评测时按标注 JSON 里的文件名读取即可（多出来的训练视频不会被用到）。
+
+### 6.4 Kinetics-400（分类）⚠️ 走官方下载脚本
+
+仓库用的是 **10 秒、320p 的验证集**（`kinetics_400_val_10s_320p`）。用 CVDF 官方仓库脚本下载
+验证集，再自行重采样/缩放到 10s、320p：
+
+```bash
+# 1) 克隆官方下载器
+git clone https://github.com/cvdfoundation/kinetics-dataset.git
+cd kinetics-dataset
+
+# 2) 只下 K400 验证集（脚本用 wget -c 支持断点续传）
+bash ./k400_downloader.sh          # 下载 tar.gz（可只保留 val 部分）
+bash ./k400_extractor.sh           # 解压出 k400/val/<类别>/*.mp4
+cd ..
+
+# 3) 缩放到 320p 短边并裁到 10s（示例，用 ffmpeg 批处理）
+mkdir -p data/kinetics_400_val_10s_320p
+for v in kinetics-dataset/k400/val/*/*.mp4; do
+  ffmpeg -y -i "$v" -t 10 -vf "scale=-2:320" \
+    "data/kinetics_400_val_10s_320p/$(basename "$v")"
+done
+ls data/kinetics_400_val_10s_320p/ | head
+```
+
+> ⚠️ Kinetics 视频来自 YouTube，部分链接会失效；CVDF 仓库提供了替换视频。
+> 文件名（YouTube id）需与 `anno_downstream/kinetics400_validate.json` 对得上。
+
+### 6.5 DiDeMo（检索）⚠️ 从 YouTube 抓取
+
+DiDeMo 不直接发布视频，需按 [LisaAnne/LocalizingMoments](https://github.com/LisaAnne/LocalizingMoments)
+提供的清单从 YouTube 抓取，再做 30 秒截断（`trimmed30`）：
+
+```bash
+git clone https://github.com/LisaAnne/LocalizingMoments.git
+cd LocalizingMoments
+# 按其 README 用 yt-dlp 按 data/*_data.json 里的 YouTube id 抓取原视频，
+# 然后转码/截断为 test 划分，放到仓库要求的路径：
+#   data/didemo/processed_videos/test/<video>.mp4
+cd ..
+mkdir -p data/didemo/processed_videos/test
+# （把处理好的 test 视频放入上面目录）
+```
+
+> `configs/data.py` 里 `didemo_ret_test` 设了 `trimmed30=True`，即只用每个视频前 30 秒；
+> 文件名需与 `anno_downstream/didemo_ret_test.json` 对应。
+
+### 6.6 ActivityNet（检索）⚠️ 需申请
+
+ActivityNet 视频版权在 YouTube，需在 [activity-net.org/download.html](http://activity-net.org/download.html)
+**填写申请表**获取下载脚本/直链。仓库用的是缩放后的验证集 `anet_1.3_video_val_resize`：
+
+```bash
+# 1) 按官网表单拿到 v1.3 验证集视频后，放到：
+mkdir -p data/anet_1.3_video_val_resize
+# 2) 缩放（官方评测常用短边 resize；文件名形如 v_XXXX.mp4 / .avi）
+#    示例：短边缩到 256
+# for v in <原始验证集>/*; do
+#   ffmpeg -y -i "$v" -vf "scale=-2:256" "data/anet_1.3_video_val_resize/$(basename "$v")"
+# done
+```
+
+> 文件名需与 `anno_downstream/anet_ret_val.json` 里的一致（`is_paragraph_retrieval=True`，段落级检索）。
+
+### 6.7 SSv2-MC（Something-Something V2）⚠️ 需注册
+
+SSv2 由 Qualcomm 托管，需在 [Qualcomm AI Datasets](https://www.qualcomm.com/developer/software/something-something-v2-dataset)
+注册并同意研究许可后下载（分成 19 个分卷 + 标签文件）：
+
+```bash
+# 注册后从 Qualcomm 门户下载 20bn-something-something-v2-??.zip 与 labels，
+# 合并解压到仓库要求的目录：
+mkdir -p data/ssv2/20bn-something-something-v2
+cat 20bn-something-something-v2-??.zip > ssv2.zip  # 分卷合并
+unzip ssv2.zip -d data/ssv2/                        # 解出 *.webm
+# 视频为 .webm，文件名是数字 id，与 anno_downstream/ssv2_mc_val.json 对应
+ls data/ssv2/20bn-something-something-v2/ | head
+```
+
+各数据集与标注、`data_root` 的对应关系都可在 `configs/data.py` 中核对。
 
 ---
 
@@ -391,7 +530,11 @@ mkdir -p checkpoints anno_downstream
 gdown --folder https://drive.google.com/drive/folders/1ROJYwQeO8lt4mEfNjEIAIDWj736WIQq7 -O checkpoints
 gdown --folder https://drive.google.com/drive/folders/1grbR39KnMLpeHPNpX4MBYArhr6wASJza -O anno_downstream
 
-# 6. 下载 MSR-VTT 视频到 data/MSRVTT_Videos/（见第 6 步）
+# 6. 下载 MSR-VTT 视频（体量最小、有直链；其它数据集见第 6 步）
+mkdir -p data && cd data
+wget https://www.robots.ox.ac.uk/~maxbain/frozen-in-time/data/MSRVTT.zip
+unzip MSRVTT.zip && ln -s "$(pwd)/MSRVTT/videos/all" "$(pwd)/MSRVTT_Videos"
+cd ..
 
 # 7. 改 GPU 编号后评测
 sed -i 's/CUDA_VISIBLE_DEVICES=3/CUDA_VISIBLE_DEVICES=0/' \
