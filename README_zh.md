@@ -182,7 +182,7 @@ pip install ninja packaging
 pip install flash-attn==2.0.8 --no-build-isolation
 ```
 
-如果编译失败，常见原因与排查见文末[常见问题](#9-常见问题与排错)。
+如果编译失败，常见原因与排查见文末[常见问题](#10-常见问题与排错)。
 
 ### 4.4 关于 apex（可选）
 
@@ -460,34 +460,114 @@ ret_test/     38.2    65.4    74.8     38.7    64.9    74.2     59.37
 
 ---
 
-## 8.（可选）训练 / 预训练
+## 8. 下载训练数据（InternVid-10M-FLT）
 
-训练需要 InternVid 视频数据（体量非常大）和多卡环境，请谨慎评估资源。
+> ⚠️ **仅训练 / 预训练需要**；只做零样本评测可跳过本节。数据体量极大（10M 视频片段、数 TB 级），
+> 且需从 YouTube 抓取，请先评估磁盘与时间成本。
 
-通用形式：
+预训练语料是 **InternVid-10M-FLT**，在 `configs/data.py`（`internvid_v1 … v11`）里被切成
+**11 个分片**，最终合并为 `internvid_all`。每个分片包含：
 
-```bash
-bash scripts/pretraining/clip/mobileviclip_<tiny|small>/run.sh
+| 组成 | 路径 | 来源 |
+|------|------|------|
+| 标注 JSON（11 份） | `anno_downstream/InternVid/InternVid-10M-flt_{1..11}.json` | 作者 Google Drive（**已在第 5 步下载好**） |
+| 视频文件 | `data/video_sample/InternVId-FLT_{1..11}/` | 按 JSON 里的 YouTube id + 时间戳自行抓取 |
+
+也就是说：**标注已经有了**（第 5 步的 `anno_downstream/`），本节只需把**视频**下到对应目录。
+
+### 8.1 目标目录结构
+
+```
+data/video_sample/
+├── InternVId-FLT_1/     # 对应 anno_downstream/InternVid/InternVid-10M-flt_1.json
+├── InternVId-FLT_2/
+├── ...
+└── InternVId-FLT_11/
 ```
 
-> 默认配置是 `NNODE=2`、`NUM_GPUS=8`（共 16 卡）。单机请编辑对应 `run.sh` 里的
-> `NNODE`、`NUM_GPUS`、`CUDA_VISIBLE_DEVICES` 再运行。例如单机 8×V100 改成 `NNODE=1`、`NUM_GPUS=8`。
->
-> ⚠️ **V100 注意**：Volta 不支持 bf16（Ampere 才有），请保持配置里的 `use_bf16=False`（默认即是）；
-> 需要混合精度用 fp16（`use_half_precision`）即可。训练同样不依赖 flash-attn。
+`dataset/pt_dataset.py` 按 `os.path.join(data_root, anno['video'])` 读取，`anno['video']` 是以
+`.mp4` 结尾的相对文件名，所以视频要**按 JSON 里的 `video` 文件名**放进对应分片目录。
 
-单机手动启动示例：
+### 8.2（可选）获取官方元数据 / UMT 分数
+
+作者的 11 份 JSON 已够训练用。如需官方完整元数据（含 UMT 相似度、YouTube 语言/类型信息），
+可从 HuggingFace 拉取：
+
+```bash
+pip install -U "huggingface_hub[cli]"
+# InternVid-10M-FLT 及带更多信息的 INFO 版元数据
+huggingface-cli download OpenGVLab/InternVid --repo-type dataset --local-dir data/InternVid_meta
+huggingface-cli download OpenGVLab/InternVid-10M-FLT-INFO --repo-type dataset --local-dir data/InternVid_meta_info
+```
+
+### 8.3 从 YouTube 抓取视频片段
+
+InternVid **不直接托管视频**，需按元数据里的 `YoutubeID` + `Start/End_timestamp`
+用 `yt-dlp` 下载原视频并按时间戳裁剪。官方说明见
+[OpenGVLab/InternVideo · Data/InternVid](https://github.com/OpenGVLab/InternVideo/tree/main/Data/InternVid)。
+
+最小示例（下单个片段；实际请遍历 JSON 批量下载，并命名成 JSON 里的 `video` 文件名）：
+
+```bash
+pip install -U yt-dlp
+
+# 例：把 YouTube id=<VID> 的 [START,END] 秒片段下到分片 1 目录
+yt-dlp -f mp4 \
+  --download-sections "*<START>-<END>" \
+  -o "data/video_sample/InternVId-FLT_1/<VID>_<START>_<END>.mp4" \
+  "https://www.youtube.com/watch?v=<VID>"
+```
+
+批量抓取可参考社区脚本
+[mindsailor/YouTube-Clip-Downloader-W-InternVid](https://github.com/mindsailor/YouTube-Clip-Downloader-W-InternVid)
+（读 jsonl、按 id + 时间戳循环调用 yt-dlp）。
+
+> ⚠️ **注意事项**：
+> - YouTube 会在下载约 3–5 万个片段后**封 IP**，全量 10M 需要代理池 / 多机分批 + 断点续传；
+> - 部分视频已失效 / 下架，抓不全属正常 —— 配置里 `jump_filter=True` 会跳过缺失样本；
+> - **只想先跑通训练流程**：只下 1 个分片（如 `InternVId-FLT_1/`）的一小部分视频，再把
+>   `config.py` 里 `train_corpus` 从 `"internvid_all"` 改成 `"internvid_v1"` 即可。
+
+---
+
+## 9.（可选）训练 / 预训练（8×V100-32GB 单机）
+
+脚本已按**单机 8×V100-32GB** 配好：`run.sh` 用 `NNODE=1`、`NUM_GPUS=8`；`config.py` 用
+**fp16**（V100 无 bf16 张量核）、每卡 `batch_size=64`（全局 512，与论文一致）。训练与评测一样
+**不依赖 flash-attn**（见第 0 节 / 4.3）。直接跑：
+
+```bash
+# Tiny
+bash scripts/pretraining/clip/mobileviclip_tiny/run.sh
+# Small
+bash scripts/pretraining/clip/mobileviclip_small/run.sh
+```
+
+针对 8×V100 已改动的地方（**无需再手动改**）：
+
+| 位置 | 原值 | 现值 | 原因 |
+|------|------|------|------|
+| `run.sh` `NNODE` / `NUM_GPUS` | `2`/`8`(tiny)、`2`/`4`(small)（共 16 / 8 卡，含 slurm 残留） | `1` / `8` | 单机 8 卡；并显式加 `--nnodes=1`、`CUDA_VISIBLE_DEVICES=0..7` |
+| `config.py` `use_bf16` | `True` | `False` | V100 无 bf16 张量核，改用 fp16 |
+| `config.py` `bf16`（新增） | 默认 `True` | `False` | `shared_utils.py` 用该键决定模型 dtype，默认 True，必须显式关掉，否则模型仍被转成 bf16 |
+| tiny `config.py` `batch_size` | `32` | `64` | 8 卡 ×64 = 全局 512（原为 16 卡 ×32） |
+
+> 显存吃紧时可把 `batch_size` 调回 `32`（全局 256），或减小 `num_frames`；`gradient_checkpointing`
+> 已开启，DeepSpeed ZeRO-1 + fp16 动态 loss scaling 也已在 `config.py` 配好。
+
+单机手动启动（等价于 run.sh）：
 
 ```bash
 export PYTHONPATH=${PYTHONPATH}:.
-torchrun --nproc_per_node=8 --master_port=$((11000 + RANDOM % 20000)) \
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+torchrun --nnodes=1 --nproc_per_node=8 --master_port=$((11000 + RANDOM % 20000)) \
     tasks_clip/pretrain.py \
     scripts/pretraining/clip/mobileviclip_tiny/config.py
 ```
 
 ---
 
-## 9. 常见问题与排错
+## 10. 常见问题与排错
 
 **Q1. `ModuleNotFoundError: flash_attn` / 想装 flash-attn 却编译失败**
 本仓库已把 `flash_attn` 导入改为可选，**评测/训练并不需要它**，一般可直接忽略该缺失。
@@ -528,7 +608,7 @@ torch + 依赖（跳过 4.3）即可运行。
 
 ---
 
-## 10. 快速上手清单（TL;DR）
+## 11. 快速上手清单（TL;DR）
 
 ```bash
 # 1. 系统依赖

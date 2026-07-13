@@ -13,8 +13,8 @@ best_key = ["msrvtt_1k_test_match", "t2v_r1"]
 # ========================= input ==========================
 num_frames = 8
 num_frames_test = 8
-batch_size = 64
-batch_size_test = 64 
+batch_size = 64  # 8x V100-32GB -> global batch 8*64=512 (same as paper)
+batch_size_test = 64
 max_txt_l = 32
 
 inputs = dict(
@@ -85,8 +85,15 @@ evaluation = dict(
     eval_offload=True,  # offload gpu tensors to cpu to save memory.
 )
 
+# V100 (Volta) has no bfloat16 tensor cores -> use fp16, not bf16.
+# NOTE: two separate keys control precision:
+#   - `use_bf16` is read by utils/config_utils.py (DeepSpeed fp16/bf16 block) and
+#     by the autocast dtype in tasks_clip/pretrain.py.
+#   - `bf16` is read by tasks_clip/shared_utils.py to cast the model, and it
+#     DEFAULTS TO True, so it must be set to False explicitly on V100.
 use_half_precision = True
-use_bf16 = True
+use_bf16 = False
+bf16 = False
 gradient_checkpointing = True
 
 # ========================= wandb ==========================
