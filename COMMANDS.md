@@ -20,17 +20,62 @@ git clone https://github.com/MCG-NJU/MobileViCLIP.git
 
 ## 1. Environment
 
+The pinned stack (from `mobileviclip.yml`): **Python 3.10**, **PyTorch 1.13.1 + CUDA 11.7**, plus compiled
+extensions (flash-attn, apex, deepspeed). Note the yml's internal env name is `internvideo`.
+
+### Option A — create from the yml (fastest, may need a machine with CUDA 11.7 toolchain)
+
 ```bash
 conda env create -f mobileviclip.yml
-conda activate mobileviclip
+conda activate internvideo          # <- env name declared inside the yml
 ```
 
-If `mobileviclip.yml` fails to solve, create manually and install PyTorch matching your CUDA:
+Verify:
 ```bash
+python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.version.cuda)"
+```
+
+### Option B — manual, step by step (more robust across machines)
+
+```bash
+# 1) base env
 conda create -n mobileviclip python=3.10 -y
 conda activate mobileviclip
-# example: CUDA 11.8
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+
+# 2) PyTorch 1.13.1 + CUDA 11.7 (match the paper's stack)
+pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 \
+    --extra-index-url https://download.pytorch.org/whl/cu117
+
+# 3) core python deps
+pip install \
+    transformers==4.28.1 tokenizers==0.13.3 timm==0.5.4 openai-clip==1.0.1 \
+    einops==0.7.0 decord==0.6.0 av==11.0.0 opencv-python==4.8.0.76 \
+    ftfy==6.2.3 regex==2024.7.24 pandas==2.0.3 scipy==1.13.0 scikit-learn==1.5.1 \
+    numpy==1.26.4 pyyaml==6.0.1 easydict==1.13 yacs==0.1.8 tabulate==0.9.0 \
+    tensorboard==2.19.0 wandb==0.16.1 webdataset==0.2.111 imageio==2.31.1 \
+    accelerate==0.33.0 peft==0.12.0 safetensors==0.4.4 huggingface-hub==0.24.5
+
+# 4) CUDA-compiled extensions (need nvcc + matching CUDA toolkit; slow to build)
+pip install ninja packaging
+pip install flash-attn==2.0.8 --no-build-isolation
+pip install deepspeed==0.10.1
+# apex (optional; only if training uses it):
+# git clone https://github.com/NVIDIA/apex && cd apex && \
+#   pip install -v --disable-pip-version-check --no-cache-dir \
+#   --global-option="--cpp_ext" --global-option="--cuda_ext" ./
+```
+
+### Notes / gotchas
+- `flash-attn`, `apex`, `deepspeed`, `dropout-layer-norm`, `fused-dense-lib` compile CUDA kernels — you need `nvcc`
+  (a CUDA toolkit) and a GPU whose arch matches. Inference/eval usually works without apex.
+- If flash-attn 2.0.8 won't build against your CUDA, try a newer wheel and test whether the model still loads.
+- On a cluster, load the CUDA module first, e.g. `module load cuda/11.7`, before building extensions.
+- Sanity check GPU visibility: `python -c "import torch; print(torch.cuda.device_count())"`.
+
+### Export your working env (for reproducibility)
+```bash
+conda env export --no-builds > env.lock.yml
+pip freeze > requirements.lock.txt
 ```
 
 ---
