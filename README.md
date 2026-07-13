@@ -1,5 +1,7 @@
 # mobileclip
 
+> 中文分步运行指南（在新 Linux 机器上从零跑起来）：见 **[README_zh.md](README_zh.md)**。
+
 Replication and improvement of **MobileViCLIP** — *An Efficient Video-Text Model for Mobile Devices* (ICCV 2025).
 
 ## Goal
