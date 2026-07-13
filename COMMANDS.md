@@ -23,6 +23,26 @@ git clone https://github.com/MCG-NJU/MobileViCLIP.git
 The pinned stack (from `mobileviclip.yml`): **Python 3.10**, **PyTorch 1.13.1 + CUDA 11.7**, plus compiled
 extensions (flash-attn, apex, deepspeed). Note the yml's internal env name is `internvideo`.
 
+### Option 0 — one shot (recommended, validated)
+
+```bash
+ENV_NAME=mobileviclip bash scripts/setup_env.sh
+conda activate mobileviclip
+```
+
+`scripts/setup_env.sh` is the **validated** recipe — after it runs, all 7 repo entry modules
+(including `tasks_clip/retrieval.py` and `tasks_clip/pretrain.py`) import cleanly on a CPU node.
+It installs the exact working set (`requirements.lock.txt` is the resulting `pip freeze`).
+It skips flash-attn/apex (optional; Ampere+ GPU only) and handles three pitfalls the yml doesn't:
+
+- **`av`**: 11.0.0 has no Python-3.10 wheel → installs `av==12.0.0` (wheel bundles FFmpeg).
+- **`open_clip_torch`**: required by the MobileCLIP backbone but missing from the yml. It **must**
+  be installed with `--no-deps`, or pip silently upgrades torch to 2.x and breaks torchvision/ONNX.
+- **`deepspeed`**: imported unguarded by the task scripts → installed with `DS_BUILD_OPS=0`.
+
+Also needs `spikingjelly` + `snntorch` (used by the MobileOne reparam block) and `setuptools`
+(for `pkg_resources`), all handled by the script.
+
 ### Option A — create from the yml (fastest, may need a machine with CUDA 11.7 toolchain)
 
 ```bash
