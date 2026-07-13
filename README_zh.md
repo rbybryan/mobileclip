@@ -14,16 +14,18 @@
 | 项目 | 要求 |
 |------|------|
 | 操作系统 | Linux（推荐 Ubuntu 20.04 / 22.04） |
-| **GPU** | **必须有 NVIDIA GPU**（评测至少 1 张，显存建议 ≥ 16 GB） |
+| **GPU** | **必须有 NVIDIA GPU**（评测 1 张即可，显存建议 ≥ 16 GB；已在 8×V100-32GB 上验证） |
+| GPU 架构 | 任意 CUDA GPU 均可评测；`flash-attn` 仅 Ampere(A100/30/40 系)及以上支持，V100 / 2080 等非 Ampere 显卡**跳过它即可**（见下方说明与 4.3） |
 | NVIDIA 驱动 | 已安装，`nvidia-smi` 能正常输出 |
 | CUDA | 环境按 **CUDA 11.7 / PyTorch 1.13.1 / Python 3.10** 固定 |
 | 磁盘 | 建议 ≥ 100 GB（视频数据集很大） |
 | 网络 | 需能访问 GitHub、Google Drive、以及各数据集官网 |
 
-> ⚠️ **重要**：代码在导入模型时会**无条件 `import flash_attn`**
-> （`models/backbones/internvideo2/` 里被导入），因此即使 MobileViCLIP-tiny/small
-> 用的是 MobileCLIP 主干，也**必须安装 `flash-attn`** 才能跑起来。`flash-attn` 需要
-> 编译 CUDA 扩展，是整个安装过程中最容易出问题的一步，请重点关注第 4 步。
+> ℹ️ **关于 flash-attn（重要）**：MobileViCLIP tiny/small 用的是 MobileCLIP(FastViT)主干，
+> 注意力为纯 PyTorch 实现，**运行时并不调用 `flash_attn`**。本仓库已把相关导入改为可选
+> （`try/except` 兜底），因此**评测和训练都无需安装 flash-attn**。
+> 只有当你要用 InternVideo2 主干、且显卡是 **Ampere(A100/30/40 系)及以上**时才需要它——
+> V100 / Turing 等非 Ampere 显卡装不了、也用不到，直接跳过（见 4.3）。
 
 先验证 GPU：
 
@@ -163,17 +165,24 @@ pip install einops timm==0.5.4 transformers==4.28.1 tokenizers==0.13.3 \
 
 > 若某个包版本装不上，可放宽版本号；核心是 `torch / einops / timm / transformers / decord`。
 
-### 4.3 安装 flash-attn（关键、也最容易失败的一步）
+### 4.3 flash-attn（可选 —— V100 / 非 Ampere 显卡请跳过）
 
-代码会无条件导入 `flash_attn`，因此**必须安装**。它需要编译 CUDA 扩展，耗时较长（可能 20–40 分钟）：
+**大多数情况下无需安装 flash-attn。** 本仓库已把 `flash_attn` 的导入改成可选（`try/except`
+兜底），而 MobileViCLIP tiny/small 用 MobileCLIP 主干、运行时不调用它，所以**评测和训练在
+没有 flash-attn 时也能跑通**。
+
+- **V100 / T4 / 2080 等非 Ampere 显卡**：`flash-attn 2.x` 只支持 Ampere 及以上，在这些卡上
+  **装不了也用不到，直接跳过本步**。
+- **A100 / 30 / 40 / H100 等 Ampere+ 显卡，且要用 InternVideo2 主干**：才需要安装。它要编译
+  CUDA 扩展、耗时较长（20–40 分钟），并需本机有匹配的 CUDA 工具链（nvcc）：
 
 ```bash
-# 确保已激活环境，且 nvcc/CUDA 与 PyTorch 版本匹配
+# 仅 Ampere+ 且确有需要时执行
 pip install ninja packaging
 pip install flash-attn==2.0.8 --no-build-isolation
 ```
 
-如果编译失败，常见原因与排查见文末[常见问题](#7-常见问题与排错)。
+如果编译失败，常见原因与排查见文末[常见问题](#9-常见问题与排错)。
 
 ### 4.4 关于 apex（可选）
 
@@ -185,10 +194,10 @@ pip install flash-attn==2.0.8 --no-build-isolation
 
 ```bash
 python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"
-python -c "import flash_attn; print('flash_attn ok')"
 ```
 
-两条都不报错、且 `cuda` 为 `True`，说明环境基本就绪。
+只要 `cuda` 为 `True` 即可。**不需要** `import flash_attn` 成功——本仓库已让它成为可选依赖，
+V100 等非 Ampere 显卡不装 flash-attn 也能正常评测/训练。
 
 ---
 
@@ -260,6 +269,9 @@ sed -i 's/CUDA_VISIBLE_DEVICES=3/CUDA_VISIBLE_DEVICES=0/' \
 
 （也可以直接用编辑器打开脚本手动改。）
 
+> 💡 **多卡 / 共享机器**：评测单张 V100-32GB 就够。先 `nvidia-smi` 看哪几张卡空闲（显存占用
+> 接近 0），把 `CUDA_VISIBLE_DEVICES` 设成一张**空闲**的卡号，避免和别人抢卡。
+
 ### 7.2 运行（以 MobileViCLIP-Tiny + MSR-VTT 为例）
 
 ```bash
@@ -320,7 +332,10 @@ bash scripts/pretraining/clip/mobileviclip_<tiny|small>/run.sh
 ```
 
 > 默认配置是 `NNODE=2`、`NUM_GPUS=8`（共 16 卡）。单机请编辑对应 `run.sh` 里的
-> `NNODE`、`NUM_GPUS`、`CUDA_VISIBLE_DEVICES` 再运行。
+> `NNODE`、`NUM_GPUS`、`CUDA_VISIBLE_DEVICES` 再运行。例如单机 8×V100 改成 `NNODE=1`、`NUM_GPUS=8`。
+>
+> ⚠️ **V100 注意**：Volta 不支持 bf16（Ampere 才有），请保持配置里的 `use_bf16=False`（默认即是）；
+> 需要混合精度用 fp16（`use_half_precision`）即可。训练同样不依赖 flash-attn。
 
 单机手动启动示例：
 
@@ -335,11 +350,12 @@ torchrun --nproc_per_node=8 --master_port=$((11000 + RANDOM % 20000)) \
 
 ## 9. 常见问题与排错
 
-**Q1. `import flash_attn` 报错 / 评测一启动就 `ModuleNotFoundError: flash_attn`**
-代码无条件依赖 `flash-attn`，必须装（见 4.3）。若编译失败：
-- 确认 `nvcc --version` 的 CUDA 版本与 PyTorch 的 CUDA 版本一致；
-- 先 `pip install ninja packaging`，再用 `--no-build-isolation` 安装；
-- 显存/内存不足会导致编译被 kill，可减少并行：`MAX_JOBS=4 pip install flash-attn==2.0.8 --no-build-isolation`。
+**Q1. `ModuleNotFoundError: flash_attn` / 想装 flash-attn 却编译失败**
+本仓库已把 `flash_attn` 导入改为可选，**评测/训练并不需要它**，一般可直接忽略该缺失。
+只有 Ampere+ 显卡要用 InternVideo2 主干时才需要装；若要装却失败：
+- 确认显卡是 Ampere 及以上（V100 / 2080 等**不支持**，别装）；
+- 确认 `nvcc --version` 与 PyTorch 的 CUDA 版本一致；
+- 先 `pip install ninja packaging`，再用 `--no-build-isolation`；内存不足加 `MAX_JOBS=4`。
 
 **Q2. `conda activate mobileviclip` 提示环境不存在**
 `mobileviclip.yml` 里的环境名其实是 `internvideo`。请 `conda activate internvideo`，
@@ -366,6 +382,11 @@ conda 连不上官方源 `repo.anaconda.com`（拉包和服务条款文件都失
 **[4.2](#42-方式二手动创建当-41-求解失败--显卡-cuda-版本不同时)** 手动 pip 方案。
 另外确认没有失效代理在捣乱：`env | grep -i proxy`、`grep -i proxy ~/.condarc`。
 
+**Q9.（V100 / 非 Ampere 显卡）flash-attn 装不上 / 报 `sm_70 not supported`**
+正常现象——`flash-attn 2.x` 只支持 Ampere 及以上。**无需安装**：本仓库已让它成为可选依赖，
+MobileViCLIP tiny/small 运行时用纯 PyTorch 注意力，评测/训练都不调用 flash-attn。按 4.2 装好
+torch + 依赖（跳过 4.3）即可运行。
+
 ---
 
 ## 10. 快速上手清单（TL;DR）
@@ -381,9 +402,14 @@ bash ~/miniconda.sh -b -p $HOME/miniconda3 && source $HOME/miniconda3/etc/profil
 # 3. 代码
 git clone https://github.com/rbybryan/mobileclip.git && cd mobileclip
 
-# 4. 环境
-conda env create -f mobileviclip.yml && conda activate internvideo
-pip install ninja packaging && pip install flash-attn==2.0.8 --no-build-isolation
+# 4. 环境（V100 等非 Ampere 显卡：无需 flash-attn，用手动方案更稳）
+conda create -n mobileviclip python=3.10 -y && conda activate mobileviclip
+pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 \
+    --index-url https://download.pytorch.org/whl/cu117
+pip install einops timm==0.5.4 transformers==4.28.1 tokenizers==0.13.3 decord av \
+    opencv-python ftfy regex pandas numpy==1.26.4 scipy tensorboard wandb pyyaml \
+    easydict deepspeed==0.10.1 openai-clip librosa
+# flash-attn 不用装（仅 Ampere+ 且用 InternVideo2 主干时才需要）
 
 # 5. 权重 + 标注
 pip install gdown
