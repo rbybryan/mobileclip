@@ -231,7 +231,7 @@ self.reparam_conv_1d.weight.data = w_1d   # 由 mixer_1d / norm_1d 折叠而来
 | Cosmos-Embed1 | NVIDIA | 2025.06 | 领域(物理 AI) | 1B,机器人 / 自动驾驶视频 embedder |
 | **ProCLIP** | 清华 / 中南 | 2025.07 | 端侧高效 | prompt-aware 帧采样 + 两阶段 + 蒸馏;−75% 延迟 |
 | **TempMe** | 清华 + 京东 | ICLR 2025 | token 裁剪 | 渐进时序 token 合并;−95% token、1.8× 加速 |
-| **LEViL** ⚠️ | — | 2026.06 | 蒸馏 | InternVideo2-CLIP → 3D-ResNet-18 软标签蒸馏 |
+| **LEViL** ⚠️ | — | 2026.06 | 蒸馏 | VLM 生成文本伪标签 → 学生视频编码器(annotation-free;UCF101 / HMDB51) |
 | **ReSpec** | 首尔大 / LG / AI2 | 2025.04 | 数据筛选 | Relevance+Specificity;27.5% 数据达 49.1 avg |
 | VideoComp | Google | CVPR 2025 | 时序对比 | 事件重排 / 换词等时序难负样本 |
 | Video-ColBERT | JHU | CVPR 2025 | late-interaction | token 级 MaxSim,细粒度且可索引 |
@@ -241,6 +241,27 @@ self.reparam_conv_1d.weight.data = w_1d   # 由 mixer_1d / norm_1d 折叠而来
 **勿混为 video-CLIP:** V-JEPA 2(自监督)、AIMv2(自回归)、InternVideo3(生成式 agent)、MetaCLIP 2(图像)。
 
 > **对本仓库的空白机会(可作"改进"卖点):** 三处几乎无人发表 —— ① **视频-CLIP 双编码器的量化**(现仅有通用 VLM-edge 量化);② **流式 / 实时检索双编码器**(所有流式工作都是生成式);③ **端侧超越 MobileViCLIP**(ProCLIP 是系统级,尚无更强紧凑编码器)。数据侧可直接把 **ReSpec 筛选** 或 **PE / GVE 式 MLLM 重描述** 叠到 InternVid-10M-FLT 管线。
+
+### 2026 快照(已核实):真前沿 = MLLM-embedder + 统一多模态 embedder
+
+对 2026 条目**逐条抓取 arXiv 核实**(含造假-ID 控制实验)后的定论:**纯对比视频编码器**的最强项(PE-AV、InternVideo-Next、Marengo 3.0)全卡在 **2025.12**;2026 上半年的大动作是 **MLLM / 视频-LLM 做 embedder** 与 **统一多模态 embedder**,外加拥挤的时序 grounding。
+
+| 工作 | arXiv · 日期 | 方向 | 关键点(已核实) |
+|---|---|---|---|
+| **Qwen3-VL-Embedding** | 2601.04720 · 1月 | 统一多模态 embedder | 阿里;MMEB-V2 总分 **77.8**(SOTA);含视频。2026 最强开源对比视频 embedder |
+| VidVec | 2602.08099 · 2月 | MLLM-embedder | 免训练;ZS MSR-VTT **52.1**(VideoLLaMA3-7B 中间层) |
+| VeRVE(=VIRTUE) | 2601.12193 · 1月 | MLLM-embedder | Amazon;46.8(ZS)/ 52.4(重排) |
+| ViLL-E | 2604.12148 · 4月 | MLLM-embedder | Amazon+UCF,ACL 2026;62.5(**训练态,非 ZS**) |
+| SAVE | 2603.08224 · 3月 | CLIP + 语音检索 | 人大,CVPR 2026;MSR-VTT-9k 微调 51.3 |
+| CVA | 2603.24934 · 3月 | 时序 grounding | CVPR 2026;上下文不变边界判别对比损失 |
+| ClusterSTM | 2603.22953 · 3月 | 高效预训练 | CVPR 2026;聚类时空掩码 |
+| Action100M | 2601.10592 · 1月 | 数据 / 重描述 | Meta FAIR 合作;~100M 段 Tree-of-Captions 管线 |
+| T2V 检索瓶颈综述 | 2605.00826 | 综述 | CERTH,评 14 个方法;解释 video-CLIP 检索为何停滞(2026 最佳单篇参考) |
+| 商用 embedder | 2026 Q1–Q2 | 统一多模态 | Gemini Embedding 2(视频≤120s)、Voyage MM-3.5、Jina v5-omni、Amazon Nova 2 |
+
+**对上一轮的更正:** ViLL-E 的 62.5 **不是零样本**(是训练 / 多任务);LEViL 的"InternVideo2→3D-ResNet-18 / Kocaeli"论文中**并无此说**(上表已改正);VeRVE 与 VIRTUE 是**同一篇**;InternVideo3 是**生成式 agent**;"Meta Tempo"**不存在**;Vote-in-Context / ViMix-14M / VECTOR / UVRB 实为 **2025**。
+
+> **三块真空白已在本仓库落地为技术方案 →** [`notes/whitespace-directions.md`](../notes/whitespace-directions.md):① **MobileViCLIP 量化**(检索感知 PTQ/QAT,利用可重参结构);② **流式 / 实时对比检索**(因果化时间分支 + 增量池化)。时序 grounding 已拥挤,不建议在该方向找新意。
 
 ---
 
