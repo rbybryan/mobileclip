@@ -160,8 +160,11 @@ pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 \
 pip install einops timm==0.5.4 transformers==4.28.1 tokenizers==0.13.3 \
     decord av opencv-python ftfy regex pandas numpy==1.26.4 scipy \
     tensorboard wandb pyyaml easydict deepspeed==0.10.1 open_clip_torch \
-    openai-clip librosa
+    openai-clip librosa \
+    spikingjelly peft termcolor imageio
 ```
+
+> `spikingjelly / peft / termcolor / imageio` 也是评测/训练启动时会被顶层导入的依赖，务必装上（漏装会在 `import` 阶段直接报 `ModuleNotFoundError`）。
 
 > 若某个包版本装不上，可放宽版本号；核心是 `torch / einops / timm / transformers / decord`。
 
@@ -547,7 +550,7 @@ pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 \
     --index-url https://download.pytorch.org/whl/cu117
 pip install einops timm==0.5.4 transformers==4.28.1 tokenizers==0.13.3 decord av \
     opencv-python ftfy regex pandas numpy==1.26.4 scipy tensorboard wandb pyyaml \
-    easydict deepspeed==0.10.1 openai-clip librosa
+    easydict deepspeed==0.10.1 openai-clip librosa spikingjelly peft termcolor imageio
 # flash-attn 不用装（仅 Ampere+ 且用 InternVideo2 主干时才需要）
 
 # 5. 权重 + 标注
