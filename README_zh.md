@@ -75,6 +75,51 @@ cd mobileclip
 
 ## 4. 创建并激活 Python 环境
 
+### 4.0 （中国大陆用户先看）配置国内镜像
+
+如果你在中国大陆，直连 conda 官方源 `repo.anaconda.com` 常常失败，典型报错长这样：
+
+```
+Retrying ... after connection broken by
+'OSError('Tunnel connection failed: 302 Moved Temporarily')': /pkgs/main/terms.json
+```
+
+这是**网络问题**（conda 拉包 + 拉「服务条款 terms.json」文件失败），不是项目本身的问题。
+把 conda / pip 指向**清华镜像**即可解决：
+
+```bash
+# 1) conda 走清华镜像
+cat > ~/.condarc <<'EOF'
+channels:
+  - defaults
+show_channel_urls: true
+default_channels:
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/msys2
+custom_channels:
+  pytorch: https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud
+  nvidia: https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud
+  conda-forge: https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud
+EOF
+conda clean -i    # 清掉旧源缓存，强制用新镜像
+
+# 2) 跳过 Anaconda 服务条款(ToS)交互检查（新版 conda 需要，否则会去拉 terms.json）
+export CONDA_PLUGINS_AUTO_ACCEPT_TOS=true
+echo 'export CONDA_PLUGINS_AUTO_ACCEPT_TOS=true' >> ~/.bashrc
+
+# 3) pip 也走清华源
+pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+配置完成后再执行下面的 4.1 / 4.2。
+
+> ⚠️ 注意：`mobileviclip.yml` 把 build 号全锁死了，即便配好镜像也可能解不动，
+> 这种情况**优先用 [4.2 手动方案](#42-方式二手动创建当-41-求解失败--显卡-cuda-版本不同时)** 更稳。
+>
+> 小贴士：Miniconda 安装脚本本身也可从清华镜像下载：
+> `https://mirrors.tuna.tsinghua.edu.cn/anaconda/miniconda/Miniconda3-latest-Linux-x86_64.sh`
+
 ### 4.1 方式一：直接用 conda 配置文件（首选）
 
 ```bash
@@ -314,6 +359,12 @@ torchrun --nproc_per_node=8 --master_port=$((11000 + RANDOM % 20000)) \
 
 **Q7. 显存不够（OOM）**
 调小对应 `config_*.py` 里的 `batch_size_test`（例如从 32 改到 8）。
+
+**Q8.（国内网络）`conda env create` 报 `Tunnel connection failed: 302` / 卡在 `pkgs/main/terms.json`**
+conda 连不上官方源 `repo.anaconda.com`（拉包和服务条款文件都失败）。按 **[4.0](#40-中国大陆用户先看配置国内镜像)**
+配置清华镜像 + `export CONDA_PLUGINS_AUTO_ACCEPT_TOS=true` 即可；若仍解不动锁死的 yml，改用
+**[4.2](#42-方式二手动创建当-41-求解失败--显卡-cuda-版本不同时)** 手动 pip 方案。
+另外确认没有失效代理在捣乱：`env | grep -i proxy`、`grep -i proxy ~/.condarc`。
 
 ---
 
