@@ -503,24 +503,39 @@ huggingface-cli download OpenGVLab/InternVid-10M-FLT-INFO --repo-type dataset --
 ### 8.3 从 YouTube 抓取视频片段
 
 InternVid **不直接托管视频**，需按元数据里的 `YoutubeID` + `Start/End_timestamp`
-用 `yt-dlp` 下载原视频并按时间戳裁剪。官方说明见
-[OpenGVLab/InternVideo · Data/InternVid](https://github.com/OpenGVLab/InternVideo/tree/main/Data/InternVid)。
+用 `yt-dlp` 下载原视频并按时间戳裁剪，切成 clip 放进分片目录、且**文件名与 JSON 里的
+`video` 字段一致**。
 
-最小示例（下单个片段；实际请遍历 JSON 批量下载，并命名成 JSON 里的 `video` 文件名）：
+> 📖 **完整、可复制的分步操作 + 现成脚本见：[`docs/internvid-download-zh.md`](docs/internvid-download-zh.md)。**
+> 仓库已提供下载器 [`tools/download_internvid.py`](tools/download_internvid.py)，会读标注 JSON、
+> 并发调用 `yt-dlp --download-sections` 只下所需时间段、按 `video` 字段命名写入分片目录、
+> 自动跳过已存在文件并记录日志。
+
+最快上手（先看命名，再冒烟抓 200 条）：
 
 ```bash
-pip install -U yt-dlp
+pip install -U yt-dlp && sudo apt-get install -y ffmpeg
 
-# 例：把 YouTube id=<VID> 的 [START,END] 秒片段下到分片 1 目录
-yt-dlp -f mp4 \
-  --download-sections "*<START>-<END>" \
+# 1) 先 inspect：确认标注里的 video 命名能被解析
+python tools/download_internvid.py inspect \
+  --anno anno_downstream/InternVid/InternVid-10M-flt_1.json
+
+# 2) 冒烟测试：只抓前 200 条到分片 1 目录
+python tools/download_internvid.py download \
+  --anno anno_downstream/InternVid/InternVid-10M-flt_1.json \
+  --out  data/video_sample/InternVId-FLT_1 \
+  --limit 200 --workers 4
+```
+
+去掉 `--limit` 即放量抓整个分片；11 个分片把 `_1` 换成 `_2 … _11`（详见上面的文档）。
+手写单条 yt-dlp 的等价命令：
+
+```bash
+# 把 YouTube id=<VID> 的 [START,END] 秒片段下到分片 1 目录
+yt-dlp -f mp4 --download-sections "*<START>-<END>" --force-keyframes-at-cuts \
   -o "data/video_sample/InternVId-FLT_1/<VID>_<START>_<END>.mp4" \
   "https://www.youtube.com/watch?v=<VID>"
 ```
-
-批量抓取可参考社区脚本
-[mindsailor/YouTube-Clip-Downloader-W-InternVid](https://github.com/mindsailor/YouTube-Clip-Downloader-W-InternVid)
-（读 jsonl、按 id + 时间戳循环调用 yt-dlp）。
 
 > ⚠️ **注意事项**：
 > - YouTube 会在下载约 3–5 万个片段后**封 IP**，全量 10M 需要代理池 / 多机分批 + 断点续传；
