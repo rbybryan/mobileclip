@@ -1,178 +1,173 @@
 # Whitespace Directions — On-Device Video-CLIP (Phase 3 candidates)
 
-Concrete, code-grounded plans for the two research directions that a July-2026
-literature sweep found to be **essentially unpublished** for contrastive
-video-text (video-CLIP) dual encoders, and that are directly reachable from this
-repo's MobileViCLIP baseline. This turns the "Improve" bullets of
-[`replication-plan.md`](replication-plan.md) Phase 3 into actionable plans.
+**v2 (feasibility-reviewed).** v1 proposed two directions (quantization, streaming)
+from a July-2026 literature sweep. v2 adds a **code-verified deployment finding**,
+an honest feasibility review that rescopes both, and **two higher-ROI directions**
+that v1 missed. Survey basis: `docs/clip-2025-progress-report.md`.
 
-Survey basis: `docs/clip-2025-progress-report.md` (§7 "video-CLIP 新进展" + 2026
-snapshot). Two whitespaces were confirmed by **six independent negative
-searches**; a third (token reduction for retrieval encoders) is thin.
-
-| Direction | Status as of 2026-07 | Reachable from MobileViCLIP? |
-|---|---|---|
-| **A. Quantization of a video-text dual encoder** | **Zero papers.** All "video + quantization" hits are generative/diffusion/tokenizer/recsys; nearest is LQA (*image*-text VLM edge quant). | Yes — reparameterized graph is quant-friendly |
-| **B. Streaming / real-time contrastive video retrieval** | **None.** All 2026 "streaming video" work is generative video-LLM/agents (StreamSense, StreamBridge). | Yes — needs a causal temporal branch |
-| Token reduction for retrieval encoders | Thin (efficiency work is on pretraining/understanding: ClusterSTM, AdaFocus) | Yes (secondary) |
-| ~~Temporal grounding via contrastive alignment~~ | **Crowded** — CVA (CVPR'26), GranAlign (AAAI'26), DART (ECCV'26), HieraMamba (CVPR'26), MASRA, CoSTL… | Avoid — novelty must be very sharp |
-
-> Recommendation: do **A (quantization)** first — smaller, self-contained, an
-> immediate on-device win — then **B (streaming)**, a larger architectural change.
+> TL;DR of the review: both original plans are implementable but were oversold.
+> The **highest-value, lowest-risk** work is a **data-pipeline upgrade** and
+> **temporal-hard-negative fine-tuning**; quantization is a gated engineering
+> item; causal streaming should be dropped (wrong bottleneck).
 
 ---
 
-## 0. Shared prerequisites (do once)
+## 0. Deployment reality (verified 2026-07) — read this first
 
-1. **FP16 baseline + eval harness.** Reproduce MobileViCLIP-Small/Tiny zero-shot:
-   MSR-VTT / DiDeMo / ActivityNet T2V+V2T R@1, and K400 / UCF101 / HMDB51 action
-   recognition. All eval corpora are already wired in `configs/data.py`
-   (`msrvtt_1k_test`, `didemo_ret_test`, `anet_ret_val`, `k400_act_val`, …).
-2. **On-device latency/energy harness.** Core ML export + measurement on the
-   target phone/tablet, reproducing the paper's iPad-Air numbers
-   (Small ≈ 37.8 ms). Report ms **and** energy — both are the deliverable.
-3. **Frozen FP16 teacher.** Keep the reproduced FP model as a teacher for
-   metric-preservation / KD in both plans.
+A code review resolved an ambiguity that changes the framing:
 
----
+- **Canonical model = `MobileViCLIP_Small` (with temporal modeling).** Both
+  `scripts/pretraining/clip/mobileviclip_small/config.py` and
+  `scripts/evaluation/clip/zero_shot/mobileviclip_small/config_msrvtt.py` set
+  `model_cls="MobileViCLIP_Small"`; `models/__init__.py` registers only
+  `MobileViCLIP_{Small,Tiny}`. So the temporal structural reparameterization
+  (1D temporal RepMixer branch + `temporal_embedding` + joint T·H·W attention in
+  `models/mobileviclip_small.py`) **is** in the real train/eval model.
+- **`models/convert_model.py` is NOT canonical.** `InternVideo2_CLIP_small_mobile`
+  is a standalone, apparently-WIP Core ML export (imports `coremltools`, `forward`
+  returns `None`, loads `mobileclip_s0.pt` for both towers). Its blocks are
+  **purely spatial + mean-pool** — no 1D temporal conv, no `temporal_embedding`.
+  It is wired into no config and no `__init__`.
+- **⇒ There is no working on-device export of the temporal model.** The only
+  export script sidesteps every temporal op — which plausibly means those ops
+  (hard-coded 8-frame reshapes, depthwise `Conv1d`, joint T·H·W attention) are
+  **hard to lower to Core ML / TFLite**. Producing that export is therefore
+  **Step 0 for any on-device plan**, and it is non-trivial. A model-level
+  `reparameterize_model` util exists (`tasks_clip/shared_utils.py`, off by
+  default) and helps on the GPU side, but does not solve mobile op-coverage.
 
-## 1. Plan A — Retrieval-aware quantization of MobileViCLIP
-
-**Goal.** INT8 (then INT4-weight) MobileViCLIP running on device with **≤ 1 pt**
-zero-shot R@1 drop and a measurable latency / energy / model-size win.
-
-**Why it's open.** No PTQ/QAT for a video-text *contrastive dual encoder* exists
-(2026-07). CLIP-family models are quantization-sensitive because retrieval
-depends on the **direction of the L2-normalized embedding (cosine)**, not raw
-logits — so naïve per-layer-MSE PTQ preserves activations but still **misranks**.
-
-**Why MobileViCLIP is unusually quant-friendly.** After
-`RepMixer.reparameterize()` (`models/mobileviclip_small.py` L624–695) the
-train-time multi-branch mixer collapses to a **single depthwise `reparam_conv`
-(2D) + `reparam_conv_1d` (1D)**; MobileOne / RepLKNet blocks likewise fold BN
-into one conv. The deployed graph is therefore plain conv/linear — no train-time
-branches, no separate BN-folding at quant time — which is close to ideal for PTQ.
-
-### Approach
-
-1. **Precision ladder.** `W8A8` (per-output-channel weights, percentile/per-tensor
-   activations) → `W4A8` → `W4A16`. Start with PTQ; escalate to QAT only where a
-   tier fails the R@1 budget.
-2. **Sensitivity map first.** Quantize one layer at a time and measure the
-   **cosine drift of the final embedding** (not layer MSE). Expected hot spots:
-   the depthwise convs (spatial **and** the temporal `reparam_conv_1d`), the
-   attention stage (`AttentionBlock`, L1030+, softmax + `temporal_embedding`),
-   and the projection heads (`GlobalPool2D.proj` L1301 + the text projection).
-   Keep the top-k most sensitive layers in higher precision (**mixed precision**).
-3. **Depthwise-conv handling.** Per-output-channel weight scales are mandatory;
-   migrate activation outliers with a SmoothQuant-style scale folded into the
-   preceding conv. The **temporal `reparam_conv_1d`** is the novel, untested piece
-   — profile it explicitly (it carries all temporal information).
-4. **Retrieval-aware calibration (the novelty).** Calibrate against the *ranking*,
-   not just per-layer error:
-   `L = λ1·Σ layer-MSE + λ2·(1 − cos(z_fp, z_q)) + λ3·KL(sim_fp ‖ sim_q)`,
-   where `z` is the normalized embedding and `sim` is the image-text similarity
-   matrix on a held-out InternVid batch. This preserves what R@1 depends on.
-5. **QAT recovery.** If a W4 tier drops > 1–2 pts, run short QAT from the FP16
-   teacher using the repo's `VTC_VTM_Loss.vtc_loss` (`models/mobileviclip_small.py`
-   L89, L124) **plus** an embedding/similarity distillation term (LSQ scales,
-   straight-through estimator). This reuses the "reinforced training / teacher"
-   philosophy the MobileCLIP lineage already relies on — here the FP model is the
-   teacher.
-6. **Calibration data.** A few thousand `internvid_all` clips at 8 frames
-   (`configs/data.py`) for real temporal activation statistics.
-7. **Deploy & measure.** Core ML / TFLite INT8; report R@1 vs FP16 at each tier +
-   on-device latency / energy / model size.
-
-**Novelty.** First metric-preserving PTQ/QAT for an on-device video-text dual
-encoder; exploits the reparameterized deploy graph; retrieval-aware calibration +
-FP-teacher similarity distillation; first study of quantizing a temporal 1D-conv
-mixing branch.
-
-**Eval.** ΔR@1 (MSR-VTT / DiDeMo / ANet ZS) and K400 ZS at W8A8 / W4A8 / W4A16 vs
-FP16; on-device latency, energy, model size.
-
-**Milestones.** M1 FP16 baseline + eval + sensitivity map · M2 W8A8 PTQ +
-retrieval-aware calibration (target ≤ 0.5 pt) · M3 W4A8 + QAT recovery · M4
-on-device report + write-up.
-
-**Risks.** Depthwise activation outliers; attention outliers (keep FP16 / per-head);
-INT4 on retrieval likely needs QAT; Core ML op coverage for `Conv1d` + attention.
+**Consequence:** any direction whose payoff is *on-device* (quantization,
+streaming) inherits Step 0 as a prerequisite and risk. Directions that pay off on
+the **server/training** side (data, temporal negatives) do not — which is part of
+why they now rank higher.
 
 ---
 
-## 2. Plan B — Streaming / real-time contrastive video retrieval
+## Priority (reordered by ROI × risk × repo state)
 
-**Goal.** Turn MobileViCLIP from an offline **fixed-8-frame clip** encoder into an
-**online streaming** encoder that (a) ingests frames incrementally at real-time
-fps with **bounded memory**, (b) emits segment embeddings continuously, and
-(c) answers text queries with low latency (moment retrieval over a growing index).
+Repo constraint: Phase 1 (replicate) is not finished and there is **no trained
+checkpoint yet**. Only **PTQ** (no training) and **data-pipeline** work (folds
+into the training they are already standing up) are immediately actionable.
 
-**Why it's open.** 2026 "streaming video" work is generative video-LLM / agents
-(StreamSense @ WWW'26, StreamBridge); there is **no on-device streaming
-*contrastive* retrieval encoder**.
+| # | Direction | ROI | Risk | Needs training? | Needs on-device export (Step 0)? | Verdict |
+|---|---|---|---|---|---|---|
+| 1 | **Data-pipeline upgrade** (ReSpec + recaption) | High | Low | folds into training | No | **Do first** |
+| 2 | **Temporal hard-negative fine-tuning** | Med-High | Low | temporal branch only | No | **Do early** |
+| 3 | **W8A8 retrieval-aware quantization** (was Plan A) | Med | Med | No (PTQ) | Yes, for latency | Parallel, **gated by a kill-criterion** |
+| 4 | **Frame-selection long-video retrieval** (reframed Plan B) | Med | Med | Yes | Optional | Later |
+| — | ~~Causal streaming (v1 Plan B)~~ | Low | High | Yes | Yes | **Drop** |
 
-**Why the current model isn't streaming-ready (repo specifics).**
-- Window `T=8` is **hard-coded** in reshapes across `RepMixer` / `MHSA` /
-  `AttentionBlock` (e.g. `x.reshape(8, …)` at L597, L1031), and the final
-  embedding is a **mean over the whole 8-frame clip** (`FastViT.forward` L1291) —
-  both need the full window.
-- The temporal RepMixer 1D conv uses **centered padding** (`padding = k//2`,
-  L521–529 / L672–680) → **non-causal**, it peeks at future frames.
-- The attention stage does **full joint `T×H×W` attention** (L397–423) → O(T)
-  recompute per new frame.
+---
 
-### Approach
+## 1. Data-pipeline upgrade (NEW — highest ROI)
 
-1. **Causal-ize the temporal branch.** Switch the temporal depthwise `Conv1d`
-   from centered to **left-only (causal) padding**, so frame `t` depends only on
-   frames `≤ t`. It still folds to a single `Conv1d` → keeps the reparameterization
-   / on-device advantage. Surgical change to `RepMixer` (L549–566 build, L672–684
-   fold).
-2. **Windowed / causal temporal attention.** Replace full joint attention in the
-   last stage with a **sliding causal window** (last `W` frames) or a recurrent
-   frame-KV cache, so per-frame cost is O(W) not O(t).
-3. **Incremental pooling.** Replace the whole-clip mean (L1291) with a running /
-   EMA pooled embedding + a ring buffer of the last `W` frame features → emit a
-   segment embedding every `stride S` frames without recompute; memory bounded.
-4. **Retrieval loop.** Emitted segment embeddings enter a growing ANN index
-   (FAISS-flat on device); the text encoder runs once per query; cosine top-k →
-   moment localization.
-5. **Training.** Fine-tune from pretrained MobileViCLIP with the causal temporal
-   branch on `internvid_all` (VTC loss on causal windows). **Add temporal hard
-   negatives** (shuffled / reversed windows) so the causal model actually uses
-   order — this directly answers the 2025–26 "order-blind" diagnostic thread
-   (TVBench / TemporalBench; VideoComp / TempCLR-style negatives). Optionally
-   distill from the non-causal FP teacher on overlapping windows.
-6. **Latency budget.** Target ≥ 30 fps ingestion + sub-100 ms query on device.
-   The spatial path is already per-frame (`FastViT.forward` folds T into batch),
-   so the causal temporal state keeps marginal per-frame cost ~constant.
+**Goal.** Improve the replication itself: better data → better MobileViCLIP,
+before touching architecture.
 
-**Novelty.** First on-device streaming contrastive video-text retrieval encoder;
-causal *reparameterizable* temporal branch (keeps MobileViCLIP's deploy graph);
-incremental bounded-memory pooling; temporal-hard-negative training against
-order-blindness.
+**What.** On `internvid_all` (`configs/data.py`): (a) **ReSpec-style online
+filtering** (relevance to target distribution + specificity vs a generic-caption
+root; ReSpec reported ~49 avg retrieval with 27.5% of the data), and/or
+(b) **MLLM recaptioning** (PE/GVE-style) of a subset. The dataset already exposes
+caption filtering hooks (`dataset/pt_dataset.py`: min-caption-length,
+`caption_augmentation`, `jump_filter`), so this is mostly a data-prep + config
+change, not a model change.
 
-**Eval.** (a) streaming / long-video moment retrieval (MomentSeeker, LoVR,
-ActivityNet); (b) causal-vs-offline penalty on MSR-VTT / DiDeMo R@1; (c) throughput
-(fps), query latency, peak memory on device.
+**Eval.** Same harness (§0 of v1); measure R@1 vs the plain-InternVid baseline at
+matched compute/data budget.
 
-**Milestones.** M1 causal temporal conv + incremental pooling, verify parity with
-offline on short clips · M2 fine-tune on InternVid causal windows + hard negatives ·
-M3 streaming index + real-time query loop · M4 long-video benchmark + on-device
-throughput.
+**Why first.** Low risk, no new inference-time complexity, directly serves the
+repo's stated "replicate + improve" goal, and is useful even before the model is
+fully reproduced.
 
-**Risks.** Causal penalty (loses future context) — quantify it; attention-windowing
-quality; on-device ANN memory growth (cap / segment it); hard-negative training
-stability.
+---
+
+## 2. Temporal hard-negative fine-tuning (NEW)
+
+**Goal.** Fix the documented **order-blindness** of CLIP-style video models
+(TVBench, TemporalBench, VITATECS) *on this on-device model*, cheaply.
+
+**Why cheap & repo-native.** The model already supports training **only the
+temporal params**: under `freeze_vision`, everything is frozen except
+`mixer_1d / norm_1d / layer_scale_1d` (and the temporal branch), per
+`models/mobileviclip_small.py`. So: freeze the image backbone, add **shuffled /
+reversed / wrong-order window** hard negatives to the VTC loss
+(`VTC_VTM_Loss.vtc_loss`), and fine-tune the temporal branch + `temporal_embedding`.
+
+**Eval.** TVBench / TemporalBench (temporal sensitivity) **and** standard
+MSR-VTT/DiDeMo retrieval (guard against regression).
+
+**Novelty.** Order-blindness fixes exist for large models; doing it for an
+**on-device** contrastive model and measuring the temporal-vs-retrieval trade-off
+is a clean, low-cost contribution that uses the repo's exact structure.
+
+---
+
+## 3. W8A8 retrieval-aware quantization (rescoped Plan A)
+
+**Honest reframing.** v1 oversold this. Most of the model is FastViT (= image
+CLIP), whose quantization is well studied; the genuinely new part is the small
+temporal branch. So the defensible contribution is **engineering + measurement +
+a retrieval-aware calibration**, not a big novelty claim.
+
+**Prerequisite.** Step 0 (§0): an on-device export of the temporal model.
+
+**Kill-criterion FIRST.** Before investing, export INT8 depthwise convs +
+attention and **measure latency vs FP16 on the target device**. Depthwise convs
+are memory-bound and INT8 kernels are **often not faster** on mobile NPUs/GPUs —
+if there is no speedup, the win is **size/memory only** (~4×); decide whether that
+alone is worth it, else pivot.
+
+**Then, if it passes:**
+- **W8A8 primary** (per-output-channel weights, percentile activations),
+  **de-emphasize INT4** (high risk, marginal size gain for a ~50–100M model).
+- **Mixed precision** guided by a **sensitivity map** built from *embedding
+  cosine drift* (not layer MSE): expect the depthwise convs (incl. the temporal
+  `reparam_conv_1d`), the attention stage, and the projection heads
+  (`GlobalPool2D.proj`, text projection) to be sensitive.
+- **Retrieval-aware calibration:** minimize `λ1·layerMSE + λ2·(1−cos(z_fp,z_q)) +
+  λ3·KL(sim_fp‖sim_q)` on a held-out InternVid batch (preserves ranking).
+- **QAT recovery** from the FP16 teacher via the repo's VTC loss + similarity
+  distillation, if PTQ misses the budget.
+- **Cover both towers** — the text encoder is ~63M vs ~36M vision on Small, so it
+  is *not* a side concern.
+
+**Eval.** ΔR@1 (MSR-VTT/DiDeMo/ANet ZS) + K400 ZS at W8A8 vs FP16; on-device
+latency / energy / size.
+
+---
+
+## 4. Frame-selection efficient long-video retrieval (reframed Plan B)
+
+**Why v1's causal-streaming was wrong.** Real-time / long-video cost is dominated
+by **per-frame spatial encode × number of frames**, not by the tiny temporal
+branch. Causal-izing the temporal conv addresses the wrong bottleneck, sacrifices
+bidirectional context (accuracy), and serves a **niche** use case (retrieval is
+usually index-then-query, not live streaming).
+
+**Reframe.** Attack the real bottleneck with **learned / query-aware / adaptive
+frame selection** (ProCLIP, AdaFocus lineage) on top of the existing model, so
+long videos are encoded with far fewer frames. This helps the **mainstream**
+offline long-video indexing case and is still novel on-device.
+
+**Optional cheap demo.** A sliding-window + running-mean + on-device ANN index
+gives a "streaming-ish" capability **without** causal retraining (nearly free for
+the frame-mean pooling path). Ship it as a demo, not the research contribution.
+
+**Drop:** causal-conv retraining as the primary mechanism.
+
+**Eval.** Long-video retrieval (MomentSeeker, LoVR, ActivityNet); accuracy vs
+frames-encoded curve; on-device throughput.
 
 ---
 
 ## Notes
 
-- Line numbers reference `models/mobileviclip_small.py` at the time of writing;
-  re-locate by symbol (`reparameterize`, `RepMixer`, `AttentionBlock`,
-  `FastViT.forward`) if the file drifts.
-- All figures cited above are author-reported (see the report's caveats); the
-  point of both plans is to produce **independently measured** on-device numbers,
-  which the field currently lacks for video-CLIP.
+- Temporal-grounding-via-contrastive is **crowded** (CVA/CVPR'26, GranAlign/AAAI'26,
+  DART/ECCV'26, HieraMamba/CVPR'26, MASRA, CoSTL…). Avoid unless the angle is very
+  sharp.
+- Line/symbol references point at `models/mobileviclip_small.py`,
+  `models/convert_model.py`, `configs/data.py`, `dataset/pt_dataset.py`,
+  `tasks_clip/shared_utils.py` at the time of writing; re-locate by symbol if files
+  drift.
+- All external figures cited are author-reported; the point of these directions is
+  to produce **independently measured** numbers the field lacks for video-CLIP.
