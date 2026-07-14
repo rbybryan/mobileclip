@@ -41,6 +41,11 @@ YoutubeID + [Start, End]  --yt-dlp-->  下载该时间段  --ffmpeg-->  切成 c
 官方元数据（`InternVid-10M-FLT-INFO.jsonl`，约 2.81 GB）列名为：
 `YoutubeID`、`Start_timestamp`、`End_timestamp`、`Caption`、`Aesthetic_Score`、`UMT_Score`。
 
+> 💡 **拿不到作者那 11 份 JSON？**（`anno_downstream/InternVid/` 来自作者的 Google Drive，
+> 若该文件夹**私有 / 需申请访问**）——预训练标注可以**绕开作者文件夹**，直接从官方 InternVid
+> 元数据自建，见 [附录 B](#附录-b拿不到作者-json-时用官方元数据自建)。注意：**下游评测**标注
+> （msrvtt/anet/k400…）没有这条捷径，仍需作者文件夹。
+
 ---
 
 ## 1. 环境准备
@@ -221,6 +226,90 @@ PY
 > 官方项目与脚本参考：
 > [OpenGVLab/InternVideo · Data/InternVid](https://github.com/OpenGVLab/InternVideo/tree/main/Data/InternVid)、
 > 社区批量下载器 [mindsailor/YouTube-Clip-Downloader-W-InternVid](https://github.com/mindsailor/YouTube-Clip-Downloader-W-InternVid)。
+
+---
+
+## 附录 B：拿不到作者 JSON 时，用官方元数据自建
+
+作者的 11 份 `InternVid-10M-flt_<N>.json` 在他们的 Google Drive 上。如果那个文件夹**私有 /
+需申请访问**，预训练可以**完全绕开它**：InternVid 的**元数据是公开可直接下载的**，
+自己转成本仓库要的标注格式即可。（⚠️ **视频本身仍需 YouTube 抓取**，元数据只给 id + 时间戳 +
+字幕；下游**评测**标注没有这条路。）
+
+### B.1 直接下载官方元数据（二选一）
+
+**OpenDataLab（推荐，通常不需要 gated 审批）：**
+
+```bash
+pip install opendatalab
+odl login                       # 注册后登录
+odl get vd-foundation/InternVid-10M-FLT -d data/InternVid_info
+# 详见 https://opendatalab.com/vd-foundation/InternVid-10M-FLT/download
+```
+
+**HuggingFace（需在网页点同意 + 登录）：**
+
+```bash
+huggingface-cli login
+huggingface-cli download OpenGVLab/InternVid-10M-FLT-INFO \
+  --repo-type dataset --local-dir data/InternVid_info
+```
+
+拿到的是一个 jsonl，列名 `YoutubeID / Start_timestamp / End_timestamp / Caption / ...`。
+
+### B.2 转成本仓库的标注格式
+
+本仓库训练读的是一个 JSON 列表，每条 `{"video": "<name>.mp4", "caption": "..."}`
+（`data_root` = `data/video_sample/InternVId-FLT_<N>`）。下面脚本把官方 jsonl 转成第 1 个分片
+的标注，命名规则与 `tools/download_internvid.py` 默认解析（`<id>_<起秒>_<止秒>.mp4`）**一致**，
+直接写到 config 已指向的路径，无需改 `configs/data.py`：
+
+```bash
+mkdir -p anno_downstream/InternVid
+python - <<'PY'
+import json, os
+SRC = "data/InternVid_info/InternVid-10M-FLT-INFO.jsonl"   # 改成你下载到的实际路径
+DST = "anno_downstream/InternVid/InternVid-10M-flt_1.json"
+LIMIT = 5000   # 先做子集；要全量把这行设为 None
+
+def sec(ts):
+    ts = str(ts)
+    if ":" in ts:
+        h, m, s = ts.split(":"); return int(h)*3600 + int(m)*60 + float(s)
+    return float(ts)
+
+out = []
+with open(SRC) as f:
+    for i, line in enumerate(f):
+        if LIMIT and len(out) >= LIMIT: break
+        line = line.strip()
+        if not line: continue
+        r = json.loads(line)
+        yid, st, en = r["YoutubeID"], sec(r["Start_timestamp"]), sec(r["End_timestamp"])
+        cap = r.get("Caption") or r.get("caption") or ""
+        out.append({"video": f"{yid}_{st}_{en}.mp4", "caption": cap})
+os.makedirs(os.path.dirname(DST), exist_ok=True)
+json.dump(out, open(DST, "w"), ensure_ascii=False)
+print(f"wrote {len(out)} entries -> {DST}")
+PY
+```
+
+### B.3 抓视频 + 启动训练
+
+标注就绪后，和正文完全一样：
+
+```bash
+# 抓第 1 分片对应的视频（文件名已与标注一致，脚本 inspect 会 matched N/N）
+python tools/download_internvid.py download \
+  --anno anno_downstream/InternVid/InternVid-10M-flt_1.json \
+  --out  data/video_sample/InternVId-FLT_1 --limit 200 --workers 4
+
+# config 用单分片即可： train_corpus = "internvid_v1"
+bash scripts/pretraining/clip/mobileviclip_tiny/run.sh
+```
+
+> 要多分片就把上面 `_1` 换成 `_2 … _11`，转换脚本按行区间切分 jsonl（如每片取不同的
+> `LIMIT` 段），分别写到对应 `InternVid-10M-flt_<N>.json` 即可。
 
 ---
 
