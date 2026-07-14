@@ -25,7 +25,7 @@ L "python: $(which python) $(python --version 2>&1)"
 
 L "=== Stage 2: PyTorch 1.13.1 + cu117 ==="
 pip install --no-cache-dir \
-    torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 \
+    torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1+cu117 \
     --extra-index-url https://download.pytorch.org/whl/cu117
 
 L "=== Stage 3: PyAV (binary wheel, bundled ffmpeg) ==="
