@@ -251,11 +251,21 @@ odl get vd-foundation/InternVid-10M-FLT -d data/InternVid_info
 
 ```bash
 huggingface-cli login
-huggingface-cli download OpenGVLab/InternVid-10M-FLT-INFO \
-  --repo-type dataset --local-dir data/InternVid_info
+# 二选一（两者都含 FLT 元数据；INFO 版多了 YouTube 语言/类型等信息）：
+huggingface-cli download OpenGVLab/InternVid              --repo-type dataset --local-dir data/InternVid_info
+huggingface-cli download OpenGVLab/InternVid-10M-FLT-INFO --repo-type dataset --local-dir data/InternVid_info
 ```
 
-拿到的是一个 jsonl，列名 `YoutubeID / Start_timestamp / End_timestamp / Caption / ...`。
+拿到的文件名：`OpenGVLab/InternVid` → **`InternVid-10M-flt.jsonl`**；
+`InternVid-10M-FLT-INFO` → `InternVid-10M-FLT-INFO.jsonl`。每行的列为
+`YoutubeID / Start_timestamp / End_timestamp / Caption / Aesthetic_Score / UMT_Score`，
+时间戳是 `HH:MM:SS.mmm` 字符串。示例：
+
+```json
+{"YoutubeID": "HdYoyzCSWyw", "Start_timestamp": "00:03:10.567",
+ "End_timestamp": "00:03:11.200", "Caption": "woman using a computer mouse and keyboard",
+ "Aesthetic_Score": 4.59, "UMT_Score": 0.398}
+```
 
 ### B.2 转成本仓库的标注格式
 
@@ -268,9 +278,10 @@ huggingface-cli download OpenGVLab/InternVid-10M-FLT-INFO \
 mkdir -p anno_downstream/InternVid
 python - <<'PY'
 import json, os
-SRC = "data/InternVid_info/InternVid-10M-FLT-INFO.jsonl"   # 改成你下载到的实际路径
+SRC = "data/InternVid_info/InternVid-10M-flt.jsonl"   # 改成你下载到的实际路径
 DST = "anno_downstream/InternVid/InternVid-10M-flt_1.json"
-LIMIT = 5000   # 先做子集；要全量把这行设为 None
+LIMIT = 5000        # 先做子集；要全量把这行设为 None
+UMT_MIN = 0.0       # 可选质量过滤：设 0.4 只保留 UMT_Score>=0.4 的高相关样本
 
 def sec(ts):
     ts = str(ts)
@@ -280,11 +291,12 @@ def sec(ts):
 
 out = []
 with open(SRC) as f:
-    for i, line in enumerate(f):
+    for line in f:
         if LIMIT and len(out) >= LIMIT: break
         line = line.strip()
         if not line: continue
         r = json.loads(line)
+        if r.get("UMT_Score", 1.0) < UMT_MIN: continue   # 可选质量过滤
         yid, st, en = r["YoutubeID"], sec(r["Start_timestamp"]), sec(r["End_timestamp"])
         cap = r.get("Caption") or r.get("caption") or ""
         out.append({"video": f"{yid}_{st}_{en}.mp4", "caption": cap})
@@ -293,6 +305,12 @@ json.dump(out, open(DST, "w"), ensure_ascii=False)
 print(f"wrote {len(out)} entries -> {DST}")
 PY
 ```
+
+上例那行会生成 `{"video": "HdYoyzCSWyw_190.567_191.2.mp4", "caption": "..."}`，
+`inspect` 会显示 `matched N/N`。
+
+> ℹ️ **FLT clip 很短**：很多片段只有 1–2 秒（示例 `00:03:10.567→00:03:11.200` 仅 0.63s）。
+> 这是正常的——训练每个 clip 固定采 8 帧，短片也能用，只是文件会很小。
 
 ### B.3 抓视频 + 启动训练
 
