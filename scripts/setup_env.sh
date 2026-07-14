@@ -11,6 +11,12 @@
 #                               MUST install with --no-deps or pip silently upgrades
 #                               torch to 2.x and breaks torchvision/onnx.
 #   - deepspeed installed with DS_BUILD_OPS=0 (ops JIT-compile only when actually used).
+#   - peft 0.12.0 -> 0.4.0    : peft>=0.8 imports `Cache` from transformers, which only
+#                               exists in transformers>=4.36. This repo pins transformers
+#                               4.28.1, so peft 0.12 fails with
+#                               "ImportError: cannot import name 'Cache' from 'transformers'".
+#                               The repo only uses get_peft_model/LoraConfig/TaskType, all
+#                               stable since peft 0.2 — 0.4.0 imports cleanly on 4.28.1.
 #   - flash-attn / apex       : skipped (build needs nvcc + a matching GPU).
 set -eo pipefail
 
@@ -38,7 +44,7 @@ pip install --no-cache-dir \
     ftfy==6.2.3 regex==2024.7.24 pandas==2.0.3 scipy==1.13.0 scikit-learn==1.5.1 \
     numpy==1.26.4 pyyaml==6.0.1 easydict==1.13 yacs==0.1.8 tabulate==0.9.0 \
     tensorboard==2.19.0 wandb==0.16.1 webdataset==0.2.111 imageio==2.31.1 \
-    accelerate==0.33.0 peft==0.12.0 safetensors==0.4.4 huggingface-hub==0.24.5 \
+    accelerate==0.33.0 peft==0.4.0 safetensors==0.4.4 huggingface-hub==0.24.5 \
     fvcore==0.1.5.post20221221 iopath==0.1.10 termcolor==2.4.0 rich==13.4.2 \
     "setuptools==69.5.1" sentencepiece
 
