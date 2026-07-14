@@ -46,3 +46,46 @@ python -c "import torch, torchaudio, torchvision; print(torch.__version__, torch
 - `dataset/utils.py` imports `torchaudio` lazily (inside `load_audio_from_path`),
   so a broken/missing audio stack only affects audio tasks — video/image evals
   import cleanly regardless.
+
+---
+
+## `ImportError: cannot import name 'Cache' from 'transformers'`
+
+### Symptom
+
+An evaluation fails while importing the model backbone:
+
+```
+File ".../models/backbones/internvideo2/internvideo2_clip_text.py", line 5, in <module>
+    from peft import get_peft_model, LoraConfig, TaskType
+...
+File ".../peft/peft_model.py", line 38, in <module>
+    from transformers import Cache, DynamicCache, EncoderDecoderCache, PreTrainedModel
+ImportError: cannot import name 'Cache' from 'transformers'
+```
+
+### Cause
+
+`peft >= 0.8` imports the `Cache` class from `transformers`, which only exists in
+`transformers >= 4.36`. This repo pins `transformers==4.28.1` (alongside
+`tokenizers==0.13.3` and the InternVideo2 text code), so a newer peft (the lock file
+previously pinned `peft==0.12.0`) can never import.
+
+The repo only uses `get_peft_model`, `LoraConfig`, and `TaskType` — all stable since
+peft 0.2 — so the fix is to downgrade peft rather than bump transformers.
+
+### Fix — downgrade peft to a version compatible with transformers 4.28.1
+
+```bash
+conda activate mobileviclip
+pip install --no-cache-dir "peft==0.4.0"
+```
+
+Verify it imports:
+
+```bash
+python -c "from peft import get_peft_model, LoraConfig, TaskType; print('peft OK')"
+```
+
+`scripts/setup_env.sh` and `requirements.lock.txt` now pin `peft==0.4.0` so fresh
+setups avoid this mismatch.
