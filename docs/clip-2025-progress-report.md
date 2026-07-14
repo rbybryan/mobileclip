@@ -261,7 +261,9 @@ self.reparam_conv_1d.weight.data = w_1d   # 由 mixer_1d / norm_1d 折叠而来
 
 **对上一轮的更正:** ViLL-E 的 62.5 **不是零样本**(是训练 / 多任务);LEViL 的"InternVideo2→3D-ResNet-18 / Kocaeli"论文中**并无此说**(上表已改正);VeRVE 与 VIRTUE 是**同一篇**;InternVideo3 是**生成式 agent**;"Meta Tempo"**不存在**;Vote-in-Context / ViMix-14M / VECTOR / UVRB 实为 **2025**。
 
-> **三块真空白已在本仓库落地为技术方案 →** [`notes/whitespace-directions.md`](../notes/whitespace-directions.md):① **MobileViCLIP 量化**(检索感知 PTQ/QAT,利用可重参结构);② **流式 / 实时对比检索**(因果化时间分支 + 增量池化)。时序 grounding 已拥挤,不建议在该方向找新意。
+> **三块真空白已在本仓库落地为技术方案 →** [`notes/whitespace-directions.md`](../notes/whitespace-directions.md)(含 v2 可行性复核)。
+>
+> **复核结论(2026-07,经代码核查):** 训练/评测的 canonical 模型 `MobileViCLIP_Small` **确含时序建模**,但仓库**尚无该时序模型的可用端侧导出**(唯一的 `convert_model.py` 是纯空间 WIP,绕开了全部时序算子)—— 这是任何端侧方案的**真·前置门槛**。据此修订:① **量化**新意较薄,且"量化=更快"在 depthwise 上**待实测**,缩到 W8A8 + 先过 kill-criterion;② **因果流式**打错瓶颈(实时成本由**帧数**主导),改做**自适应选帧**的高效长视频检索;更高 ROI 的其实是**数据管线(ReSpec / 重描述)** 与 **时序难负样本微调**(治"顺序盲",便宜、用现成 freeze 机制)。
 
 ---
 
