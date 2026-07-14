@@ -504,7 +504,7 @@ self.reparam_conv_1d.weight.data = w_1d   <span class="c"># 由 mixer_1d / norm_
       </table>
     </div>
     <p><b>对上一轮的更正:</b>ViLL-E 的 62.5 <b>不是零样本</b>(是训练/多任务);LEViL 的"InternVideo2→3D-ResNet-18 / Kocaeli"论文中<b>并无此说</b>(上表已改正);VeRVE 与 VIRTUE 是<b>同一篇</b>;InternVideo3 是<b>生成式 agent</b>;"Meta Tempo"<b>不存在</b>;Vote-in-Context / ViMix-14M / VECTOR / UVRB 实为 <b>2025</b>。</p>
-    <div class="callout"><strong>三块真空白已在本仓库落地为技术方案 → </strong><code class="fileref">notes/whitespace-directions.md</code>:① <b>MobileViCLIP 量化</b>(检索感知 PTQ/QAT,利用可重参结构);② <b>流式 / 实时对比检索</b>(因果化时间分支 + 增量池化)。时序 grounding 已拥挤,不建议在该方向找新意。</div>
+    <div class="callout"><strong>三块真空白已在本仓库落地为技术方案 → </strong><code class="fileref">notes/whitespace-directions.md</code>(含 v2 可行性复核)。<b>复核结论(2026-07,经代码核查):</b>训练/评测的 canonical 模型 <code class="fileref">MobileViCLIP_Small</code> <b>确含时序建模</b>,但仓库<b>尚无该时序模型的可用端侧导出</b>(唯一的 <code class="fileref">convert_model.py</code> 是纯空间 WIP,绕开了全部时序算子)——这是任何端侧方案的<b>真·前置门槛</b>。据此修订:① <b>量化</b>新意较薄,且"量化=更快"在 depthwise 上<b>待实测</b>,缩到 W8A8 + 先过 kill-criterion;② <b>因果流式</b>打错瓶颈(实时成本由<b>帧数</b>主导),改做<b>自适应选帧</b>的高效长视频检索;更高 ROI 的其实是<b>数据管线(ReSpec / 重描述)</b> 与 <b>时序难负样本微调</b>(治"顺序盲",便宜、用现成 freeze 机制)。</div>
   </section>
 
   <!-- 8 · 时间线 -->
