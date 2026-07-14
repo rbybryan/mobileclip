@@ -229,6 +229,10 @@ checkpoints/
 
 > 这些目录都在 `.gitignore` 里，不会被提交。
 
+> ⚠️ 若 `gdown --folder` 报 `Cannot retrieve the folder information from the link`（没权限/限流），
+> 见 [常见问题 Q6.1](#10-常见问题与排错)：多为 gdown 版本旧或被限流，先
+> `pip install --upgrade --no-cache-dir gdown` 再试，或用浏览器把整个文件夹打包成 zip 传上服务器。
+
 ---
 
 ## 6. 下载视频数据集
@@ -606,6 +610,30 @@ torchrun --nnodes=1 --nproc_per_node=8 --master_port=$((11000 + RANDOM % 20000))
 
 **Q6. `gdown` 下载 Google Drive 文件夹失败或限速**
 可多试几次，或升级 `pip install -U gdown`；大文件夹可分文件下载。
+
+**Q6.1 `gdown --folder` 报 `Cannot retrieve the folder information from the link`**
+这条错误出在**列目录**阶段（还没开始下文件），几乎不是真的没权限（该文件夹是公开的），
+而是**gdown 版本旧**或**访问过于频繁被限流**（错误里 “have had many accesses” 就是限流）。
+按顺序排查：
+
+1. **强制升级 gdown 再试**（旧版解析不了 Google 现在的目录响应）：
+   ```bash
+   pip install --upgrade --no-cache-dir gdown
+   gdown --version        # 需 ≥ 5.2.0
+   gdown --folder https://drive.google.com/drive/folders/1grbR39KnMLpeHPNpX4MBYArhr6wASJza -O anno_downstream
+   ```
+2. **被限流就等一会**：反复重试会被 Google 临时限流，**等 30–60 分钟**或换网络/VPN 后只跑一次。
+3. **绕过 gdown（最稳）**：在**本地浏览器**打开
+   [该文件夹](https://drive.google.com/drive/folders/1grbR39KnMLpeHPNpX4MBYArhr6wASJza)
+   → 全选 → **下载**（Google 会打包成 zip）→ `scp` 到服务器再解压：
+   ```bash
+   scp anno_downstream.zip rby@<server>:~/mobileclip/
+   cd ~/mobileclip && unzip anno_downstream.zip -d anno_downstream
+   ```
+4. **判断是版本问题还是单个文件夹问题**：权重文件夹
+   `gdown --folder https://drive.google.com/drive/folders/1ROJYwQeO8lt4mEfNjEIAIDWj736WIQq7 -O checkpoints`
+   若也报同样错 → 是 gdown 版本/限流（做 1、2）；若只有标注文件夹报错 → 可能是**文件数 >50**
+   触发 gdown 文件夹上限，改用第 3 步的浏览器打包下载。
 
 **Q7. 显存不够（OOM）**
 调小对应 `config_*.py` 里的 `batch_size_test`（例如从 32 改到 8）。
