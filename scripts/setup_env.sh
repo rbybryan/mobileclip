@@ -17,6 +17,9 @@
 #                               "ImportError: cannot import name 'Cache' from 'transformers'".
 #                               The repo only uses get_peft_model/LoraConfig/TaskType, all
 #                               stable since peft 0.2 — 0.4.0 imports cleanly on 4.28.1.
+#                               Installed with --no-deps (Stage 6) for the same reason as
+#                               open_clip: otherwise pip upgrades torch to 2.x and breaks
+#                               torchvision/torchaudio.
 #   - flash-attn / apex       : skipped (build needs nvcc + a matching GPU).
 set -eo pipefail
 
@@ -44,15 +47,22 @@ pip install --no-cache-dir \
     ftfy==6.2.3 regex==2024.7.24 pandas==2.0.3 scipy==1.13.0 scikit-learn==1.5.1 \
     numpy==1.26.4 pyyaml==6.0.1 easydict==1.13 yacs==0.1.8 tabulate==0.9.0 \
     tensorboard==2.19.0 wandb==0.16.1 webdataset==0.2.111 imageio==2.31.1 \
-    accelerate==0.33.0 peft==0.4.0 safetensors==0.4.4 huggingface-hub==0.24.5 \
+    accelerate==0.33.0 safetensors==0.4.4 huggingface-hub==0.24.5 \
     fvcore==0.1.5.post20221221 iopath==0.1.10 termcolor==2.4.0 rich==13.4.2 \
     "setuptools==69.5.1" sentencepiece
 
 L "=== Stage 5: spiking-neuron libs (MobileOne reparam block imports these) ==="
 pip install --no-cache-dir "spikingjelly==0.0.0.0.14" "snntorch==0.9.4"
 
-L "=== Stage 6: open_clip (MobileCLIP backbone). --no-deps is CRITICAL ==="
+L "=== Stage 6: open_clip + peft (--no-deps is CRITICAL) ==="
+# Both must be installed with --no-deps: their metadata lists an unpinned torch,
+# and pip will happily UPGRADE the cu117 torch 1.13.1 to a torch 2.x wheel to
+# "satisfy" it — which then breaks torchvision/torchaudio (built for 1.13.1) with
+# errors like "cannot import name '_cast_Long'". peft's real deps (transformers,
+# accelerate, safetensors, huggingface-hub, numpy, pyyaml, tqdm) are already
+# installed by Stage 4, so --no-deps leaves a working env.
 pip install --no-cache-dir --no-deps "open_clip_torch==2.20.0"
+pip install --no-cache-dir --no-deps "peft==0.4.0"
 
 L "=== Stage 7: deepspeed (imported unguarded by the task entry scripts) ==="
 DS_BUILD_OPS=0 pip install --no-cache-dir "deepspeed==0.10.1"
