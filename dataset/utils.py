@@ -13,7 +13,12 @@ from tqdm import trange
 from PIL import Image
 from PIL import ImageFile
 from torchvision.transforms import PILToTensor
-import torchaudio
+
+# NOTE: torchaudio is imported lazily inside load_audio_from_path (see below).
+# It is only needed for audio tasks, and its shared libs (libtorchaudio.so) fail
+# to load when torchaudio's build does not match the installed torch version. A
+# top-level import would take down video/image-only tasks (e.g. MSRVTT retrieval)
+# that never touch audio, so we defer it to the point of use.
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 Image.MAX_IMAGE_PIXELS = None
@@ -22,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 def load_audio_from_path(audio_path, client, sr, audio_reader_type, max_length=0):
+    import torchaudio  # lazy import: only audio tasks need it (see note at top of file)
     if "s3://" in audio_path and client is not None:
         audio_bytes = client.get(audio_path)
         buff = io.BytesIO(audio_bytes)
