@@ -104,10 +104,16 @@ The sections below give the reasoning, code touchpoints, and eval for each.
 
 `MHSA.forward`, `CrossAttention.forward`, and `Attention_global_residual.forward`
 all materialize the full `N×N` attention matrix. Replace the body with
-`F.scaled_dot_product_attention` (PyTorch ≥2.0 dispatches to
-Flash/mem-efficient kernels automatically; V100 gets the mem-efficient path).
-The flags for this (`use_flash_attn`) already exist and are ignored — wire them
-up or just make SDPA unconditional.
+`F.scaled_dot_product_attention`. The flags for this (`use_flash_attn`) already
+exist and are ignored — wire them up or just make SDPA unconditional.
+
+**Validation correction (2026-07-15):** the pinned env is **PyTorch 1.13.1**
+(`mobileviclip.yml`), which predates SDPA (added in 2.0). So this requires
+either a torch ≥2.0 env bump (cu117/cu118 wheels exist; verify DeepSpeed/apex
+compat) or `xformers.ops.memory_efficient_attention` on 1.13. Also: the Flash
+kernel needs sm80+; **V100 (sm70) gets the memory-efficient kernel**, which
+still removes the N×N materialization — the win is real but it is a
+memory+moderate-speed win, not a Flash-class speedup.
 
 - **Touchpoints:** `models/mobileviclip_{small,tiny}.py` (`MHSA`,
   `CrossAttention`); keep the reshape choreography, swap only the attention core.
@@ -144,9 +150,12 @@ what makes test-time frame scaling work.
 The final video embedding is an **unweighted mean of 8 frame embeddings**
 (`x_new_stack.mean(0)`). This is the cheapest possible aggregator and provably
 discards temporal saliency: a 2-second relevant action in an 8-frame window is
-averaged 1:7 with background. The file *already defines* an unused
-`AttentionPoolingBlock` (mean-query cross-attention, `mobileviclip_tiny.py:1480`);
-InternVideo2 and Perception Encoder both use attention pooling as the head.
+averaged 1:7 with background. The file *already defines* an
+`AttentionPoolingBlock` (mean-query cross-attention, `mobileviclip_tiny.py:1480`)
+that the canonical MobileViCLIP model never instantiates — the InternVideo2
+backbones in this repo use their own copies of the same class as their
+`clip_projector` head (`internvideo2.py:484`), which is direct in-repo evidence
+the pattern works. Perception Encoder likewise uses an attention-pool head.
 
 Concretely: keep per-frame `GlobalPool2D`, then run **one** cross-attention
 block over the T frame embeddings (query = mean, keys/values = frames), i.e.
@@ -298,8 +307,10 @@ TinyCLIP-style weight inheritance (drop alternating layers, then KD).
 
 Direct response to the deployment finding in `whitespace-directions.md §0`
 (the only export script silently drops all temporal ops). Joint T·H·W attention
-is the op that breaks Core ML/TFLite lowering. TimeSformer's ablation
-(divided ≥ joint at lower cost) suggests replacing it with **per-frame spatial
+is the op that breaks Core ML/TFLite lowering. TimeSformer's ablation shows
+divided space-time attention is **both more accurate and cheaper** than joint
+(best K400/SSv2 accuracy; joint OOMs at 32 frames — which also caps P2's
+frame scaling). This suggests replacing it with **per-frame spatial
 attention (N=64) + the already-present 1D temporal RepMixer** (possibly one
 extra temporal conv per attention block). Per-frame 64-token attention is
 static-shape, batch-friendly, and exports today.
