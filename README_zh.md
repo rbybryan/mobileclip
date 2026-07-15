@@ -365,31 +365,54 @@ act_val/       75.44   95.35    98.60    83.17   96.04    99.01
 > **HTML 页面**，`unrar` 报 `hmdb51_org.rar is not RAR archive`。整个 `serre-lab.clps.brown.edu`
 > 域名已下线，重试无用。改用下面的 **HuggingFace 镜像**（内容一致：6766 个 `.avi`，约 2.12 GB）。
 
-**① 下载并把视频平铺到 `data/hmdb51/videos_test/`**：
+**① 下载并把视频平铺到 `data/hmdb51/videos_test/`（推荐用脚本，一步到位）**：
+
+> `jili5044/hmdb51` 其实是**一个** Xet-backed LFS 文件 `hmdb51.zip`（约 2.12 GB）+ 一个
+> README，**不是**散装 `.avi`，也不是按类别打包的 `.rar`。下面的脚本已封装「断点续传下载 →
+> 校验字节数 → 解压 → 软链平铺 → 对标注 JSON 核对」全流程，并绕开了 hf-mirror 对 Xet 文件
+> 的元数据坑（见下方 ⚠️）：
 
 ```bash
 # 清掉可能下到的假文件（其实是 HTML）
 rm -f data/hmdb51/hmdb51_org.rar
 
-# 从 HuggingFace 镜像下载（国内用 hf-mirror 加速）
-pip install -U "huggingface_hub[cli]"
-export HF_ENDPOINT=https://hf-mirror.com
-huggingface-cli download jili5044/hmdb51 --repo-type dataset --local-dir data/hmdb51_hf
-
-# 看一下结构（可能直接是 .avi，也可能是按类别打包的 .rar）
-find data/hmdb51_hf -maxdepth 2 | head -30
-
-# 情况 A：直接就是 .avi —— 软链平铺到 videos_test/（省空间）
-mkdir -p data/hmdb51/videos_test
-find data/hmdb51_hf -name '*.avi' -exec ln -sf {} data/hmdb51/videos_test/ \;
-
-# 情况 B：里面是 .rar —— 先解压再平铺
-#   cd data/hmdb51_hf && for f in *.rar; do unrar x "$f"; done && cd -
-#   find data/hmdb51_hf -name '*.avi' -exec ln -sf {} data/hmdb51/videos_test/ \;
+# 默认走 hf-mirror；官方源：HF_ENDPOINT=https://huggingface.co bash tools/download_hmdb51.sh
+bash tools/download_hmdb51.sh
 
 ls data/hmdb51/videos_test/ | head        # 形如 *.avi
 ls data/hmdb51/videos_test/ | wc -l       # 目标 ~6766
 ```
+
+> ⚠️ **`huggingface-cli download` 直接报错怎么办**：用镜像（`export HF_ENDPOINT=https://hf-mirror.com`）
+> 跑 `huggingface-cli download jili5044/hmdb51 ...` 时，常见如下报错并**一个字节都下不下来**：
+>
+> ```
+> huggingface_hub.errors.FileMetadataError: Distant resource does not seem to be on huggingface.co ...
+> huggingface_hub.errors.LocalEntryNotFoundError: An error happened while trying to locate the file on the Hub ...
+> ```
+>
+> 原因：`hmdb51.zip` 用 **Xet** 存储，hf-mirror 的 HEAD 响应缺 `x-linked-etag` 头，
+> `huggingface_hub` 判定 `etag is None` 就在下载**之前**直接放弃（其实文件字节完全可达）。
+> 三种解法（脚本用的是第 1 种，最稳）：
+>
+> 1. **直接 `wget` 拉那个 zip**（绕过 Python 客户端的元数据校验，支持断点续传）：
+>    ```bash
+>    export HF_ENDPOINT=https://hf-mirror.com
+>    mkdir -p data/hmdb51_hf
+>    wget -c "$HF_ENDPOINT/datasets/jili5044/hmdb51/resolve/main/hmdb51.zip" \
+>         -O data/hmdb51_hf/hmdb51.zip
+>    unzip -n -q data/hmdb51_hf/hmdb51.zip -d data/hmdb51_hf
+>    mkdir -p data/hmdb51/videos_test
+>    find data/hmdb51_hf -name '*.avi' -exec ln -sf {} data/hmdb51/videos_test/ \;
+>    ```
+> 2. **关掉 Xet** 再用 CLI（新版 `huggingface_hub` 支持）：
+>    ```bash
+>    export HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1
+>    huggingface-cli download jili5044/hmdb51 --repo-type dataset --local-dir data/hmdb51_hf
+>    ```
+> 3. **换官方源**（网络允许时最省事）：`unset HF_ENDPOINT` 后再跑 CLI。
+>
+> 上面 `tools/download_hmdb51.sh` 已内置解法 1（含字节数校验、解压、平铺、核对标注），无脑跑即可。
 
 > HMDB51 的官方 test 划分由 `anno_downstream/hmdb51_act_test.json` 指定；上面把全部 `.avi`
 > 平铺进 `videos_test/`，评测时只按标注 JSON 里的文件名读取（多出来的训练视频不会被用到）。

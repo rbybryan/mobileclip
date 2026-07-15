@@ -222,6 +222,80 @@ mirror `anno_downstream/` on a public host (e.g. a Hugging Face dataset).
 
 ---
 
+## HMDB51 download: `FileMetadataError: Distant resource does not seem to be on huggingface.co`
+
+### Symptom
+
+Downloading the HMDB51 videos from the HF mirror dies immediately — **zero bytes
+fetched** — with:
+
+```
+huggingface_hub.errors.FileMetadataError: Distant resource does not seem to be on
+huggingface.co. It is possible that a configuration issue prevents you from
+downloading resources from https://huggingface.co. ...
+...
+huggingface_hub.errors.LocalEntryNotFoundError: An error happened while trying to
+locate the file on the Hub and we cannot find the requested files in the local cache.
+```
+
+after running:
+
+```bash
+export HF_ENDPOINT=https://hf-mirror.com
+huggingface-cli download jili5044/hmdb51 --repo-type dataset --local-dir data/hmdb51_hf
+```
+
+### Cause
+
+The dataset `jili5044/hmdb51` is a **single Xet-backed LFS file** — `hmdb51.zip`
+(~2.12 GB) plus a `README.md`. For Xet-stored files, `hf-mirror.com`'s HEAD
+response does not carry the `x-linked-etag` header. `huggingface_hub` treats a
+missing etag as "the file isn't really on the Hub" and raises `FileMetadataError`
+**before downloading anything** — hence `LocalEntryNotFoundError` too.
+
+The bytes themselves are fine: `…/resolve/main/hmdb51.zip` just 302-redirects to a
+CDN that serves plain HTTP range requests (`accept-ranges: bytes`). The failure is
+purely the client's pre-download metadata check against the mirror.
+
+> Note: the official `huggingface.co` endpoint returns the `x-linked-etag`
+> correctly, so this error is specific to the mirror. It is **not** a firewall or
+> SSL problem despite what the message suggests.
+
+### Fix — bypass the metadata check (any one of these)
+
+**A. One-shot script (recommended).** Downloads, verifies the byte count, unzips,
+flattens every `.avi` into `data/hmdb51/videos_test/`, and checks the annotation:
+
+```bash
+bash tools/download_hmdb51.sh
+# official endpoint instead of the mirror:
+#   HF_ENDPOINT=https://huggingface.co bash tools/download_hmdb51.sh
+```
+
+**B. Direct `wget`** of the one zip (resumable, skips the Python client entirely):
+
+```bash
+export HF_ENDPOINT=https://hf-mirror.com
+mkdir -p data/hmdb51_hf
+wget -c "$HF_ENDPOINT/datasets/jili5044/hmdb51/resolve/main/hmdb51.zip" \
+     -O data/hmdb51_hf/hmdb51.zip
+unzip -n -q data/hmdb51_hf/hmdb51.zip -d data/hmdb51_hf
+mkdir -p data/hmdb51/videos_test
+find data/hmdb51_hf -name '*.avi' -exec ln -sf {} data/hmdb51/videos_test/ \;
+```
+
+**C. Disable Xet** and keep using the CLI (recent `huggingface_hub`):
+
+```bash
+export HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1
+huggingface-cli download jili5044/hmdb51 --repo-type dataset --local-dir data/hmdb51_hf
+```
+
+Then verify `data/hmdb51/videos_test/` holds ~6766 `.avi` and that
+`anno_downstream/hmdb51_act_test.json` reports 0 missing (see README_zh §6.3).
+
+---
+
 ## Running the next retrieval dataset (DiDeMo, ActivityNet)
 
 Once MSR-VTT works end-to-end, the other zero-shot **retrieval** benchmarks run
