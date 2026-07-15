@@ -523,12 +523,14 @@ cd kinetics-dataset
 
 # 2) 只下 K400 验证集（脚本用 wget -c 支持断点续传）
 bash ./k400_downloader.sh          # 下载 tar.gz（可只保留 val 部分）
-bash ./k400_extractor.sh           # 解压出 k400/val/<类别>/*.mp4
+bash ./k400_extractor.sh           # 解压出 k400/val/*.mp4（扁平结构，无类别子目录）
 cd ..
 
 # 3) 缩放到 320p 短边并裁到 10s（示例，用 ffmpeg 批处理）
+#    注意：CVDF 解压出的验证集是扁平结构 kinetics-dataset/k400/val/*.mp4
+#    （无类别子目录），这里用 find 兼容扁平/嵌套两种布局。
 mkdir -p data/kinetics_400_val_10s_320p
-for v in kinetics-dataset/k400/val/*/*.mp4; do
+find kinetics-dataset/k400/val -name '*.mp4' | while read -r v; do
   ffmpeg -y -i "$v" -t 10 -vf "scale=-2:320" \
     "data/kinetics_400_val_10s_320p/$(basename "$v")"
 done
