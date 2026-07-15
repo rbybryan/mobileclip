@@ -455,22 +455,31 @@ ls data/hmdb51/videos_test/ | wc -l       # 目标 ~6766
 > 只要有 HMDB51 的 `.avi` 视频，**任何来源都可以**（Kaggle、其它 HF 镜像等），关键是文件名与标注对齐。
 
 **② 生成标注 `hmdb51_act_test.json`**（Drive 拿不到，自建）。HMDB51 的官方划分文件
-`test_train_splits.rar` 也托管在**已下线的 Brown 域名**上，多半下不到，所以**首选兜底方案**：
-直接用上一步下下来的**按类别分文件夹**的视频目录生成（`build_act_rec_anno.py` 的 `--from-dir`）：
+`test_train_splits.rar` 原托管在**已下线的 Brown 域名**上，但 **Wayback Machine（互联网档案馆）
+存有可下载的快照**（HTTP 200），用它拿到官方 split-1，生成与论文一致的**测试集**标注（~1530 条 = 51 类 × 30）：
 
 ```bash
-# 先确认 HF 下载下来的是按类别分的文件夹（<dir>/<class>/<clip>.avi）：
-find data/hmdb51_hf -maxdepth 2 -type d | head
-# 用类别文件夹名当类别、每个 .avi 生成一条；--videos 对齐 videos_test/ 里的实际文件
+cd data/hmdb51
+# 从 Wayback 的原始文件快照下载（id_ 表示取原始二进制、不带档案馆工具栏）
+wget -O test_train_splits.rar \
+  "https://web.archive.org/web/20221224192854id_/http://serre-lab.clps.brown.edu/wp-content/uploads/2013/10/test_train_splits.rar"
+file test_train_splits.rar        # 应显示 "RAR archive"（若是 HTML 说明快照没取到，见下方兜底）
+unrar x test_train_splits.rar     # -> testTrainMulti_7030_splits/
+cd ../..
+# 用 split-1 的 test（每类 .txt 里 tag==2 的行）生成标注，并按磁盘实际视频过滤
 python preprocess/build_act_rec_anno.py --dataset hmdb51 \
-    --from-dir data/hmdb51_hf --videos data/hmdb51/videos_test \
+    --src data/hmdb51/testTrainMulti_7030_splits --videos data/hmdb51/videos_test \
     --out anno_downstream/hmdb51_act_test.json
 ```
 
-> ⚠️ `--from-dir` 用的是**全部视频**（train+test，约 6766 条），而论文参考行 `act_val/` 用的是
-> **split-1 测试集**（约 1530 条）。因此 Top-1 会与下表有出入，但流程完全正确、可自洽验证。
-> 若你能弄到 `testTrainMulti_7030_splits/`（如 Kaggle / 其它镜像），换成精确的 split-1 测试集：
-> `python preprocess/build_act_rec_anno.py --dataset hmdb51 --src <testTrainMulti_7030_splits> --videos data/hmdb51/videos_test --out anno_downstream/hmdb51_act_test.json`
+> 🔁 **兜底（拿不到划分文件时）**：直接用上一步 HF 下下来的**按类别分文件夹**的视频目录生成——
+> 但这样用的是**全部视频**（train+test，约 6766 条），而参考行 `act_val/` 用的是 split-1 测试集，
+> 因此 Top-1 会与下表有出入（流程仍正确、可自洽）：
+> ```bash
+> python preprocess/build_act_rec_anno.py --dataset hmdb51 \
+>     --from-dir data/hmdb51_hf --videos data/hmdb51/videos_test \
+>     --out anno_downstream/hmdb51_act_test.json
+> ```
 
 **③ 验证**：跑「通用验证脚本」（或下面单独针对 HMDB51 的一段）确认 `hmdb51_act_test.json` 0 缺失。
 若大量缺失，多为**扩展名/命名不一致**（标注是裸文件名 `*.avi`，镜像可能带类别子目录）——用 `find ... -exec ln -sf`
