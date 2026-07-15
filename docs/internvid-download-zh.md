@@ -163,6 +163,7 @@ train_corpus = "internvid_v1"     # 原为 "internvid_all"
 |------|-------------|
 | `Private video` / `Video unavailable`，个别 `fail` | 该视频**真被删 / 设私有**，**没救**，跳过即可。**正常**：config 里 `jump_filter=True`，且 `pt_dataset.py` 加载失败会随机重采样，缺样本不影响训练启动。 |
 | 大量 `Sign in to confirm you're not a bot` / 年龄限制 | YouTube **反爬门**，不是视频私有。**传 cookies 可解**，见 [5.1](#51-传-cookies-解决-sign-in-反爬门)。 |
+| 一上来**每条都** `Unable to download API page: [Errno 111] Connection refused` | **网络问题，不是权限**：本机连不上 YouTube（国内服务器 / GFW，或代理没开）。需挂代理，见 [5.2](#52-国内服务器连不上-youtube挂代理)。 |
 | 抓了几万个后大量 `HTTP 429` | YouTube **封 IP**（约 3–5 万片段）。用**代理池**、多机分批、降 `--workers`、隔段时间再续跑。 |
 | 下载很慢 | 提高 `--workers`；`yt-dlp` 可加 `--concurrent-fragments`；换更快出口。 |
 | 磁盘爆了 | clip 很多，先 `--limit` 估算单条平均大小 × 条数；分盘存放，软链到分片目录。 |
@@ -199,6 +200,42 @@ train_corpus = "internvid_v1"     # 原为 "internvid_all"
 
 > ⚠️ **用小号**：大规模抓取可能导致账号被风控，请用**一次性 Google 账号**的 cookies，别用主号。
 > cookies 只解反爬门，**救不回真私有/被删的视频**（那些继续失败即可）。
+
+### 5.2 国内服务器连不上 YouTube：挂代理
+
+若**一上来每条**都报 `Unable to download API page: [Errno 111] Connection refused`
+（或超时），那是**网络层**问题——本机根本连不上 YouTube（国内 / GFW，或代理没开），
+和 cookies、权限都无关。先确认：
+
+```bash
+env | grep -i proxy                              # 是否已配代理
+curl -I --max-time 10 https://www.youtube.com    # 本机能否直连 YouTube
+```
+
+- `curl` 也连不上 → 本机确实到不了 YouTube，**必须挂代理 / VPN**（或换一台能连 YouTube 的机器抓）。
+- `curl` 能通 → 只是 yt-dlp 没走代理，按下面显式指定。
+
+`tools/download_internvid.py` 已内置 `--proxy`（透传给 yt-dlp）。以本机 clash/v2ray
+（常见端口 `127.0.0.1:7890`）为例：
+
+```bash
+python tools/download_internvid.py download \
+  --anno anno_downstream/InternVid/InternVid-10M-flt_1.json \
+  --out  data/video_sample/InternVId-FLT_1 \
+  --limit 200 --workers 4 \
+  --cookies cookies.txt \
+  --proxy http://127.0.0.1:7890
+```
+
+等价的零改动写法（yt-dlp 认代理环境变量，子进程会继承）：
+
+```bash
+export https_proxy=http://127.0.0.1:7890 http_proxy=http://127.0.0.1:7890
+python tools/download_internvid.py download --anno ... --out ... --cookies cookies.txt
+```
+
+> 端口按你的代理实际值改（clash 常见 7890，v2ray 常见 10809/1080）。
+> 元数据（HuggingFace/OpenDataLab）在国内一般能直连或走镜像，**只有抓 YouTube 视频这步需要代理**。
 
 ---
 
@@ -431,7 +468,9 @@ pip install -U yt-dlp && sudo apt-get install -y ffmpeg
 python tools/download_internvid.py inspect \
   --anno anno_downstream/InternVid/InternVid-10M-flt_1.json
 
-# 2) 冒烟（200 条）；大量 "Sign in to confirm you're not a bot" 就加 --cookies cookies.txt（见 5.1）
+# 2) 冒烟（200 条）
+#    大量 "Sign in to confirm you're not a bot" -> 加 --cookies cookies.txt（见 5.1）
+#    每条 "Connection refused" -> 国内连不上 YouTube，加 --proxy http://127.0.0.1:7890（见 5.2）
 python tools/download_internvid.py download \
   --anno anno_downstream/InternVid/InternVid-10M-flt_1.json \
   --out  data/video_sample/InternVId-FLT_1 --limit 200 --workers 4

@@ -95,7 +95,7 @@ def have(cmd):
     return subprocess.run(["which", cmd], capture_output=True).returncode == 0
 
 
-def download_clip(yid, start, end, out_path, cookies=None, retries=2):
+def download_clip(yid, start, end, out_path, cookies=None, proxy=None, retries=2):
     """Download the source video's [start, end] range straight into out_path.
 
     Uses yt-dlp's --download-sections so only the needed range is fetched, then
@@ -115,6 +115,8 @@ def download_clip(yid, start, end, out_path, cookies=None, retries=2):
     ]
     if cookies:
         cmd += ["--cookies", cookies]
+    if proxy:
+        cmd += ["--proxy", proxy]
     cmd.append(url)
     for attempt in range(retries + 1):
         p = subprocess.run(cmd, capture_output=True, text=True)
@@ -184,7 +186,8 @@ def cmd_download(args):
 
     def run_one(job):
         yid, start, end, out_path = job
-        status = download_clip(yid, start, end, out_path, cookies=args.cookies)
+        status = download_clip(yid, start, end, out_path,
+                               cookies=args.cookies, proxy=args.proxy)
         return out_path, status
 
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
@@ -219,6 +222,9 @@ def main():
     pd.add_argument("--limit", type=int, default=0, help="only first N entries (smoke test)")
     pd.add_argument("--workers", type=int, default=4)
     pd.add_argument("--cookies", default=None, help="cookies.txt for age-restricted videos")
+    pd.add_argument("--proxy", default=None,
+                    help="proxy for yt-dlp, e.g. http://127.0.0.1:7890 "
+                         "(needed where YouTube is unreachable directly, e.g. mainland China)")
     pd.add_argument("--info-jsonl", default=None,
                     help="official FLT-INFO jsonl, to resolve names if regex fails")
     pd.set_defaults(func=cmd_download)
