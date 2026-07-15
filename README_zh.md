@@ -357,28 +357,58 @@ bash scripts/evaluation/clip/zero_shot/mobileviclip_tiny/eval_ucf101.sh
 act_val/       75.44   95.35    98.60    83.17   96.04    99.01
 ```
 
-### 6.3 HMDB51（分类，有直链）
+### 6.3 HMDB51（分类）
 
-**① 下载并把视频平铺到 `data/hmdb51/videos_test/`**（官网 [Serre Lab / HMDB51](https://serre-lab.clps.brown.edu/resource/hmdb-a-large-human-motion-database/) 提供 `hmdb51_org.rar`，约 2 GB，内部还是按类别打包的 rar）：
+> ⚠️ **官方直链已失效**：Brown 大学的老地址
+> `http://serre-lab.clps.brown.edu/wp-content/uploads/2013/10/hmdb51_org.rar`
+> 现在会 301 跳转到 `https://serre.lab.brown.edu` 主页，`wget` 只会下到一个约 5 KB 的
+> **HTML 页面**，`unrar` 报 `hmdb51_org.rar is not RAR archive`。整个 `serre-lab.clps.brown.edu`
+> 域名已下线，重试无用。改用下面的 **HuggingFace 镜像**（内容一致：6766 个 `.avi`，约 2.12 GB）。
+
+**① 下载并把视频平铺到 `data/hmdb51/videos_test/`**：
 
 ```bash
-mkdir -p data/hmdb51
-cd data/hmdb51
-wget --no-check-certificate http://serre-lab.clps.brown.edu/wp-content/uploads/2013/10/hmdb51_org.rar
-unrar x hmdb51_org.rar          # 解出每个类别一个 .rar
-# 逐个解开类别 rar，再把测试集视频平铺到 videos_test/
-for f in *.rar; do [ "$f" = hmdb51_org.rar ] || unrar x "$f"; done
-mkdir -p videos_test
-find . -name '*.avi' -exec mv {} videos_test/ \;
-cd ../..
-ls data/hmdb51/videos_test/ | head
+# 清掉可能下到的假文件（其实是 HTML）
+rm -f data/hmdb51/hmdb51_org.rar
+
+# 从 HuggingFace 镜像下载（国内用 hf-mirror 加速）
+pip install -U "huggingface_hub[cli]"
+export HF_ENDPOINT=https://hf-mirror.com
+huggingface-cli download jili5044/hmdb51 --repo-type dataset --local-dir data/hmdb51_hf
+
+# 看一下结构（可能直接是 .avi，也可能是按类别打包的 .rar）
+find data/hmdb51_hf -maxdepth 2 | head -30
+
+# 情况 A：直接就是 .avi —— 软链平铺到 videos_test/（省空间）
+mkdir -p data/hmdb51/videos_test
+find data/hmdb51_hf -name '*.avi' -exec ln -sf {} data/hmdb51/videos_test/ \;
+
+# 情况 B：里面是 .rar —— 先解压再平铺
+#   cd data/hmdb51_hf && for f in *.rar; do unrar x "$f"; done && cd -
+#   find data/hmdb51_hf -name '*.avi' -exec ln -sf {} data/hmdb51/videos_test/ \;
+
+ls data/hmdb51/videos_test/ | head        # 形如 *.avi
+ls data/hmdb51/videos_test/ | wc -l       # 目标 ~6766
 ```
 
 > HMDB51 的官方 test 划分由 `anno_downstream/hmdb51_act_test.json` 指定；上面把全部 `.avi`
 > 平铺进 `videos_test/`，评测时只按标注 JSON 里的文件名读取（多出来的训练视频不会被用到）。
+> 只要有 HMDB51 的 `.avi` 视频，**任何来源都可以**（Kaggle、其它 HF 镜像等），关键是文件名与标注对齐。
 
-**② 验证**：跑「通用验证脚本」确认 `hmdb51_act_test.json` 0 缺失。若有缺失，通常是个别类别的
-`.rar` 没解开，回到 `data/hmdb51/` 补 `unrar x <类别>.rar` 后重新 `find ... -exec mv`。
+**② 验证**：跑「通用验证脚本」（或下面单独针对 HMDB51 的一段）确认 `hmdb51_act_test.json` 0 缺失。
+若大量缺失，多为**扩展名/命名不一致**（标注是裸文件名 `*.avi`，镜像可能带类别子目录）——用 `find ... -exec ln -sf`
+把所有 `.avi` 平铺到 `videos_test/` 即可对齐：
+>
+> ```bash
+> python - <<'PY'
+> import json, os
+> root = "./data/hmdb51/videos_test"
+> d = json.load(open("anno_downstream/hmdb51_act_test.json"))
+> miss = [e["video"] for e in d if not os.path.exists(os.path.join(root, e["video"]))]
+> print(f"共 {len(d)} 条, 缺失 {len(miss)}; 首条 -> {os.path.join(root, d[0]['video'])}")
+> if miss: print("例如缺失:", miss[:3])
+> PY
+> ```
 
 **③ 运行评测**（脚本默认 `CUDA_VISIBLE_DEVICES=6`）：
 
