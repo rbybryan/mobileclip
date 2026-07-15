@@ -219,3 +219,109 @@ mirror `anno_downstream/` on a public host (e.g. a Hugging Face dataset).
 > video via a `*jsfusion*caption_idx*.pkl`. `build_msrvtt_1k_test.py` uses it
 > automatically when present; if it is absent the script falls back to the first
 > caption — the eval still runs, but R@k may differ slightly from the paper.
+
+---
+
+## Running the next retrieval dataset (DiDeMo, ActivityNet)
+
+Once MSR-VTT works end-to-end, the other zero-shot **retrieval** benchmarks run
+through the exact same three-step pattern — only the dataset names change:
+
+1. an **annotation JSON** under `anno_downstream/`,
+2. the **videos** on disk at the `data_root` the config expects, and
+3. run the matching `eval_*.sh`.
+
+### The retrieval configs at a glance
+
+| Dataset | Script | `anno_path` | `data_root` (videos) | `caption` field |
+|---|---|---|---|---|
+| MSR-VTT 1K-A | `eval_msrvtt.sh` | `anno_downstream/msrvtt_1k_test.json` | `./data/MSRVTT_Videos` | single string |
+| DiDeMo | `eval_didemo.sh` | `anno_downstream/didemo_ret_test.json` | `./data/didemo/processed_videos/test` | list of sentences |
+| ActivityNet | `eval_anet.sh` | `anno_downstream/anet_ret_val.json` | `./data/anet_1.3_video_val_resize` | list of sentences |
+
+> **Paragraph retrieval.** DiDeMo and ActivityNet are *paragraph* retrieval
+> (`is_paragraph_retrieval=True`): each video is matched against **all its
+> sentences joined into one paragraph**. Their annotation `caption` is therefore a
+> **list of strings**, not a single string:
+> ```json
+> [{"video": "xxxxx.mp4", "caption": ["a woman walks in.", "she sits down.", "..."]}, ...]
+> ```
+> The loader joins the list with spaces (`" ".join(caption)`, see
+> `preprocess_para_retrieval_data` in `dataset/ret_dataset.py`). MSR-VTT's
+> `caption` is a plain string. DiDeMo also sets `trimmed30=True` — only the first
+> 30 s of each video is read.
+
+### Step 1 — annotation JSON
+
+Like `msrvtt_1k_test.json`, `didemo_ret_test.json` and `anet_ret_val.json` come
+from the author's Google Drive `anno_downstream/` folder (access-gated). With
+Drive access:
+
+```bash
+gdown --folder https://drive.google.com/drive/folders/1grbR39KnMLpeHPNpX4MBYArhr6wASJza -O anno_downstream
+```
+
+Without it: the DiDeMo and ActivityNet paragraph-retrieval splits are the
+standard ones shared across CLIP4Clip / Frozen-in-Time / collaborative-experts,
+so rebuild them from those public releases into the schema above (a list of
+`{"video", "caption": [...]}`). These annotation files are small text — the
+videos are the large download.
+
+### Step 2 — videos + path (same symlink trick as MSR-VTT)
+
+The config points at a specific `data_root`; your videos just need to be
+reachable there. After downloading each dataset's videos, symlink your real
+folder to the path the config expects:
+
+```bash
+cd ~/mobileclip
+
+# DiDeMo  -> config wants ./data/didemo/processed_videos/test
+mkdir -p data/didemo/processed_videos
+ln -s "$(pwd)/<your_didemo_test_videos>" "$(pwd)/data/didemo/processed_videos/test"
+
+# ActivityNet  -> config wants ./data/anet_1.3_video_val_resize
+ln -s "$(pwd)/<your_anet_val_videos>" "$(pwd)/data/anet_1.3_video_val_resize"
+```
+
+Confirm the `video` filenames in the annotation resolve to real files before
+launching (catches path/extension mismatches early):
+
+```bash
+python - <<'PY'
+import json, os
+checks = [("anno_downstream/didemo_ret_test.json", "./data/didemo/processed_videos/test"),
+          ("anno_downstream/anet_ret_val.json",    "./data/anet_1.3_video_val_resize")]
+for anno, root in checks:
+    if not os.path.exists(anno):
+        print(f"[skip] {anno} not built yet"); continue
+    v = json.load(open(anno))[0]["video"]
+    p = os.path.join(root, v)
+    print(f"{anno}: first video -> {p}  exists={os.path.exists(p)}")
+PY
+```
+
+### Step 3 — run
+
+```bash
+conda activate mobileviclip
+bash scripts/evaluation/clip/zero_shot/mobileviclip_tiny/eval_didemo.sh
+bash scripts/evaluation/clip/zero_shot/mobileviclip_tiny/eval_anet.sh
+```
+
+> **GPU index gotcha.** These scripts hard-code a GPU that may not exist on your
+> box: `eval_didemo.sh` sets `CUDA_VISIBLE_DEVICES=1` and `eval_anet.sh` sets
+> `CUDA_VISIBLE_DEVICES=7` (`eval_msrvtt.sh` ships with `=3`). On a single-GPU
+> machine, change it to `0` (as you did for MSR-VTT) or the run fails with an
+> invalid-device error.
+
+### Expected numbers (MobileViCLIP-Tiny, from each script's header comment)
+
+| Dataset | txt R@1 | txt R@5 | txt R@10 | vid R@1 | vid R@5 | vid R@10 |
+|---|---|---|---|---|---|---|
+| MSR-VTT | 39.0 | 65.5 | 75.1 | 38.3 | 66.4 | 74.9 |
+| DiDeMo | 37.11 | 64.91 | 73.32 | 36.66 | 64.69 | 74.89 |
+| ActivityNet | 28.21 | 54.75 | 68.29 | 29.29 | 58.41 | 71.77 |
+
+Landing within ~1 point of these confirms the model, video decoding, and the
+annotation split are all wired up correctly for that dataset.
