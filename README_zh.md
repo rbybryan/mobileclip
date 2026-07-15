@@ -278,9 +278,52 @@ ls data/MSRVTT_Videos/ | head
 > 标注 `anno_downstream/msrvtt_1k_test.json` 用的是 1K-A 测试划分，视频文件名形如 `videoXXXX.mp4`，
 > 与上面解压出来的命名一致。若 `ln -s` 不方便也可 `mv MSRVTT/videos/all MSRVTT_Videos`。
 
+---
+
+## 6.2–6.4 分类数据集（UCF101 / HMDB51 / Kinetics-400）：组织数据并测试
+
+这三个是**零样本动作识别（分类）**任务，走 `is_act_rec=True` 流程，与检索略有不同。
+下面先统一说明「数据怎么组织、怎么验证」，再分别给出 **下载 → 验证 → 运行 → 参考结果** 的完整步骤。
+
+> 📌 **分类任务的数据模型（三者通用，先读）**
+> - 标注 JSON（第 5 步已随 `anno_downstream/` 下好）是一个列表，每条形如
+>   `{"video": "<文件名>", "caption": "<类别名>"}`，其中 `caption` 就是**类别名**（如 `playing basketball`）。
+>   评测时会用 `kinetics_templates` 把每个类别名套成多条提示词（"a video of a person doing {}." 等），
+>   与视频特征逐一比对，取最相似的类别作为预测——所以这是「视频 → 类别」的分类，而非「视频 ↔ 句子」的检索。
+> - 视频按 `os.path.join(data_root, video)` 读取。因此你**只需把视频平铺到各自的 `data_root`、
+>   且文件名与标注里的 `video` 字段一致**即可；标注里没提到的多余视频（如训练集）不会被用到。
+> - 三者的对应关系（`data_root` / 标注 / 脚本 / 脚本内写死的 GPU 编号）：
+>
+> | 数据集 | `data_root`（视频放这里） | 标注 JSON | 评测脚本 | 脚本默认 GPU |
+> |---|---|---|---|---|
+> | UCF101 | `./data/ucf101/videos` | `anno_downstream/ucf101_act_test.json` | `eval_ucf101.sh` | `=4` |
+> | HMDB51 | `./data/hmdb51/videos_test` | `anno_downstream/hmdb51_act_test.json` | `eval_hmdb51.sh` | `=6` |
+> | Kinetics-400 | `./data/kinetics_400_val_10s_320p` | `anno_downstream/kinetics400_validate.json` | `eval_k400.sh` | `=2` |
+
+> 💡 **通用验证脚本**：视频放好后，用下面这段确认「标注里的文件名能对应到真实文件」，
+> 避免跑到一半才发现路径/命名不符（同样适用于第 7 步之前的自检）：
+>
+> ```bash
+> python - <<'PY'
+> import json, os
+> checks = [("anno_downstream/ucf101_act_test.json",     "./data/ucf101/videos"),
+>           ("anno_downstream/hmdb51_act_test.json",     "./data/hmdb51/videos_test"),
+>           ("anno_downstream/kinetics400_validate.json","./data/kinetics_400_val_10s_320p")]
+> for anno, root in checks:
+>     if not os.path.exists(anno):
+>         print(f"[skip] 标注未下载: {anno}"); continue
+>     d = json.load(open(anno))
+>     miss = [e["video"] for e in d[:300] if not os.path.exists(os.path.join(root, e["video"]))]
+>     print(f"{anno}: 共 {len(d)} 条, 前300条缺失 {len(miss)} 个; 首条 -> {os.path.join(root, d[0]['video'])}")
+>     if miss: print("   例如缺失:", miss[:3])
+> PY
+> ```
+> 缺失数为 0 说明命名对得上，可以直接评测；若大量缺失，多半是**文件名/扩展名不一致**
+> （如标注写 `.mp4` 而你的是 `.avi`，或标注含子目录前缀），按下面各数据集的说明调整平铺方式或补软链。
+
 ### 6.2 UCF101（分类，有直链）
 
-官网 [CRCV/UCF101](https://www.crcv.ucf.edu/data/UCF101.php) 提供整包 `UCF101.rar`（约 6.5 GB）：
+**① 下载并把视频平铺到 `data/ucf101/videos/`**（官网 [CRCV/UCF101](https://www.crcv.ucf.edu/data/UCF101.php) 提供整包 `UCF101.rar`，约 6.5 GB）：
 
 ```bash
 mkdir -p data/ucf101
@@ -292,12 +335,31 @@ unrar x UCF101.rar              # 解压出 UCF-101/<类别>/*.avi
 mkdir -p videos
 find UCF-101 -name '*.avi' -exec mv {} videos/ \;
 cd ../..
-ls data/ucf101/videos/ | head
+ls data/ucf101/videos/ | head   # 形如 v_ApplyEyeMakeup_g01_c01.avi
+```
+
+**② 验证**：跑上面的「通用验证脚本」，确认 `ucf101_act_test.json` 的文件名 0 缺失。
+UCF101 标注里的 `video` 一般就是**平铺后的裸文件名**（不带类别子目录），与上面 `find ... -exec mv` 的结果一致。
+
+**③ 运行评测**（脚本默认 `CUDA_VISIBLE_DEVICES=4`，先改成本机 GPU）：
+
+```bash
+sed -i 's/CUDA_VISIBLE_DEVICES=4/CUDA_VISIBLE_DEVICES=0/' \
+    scripts/evaluation/clip/zero_shot/mobileviclip_tiny/eval_ucf101.sh
+bash scripts/evaluation/clip/zero_shot/mobileviclip_tiny/eval_ucf101.sh
+```
+
+**④ 参考结果（Tiny）**：`act_val/` 行的 **`img_r1` 即 Top-1 分类准确率**（视频→类别），
+`img_r5` 即 Top-5：
+
+```
+              txt_r1  txt_r5  txt_r10   img_r1  img_r5  img_r10
+act_val/       75.44   95.35    98.60    83.17   96.04    99.01
 ```
 
 ### 6.3 HMDB51（分类，有直链）
 
-官网 [Serre Lab / HMDB51](https://serre-lab.clps.brown.edu/resource/hmdb-a-large-human-motion-database/) 提供 `hmdb51_org.rar`（约 2 GB，内部还是按类别打包的 rar）：
+**① 下载并把视频平铺到 `data/hmdb51/videos_test/`**（官网 [Serre Lab / HMDB51](https://serre-lab.clps.brown.edu/resource/hmdb-a-large-human-motion-database/) 提供 `hmdb51_org.rar`，约 2 GB，内部还是按类别打包的 rar）：
 
 ```bash
 mkdir -p data/hmdb51
@@ -313,12 +375,30 @@ ls data/hmdb51/videos_test/ | head
 ```
 
 > HMDB51 的官方 test 划分由 `anno_downstream/hmdb51_act_test.json` 指定；上面把全部 `.avi`
-> 平铺进 `videos_test/`，评测时按标注 JSON 里的文件名读取即可（多出来的训练视频不会被用到）。
+> 平铺进 `videos_test/`，评测时只按标注 JSON 里的文件名读取（多出来的训练视频不会被用到）。
+
+**② 验证**：跑「通用验证脚本」确认 `hmdb51_act_test.json` 0 缺失。若有缺失，通常是个别类别的
+`.rar` 没解开，回到 `data/hmdb51/` 补 `unrar x <类别>.rar` 后重新 `find ... -exec mv`。
+
+**③ 运行评测**（脚本默认 `CUDA_VISIBLE_DEVICES=6`）：
+
+```bash
+sed -i 's/CUDA_VISIBLE_DEVICES=6/CUDA_VISIBLE_DEVICES=0/' \
+    scripts/evaluation/clip/zero_shot/mobileviclip_tiny/eval_hmdb51.sh
+bash scripts/evaluation/clip/zero_shot/mobileviclip_tiny/eval_hmdb51.sh
+```
+
+**④ 参考结果（Tiny）**（`img_r1` = Top-1）：
+
+```
+              txt_r1  txt_r5  txt_r10   img_r1  img_r5  img_r10
+act_val/       48.76   77.71    88.17    62.75   74.51    84.31
+```
 
 ### 6.4 Kinetics-400（分类）⚠️ 走官方下载脚本
 
-仓库用的是 **10 秒、320p 的验证集**（`kinetics_400_val_10s_320p`）。用 CVDF 官方仓库脚本下载
-验证集，再自行重采样/缩放到 10s、320p：
+**① 下载验证集并转成 10s / 320p**。仓库用的是 **10 秒、320p 的验证集**
+（`data/kinetics_400_val_10s_320p`）。用 CVDF 官方仓库脚本下载验证集，再用 ffmpeg 裁到 10s、缩到 320p：
 
 ```bash
 # 1) 克隆官方下载器
@@ -341,6 +421,30 @@ ls data/kinetics_400_val_10s_320p/ | head
 
 > ⚠️ Kinetics 视频来自 YouTube，部分链接会失效；CVDF 仓库提供了替换视频。
 > 文件名（YouTube id）需与 `anno_downstream/kinetics400_validate.json` 对得上。
+
+**② 验证**：跑「通用验证脚本」看 `kinetics400_validate.json` 的缺失比例。K400 部分视频因 YouTube 失效
+抓不全属正常——只要缺失比例不高，评测仍可进行（缺失样本会被跳过），但准确率会因样本缺失而与参考值有出入。
+若缺失很多，多为**扩展名或 id 命名不一致**：标注里的 `video` 通常是 `<ytid>_<start>_<end>.mp4` 或 `<ytid>.mp4`，
+按你解压出的实际命名对齐（必要时用 `ffmpeg` 输出名或加软链）。
+
+**③ 运行评测**（脚本默认 `CUDA_VISIBLE_DEVICES=2`）：
+
+```bash
+sed -i 's/CUDA_VISIBLE_DEVICES=2/CUDA_VISIBLE_DEVICES=0/' \
+    scripts/evaluation/clip/zero_shot/mobileviclip_tiny/eval_k400.sh
+bash scripts/evaluation/clip/zero_shot/mobileviclip_tiny/eval_k400.sh
+```
+
+**④ 参考结果（Tiny）**（`img_r1` = Top-1）：
+
+```
+              txt_r1  txt_r5  txt_r10   img_r1  img_r5  img_r10
+act_val/       56.25   81.89    88.75    80.75   95.00    98.00
+```
+
+> 💡 **三者小结**：分类任务看 `act_val/` 行的 **`img_r1`（Top-1）/ `img_r5`（Top-5）**。数值接近上表
+> 即说明数据组织正确、复现成功；换 Small 模型把脚本路径里的 `mobileviclip_tiny` 换成 `mobileviclip_small` 即可。
+> 若某数据集视频抓不全，Top-1 会相应偏低，属数据缺失而非流程错误。
 
 ### 6.5 DiDeMo（检索）⚠️ 从 YouTube 抓取
 
