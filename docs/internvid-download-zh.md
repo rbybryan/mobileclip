@@ -161,13 +161,44 @@ train_corpus = "internvid_v1"     # 原为 "internvid_all"
 
 | 现象 | 原因 / 处理 |
 |------|-------------|
-| 部分 `fail`，抓不全 | 视频被删/设私有/地区限制。**正常**：config 里 `jump_filter=True`，且 `pt_dataset.py` 加载失败会随机重采样，缺样本不影响训练启动。 |
-| 抓了几万个后大量 `fail: HTTP 429 / Sign in to confirm` | YouTube 封 IP（约 3–5 万片段）。用**代理池**、多机分批、降 `--workers`、隔段时间再续跑。 |
-| `Sign in to confirm you're not a bot` / 年龄限制 | 传 cookies：`--cookies cookies.txt`（浏览器导出，或 `yt-dlp --cookies-from-browser chrome` 生成）。 |
+| `Private video` / `Video unavailable`，个别 `fail` | 该视频**真被删 / 设私有**，**没救**，跳过即可。**正常**：config 里 `jump_filter=True`，且 `pt_dataset.py` 加载失败会随机重采样，缺样本不影响训练启动。 |
+| 大量 `Sign in to confirm you're not a bot` / 年龄限制 | YouTube **反爬门**，不是视频私有。**传 cookies 可解**，见 [5.1](#51-传-cookies-解决-sign-in-反爬门)。 |
+| 抓了几万个后大量 `HTTP 429` | YouTube **封 IP**（约 3–5 万片段）。用**代理池**、多机分批、降 `--workers`、隔段时间再续跑。 |
 | 下载很慢 | 提高 `--workers`；`yt-dlp` 可加 `--concurrent-fragments`；换更快出口。 |
 | 磁盘爆了 | clip 很多，先 `--limit` 估算单条平均大小 × 条数；分盘存放，软链到分片目录。 |
 
 > **合规提醒**：请遵守 YouTube 服务条款与各视频版权，仅将数据用于研究用途。
+
+### 5.1 传 cookies 解决 sign-in 反爬门
+
+先分清两种“需要登录”：
+
+- **`Private video` / `Video unavailable`（个别）**：视频真没了/私有，**登录也下不了**，直接跳过（正常损耗）。
+- **`Sign in to confirm you're not a bot`（大面积）**：YouTube 反爬门，**登录 cookies 能解**。
+
+`tools/download_internvid.py` 已内置 `--cookies` 参数。**无头服务器**上这样用：
+
+1. **先升级 yt-dlp**（旧版常被 YouTube 变更打到，误报 sign-in）：
+   ```bash
+   pip install -U yt-dlp
+   ```
+2. 在**本地电脑浏览器**登录 YouTube，用「Get cookies.txt LOCALLY」之类扩展，在 youtube.com 页面
+   导出 **`cookies.txt`**；`scp` 到服务器：
+   ```bash
+   scp cookies.txt rby@<server>:~/mobileclip/
+   ```
+3. 抓取时带上 `--cookies`：
+   ```bash
+   python tools/download_internvid.py download \
+     --anno anno_downstream/InternVid/InternVid-10M-flt_1.json \
+     --out  data/video_sample/InternVId-FLT_1 \
+     --limit 200 --workers 4 \
+     --cookies cookies.txt
+   ```
+   （若该机器本身有浏览器 profile，也可改用 `yt-dlp --cookies-from-browser chrome`，无头机一般用不上。）
+
+> ⚠️ **用小号**：大规模抓取可能导致账号被风控，请用**一次性 Google 账号**的 cookies，别用主号。
+> cookies 只解反爬门，**救不回真私有/被删的视频**（那些继续失败即可）。
 
 ---
 
@@ -400,7 +431,7 @@ pip install -U yt-dlp && sudo apt-get install -y ffmpeg
 python tools/download_internvid.py inspect \
   --anno anno_downstream/InternVid/InternVid-10M-flt_1.json
 
-# 2) 冒烟（200 条）
+# 2) 冒烟（200 条）；大量 "Sign in to confirm you're not a bot" 就加 --cookies cookies.txt（见 5.1）
 python tools/download_internvid.py download \
   --anno anno_downstream/InternVid/InternVid-10M-flt_1.json \
   --out  data/video_sample/InternVId-FLT_1 --limit 200 --workers 4
