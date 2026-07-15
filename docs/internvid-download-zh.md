@@ -312,9 +312,53 @@ PY
 > ℹ️ **FLT clip 很短**：很多片段只有 1–2 秒（示例 `00:03:10.567→00:03:11.200` 仅 0.63s）。
 > 这是正常的——训练每个 clip 固定采 8 帧，短片也能用，只是文件会很小。
 
+#### 一次生成全部 11 个分片（循环）
+
+想直接用 `internvid_all`（11 片全上）时，把整份 jsonl 切成 11 份、分别写到
+`InternVid-10M-flt_1.json … _11.json`：
+
+```bash
+python - <<'PY'
+import json, os, math
+SRC = "data/InternVid_info/InternVid-10M-flt.jsonl"   # 改成你下载到的实际路径
+OUT_DIR = "anno_downstream/InternVid"
+NUM_SHARDS = 11
+PER_SHARD  = 5000     # 每片条数；设 None = 把全部行平均切到 11 片
+UMT_MIN    = 0.0      # 可选质量过滤：设 0.4 只保留 UMT_Score>=0.4
+
+def sec(ts):
+    ts = str(ts)
+    if ":" in ts:
+        h, m, s = ts.split(":"); return int(h)*3600 + int(m)*60 + float(s)
+    return float(ts)
+
+cap = PER_SHARD * NUM_SHARDS if PER_SHARD else None
+entries = []
+with open(SRC) as f:
+    for line in f:
+        if cap and len(entries) >= cap: break
+        line = line.strip()
+        if not line: continue
+        r = json.loads(line)
+        if r.get("UMT_Score", 1.0) < UMT_MIN: continue
+        yid, st, en = r["YoutubeID"], sec(r["Start_timestamp"]), sec(r["End_timestamp"])
+        entries.append({"video": f"{yid}_{st}_{en}.mp4", "caption": r.get("Caption") or ""})
+
+os.makedirs(OUT_DIR, exist_ok=True)
+per = math.ceil(len(entries) / NUM_SHARDS)
+for n in range(1, NUM_SHARDS + 1):
+    part = entries[(n-1)*per : n*per]
+    dst = os.path.join(OUT_DIR, f"InternVid-10M-flt_{n}.json")
+    json.dump(part, open(dst, "w"), ensure_ascii=False)
+    print(f"shard {n}: {len(part)} -> {dst}")
+PY
+```
+
 ### B.3 抓视频 + 启动训练
 
 标注就绪后，和正文完全一样：
+
+**单分片（先跑通）：**
 
 ```bash
 # 抓第 1 分片对应的视频（文件名已与标注一致，脚本 inspect 会 matched N/N）
@@ -326,8 +370,23 @@ python tools/download_internvid.py download \
 bash scripts/pretraining/clip/mobileviclip_tiny/run.sh
 ```
 
-> 要多分片就把上面 `_1` 换成 `_2 … _11`，转换脚本按行区间切分 jsonl（如每片取不同的
-> `LIMIT` 段），分别写到对应 `InternVid-10M-flt_<N>.json` 即可。
+**全部 11 个分片（循环抓取）：** 生成好 11 份标注后，循环下每一片的视频到对应目录：
+
+```bash
+for N in $(seq 1 11); do
+  echo "==== shard ${N} ===="
+  python tools/download_internvid.py download \
+    --anno anno_downstream/InternVid/InternVid-10M-flt_${N}.json \
+    --out  data/video_sample/InternVId-FLT_${N} \
+    --workers 8            # 加 --limit N 可先每片各抓少量做验证
+done
+
+# 11 片都就绪后用默认全量语料训练： train_corpus = "internvid_all"
+bash scripts/pretraining/clip/mobileviclip_tiny/run.sh
+```
+
+> 断点续跑：脚本对已存在文件返回 `skip`，任一分片中断后重跑同一循环即可继续。
+> 被 YouTube 限流时，可把循环拆到多机 / 挂代理分别跑不同分片。
 
 ---
 
