@@ -229,9 +229,15 @@ checkpoints/
 
 > 这些目录都在 `.gitignore` 里，不会被提交。
 
-> ⚠️ 若 `gdown --folder` 报 `Cannot retrieve the folder information from the link`（没权限/限流），
-> 见 [常见问题 Q6.1](#10-常见问题与排错)：多为 gdown 版本旧或被限流，先
-> `pip install --upgrade --no-cache-dir gdown` 再试，或用浏览器把整个文件夹打包成 zip 传上服务器。
+> ⚠️ **标注文件夹（5.2）常常没有下载权限**：`gdown --folder` 会报
+> `Cannot retrieve the folder information from the link` / `Permission denied`。
+> 这个 `anno_downstream/` 是**数据**、不是仓库内容，作者的 Drive 需要审批，**很可能拿不到**。
+> 好消息是**这些标注都可以自己生成**：
+> - **MSR-VTT** → 见 [6.1](#61-msr-vtt检索最小推荐先跑) + `preprocess/build_msrvtt_1k_test.py`
+> - **UCF101 / HMDB51 / Kinetics-400（分类）** → 见 [6.2–6.4](#62-64-分类数据集ucf101--hmdb51--kinetics-400组织数据并测试) + `preprocess/build_act_rec_anno.py`
+>
+> 即使权重那步（5.1）能下、标注这步（5.2）拿不到，也**不影响**——按第 6 步各数据集的「生成标注」小节自建即可。
+> 若你确实有 Drive 权限，`gdown` 报错多为版本旧/限流，见 [常见问题 Q6.1](#10-常见问题与排错)。
 
 ---
 
@@ -252,7 +258,11 @@ data/
 ```
 
 > 建议先只下载 **MSR-VTT**（体量最小、且有直链），把评测流程完整跑通一次，再按需下载其它数据集。
-> 每个数据集对应的标注 JSON 已在第 5 步随 `anno_downstream/` 一起下载好，这里只下**视频文件**。
+>
+> ⚠️ **标注 JSON 需自建**：第 5.2 步的 Drive `anno_downstream/` 往往**没有下载权限**（Permission denied）。
+> 因此下面每个数据集除了下**视频**，还会给出**用公开划分文件自己生成标注 JSON** 的步骤
+> （MSR-VTT 用 `preprocess/build_msrvtt_1k_test.py`，分类三件套用 `preprocess/build_act_rec_anno.py`）。
+> 生成脚本会把标注**按你磁盘上实际存在的视频**过滤——缺失的视频会被丢弃，避免评测中途因找不到文件而崩溃。
 
 > ⚠️ **诚实提醒**：除 MSR-VTT / UCF101 / HMDB51 有公开直链外，**ActivityNet、Kinetics-400、
 > DiDeMo、SSv2 都需要申请表单、走 YouTube 抓取脚本，或注册后才能下载**，无法用一条 `wget` 搞定。
@@ -286,12 +296,15 @@ ls data/MSRVTT_Videos/ | head
 下面先统一说明「数据怎么组织、怎么验证」，再分别给出 **下载 → 验证 → 运行 → 参考结果** 的完整步骤。
 
 > 📌 **分类任务的数据模型（三者通用，先读）**
-> - 标注 JSON（第 5 步已随 `anno_downstream/` 下好）是一个列表，每条形如
->   `{"video": "<文件名>", "caption": "<类别名>"}`，其中 `caption` 就是**类别名**（如 `playing basketball`）。
->   评测时会用 `kinetics_templates` 把每个类别名套成多条提示词（"a video of a person doing {}." 等），
->   与视频特征逐一比对，取最相似的类别作为预测——所以这是「视频 → 类别」的分类，而非「视频 ↔ 句子」的检索。
-> - 视频按 `os.path.join(data_root, video)` 读取。因此你**只需把视频平铺到各自的 `data_root`、
->   且文件名与标注里的 `video` 字段一致**即可；标注里没提到的多余视频（如训练集）不会被用到。
+> - 标注 JSON 是一个列表，每条形如 `{"video": "<文件名>", "caption": "<类别名>"}`，其中
+>   `caption` 就是**类别名**（如 `playing basketball`）。评测时会用 `kinetics_templates`
+>   把每个类别名套成多条提示词（"a video of a person doing {}." 等），与视频特征逐一比对，
+>   取最相似的类别作为预测——所以这是「视频 → 类别」的分类，而非「视频 ↔ 句子」的检索。
+> - ⚠️ **标注需自建**：作者 Drive 里的 `anno_downstream/*.json` 往往**没权限**（见第 5.2 步）。
+>   下面每个数据集都给出用 `preprocess/build_act_rec_anno.py` **从公开划分文件生成**标注的步骤——
+>   和 6.1 里 `build_msrvtt_1k_test.py` 是一样的思路。
+> - 视频按 `os.path.join(data_root, video)` 读取；**缺失文件会让评测直接崩溃**（不是跳过）。
+>   所以生成脚本带 `--videos <data_root>` 时会**只保留磁盘上真实存在的视频**，缺的丢弃（K400 因 YouTube 失效抓不全时尤其有用）。
 > - 三者的对应关系（`data_root` / 标注 / 脚本 / 脚本内写死的 GPU 编号）：
 >
 > | 数据集 | `data_root`（视频放这里） | 标注 JSON | 评测脚本 | 脚本默认 GPU |
@@ -299,6 +312,11 @@ ls data/MSRVTT_Videos/ | head
 > | UCF101 | `./data/ucf101/videos` | `anno_downstream/ucf101_act_test.json` | `eval_ucf101.sh` | `=4` |
 > | HMDB51 | `./data/hmdb51/videos_test` | `anno_downstream/hmdb51_act_test.json` | `eval_hmdb51.sh` | `=6` |
 > | Kinetics-400 | `./data/kinetics_400_val_10s_320p` | `anno_downstream/kinetics400_validate.json` | `eval_k400.sh` | `=2` |
+>
+> **类别名文本的说明（可能带来与论文的小幅差异）**：脚本用标准可读类名作 `caption`——UCF101 把驼峰
+> `ApplyEyeMakeup` 拆成 `apply eye makeup`，HMDB51 把 `brush_hair` 下划线换空格成 `brush hair`，
+> K400 直接用官方 label。评测里 `pre_text` 会统一小写去标点，所以大小写无所谓；但若作者对某类的措辞不同，
+> 那一类的准确率可能略有出入（与 6.1 里 MSR-VTT 的 caption-index 同理）。
 
 > 💡 **通用验证脚本**：视频放好后，用下面这段确认「标注里的文件名能对应到真实文件」，
 > 避免跑到一半才发现路径/命名不符（同样适用于第 7 步之前的自检）：
@@ -338,10 +356,28 @@ cd ../..
 ls data/ucf101/videos/ | head   # 形如 v_ApplyEyeMakeup_g01_c01.avi
 ```
 
-**② 验证**：跑上面的「通用验证脚本」，确认 `ucf101_act_test.json` 的文件名 0 缺失。
-UCF101 标注里的 `video` 一般就是**平铺后的裸文件名**（不带类别子目录），与上面 `find ... -exec mv` 的结果一致。
+**② 生成标注 `ucf101_act_test.json`**（Drive 拿不到，用官方划分文件自建）。UCF101 的官方
+train/test 划分是 `UCF101TrainTestSplits-RecognitionTask.zip`（CRCV 官网，很小）：
 
-**③ 运行评测**（脚本默认 `CUDA_VISIBLE_DEVICES=4`，先改成本机 GPU）：
+```bash
+cd data/ucf101
+wget --no-check-certificate https://www.crcv.ucf.edu/data/UCF101/UCF101TrainTestSplits-RecognitionTask.zip
+unzip -q UCF101TrainTestSplits-RecognitionTask.zip     # 解出 ucfTrainTestlist/
+cd ../..
+# 用 testlist01（split 1）生成标注，并按磁盘实际视频过滤：
+python preprocess/build_act_rec_anno.py --dataset ucf101 \
+    --src data/ucf101/ucfTrainTestlist --videos data/ucf101/videos \
+    --out anno_downstream/ucf101_act_test.json
+```
+
+> 拿不到划分 zip 时的兜底：直接用**按类别分文件夹**的原始解压目录（`UCF-101/<类别>/*.avi`）生成——
+> 但这会用**全部视频**（train+test），数量和参考值不同：
+> `python preprocess/build_act_rec_anno.py --dataset ucf101 --from-dir data/ucf101/UCF-101 --videos data/ucf101/videos --out anno_downstream/ucf101_act_test.json`
+
+**③ 验证**：跑上面的「通用验证脚本」，确认 `ucf101_act_test.json` 的文件名 0 缺失。
+UCF101 标注里的 `video` 就是**平铺后的裸文件名**（不带类别子目录），与上面 `find ... -exec mv` 的结果一致。
+
+**④ 运行评测**（脚本默认 `CUDA_VISIBLE_DEVICES=4`，先改成本机 GPU）：
 
 ```bash
 sed -i 's/CUDA_VISIBLE_DEVICES=4/CUDA_VISIBLE_DEVICES=0/' \
@@ -349,7 +385,7 @@ sed -i 's/CUDA_VISIBLE_DEVICES=4/CUDA_VISIBLE_DEVICES=0/' \
 bash scripts/evaluation/clip/zero_shot/mobileviclip_tiny/eval_ucf101.sh
 ```
 
-**④ 参考结果（Tiny）**：`act_val/` 行的 **`img_r1` 即 Top-1 分类准确率**（视频→类别），
+**⑤ 参考结果（Tiny）**：`act_val/` 行的 **`img_r1` 即 Top-1 分类准确率**（视频→类别），
 `img_r5` 即 Top-5：
 
 ```
@@ -395,7 +431,25 @@ ls data/hmdb51/videos_test/ | wc -l       # 目标 ~6766
 > 平铺进 `videos_test/`，评测时只按标注 JSON 里的文件名读取（多出来的训练视频不会被用到）。
 > 只要有 HMDB51 的 `.avi` 视频，**任何来源都可以**（Kaggle、其它 HF 镜像等），关键是文件名与标注对齐。
 
-**② 验证**：跑「通用验证脚本」（或下面单独针对 HMDB51 的一段）确认 `hmdb51_act_test.json` 0 缺失。
+**② 生成标注 `hmdb51_act_test.json`**（Drive 拿不到，自建）。HMDB51 的官方划分文件
+`test_train_splits.rar` 也托管在**已下线的 Brown 域名**上，多半下不到，所以**首选兜底方案**：
+直接用上一步下下来的**按类别分文件夹**的视频目录生成（`build_act_rec_anno.py` 的 `--from-dir`）：
+
+```bash
+# 先确认 HF 下载下来的是按类别分的文件夹（<dir>/<class>/<clip>.avi）：
+find data/hmdb51_hf -maxdepth 2 -type d | head
+# 用类别文件夹名当类别、每个 .avi 生成一条；--videos 对齐 videos_test/ 里的实际文件
+python preprocess/build_act_rec_anno.py --dataset hmdb51 \
+    --from-dir data/hmdb51_hf --videos data/hmdb51/videos_test \
+    --out anno_downstream/hmdb51_act_test.json
+```
+
+> ⚠️ `--from-dir` 用的是**全部视频**（train+test，约 6766 条），而论文参考行 `act_val/` 用的是
+> **split-1 测试集**（约 1530 条）。因此 Top-1 会与下表有出入，但流程完全正确、可自洽验证。
+> 若你能弄到 `testTrainMulti_7030_splits/`（如 Kaggle / 其它镜像），换成精确的 split-1 测试集：
+> `python preprocess/build_act_rec_anno.py --dataset hmdb51 --src <testTrainMulti_7030_splits> --videos data/hmdb51/videos_test --out anno_downstream/hmdb51_act_test.json`
+
+**③ 验证**：跑「通用验证脚本」（或下面单独针对 HMDB51 的一段）确认 `hmdb51_act_test.json` 0 缺失。
 若大量缺失，多为**扩展名/命名不一致**（标注是裸文件名 `*.avi`，镜像可能带类别子目录）——用 `find ... -exec ln -sf`
 把所有 `.avi` 平铺到 `videos_test/` 即可对齐：
 >
@@ -410,7 +464,7 @@ ls data/hmdb51/videos_test/ | wc -l       # 目标 ~6766
 > PY
 > ```
 
-**③ 运行评测**（脚本默认 `CUDA_VISIBLE_DEVICES=6`）：
+**④ 运行评测**（脚本默认 `CUDA_VISIBLE_DEVICES=6`）：
 
 ```bash
 sed -i 's/CUDA_VISIBLE_DEVICES=6/CUDA_VISIBLE_DEVICES=0/' \
@@ -418,7 +472,7 @@ sed -i 's/CUDA_VISIBLE_DEVICES=6/CUDA_VISIBLE_DEVICES=0/' \
 bash scripts/evaluation/clip/zero_shot/mobileviclip_tiny/eval_hmdb51.sh
 ```
 
-**④ 参考结果（Tiny）**（`img_r1` = Top-1）：
+**⑤ 参考结果（Tiny，split-1 测试集）**（`img_r1` = Top-1）：
 
 ```
               txt_r1  txt_r5  txt_r10   img_r1  img_r5  img_r10
@@ -452,12 +506,24 @@ ls data/kinetics_400_val_10s_320p/ | head
 > ⚠️ Kinetics 视频来自 YouTube，部分链接会失效；CVDF 仓库提供了替换视频。
 > 文件名（YouTube id）需与 `anno_downstream/kinetics400_validate.json` 对得上。
 
-**② 验证**：跑「通用验证脚本」看 `kinetics400_validate.json` 的缺失比例。K400 部分视频因 YouTube 失效
-抓不全属正常——只要缺失比例不高，评测仍可进行（缺失样本会被跳过），但准确率会因样本缺失而与参考值有出入。
-若缺失很多，多为**扩展名或 id 命名不一致**：标注里的 `video` 通常是 `<ytid>_<start>_<end>.mp4` 或 `<ytid>.mp4`，
-按你解压出的实际命名对齐（必要时用 `ffmpeg` 输出名或加软链）。
+**② 生成标注 `kinetics400_validate.json`**（Drive 拿不到，自建）。K400 的官方验证集标注是一个 CSV
+（列 `label,youtube_id,time_start,time_end`），CVDF 下载器里就带（`kinetics-dataset/k400/annotations/val.csv`），
+也可从官方标注包获取。用它生成，并**按磁盘实际视频过滤**（失效抓不到的自动丢弃，避免评测崩溃）：
 
-**③ 运行评测**（脚本默认 `CUDA_VISIBLE_DEVICES=2`）：
+```bash
+python preprocess/build_act_rec_anno.py --dataset k400 \
+    --src kinetics-dataset/k400/annotations/val.csv \
+    --videos data/kinetics_400_val_10s_320p \
+    --out anno_downstream/kinetics400_validate.json
+```
+
+> 脚本按 CVDF 命名 `<ytid>_<start:06d>_<end:06d>.mp4` 匹配；若你的文件名只是 `<ytid>.mp4` 或别的形式，
+> `--videos` 会**按 YouTube id 前缀**自动对齐，无需手动改名。CSV 路径按你的实际位置调整。
+
+**③ 验证**：跑「通用验证脚本」看 `kinetics400_validate.json` 的缺失比例。因为第 ② 步已按磁盘过滤，
+这里应为 0 缺失。K400 部分视频因 YouTube 失效抓不全属正常——**评测集会相应变小**，准确率因样本缺失与参考值有出入，但流程正确。
+
+**④ 运行评测**（脚本默认 `CUDA_VISIBLE_DEVICES=2`）：
 
 ```bash
 sed -i 's/CUDA_VISIBLE_DEVICES=2/CUDA_VISIBLE_DEVICES=0/' \
@@ -465,7 +531,7 @@ sed -i 's/CUDA_VISIBLE_DEVICES=2/CUDA_VISIBLE_DEVICES=0/' \
 bash scripts/evaluation/clip/zero_shot/mobileviclip_tiny/eval_k400.sh
 ```
 
-**④ 参考结果（Tiny）**（`img_r1` = Top-1）：
+**⑤ 参考结果（Tiny，完整验证集）**（`img_r1` = Top-1）：
 
 ```
               txt_r1  txt_r5  txt_r10   img_r1  img_r5  img_r10
