@@ -50,9 +50,20 @@ def from_frozen_in_time(root):
 
     data = json.load(open(ann_path))
     caps = defaultdict(list)
-    # order captions per video deterministically by sen_id so the caption index lines up
-    for s in sorted(data["sentences"], key=lambda x: x.get("sen_id", 0)):
-        caps[s["video_id"]].append(s["caption"])
+    # MSR_VTT.json ships in two shapes; support both. Order captions per video
+    # deterministically so the jsfusion caption index lines up.
+    if isinstance(data, dict) and data.get("sentences"):
+        # {"sentences": [{"video_id", "sen_id", "caption"}, ...]}
+        for s in sorted(data["sentences"], key=lambda x: x.get("sen_id", 0)):
+            caps[s["video_id"]].append(s["caption"])
+    elif isinstance(data, dict) and data.get("annotations"):
+        # COCO-style (Frozen-in-Time): {"annotations": [{"image_id", "id", "caption"}, ...]}
+        for a in sorted(data["annotations"], key=lambda x: x.get("id", 0)):
+            caps[a["image_id"]].append(a["caption"])
+    else:
+        keys = list(data.keys()) if isinstance(data, dict) else type(data).__name__
+        raise SystemExit(f"Unrecognized annotation schema in {ann_path} (keys={keys}). "
+                         "Expected a 'sentences' or 'annotations' list.")
 
     val_ids = [ln.strip() for ln in open(val_list) if ln.strip()]
 
