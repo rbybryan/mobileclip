@@ -144,3 +144,78 @@ pip install --no-cache-dir --no-deps "peft==0.4.0" -i https://pypi.org/simple
 python -c "import torch, torchvision, torchaudio; print(torch.__version__, torchvision.__version__, torchaudio.__version__)"
 # expected: 1.13.1+cu117 0.14.1+cu117 0.13.1+cu117
 ```
+
+---
+
+## Missing `anno_downstream/*.json` (e.g. `msrvtt_1k_test.json`)
+
+### Symptom
+
+An eval fails because its annotation file does not exist, e.g.:
+
+```
+FileNotFoundError: anno_downstream/msrvtt_1k_test.json
+```
+
+(or the config points at `anno_downstream/<dataset>.json` and that path is absent).
+
+### Cause
+
+The downstream annotation JSONs are **data**, not part of the repo. `README_zh.md`
+§5.2 fetches them from the author's Google Drive folder:
+
+```bash
+gdown --folder https://drive.google.com/drive/folders/1grbR39KnMLpeHPNpX4MBYArhr6wASJza -O anno_downstream
+```
+
+That folder requires access approval, so it may not be reachable.
+
+### Fix A — build the MSR-VTT annotation from public sources (no Drive access)
+
+`msrvtt_1k_test.json` is the standard MSR-VTT 1K-A / JSFusion test split, identical
+across InternVideo2 / UMT / VINDLU / CLIP4Clip. Reconstruct it with the helper
+script from the public Frozen-in-Time zip (the same zip used for the videos):
+
+```bash
+cd ~/mobileclip
+wget https://www.robots.ox.ac.uk/~maxbain/frozen-in-time/data/MSRVTT.zip
+unzip -q MSRVTT.zip                                  # -> ./MSRVTT/
+python preprocess/build_msrvtt_1k_test.py --src ./MSRVTT
+ls -la anno_downstream/msrvtt_1k_test.json           # 1000 entries
+```
+
+If the script prints `MSR_VTT.json -> None`, your `MSRVTT/` has no annotation
+folder (videos-only package). Locate the source files with:
+
+```bash
+find ./MSRVTT \( -name 'MSR_VTT.json' -o -iname '*jsfusion*' \) 2>/dev/null
+```
+
+and pass the directory that contains `annotation/` as `--src`, or use Fix B.
+
+### Fix B — convert CLIP4Clip's `MSRVTT_JSFUSION_test.csv`
+
+The widely-mirrored CLIP4Clip CSV (columns `key,vid_key,video_id,sentence`)
+directly holds the 1000 video→caption pairs. The same script converts it:
+
+```bash
+python preprocess/build_msrvtt_1k_test.py --src /path/to/MSRVTT_JSFUSION_test.csv
+```
+
+### Fix C — request the Drive folder / ask upstream
+
+For the other downstream sets (`didemo_ret_test`, `anet_ret_val`,
+`kinetics400_validate`, `ucf101_act_test`, `hmdb51_act_test`, `ssv2_mc_val`, …),
+request access to the Drive folder above, or open an issue asking the author to
+mirror `anno_downstream/` on a public host (e.g. a Hugging Face dataset).
+
+> **Expected schema.** The retrieval loader expects a JSON list of objects with a
+> `video` (or `image`) filename and a `caption` string, e.g.
+> `[{"video": "video7010.mp4", "caption": "a man is spreading butter on bread"}, ...]`.
+> Paths are resolved relative to each dataset's `data_root` (for MSR-VTT,
+> `./data/MSRVTT_Videos`).
+
+> **Exact-reproducibility note.** The 1K-A protocol pins one specific caption per
+> video via a `*jsfusion*caption_idx*.pkl`. `build_msrvtt_1k_test.py` uses it
+> automatically when present; if it is absent the script falls back to the first
+> caption — the eval still runs, but R@k may differ slightly from the paper.
