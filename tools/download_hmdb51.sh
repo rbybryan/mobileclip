@@ -70,8 +70,15 @@ unzip -n -q "${ZIP_PATH}" -d "${RAW_DIR}"
 # 4) Flatten every .avi into videos_test/ via symlinks (saves disk). The eval
 #    reads bare filenames from anno_downstream/hmdb51_act_test.json, so nested
 #    per-class folders must be collapsed to a flat directory.
+#
+#    Use an ABSOLUTE source root so the symlink targets are absolute paths. A
+#    relative target (e.g. from `find data/hmdb51_hf ...`) is resolved relative
+#    to the LINK's own directory (data/hmdb51/videos_test/), not the CWD, so
+#    every link would dangle -- os.listdir() still lists the names (build passes)
+#    but os.path.exists() follows the link and fails (eval reports all missing).
 echo ">> Flattening .avi files into ${DEST_DIR} ..."
-find "${RAW_DIR}" -name '*.avi' -exec ln -sf {} "${DEST_DIR}/" \;
+RAW_ABS="$(cd "${RAW_DIR}" && pwd)"
+find "${RAW_ABS}" -name '*.avi' -exec ln -sf {} "${DEST_DIR}/" \;
 
 COUNT="$(find "${DEST_DIR}" -maxdepth 1 -name '*.avi' | wc -l | tr -d ' ')"
 echo ">> ${DEST_DIR} now holds ${COUNT} .avi files (expected ~6766)."
