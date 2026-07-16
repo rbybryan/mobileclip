@@ -33,3 +33,7 @@ outputs/
 *.swp
 .vscode/
 .idea/
+
+# Experiment outputs
+experiments/runs/
+experiments/evals/

@@ -40,8 +40,8 @@ It skips flash-attn/apex (optional; Ampere+ GPU only) and handles three pitfalls
   be installed with `--no-deps`, or pip silently upgrades torch to 2.x and breaks torchvision/ONNX.
 - **`deepspeed`**: imported unguarded by the task scripts → installed with `DS_BUILD_OPS=0`.
 
-Also needs `spikingjelly` + `snntorch` (used by the MobileOne reparam block) and `setuptools`
-(for `pkg_resources`), all handled by the script.
+Also needs `setuptools` (for `pkg_resources`), handled by the script.
+(`spikingjelly`/`snntorch` are no longer needed — they were dead imports, removed.)
 
 ### Option A — create from the yml (fastest, may need a machine with CUDA 11.7 toolchain)
 

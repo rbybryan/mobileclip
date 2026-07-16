@@ -10,14 +10,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from timm.models.layers import DropPath, trunc_normal_
 
-from spikingjelly.clock_driven.neuron import (
-    MultiStepParametricLIFNode,
-    MultiStepLIFNode,
-)
-from spikingjelly.clock_driven import functional, surrogate, layer
-from torch.nn.parameter import Parameter
-from spikingjelly.activation_based import neuron
-
 __all__ = ["MobileOneBlock","MobileOneBlock_1d", "reparameterize_model"]
 
 class SEBlock(nn.Module):

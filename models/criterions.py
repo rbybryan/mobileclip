@@ -164,8 +164,14 @@ class VTC_VTM_Loss(nn.Module):
             logits = logits * t
         else:
             logits = logits * t + b
-        eye = torch.eye(vision_proj.shape[0], device=logits.device)
-        mask = (-torch.ones_like(logits) + 2 * eye)
+        if idx is None:
+            pos = torch.eye(vision_proj.shape[0], device=logits.device)
+        else:
+            # InternVid clips cut from one video share a caption/idx; treat all
+            # matched pairs as positives instead of only the diagonal
+            # (otherwise duplicates become false negatives).
+            pos = self.get_mask(logits, idx=idx)
+        mask = (-torch.ones_like(logits) + 2 * pos)
         log_likelihood = F.logsigmoid(mask * logits)
         nll = -torch.sum(log_likelihood, dim=-1)
         loss = torch.mean(nll)

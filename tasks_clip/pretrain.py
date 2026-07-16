@@ -359,8 +359,10 @@ def main(config):
 
 
 if __name__ == "__main__":
-    torch.autograd.set_detect_anomaly(True)
-    
     cfg = setup_main()
+    # anomaly detection adds a full-graph check to every backward pass
+    # (2-5x slower training) -> only enable it in debug mode
+    if cfg.get("debug", False):
+        torch.autograd.set_detect_anomaly(True)
     local_broadcast_process_authkey()
     main(cfg)

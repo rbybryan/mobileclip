@@ -14,8 +14,6 @@ from utils.distributed import get_rank, get_world_size
 
 logger = logging.getLogger(__name__)
 
-from spikingjelly.clock_driven import neuron, functional, surrogate, layer
-
 
 
 def extract_text_feats(texts, max_txt_l, tokenizer, model, device):
@@ -134,8 +132,6 @@ def evaluation_video_clip(model, data_loader, tokenizer, device, config):
     for image, _ in iterator:
         image = image.to(device, non_blocking=True)
         image_feat = model.encode_vision(image, test=True)
-        functional.reset_net(model) 
-
         image_feats.append(image_feat.cpu())
     image_feats = torch.cat(image_feats, dim=0)
     logger.info("Finished feature extraction")
