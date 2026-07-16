@@ -9,6 +9,7 @@
 | S1 嵌入打分 | `score_alignment.py` | 全量 10M | SigLIP2，~100–200 GPU·h |
 | S2 VLM 审核 | `make_audit_sample.py` + `vlm_audit.py` | 分层抽样 ~4–5 万 | Qwen3-VL-8B，~15–30 GPU·h |
 | S3 校准分桶 | `aggregate_report.py` | 全量外推 | CPU |
+| S4 落地 v0.2 | `apply_buckets.py` | 全量 | CPU |
 
 ## 快速上手（在有数据盘和 GPU 的机器上）
 
@@ -48,6 +49,14 @@ python tools/data_audit/aggregate_report.py \
   --scores "$OUT/s1_scores.*.jsonl" --flags $OUT/s0_flags.jsonl \
   --verdicts $OUT/s2_verdicts.jsonl \
   --out-buckets $OUT/buckets.jsonl --out-report $OUT/report.md
+
+# ---- S4：分桶落地成 v0.2 数据 + 重翻/重写任务队列 ----
+python tools/data_audit/apply_buckets.py --input $DATA \
+  --buckets $OUT/buckets.jsonl --verdicts $OUT/s2_verdicts.jsonl \
+  --out-data $OUT/v0_2/internvid_zh_v0_2.jsonl \
+  --out-retranslate $OUT/v0_2/retranslate_tasks.jsonl \
+  --out-recaption $OUT/v0_2/recaption_tasks.jsonl \
+  --out-drop $OUT/v0_2/dropped.jsonl
 ```
 
 先用 `--limit 20000`（S0/S1）和 `--limit 200`（S2）各跑一次冒烟，确认字段探测
@@ -66,6 +75,9 @@ S2 服务端需要 `vllm>=0.11`（建议单独 conda 环境，与训练环境隔
 - `s2_verdicts.jsonl`：VLM 结构化判定（对齐/翻译/粒度/时序 + 建议动作 + 候选新中文短 caption）
 - `buckets.jsonl`：全量每条 → `KEEP / FIX_TEXT / RETRANSLATE / RECAPTION / DROP`
 - `report.md`：问题率外推表 + 阈值校准表，直接可贴进周报
+- `v0_2/internvid_zh_v0_2.jsonl`：训练可用的 v0.2 数据
+  （`{"video","caption","captions":[...]}`，loader 直接兼容）
+  + 重翻/重写任务队列 + 剔除清单
 
-分桶之后的 v0.2 数据生产（清洗、重翻、按画面重写中文短 caption）见
-`notes/internvid-zh-data-audit-plan.md` §5。
+完整分步操作手册（含环境准备、冒烟验证、每步验收点/决策门、v0.2→v0.3 节奏）
+见 `notes/internvid-zh-data-audit-plan.md` §5–§7。

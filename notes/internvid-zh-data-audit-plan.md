@@ -5,7 +5,8 @@
 >
 > 回答三个问题：① 这版数据可能有哪些问题、各自来自哪个环节；② 用哪些开源
 > SOTA VLM（含视频模型）、以什么流程审核 10M 规模的数据；③ 审核结果如何落成
-> 一版更好的 v0.2 数据。配套可执行工具在 `tools/data_audit/`（四个阶段一一对应）。
+> 一版更好的 v0.2 数据。配套可执行工具在 `tools/data_audit/`（审核四阶段
+> S0–S3 + 落地脚本 `apply_buckets.py` 一一对应），完整命令见 §7 操作手册。
 >
 > 与 `notes/data-quality-caprl-scheme.md`（CapRL 数据强化方案）的关系：本方案是
 > 它的**前置诊断层 + 中文化落地**——先量化 v0.1 的病灶分布，再决定重写预算投给谁；
@@ -110,11 +111,11 @@ S3 校准与外推(CPU)                      aggregate_report.py
 
 | 桶 | 动作 | 工具/方法 |
 |---|---|---|
-| KEEP | 直接保留，附带 `sig_zh` 分入库（后续 curriculum/过滤可用） | — |
-| FIX_TEXT | 规则清洗：去包裹引号/前缀/换行/HTML 转义，**零模型成本** | 按 `s0_flags` 写 50 行清洗脚本即可 |
-| RETRANSLATE | 英文没错、翻译坏了 → 用更强配置重翻：Qwen3 大杯 + 关 thinking 输出、严格输出格式、按 S0 学到的失败模式改 prompt；重翻后必须复算 `xling_cos` 回归验证 | 复用现有翻译管线 v0_2 |
-| RECAPTION | **英文源头就错 → 不再走"英文→翻译"级联，直接用 Qwen3-VL 看视频写中文**：每片 K=2–3 条 ≤30 字短 caption，一步同时解决 A/B/C/E 四类问题 | S2 的 `better_zh` 已是同款产物；放量即 caprl-scheme §4.2 路径 B0 的中文版 |
-| DROP | 剔除（不可解码/拒答/无法配文），并记录原因供补抓 | — |
+| KEEP | 直接保留，附带 `sig_zh` 分入库（后续 curriculum/过滤可用） | `apply_buckets.py` |
+| FIX_TEXT | 规则清洗：去包裹引号/前缀/换行/HTML 转义，**零模型成本** | `apply_buckets.py` 已内置（`clean_zh`） |
+| RETRANSLATE | 英文没错、翻译坏了 → 用更强配置重翻：Qwen3 大杯 + 关 thinking 输出、严格输出格式、按 S0 学到的失败模式改 prompt；重翻后必须复算 `xling_cos` 回归验证 | `apply_buckets.py` 导出任务队列 → 现有翻译管线 v0_2 |
+| RECAPTION | **英文源头就错 → 不再走"英文→翻译"级联，直接用 Qwen3-VL 看视频写中文**：每片 K=2–3 条 ≤30 字短 caption，一步同时解决 A/B/C/E 四类问题 | `apply_buckets.py` 导出任务队列；S2 的 `better_zh` 已是同款产物；放量即 caprl-scheme §4.2 路径 B0 的中文版 |
+| DROP | 剔除（不可解码/拒答/无法配文），并记录原因供补抓 | `apply_buckets.py` 导出 `dropped.jsonl` |
 
 三个结构性升级（随 v0.2 一起做，成本低收益高）：
 
@@ -141,15 +142,135 @@ caprl-scheme §7：3M 片 × K=3 约 1.5k–3k A100·时。
   （MSR-VTT-1k、K400 零样本）不回退作为护栏。
 - **人工面**：v0.1 vs v0.2 各抽 300 条盲评（对齐/流畅双维度），胜率 > 65%。
 
-## 7. 执行清单
+## 7. 操作手册（在 B100 数据机上按序执行）
 
-1. [ ] B100 上冒烟：S0 `--limit 20000`、S1 `--limit 2000`、S2 `--limit 200`，
-   确认字段探测与视频路径（脚本自动探测 `video/caption/caption_zh` 等常见键，
-   不匹配时用 `--video-key/--zh-key/--en-key` 指定）
-2. [ ] S0 全量 → 先看翻译残留率和重复率（当天可出，决定 FIX_TEXT 桶规模）
-3. [ ] S1 全量分片跑（8 卡 ~1 天）
-4. [ ] S2 抽样 4.5 万 → Qwen3-VL-8B 审核；2k 条 235B 裁判 + 500 条人工
-5. [ ] S3 出 `report.md` + `buckets.jsonl`，对齐一次问题率数字
-6. [ ] v0.2 文本侧修复（FIX_TEXT/RETRANSLATE/DROP）→ 复跑 S0/S1 回归
-7. [ ] 小预算重训 + 中文检索评测
-8. [ ] v0.3 RECAPTION 放量（衔接 caprl-scheme P0）
+以下命令假设在本仓库 clone 的根目录执行；每步末尾给出**验收点**和
+**决策门**（不达标就停下修，不要带病往下跑）。
+
+### 7.0 环境准备（一次性，~15 分钟）
+
+```bash
+# 审核环境与训练环境隔离（vllm/transformers 版本较新，勿装进训练 env）
+conda create -n audit python=3.10 -y && conda activate audit
+pip install "torch>=2.4" "transformers>=4.49" sentence-transformers \
+            decord pillow numpy requests
+pip install "vllm>=0.11"        # 仅 S2 需要；装失败不影响 S0/S1
+
+export DATA=/workspace/mount/b100_zaip_data/zyc/vibe_coding/low_resource_cv/MobileViCLIP/outputs/internvid_alignment/caption_translation_qwen36_v0_1/20_outputs/aligned_internvid_zh_translated_retry_merged.jsonl
+export CLIPS=/path/to/internvid/clips   # TODO: 改成视频根目录（video 字段相对它拼路径）
+export OUT=outputs/audit_v0_1 && mkdir -p $OUT
+```
+
+### 7.1 冒烟（~10 分钟，必做）
+
+```bash
+# S0 前 2 万条：确认字段探测（看 stderr 的 "[keys] video=... zh=... en=..."）
+python tools/data_audit/profile_jsonl.py --input $DATA --limit 20000 \
+  --out-summary $OUT/smoke_s0.json --out-flags $OUT/smoke_s0_flags.jsonl
+
+# S1 前 2 千条：确认视频路径拼接与解码
+python tools/data_audit/score_alignment.py --input $DATA --video-root $CLIPS \
+  --output "$OUT/smoke_s1.{shard}.jsonl" --limit 2000 --frames 4 --batch-clips 16
+
+# 解码失败率检查（应 <2%；偏高先查 $CLIPS 路径或视频完整性，再放全量）
+python -c "
+import json;rows=[json.loads(l) for l in open('$OUT/smoke_s1.0.jsonl')]
+err=sum('error' in r for r in rows);print(f'decode error: {err}/{len(rows)}')"
+```
+**验收点**：`[keys]` 探测的三个字段正确（不对则后续所有命令加
+`--video-key/--zh-key/--en-key`）；解码失败率 <2%。
+
+### 7.2 S0 规则画像（全量，CPU ~20 分钟）
+
+```bash
+python tools/data_audit/profile_jsonl.py --input $DATA \
+  --out-summary $OUT/s0_summary.json --out-flags $OUT/s0_flags.jsonl
+python -m json.tool $OUT/s0_summary.json | head -60   # 看 flag_rates 和重复率
+```
+**决策门**：拒答+未翻译+指令泄漏合计 >5% → 翻译管线本身要回炉，先修管线
+再谈数据修复；重复 caption 率 >10% → §5 假负例治理升为必做项。
+
+### 7.3 S1 嵌入打分（全量，8 卡 ~1 天，可断点续跑）
+
+```bash
+for i in $(seq 0 7); do
+  CUDA_VISIBLE_DEVICES=$i nohup python tools/data_audit/score_alignment.py \
+    --input $DATA --video-root $CLIPS --output "$OUT/s1_scores.{shard}.jsonl" \
+    --num-shards 8 --shard-id $i --frames 4 --batch-clips 16 \
+    > $OUT/s1_shard$i.log 2>&1 &
+done
+watch -n 60 'wc -l outputs/audit_v0_1/s1_scores.*.jsonl'   # 总数应逼近 10M/8×8
+```
+中断后原样重跑同一命令即可续（按输出行数跳过已完成）。
+**验收点**：8 个分片行数之和 = 输入行数；`error` 记录占比与冒烟一致。
+
+### 7.4 S2 分层抽样 + VLM 审核（~4.5 万条，8B 单卡数小时）
+
+```bash
+python tools/data_audit/make_audit_sample.py --input $DATA \
+  --scores "$OUT/s1_scores.*.jsonl" --flags $OUT/s0_flags.jsonl \
+  --per-bucket 3000 --flagged 10000 --low-xling 5000 \
+  --output $OUT/s2_sample.jsonl
+
+# 主力档：Qwen3-VL-8B（单卡起服务；并发按显存调）
+vllm serve Qwen/Qwen3-VL-8B-Instruct --port 8000 \
+  --limit-mm-per-prompt image=8 --max-model-len 16384 &
+python tools/data_audit/vlm_audit.py --input $OUT/s2_sample.jsonl \
+  --video-root $CLIPS --api-base http://localhost:8000/v1 \
+  --model Qwen/Qwen3-VL-8B-Instruct --frames 8 --concurrency 32 \
+  --output $OUT/s2_verdicts.jsonl
+
+# 裁判档：同一批样本头 2000 条再过 235B（4 卡 tensor parallel），校验 8B 可信度
+vllm serve Qwen/Qwen3-VL-235B-A22B-Instruct --port 8001 -tp 4 \
+  --limit-mm-per-prompt image=8 &
+python tools/data_audit/vlm_audit.py --input $OUT/s2_sample.jsonl \
+  --video-root $CLIPS --api-base http://localhost:8001/v1 \
+  --model Qwen/Qwen3-VL-235B-A22B-Instruct --frames 8 --concurrency 16 \
+  --limit 2000 --output $OUT/s2_verdicts_judge.jsonl
+
+# 人工抽检 500 条（盲评表：视频名 + 中文 caption + 8B 判定）
+shuf -n 500 $OUT/s2_verdicts.jsonl > $OUT/human_check_500.jsonl
+```
+**决策门**：8B 与 235B 在 `action` 上的一致率 <75%（或 zh_score ≤2 判定的
+κ<0.6）→ 改 rubric/换主力模型重跑 S2，不要用不可信判定去校准阈值。
+
+### 7.5 S3 校准 + 全量分桶 + 报告（CPU 分钟级）
+
+```bash
+python tools/data_audit/aggregate_report.py \
+  --scores "$OUT/s1_scores.*.jsonl" --flags $OUT/s0_flags.jsonl \
+  --verdicts $OUT/s2_verdicts.jsonl --target-precision 0.8 \
+  --out-buckets $OUT/buckets.jsonl --out-report $OUT/report.md
+```
+**验收点**：`report.md` 的 sig_zh 分位表差率应随分位单调下降、最低分位
+zh 差率 ≥80%；不单调说明嵌入分外推不可靠 → 提高 S2 抽样量或对可疑区间
+全量过一遍 4B/8B VLM 门控再分桶。`report.md` 即周报素材。
+
+### 7.6 S4 落地 v0.2（文本侧，CPU 小时级）
+
+```bash
+python tools/data_audit/apply_buckets.py --input $DATA \
+  --buckets $OUT/buckets.jsonl --verdicts $OUT/s2_verdicts.jsonl \
+  --out-data $OUT/v0_2/internvid_zh_v0_2.jsonl \
+  --out-retranslate $OUT/v0_2/retranslate_tasks.jsonl \
+  --out-recaption $OUT/v0_2/recaption_tasks.jsonl \
+  --out-drop $OUT/v0_2/dropped.jsonl
+```
+然后：① `retranslate_tasks.jsonl` 喂给翻译管线 v0_2（prompt 按 S0 学到的
+失败模式加固：禁止前缀/引号/解释、关 thinking 输出、限长），重翻结果并回
+`internvid_zh_v0_2.jsonl`；② 对 v0.2 **复跑 7.2 和 7.3 做回归**——
+**验收门**：D 类残留率 <0.1%、`xling_cos` 中位数较 v0.1 上移、重复率下降。
+
+### 7.7 小预算重训验证
+
+v0.2 接入 `configs/data.py`（新增 `internvid_zh_v0_2` 语料项，多字幕已兼容
+`caption_augmentation.caption_sample_type='uniform'`），等 token 预算重训
+（12.8M 样本消融惯例），中文检索（VATEX-zh / MSRVTT-1k-zh）R@1 对比 v0.1，
+英文基准不回退（§6 验收标准）。
+
+### 7.8 v0.3 RECAPTION 放量（衔接 caprl-scheme P0）
+
+`recaption_tasks.jsonl` 按 `sig_en` 从低到高排序分批：Qwen3-VL 直接看视频写
+K=2–3 条 ≤30 字中文短 caption（prompt 复用 `vlm_audit.py` 的 `better_zh`
+定义），产出并回 `captions` 列表；预算参照 caprl-scheme §7
+（3M 片 × K=3 ≈ 1.5k–3k A100·时，优先最差的 1M 片）。
