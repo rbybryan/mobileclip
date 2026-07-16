@@ -439,7 +439,10 @@ ls data/hmdb51/videos_test/ | wc -l       # 目标 ~6766
 >         -O data/hmdb51_hf/hmdb51.zip
 >    unzip -n -q data/hmdb51_hf/hmdb51.zip -d data/hmdb51_hf
 >    mkdir -p data/hmdb51/videos_test
->    find data/hmdb51_hf -name '*.avi' -exec ln -sf {} data/hmdb51/videos_test/ \;
+>    # 注意：find 的根目录用**绝对路径**，这样软链目标是绝对路径。若用相对路径
+>    # （find data/hmdb51_hf ...），软链目标会相对于「软链所在目录」解析，全部悬空——
+>    # os.listdir 仍能列出文件名（生成脚本会误判为存在），但 os.path.exists 跟随软链失败（评测报全缺失）。
+>    find "$(cd data/hmdb51_hf && pwd)" -name '*.avi' -exec ln -sf {} data/hmdb51/videos_test/ \;
 >    ```
 > 2. **关掉 Xet** 再用 CLI（新版 `huggingface_hub` 支持）：
 >    ```bash
@@ -494,6 +497,16 @@ python preprocess/build_act_rec_anno.py --dataset hmdb51 \
 > print(f"共 {len(d)} 条, 缺失 {len(miss)}; 首条 -> {os.path.join(root, d[0]['video'])}")
 > if miss: print("例如缺失:", miss[:3])
 > PY
+> ```
+>
+> ⚠️ **若 `os.listdir` 能看到文件、但这段脚本报「全部缺失」**：是**软链悬空**。之前用
+> `find data/hmdb51_hf ... -exec ln -sf {} videos_test/`（find 根为相对路径）建的软链，
+> 目标被当作**相对于软链所在目录**解析，指向了不存在的
+> `data/hmdb51/videos_test/data/hmdb51_hf/...`。**无需重新下载**，用绝对路径重建软链即可（`ln -sf` 会覆盖旧链）：
+> ```bash
+> find data/hmdb51/videos_test -maxdepth 1 -xtype l -delete   # 清掉悬空软链（可选）
+> find "$(cd data/hmdb51_hf && pwd)" -name '*.avi' -exec ln -sf {} data/hmdb51/videos_test/ \;
+> # 再跑上面的校验，应为 0 缺失。或直接重跑 bash tools/download_hmdb51.sh（已修复，幂等）。
 > ```
 
 **④ 运行评测**（脚本默认 `CUDA_VISIBLE_DEVICES=6`）：
