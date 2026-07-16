@@ -577,6 +577,7 @@ ls data/kinetics_400_val_10s_320p/ | head
 python preprocess/build_act_rec_anno.py --dataset k400 \
     --src kinetics-dataset/k400/annotations/val.csv \
     --videos data/kinetics_400_val_10s_320p \
+    --verify-videos \
     --out anno_downstream/kinetics400_validate.json
 ```
 
@@ -585,6 +586,16 @@ python preprocess/build_act_rec_anno.py --dataset k400 \
 >
 > 💡 `--src` 也接受**目录**，会自动 glob 出里面的 `*val*.csv`；所以若 csv 落在别处，直接
 > `--src kinetics-dataset`（或注解所在目录）让脚本自己找也行。
+>
+> ⚠️ **强烈建议加 `--verify-videos`**。K400 视频来自 YouTube，失效/中断的下载常会让 ffmpeg 产出
+> **能存在但解不开**的坏 mp4（0 字节 / 截断 / 无视频流）。这类文件过不了「解码」，评测跑到它时会崩：
+> ```
+> decord._ffi.base.DECORDError: ... cannot find video stream with wanted index: -1
+> ```
+> `--verify-videos` 会在建标注时用 decord **逐个试开**（和评测同一读取逻辑），把解不开的丢掉，
+> 保证生成的 JSON 里每条都能解码，评测不会中途崩溃。代价是要多花几分钟遍历一遍视频。
+>
+> 若你已经生成了没加该选项的 JSON、评测又崩在上面这个 DECORDError，直接**加上 `--verify-videos` 重跑本步**即可。
 
 **③ 验证**：跑「通用验证脚本」看 `kinetics400_validate.json` 的缺失比例。因为第 ② 步已按磁盘过滤，
 这里应为 0 缺失。K400 部分视频因 YouTube 失效抓不全属正常——**评测集会相应变小**，准确率因样本缺失与参考值有出入，但流程正确。

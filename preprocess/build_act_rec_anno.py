@@ -227,6 +227,37 @@ def resolve_against_disk(entries, videos_dir, dataset):
     return kept, dropped
 
 
+def verify_decodable(entries, videos_dir):
+    """Drop entries whose video can't be opened/decoded by decord.
+
+    The eval reads clips with `decord.VideoReader(path); len(vr); vr.get_batch(...)`
+    (see dataset/video_utils.py:read_frames_decord). A present-but-corrupt file
+    (0-byte / truncated / no video stream — e.g. a failed K400 YouTube grab that
+    ffmpeg still emitted) passes the existence filter but makes the eval crash with
+    `DECORDError: cannot find video stream with wanted index: -1`. Probing here with
+    the same reader guarantees every referenced clip is actually decodable.
+    """
+    try:
+        from decord import VideoReader  # lazy: only needed with --verify-videos
+    except ImportError:
+        raise SystemExit("--verify-videos needs decord installed (pip install decord).")
+    kept, bad = [], []
+    total = len(entries)
+    for i, e in enumerate(entries):
+        path = os.path.join(videos_dir, e["video"])
+        try:
+            vr = VideoReader(path, num_threads=0)
+            if len(vr) < 1:
+                raise ValueError("0 frames")
+            vr.get_batch([0])  # force an actual decode, like the eval does
+            kept.append(e)
+        except Exception as ex:  # noqa: BLE401 - decord raises its own error type
+            bad.append(e["video"])
+        if (i + 1) % 500 == 0 or i + 1 == total:
+            print(f"[info] verified {i + 1}/{total} videos ({len(bad)} un-decodable)")
+    return kept, bad
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", required=True, choices=["ucf101", "hmdb51", "k400"])
@@ -242,6 +273,10 @@ def main():
                     help="data_root with the videos; if given, entries whose video is "
                          "not on disk are dropped (a missing file otherwise crashes the eval).")
     ap.add_argument("--split", type=int, default=1, help="UCF101/HMDB51 split id (default 1).")
+    ap.add_argument("--verify-videos", dest="verify_videos", action="store_true",
+                    help="After disk filtering, open each kept video with decord and drop "
+                         "the un-decodable ones (0-byte / truncated / no video stream). "
+                         "Slower, but prevents a DECORDError crash mid-eval. Needs --videos.")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -268,7 +303,16 @@ def main():
                   f"(e.g. {dropped[:3]}). For K400 this is normal (dead YouTube links).")
         print(f"[info] {len(entries)} entries remain after disk filtering "
               f"({len({e['caption'] for e in entries})} classes present)")
+        if args.verify_videos:
+            entries, bad = verify_decodable(entries, args.videos)
+            if bad:
+                print(f"[warn] dropped {len(bad)} un-decodable videos (e.g. {bad[:3]}). "
+                      "These are corrupt/empty clips ffmpeg emitted from dead K400 grabs.")
+            print(f"[info] {len(entries)} entries remain after decode verification "
+                  f"({len({e['caption'] for e in entries})} classes present)")
     else:
+        if args.verify_videos:
+            raise SystemExit("--verify-videos requires --videos <data_root>.")
         for e in entries:
             e.pop("_ytid", None)
         print("[warn] --videos not given: JSON not filtered against disk. If any listed "
