@@ -557,6 +557,22 @@ ls data/kinetics_400_val_10s_320p/ | head
 （列 `label,youtube_id,time_start,time_end`），CVDF 下载器里就带（`kinetics-dataset/k400/annotations/val.csv`），
 也可从官方标注包获取。用它生成，并**按磁盘实际视频过滤**（失效抓不到的自动丢弃，避免评测崩溃）：
 
+> ⚠️ **先确认 `val.csv` 在不在**。如果第 ① 步只保留了 val 视频，注解那步可能没下成功（K400 下载器的
+> 注解下载偶尔会因网络中断静默跳过），导致 `kinetics-dataset/k400/annotations/val.csv` 不存在，脚本会报
+> `Could not find a Kinetics validation CSV under ...`。先定位它，或直接补下（很小的公开文件）：
+>
+> ```bash
+> # a) 精确检查 + 全盘找 csv
+> ls -la kinetics-dataset/k400/annotations/ 2>/dev/null
+> find kinetics-dataset -iname '*.csv' 2>/dev/null
+>
+> # b) 若确实没有，直接补下 val.csv
+> mkdir -p kinetics-dataset/k400/annotations
+> wget -c https://s3.amazonaws.com/kinetics/400/annotations/val.csv \
+>   -O kinetics-dataset/k400/annotations/val.csv
+> head -2 kinetics-dataset/k400/annotations/val.csv   # 表头应为 label,youtube_id,time_start,time_end,split
+> ```
+
 ```bash
 python preprocess/build_act_rec_anno.py --dataset k400 \
     --src kinetics-dataset/k400/annotations/val.csv \
@@ -566,6 +582,9 @@ python preprocess/build_act_rec_anno.py --dataset k400 \
 
 > 脚本按 CVDF 命名 `<ytid>_<start:06d>_<end:06d>.mp4` 匹配；若你的文件名只是 `<ytid>.mp4` 或别的形式，
 > `--videos` 会**按 YouTube id 前缀**自动对齐，无需手动改名。CSV 路径按你的实际位置调整。
+>
+> 💡 `--src` 也接受**目录**，会自动 glob 出里面的 `*val*.csv`；所以若 csv 落在别处，直接
+> `--src kinetics-dataset`（或注解所在目录）让脚本自己找也行。
 
 **③ 验证**：跑「通用验证脚本」看 `kinetics400_validate.json` 的缺失比例。因为第 ② 步已按磁盘过滤，
 这里应为 0 缺失。K400 部分视频因 YouTube 失效抓不全属正常——**评测集会相应变小**，准确率因样本缺失与参考值有出入，但流程正确。
