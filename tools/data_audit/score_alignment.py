@@ -76,6 +76,8 @@ def main():
     ap.add_argument("--num-shards", type=int, default=1)
     ap.add_argument("--shard-id", type=int, default=0)
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--dtype", default="auto", choices=["auto", "bf16", "fp16", "fp32"],
+                    help="auto = bf16 on Ampere+, fp16 on older GPUs (e.g. V100)")
     ap.add_argument("--video-key", default=None)
     ap.add_argument("--zh-key", default=None)
     ap.add_argument("--en-key", default=None)
@@ -83,7 +85,16 @@ def main():
     args = ap.parse_args()
 
     from transformers import AutoModel, AutoProcessor
-    dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+    if args.dtype == "auto":
+        if not torch.cuda.is_available():
+            dtype = torch.float32
+        elif torch.cuda.is_bf16_supported():
+            dtype = torch.bfloat16
+        else:  # pre-Ampere (V100 etc.): no bf16 in hardware
+            dtype = torch.float16
+    else:
+        dtype = {"bf16": torch.bfloat16, "fp16": torch.float16,
+                 "fp32": torch.float32}[args.dtype]
     model = AutoModel.from_pretrained(args.model, torch_dtype=dtype).to(args.device).eval()
     processor = AutoProcessor.from_pretrained(args.model)
 

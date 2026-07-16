@@ -142,10 +142,28 @@ caprl-scheme §7：3M 片 × K=3 约 1.5k–3k A100·时。
   （MSR-VTT-1k、K400 零样本）不回退作为护栏。
 - **人工面**：v0.1 vs v0.2 各抽 300 条盲评（对齐/流畅双维度），胜率 > 65%。
 
-## 7. 操作手册（在 B100 数据机上按序执行）
+## 7. 操作手册（在数据机上按序执行）
 
 以下命令假设在本仓库 clone 的根目录执行；每步末尾给出**验收点**和
 **决策门**（不达标就停下修，不要带病往下跑）。
+**审查阶段只需 7.0–7.5（产出诊断报告即止）；7.6 起是数据优化阶段，
+待报告评审后再启动。**
+
+> **8×V100 一键通道**：全部审查步骤已封装为
+> `bash tools/data_audit/run_v100.sh {smoke|s0|s1|status|s2-sample|s2|s2-judge|s3}`，
+> 只需先 `export CLIPS=视频根目录`。V100（Volta）与下文 A100 命令的三个差异
+> 已在脚本内处理：
+> ① 无 bf16 → S1/S2 自动落 fp16（`--dtype` 可强制）；
+> ② vLLM V1 引擎不支持 Volta、而 Qwen3-VL 需要新版 vLLM → S2 不起服务，
+>   改用 transformers 后端 `vlm_audit_hf.py` 做 8 卡数据并行（同一 rubric/
+>   输出格式，S3 无感）；
+> ③ 235B 裁判 8×32GB 放不下（权重就 >400GB）→ `s2-judge` 走 OpenAI 兼容
+>   云端 API（DashScope/OpenRouter 的 qwen3-vl-235b，2k 条约几十元），
+>   或降级为本地换一个模型家族（InternVL3.5-8B）交叉验证。
+> 显存注意：32GB 卡用 Qwen3-VL-8B（fp16 约 17GB）；**16GB 卡请
+> `export S2_MODEL=Qwen/Qwen3-VL-4B-Instruct`**。
+> 时间预估（8×V100，解码为主瓶颈）：S1 全量 ~1–2 天；S2 4.5 万条 ~半天
+> （每卡 ~5.6k 条 × 5–8 s）；嫌慢可 `export PER_BUCKET=2000` 收缩抽样。
 
 ### 7.0 环境准备（一次性，~15 分钟）
 
@@ -231,6 +249,11 @@ python tools/data_audit/vlm_audit.py --input $OUT/s2_sample.jsonl \
 # 人工抽检 500 条（盲评表：视频名 + 中文 caption + 8B 判定）
 shuf -n 500 $OUT/s2_verdicts.jsonl > $OUT/human_check_500.jsonl
 ```
+（**V100 环境**：上面两段 vLLM 服务命令分别替换为
+`bash tools/data_audit/run_v100.sh s2`（8 卡 transformers 后端）和
+`export JUDGE_API_KEY=...; bash tools/data_audit/run_v100.sh s2-judge`
+（云端裁判 + 自动输出一致率）；产物文件名为分片形式
+`s2_verdicts.*.jsonl`，S3 命令传 glob 即可。）
 **决策门**：8B 与 235B 在 `action` 上的一致率 <75%（或 zh_score ≤2 判定的
 κ<0.6）→ 改 rubric/换主力模型重跑 S2，不要用不可信判定去校准阈值。
 

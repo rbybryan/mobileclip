@@ -7,11 +7,33 @@
 |---|---|---|---|
 | S0 规则画像 | `profile_jsonl.py` | 全量 10M | CPU，~20 分钟 |
 | S1 嵌入打分 | `score_alignment.py` | 全量 10M | SigLIP2，~100–200 GPU·h |
-| S2 VLM 审核 | `make_audit_sample.py` + `vlm_audit.py` | 分层抽样 ~4–5 万 | Qwen3-VL-8B，~15–30 GPU·h |
+| S2 VLM 审核 | `make_audit_sample.py` + `vlm_audit.py`（vLLM 服务，Ampere+）或 `vlm_audit_hf.py`（transformers 后端，V100 可用） | 分层抽样 ~4–5 万 | Qwen3-VL-8B，~15–30 GPU·h |
 | S3 校准分桶 | `aggregate_report.py` | 全量外推 | CPU |
 | S4 落地 v0.2 | `apply_buckets.py` | 全量 | CPU |
 
-## 快速上手（在有数据盘和 GPU 的机器上）
+## 8×V100 快速上手（推荐：一键脚本）
+
+V100（Volta）无 bf16、且新版 vLLM（Qwen3-VL 所需）不支持 Volta，
+所以 S1/S2 自动用 fp16、S2 用 transformers 后端 `vlm_audit_hf.py`
+8 卡数据并行（输出格式与 `vlm_audit.py` 相同）：
+
+```bash
+export CLIPS=/path/to/internvid/clips        # 唯一必改项；DATA/OUT 有默认值
+bash tools/data_audit/run_v100.sh smoke      # 冒烟：字段探测/解码/模型下载
+bash tools/data_audit/run_v100.sh s0         # 全量规则画像（CPU）
+bash tools/data_audit/run_v100.sh s1         # 全量嵌入打分（8 卡后台，可续跑）
+bash tools/data_audit/run_v100.sh status     # 进度
+bash tools/data_audit/run_v100.sh s2-sample  # 分层抽样
+bash tools/data_audit/run_v100.sh s2         # 8 卡 VLM 审核（HF 后端）
+export JUDGE_API_KEY=sk-...                  # 可选：云端 235B 裁判 2k 条
+bash tools/data_audit/run_v100.sh s2-judge
+bash tools/data_audit/run_v100.sh s3         # 诊断报告 report.md + buckets.jsonl
+```
+
+16GB 的 V100 需 `export S2_MODEL=Qwen/Qwen3-VL-4B-Instruct`。
+若 fp16 输出乱码/NaN（罕见的 bf16→fp16 溢出），改用 4B 模型加 `--dtype fp32`。
+
+## 快速上手（A100/H100 等 Ampere+ 机器，vLLM 服务方式）
 
 ```bash
 DATA=/workspace/mount/b100_zaip_data/zyc/vibe_coding/low_resource_cv/MobileViCLIP/outputs/internvid_alignment/caption_translation_qwen36_v0_1/20_outputs/aligned_internvid_zh_translated_retry_merged.jsonl
@@ -64,9 +86,10 @@ python tools/data_audit/apply_buckets.py --input $DATA \
 
 ## 依赖
 
-在仓库现有环境（含 `decord`、`torch`）之上：`transformers>=4.49`（SigLIP2）、
-`sentence-transformers`（LaBSE，可用 `--xlingual-model ''` 关闭）、`requests`；
-S2 服务端需要 `vllm>=0.11`（建议单独 conda 环境，与训练环境隔离）。
+在仓库现有环境（含 `decord`、`torch`）之上：`transformers>=4.57`
+（SigLIP2 需 ≥4.49，Qwen3-VL 需 ≥4.57）、`sentence-transformers`（LaBSE，
+可用 `--xlingual-model ''` 关闭）、`requests`；仅 Ampere+ 走 vLLM 服务方式时
+需要 `vllm>=0.11`（建议单独 conda 环境，与训练环境隔离；V100 不需要装）。
 
 ## 输出
 

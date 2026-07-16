@@ -58,7 +58,8 @@ def calibrate(verdict_path, target_precision):
     rows = []
     action_counter, issue_counter = Counter(), Counter()
     gran_counter = Counter()
-    for rec in iter_jsonl([verdict_path]):
+    verdict_files = sorted(glob.glob(verdict_path)) or [verdict_path]
+    for rec in iter_jsonl(verdict_files):
         v = rec.get("verdict") or {}
         if "error" in v and "action" not in v:
             continue
@@ -123,7 +124,8 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--scores", required=True, help="stage-1 output glob")
     ap.add_argument("--flags", default=None, help="stage-0 flags jsonl")
-    ap.add_argument("--verdicts", default=None, help="stage-2 verdicts jsonl")
+    ap.add_argument("--verdicts", default=None,
+                    help="stage-2 verdicts jsonl (glob ok, e.g. 's2_verdicts.*.jsonl')")
     ap.add_argument("--target-precision", type=float, default=0.8)
     ap.add_argument("--sig-zh-threshold", type=float, default=None,
                     help="override calibrated misalignment threshold")
