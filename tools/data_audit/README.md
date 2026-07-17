@@ -11,14 +11,17 @@
 | S3 校准分桶 | `aggregate_report.py` | 全量外推 | CPU |
 | S4 落地 v0.2 | `apply_buckets.py` | 全量 | CPU |
 
-## 8×H100 完整配置手册
+## 按机器选手册（两台服务器各一份，均可独立跑完全流程）
 
-当前数据机（8×H100-80G，Driver 580 / CUDA 13.0）的**逐步配置 + 全部命令**
-见 **[`SETUP_H100.md`](SETUP_H100.md)**：conda/pip 镜像绕坑、权重经
-ModelScope/hf-mirror 预下载、vLLM 服务路径（8B 主力 dp=8 + 235B-FP8 裁判
-本地 8 卡）、各步验收点与时间线（全流程 ~1.5 天出诊断报告）。
+| 机器 | 手册 | S2 路径 | 全流程耗时 |
+|---|---|---|---|
+| 8×H100-80G | **[`SETUP_H100.md`](SETUP_H100.md)** | vLLM 服务（8B dp=8 + 235B-FP8 裁判本地 tp8） | ~1.5 天 |
+| 8×V100-32G | **[`SETUP_V100.md`](SETUP_V100.md)** | transformers 后端 `run_v100.sh`（无 bf16/vLLM；torch 须用 cu118 构建；裁判走云端 API） | ~2–2.5 天 |
 
-## 8×V100 快速上手（一键脚本）
+两台都可用时的分工建议见 `SETUP_V100.md` 末节：S1（解码瓶颈）放 V100，
+S2 主力+裁判（卡型差距最大）放 H100。
+
+## 8×V100 快速上手（一键脚本，详细版见 SETUP_V100.md）
 
 V100（Volta）无 bf16、且新版 vLLM（Qwen3-VL 所需）不支持 Volta，
 所以 S1/S2 自动用 fp16、S2 用 transformers 后端 `vlm_audit_hf.py`

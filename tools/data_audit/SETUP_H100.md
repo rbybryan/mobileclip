@@ -1,5 +1,8 @@
 # 8×H100-80G 数据审查完整配置与执行手册
 
+> 姊妹篇：V100 机器用 [`SETUP_V100.md`](SETUP_V100.md)（差异：torch 须
+> cu118 构建、fp16、transformers 后端、裁判走云端）。
+>
 > 目标机器：8×H100 80GB，Driver 580.105.08（CUDA 13.0，向下兼容全部 cu12x
 > wheel）；可联网但 PyPI/HF 直连不稳 → 全程走 aliyun pip 源 + hf-mirror/ModelScope。
 > H100 结论：**用 vLLM 服务路径**（比 V100 的 HF 后端快一个量级），
