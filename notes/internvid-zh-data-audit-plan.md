@@ -168,11 +168,13 @@ caprl-scheme §7：3M 片 × K=3 约 1.5k–3k A100·时。
 ### 7.0 环境准备（一次性，~15 分钟）
 
 ```bash
-# 审核环境与训练环境隔离（vllm/transformers 版本较新，勿装进训练 env）
+# 首选（网络通畅、独立环境）——注意：网络受限/国内集群请改用
+# tools/data_audit/README.md「网络受限机器」一节的 venv 复用方案，
+# 不要硬拉 conda + torch；V100 机器不需要装 vllm。
 conda create -n audit python=3.10 -y && conda activate audit
-pip install "torch>=2.4" "transformers>=4.49" sentence-transformers \
+pip install "torch>=2.4" "transformers>=4.57" sentence-transformers \
             decord pillow numpy requests
-pip install "vllm>=0.11"        # 仅 S2 需要；装失败不影响 S0/S1
+pip install "vllm>=0.11"        # 仅 Ampere+ 走 vLLM 服务方式才需要
 
 export DATA=/workspace/mount/b100_zaip_data/zyc/vibe_coding/low_resource_cv/MobileViCLIP/outputs/internvid_alignment/caption_translation_qwen36_v0_1/20_outputs/aligned_internvid_zh_translated_retry_merged.jsonl
 export CLIPS=/path/to/internvid/clips   # TODO: 改成视频根目录（video 字段相对它拼路径）

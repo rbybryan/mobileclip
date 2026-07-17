@@ -84,6 +84,35 @@ python tools/data_audit/apply_buckets.py --input $DATA \
 先用 `--limit 20000`（S0/S1）和 `--limit 200`（S2）各跑一次冒烟，确认字段探测
 （脚本会打印 `[keys] video=... zh=... en=...`）和视频路径拼接正确，再放全量。
 
+## 网络受限机器（国内集群常见：PyPI/conda 被 reset、HF 不通）
+
+1. **S0 零依赖**：`profile_jsonl.py` 只用标准库，任何现成 Python 直接跑，
+   不用等环境装好。
+2. **跳过 conda，复用训练环境的 torch/decord**（省 700MB+ 下载，且 conda 源
+   往往同样不通）：
+   ```bash
+   conda activate mobileviclip
+   python -m venv --system-site-packages ~/audit_env && source ~/audit_env/bin/activate
+   pip install -i https://mirrors.aliyun.com/pypi/simple --timeout 120 \
+     "transformers>=4.57" sentence-transformers requests
+   ```
+   TUNA 超时就换 aliyun/ustc/sjtu 源；全不通说明机器要代理
+   （`echo $https_proxy`，找管理员）。V100 路径不需要 vllm，别装。
+3. **完全离线**：在有网的同架构机器 `pip download -d audit_wheels
+   --platform manylinux2014_x86_64 --python-version 310 --only-binary=:all:
+   "transformers>=4.57" sentence-transformers requests`，拷过去
+   `pip install --no-index --find-links audit_wheels ...`。
+4. **模型权重**：`export HF_ENDPOINT=https://hf-mirror.com`（写进 `~/.bashrc`），
+   或用 ModelScope 预下载后传本地路径：
+   ```bash
+   pip install modelscope
+   modelscope download --model Qwen/Qwen3-VL-8B-Instruct --local_dir ckpts/Qwen3-VL-8B-Instruct
+   export S2_MODEL=ckpts/Qwen3-VL-8B-Instruct   # run_v100.sh 会直接用本地路径
+   ```
+   SigLIP2 / LaBSE 同理（`--model`/`--xlingual-model` 均接受本地目录）。
+5. 训练环境 torch 偏老时 S1（SigLIP2）通常仍可跑；仅当 S2 加载 Qwen3-VL
+   报 torch 版本错误时，再经镜像/离线 wheel 升 `torch>=2.4`（V100 选 cu118）。
+
 ## 依赖
 
 在仓库现有环境（含 `decord`、`torch`）之上：`transformers>=4.57`
