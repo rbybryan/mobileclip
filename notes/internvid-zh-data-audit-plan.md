@@ -149,6 +149,11 @@ caprl-scheme §7：3M 片 × K=3 约 1.5k–3k A100·时。
 **审查阶段只需 7.0–7.5（产出诊断报告即止）；7.6 起是数据优化阶段，
 待报告评审后再启动。**
 
+> **8×H100 机器**（当前数据机实测：H100-80G×8，Driver 580/CUDA 13.0）：
+> 按 `tools/data_audit/SETUP_H100.md` 执行——vLLM 服务路径（8B 主力
+> `--data-parallel-size 8` + 235B-A22B-FP8 裁判本地 8 卡 tp8），全流程
+> ~1.5 天出诊断报告，无需云端 API。下方 V100 通道仅在换回旧卡时使用。
+>
 > **8×V100 一键通道**：全部审查步骤已封装为
 > `bash tools/data_audit/run_v100.sh {smoke|s0|s1|status|s2-sample|s2|s2-judge|s3}`，
 > 只需先 `export CLIPS=视频根目录`。V100（Volta）与下文 A100 命令的三个差异

@@ -11,7 +11,14 @@
 | S3 校准分桶 | `aggregate_report.py` | 全量外推 | CPU |
 | S4 落地 v0.2 | `apply_buckets.py` | 全量 | CPU |
 
-## 8×V100 快速上手（推荐：一键脚本）
+## 8×H100 完整配置手册
+
+当前数据机（8×H100-80G，Driver 580 / CUDA 13.0）的**逐步配置 + 全部命令**
+见 **[`SETUP_H100.md`](SETUP_H100.md)**：conda/pip 镜像绕坑、权重经
+ModelScope/hf-mirror 预下载、vLLM 服务路径（8B 主力 dp=8 + 235B-FP8 裁判
+本地 8 卡）、各步验收点与时间线（全流程 ~1.5 天出诊断报告）。
+
+## 8×V100 快速上手（一键脚本）
 
 V100（Volta）无 bf16、且新版 vLLM（Qwen3-VL 所需）不支持 Volta，
 所以 S1/S2 自动用 fp16、S2 用 transformers 后端 `vlm_audit_hf.py`
