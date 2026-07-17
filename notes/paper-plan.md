@@ -1,6 +1,10 @@
 # Top-Tier Paper Plan (v1) — re-cut of the improvement roadmap
 
 **Date:** 2026-07-16
+**Revised:** 2026-07-17 — added **R4** (conditional reclaim of P7 asymmetric
+frame encoding, dual trigger); **P9** upgraded from "only if needed" to an
+explicit week-8 export decision point (it is likely a prerequisite of C4's
+latency table).
 **Goal shift:** the previous notes (`model-architecture-improvements{,-zh}.md`,
 `script-level-optimizations-zh.md`) were a *replication + improvement backlog* —
 10 proposals + 13 script fixes, all worth doing in the abstract. This document
@@ -84,7 +88,7 @@ its own ablation row.
 | Old # | Minimum version | What we drop |
 |-------|-----------------|--------------|
 | P1 | Bump env to torch ≥2.0 + SDPA (or xformers on 1.13 if DeepSpeed blocks the bump). Infra only, one line in the paper's impl details | Any "efficient attention" claim |
-| P9 | Only if the latency table needs it: a divided-attention *deployment variant* fine-tuned with the C1 loss, reported as one ablation row + the Core ML export demo | Full study of divided vs joint; hybrid variants |
+| P9 | **Explicit week-8 decision point** (upgraded 07-17): first try exporting the full model with all temporal ops (Core ML/TFLite/ONNX); if every route fails, this variant becomes a **prerequisite** of C4's latency table, not an option (whitespace §0 verified joint attention is the export blocker). Same shape as before: divided-attention deployment variant fine-tuned with the C1 loss, one ablation row + export demo | Full study of divided vs joint; hybrid variants |
 | H1/H4 + freeze bug | Mandatory hygiene **before any baseline number**: remove `set_detect_anomaly`, remove spikingjelly, fix `hasattr(name,'_1d')` | — |
 | H3 | Mandatory: report `dsl/` and `raw/` scores separately, pin the paper's protocol to one of them **before** the first A/B | — |
 | H5 | Optional but cheap: shard eval across ranks — pays for itself across the ~15 A/B runs below | — |
@@ -94,10 +98,15 @@ its own ablation row.
 | Old # | Why skipped |
 |-------|-------------|
 | P6 (temporal token merging) | TempMe already published it (ICLR'25); as our contribution it's derivative, and our own analysis showed stage-4 attention is only ~8% of MACs. **Cite and compare against it instead** — TempMe becomes a baseline row, not a work item |
-| P7 (asymmetric frame encoding) | Genuine novelty but a *second paper's* worth of risk; C2 already owns the "fewer frames, same accuracy" territory with far lower risk. Revisit as the follow-up if C2 lands (the self-distillation loss from C1 is exactly what P7 needs) |
 | P8 (mct text tower) | Pure compression, no novelty; doesn't interact with the story. Future work / appendix at most |
 | H2, M1–M3, L1–L5 | Engineering polish with zero paper value; do only if a specific run is blocked by memory/speed |
 | whitespace §3 (quantization), §4 (frame selection) | §4 is subsumed by C2 (elastic T is the stronger version of frame selection); §3 stays parked |
+
+### Conditional stretch (added 07-17: reclaimed on trigger, costs no mainline schedule)
+
+| Old # | New role | Reclaim logic and triggers |
+|-------|----------|----------------------------|
+| P7 (asymmetric frame encoding) | **R4 (optional run)** | It was cut as "a second paper's worth of risk" — but that was the train-from-scratch estimate. **Once R2/R3 exist, the C1 distillation loss and teacher embeddings are already in hand, and P7 collapses to one self-distillation fine-tune** (teacher = the model's own full-frame path), roughly a week. It also complements rather than duplicates C2: C2 saves compute by *seeing fewer frames*; P7 sees every frame but routes most through a cheap path, attacking the ~92%-of-MACs per-frame conv cost and improving the Pareto **at fixed T**. **Dual trigger (both required)**: (a) ≥2 weeks of buffer left after R3; (b) the elastic model degrades visibly at low T (frame information demonstrably matters). **Verdict rule**: must beat elastic T=4 at equal FLOPs — win → a full paper section (combined elastic-T × asymmetric-compute Pareto surface); lose → back to future work, no second attempt |
 
 whitespace §2 (temporal hard negatives) is **absorbed**: with teacher
 embeddings stored per clip, temporal hard negatives (shuffled-frame clips
@@ -141,6 +150,24 @@ Buffer    ~6 wks to the CVPR deadline for reruns and rebuttal-proofing.
   within ~1 point of its own T=8 mode — otherwise C2 becomes "we also tried"
   and the paper ships on C1+C3 (weaker but viable, TMLR/AAAI class).
 
+**R4 (optional, added 07-17) — conditional reclaim of P7:**
+
+- Triggers (**both** must hold): (a) ≥2 weeks of buffer after R3;
+  (b) R3's elastic model degrades visibly at low T (T=2/4).
+- Shape: a ~one-week self-distillation fine-tune — K=2–4 keyframes through
+  the full path, remaining frames through the shallow path injected via the
+  temporal RepMixer; teacher = the model's own full-frame path, reusing the
+  C1 loss. No from-scratch training.
+- Verdict rule: beat elastic T=4 at equal FLOPs. Win → new paper section
+  (combined elastic-T × asymmetric-compute Pareto); lose → future work.
+
+**Week-8 export decision point (upgraded 07-17, formerly P9's "if needed"):**
+first try exporting the complete model with all temporal ops
+(Core ML / TFLite / ONNX); if any route works, skip P9 entirely; if all
+fail, the P9 deployment variant immediately becomes a **prerequisite task**
+for C4's latency table (divided-attention variant fine-tuned with the C1
+loss, one ablation row + export demo).
+
 ## 5. What changed vs the old sequencing, in one look
 
 - Old 阶段 0–3 treated P1–P10 as parallel tracks; **now there is one track**
@@ -151,6 +178,10 @@ Buffer    ~6 wks to the CVPR deadline for reruns and rebuttal-proofing.
   MobileCLIP2's single biggest lever and our caption-noise defense).
 - Script list: only the 4 correctness items (H1, H3, H4, freeze bug) survive
   as blockers; everything else is opportunistic.
+- (07-17 revision) P7 is no longer a plain cut: it returns as **R4** behind a
+  dual trigger (post-R2/R3 it is just one self-distillation fine-tune);
+  **P9** upgraded from "if needed" to an explicit week-8 export decision
+  point — if direct export fails, it is a prerequisite of the latency table.
 
 *Line/file references inherit from the two validated notes; all facts cited
 here were code- or literature-verified there.*
