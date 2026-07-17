@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# InternVid-zh v0.1 数据审查一键脚本 —— 8x V100 版（只做审查 S0–S3，不改数据）
+#
+# 用法：
+#   export CLIPS=/path/to/internvid/clips        # 唯一必须手改的变量
+#   bash tools/data_audit/run_v100.sh smoke      # ① 冒烟（必须先跑）
+#   bash tools/data_audit/run_v100.sh s0         # ② 全量规则画像（CPU ~20min）
+#   bash tools/data_audit/run_v100.sh s1         # ③ 全量嵌入打分（8 卡 ~1–2 天，可续跑）
+#   bash tools/data_audit/run_v100.sh status     # 随时看 S1/S2 进度
+#   bash tools/data_audit/run_v100.sh s2-sample  # ④ 分层抽样 ~4.5 万条
+#   bash tools/data_audit/run_v100.sh s2         # ⑤ 8 卡 VLM 审核（HF 后端，~半天）
+#   bash tools/data_audit/run_v100.sh s2-judge   # ⑥ 云端大模型裁判 2k 条（可选，需 API key）
+#   bash tools/data_audit/run_v100.sh s3         # ⑦ 校准+分桶+诊断报告 report.md
+#
+# V100 三个硬件差异已在脚本/工具内处理：
+#   1. Volta 无 bf16      -> score_alignment.py / vlm_audit_hf.py 自动落到 fp16
+#   2. vLLM V1 不支持 Volta -> S2 用 transformers 后端 (vlm_audit_hf.py) 8 卡数据并行
+#   3. 235B 裁判本地放不下(8x32GB=256GB < 权重) -> s2-judge 走 OpenAI 兼容云端 API
+set -euo pipefail
+cd "$(dirname "$0")/../.."   # 仓库根目录
+
+# ---------------- 配置（可用环境变量覆盖） ----------------
+DATA=${DATA:-/workspace/mount/b100_zaip_data/zyc/vibe_coding/low_resource_cv/MobileViCLIP/outputs/internvid_alignment/caption_translation_qwen36_v0_1/20_outputs/aligned_internvid_zh_translated_retry_merged.jsonl}
+CLIPS=${CLIPS:-}                                  # 视频根目录（video 字段相对它）
+OUT=${OUT:-outputs/audit_v0_1}
+NGPU=${NGPU:-8}
+S1_FRAMES=${S1_FRAMES:-4}
+S2_FRAMES=${S2_FRAMES:-8}
+S2_MODEL=${S2_MODEL:-Qwen/Qwen3-VL-8B-Instruct}   # 16GB 卡改 Qwen/Qwen3-VL-4B-Instruct
+# 抽样规模（V100 吞吐低于 A100，默认略收缩；嫌慢再调小 PER_BUCKET）
+PER_BUCKET=${PER_BUCKET:-3000}; FLAGGED=${FLAGGED:-10000}; LOW_XLING=${LOW_XLING:-5000}
+# 云端裁判（示例为 DashScope 兼容模式；OpenRouter 等任何 OpenAI 兼容端点均可）
+JUDGE_API_BASE=${JUDGE_API_BASE:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+JUDGE_API_KEY=${JUDGE_API_KEY:-}
+JUDGE_MODEL=${JUDGE_MODEL:-qwen3-vl-235b-a22b-instruct}
+JUDGE_N=${JUDGE_N:-2000}
+
+mkdir -p "$OUT"
+need_clips() { [ -n "$CLIPS" ] || { echo "请先 export CLIPS=视频根目录"; exit 1; }; }
+expected_total() { wc -l < "$DATA"; }
+s1_lines() { cat "$OUT"/s1_scores.*.jsonl 2>/dev/null | wc -l; }
+
+case "${1:-}" in
+# ---------------------------------------------------------------- ① 冒烟
+smoke)
+  need_clips
+  echo "== S0 冒烟：前 2 万条，确认字段探测 =="
+  python tools/data_audit/profile_jsonl.py --input "$DATA" --limit 20000 \
+    --out-summary "$OUT/smoke_s0.json" --out-flags "$OUT/smoke_s0_flags.jsonl"
+  echo "== S1 冒烟：前 2000 条，确认视频路径与 fp16 推理 =="
+  rm -f "$OUT/smoke_s1.0.jsonl"
+  CUDA_VISIBLE_DEVICES=0 python tools/data_audit/score_alignment.py \
+    --input "$DATA" --video-root "$CLIPS" --output "$OUT/smoke_s1.{shard}.jsonl" \
+    --limit 2000 --frames "$S1_FRAMES" --batch-clips 16
+  python - "$OUT/smoke_s1.0.jsonl" <<'PY'
+import json,sys
+rows=[json.loads(l) for l in open(sys.argv[1])]
+err=sum('error' in r for r in rows)
+ok=[r['sig_zh_mean'] for r in rows if r.get('sig_zh_mean') is not None]
+print(f"decode error: {err}/{len(rows)} ({err/max(1,len(rows)):.1%})  <- 应 <2%")
+print(f"sig_zh_mean 非零样本: {len(ok)}, 中位数≈{sorted(ok)[len(ok)//2] if ok else 'N/A'}")
+PY
+  echo "== S2 冒烟：GPU0 审 8 条（首次会下载 $S2_MODEL） =="
+  [ -s "$OUT/smoke_s1.0.jsonl" ] || { echo "S1 冒烟无产物，先解决上一步"; exit 1; }
+  python tools/data_audit/make_audit_sample.py --input "$DATA" \
+    --scores "$OUT/smoke_s1.*.jsonl" --flags "$OUT/smoke_s0_flags.jsonl" \
+    --per-bucket 2 --buckets 4 --flagged 4 --low-xling 4 \
+    --output "$OUT/smoke_s2_sample.jsonl"
+  rm -f "$OUT/smoke_s2_verdicts.0.jsonl"
+  CUDA_VISIBLE_DEVICES=0 python tools/data_audit/vlm_audit_hf.py \
+    --input "$OUT/smoke_s2_sample.jsonl" --video-root "$CLIPS" \
+    --model "$S2_MODEL" --frames "$S2_FRAMES" --limit 8 \
+    --output "$OUT/smoke_s2_verdicts.{shard}.jsonl"
+  head -2 "$OUT/smoke_s2_verdicts.0.jsonl"
+  echo "== 冒烟通过。检查上面 [keys] 探测的字段名；不对则在本脚本各命令上补 --video-key/--zh-key/--en-key =="
+  ;;
+# ---------------------------------------------------------------- ② S0 全量
+s0)
+  python tools/data_audit/profile_jsonl.py --input "$DATA" \
+    --out-summary "$OUT/s0_summary.json" --out-flags "$OUT/s0_flags.jsonl"
+  echo "== 决策门：拒答+未翻译+指令泄漏合计 >5% 先修翻译管线；重复率 >10% 记入报告 =="
+  ;;
+# ---------------------------------------------------------------- ③ S1 全量 8 卡
+s1)
+  need_clips
+  for i in $(seq 0 $((NGPU-1))); do
+    CUDA_VISIBLE_DEVICES=$i nohup python tools/data_audit/score_alignment.py \
+      --input "$DATA" --video-root "$CLIPS" --output "$OUT/s1_scores.{shard}.jsonl" \
+      --num-shards "$NGPU" --shard-id "$i" --frames "$S1_FRAMES" --batch-clips 16 \
+      > "$OUT/s1_shard$i.log" 2>&1 &
+    echo "shard $i -> GPU$i (log: $OUT/s1_shard$i.log)"
+  done
+  echo "已后台启动。中断后重跑本命令即可续跑；进度: bash $0 status"
+  ;;
+# ---------------------------------------------------------------- 进度
+status)
+  total=$(expected_total)
+  s1=$(s1_lines)
+  echo "S1: $s1 / $total ($(python3 -c "print(f'{$s1/$total:.1%}')"))"
+  s2=$(cat "$OUT"/s2_verdicts.*.jsonl 2>/dev/null | wc -l)
+  s2t=$( [ -f "$OUT/s2_sample.jsonl" ] && wc -l < "$OUT/s2_sample.jsonl" || echo 0)
+  echo "S2: $s2 / $s2t"
+  tail -n 2 "$OUT"/s1_shard*.log 2>/dev/null | grep -a progress | tail -4 || true
+  ;;
+# ---------------------------------------------------------------- ④ 抽样
+s2-sample)
+  [ "$(s1_lines)" -ge "$(( $(expected_total) * 95 / 100 ))" ] || \
+    { echo "S1 完成度不足 95%，先等 S1（bash $0 status）"; exit 1; }
+  python tools/data_audit/make_audit_sample.py --input "$DATA" \
+    --scores "$OUT/s1_scores.*.jsonl" --flags "$OUT/s0_flags.jsonl" \
+    --per-bucket "$PER_BUCKET" --flagged "$FLAGGED" --low-xling "$LOW_XLING" \
+    --output "$OUT/s2_sample.jsonl"
+  wc -l "$OUT/s2_sample.jsonl"
+  ;;
+# ---------------------------------------------------------------- ⑤ S2 8 卡 HF 审核
+s2)
+  need_clips
+  [ -f "$OUT/s2_sample.jsonl" ] || { echo "先跑 s2-sample"; exit 1; }
+  for i in $(seq 0 $((NGPU-1))); do
+    CUDA_VISIBLE_DEVICES=$i nohup python tools/data_audit/vlm_audit_hf.py \
+      --input "$OUT/s2_sample.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
+      --frames "$S2_FRAMES" --num-shards "$NGPU" --shard-id "$i" \
+      --output "$OUT/s2_verdicts.{shard}.jsonl" \
+      > "$OUT/s2_shard$i.log" 2>&1 &
+    echo "shard $i -> GPU$i (log: $OUT/s2_shard$i.log)"
+  done
+  echo "已后台启动（可续跑）。进度: bash $0 status"
+  ;;
+# ---------------------------------------------------------------- ⑥ 云端裁判（可选）
+s2-judge)
+  [ -n "$JUDGE_API_KEY" ] || { echo "export JUDGE_API_KEY=... （DashScope/OpenRouter 等）"; exit 1; }
+  need_clips
+  head -n "$JUDGE_N" "$OUT/s2_sample.jsonl" > "$OUT/s2_judge_sample.jsonl"
+  python tools/data_audit/vlm_audit.py --input "$OUT/s2_judge_sample.jsonl" \
+    --video-root "$CLIPS" --api-base "$JUDGE_API_BASE" --api-key "$JUDGE_API_KEY" \
+    --model "$JUDGE_MODEL" --frames "$S2_FRAMES" --concurrency 8 \
+    --output "$OUT/s2_verdicts_judge.jsonl"
+  python - "$OUT" <<'PY'
+import glob, json, sys
+out = sys.argv[1]
+judge = {json.loads(l)["video"]: json.loads(l).get("verdict", {})
+         for l in open(f"{out}/s2_verdicts_judge.jsonl")}
+agree = tot = 0
+for p in glob.glob(f"{out}/s2_verdicts.*.jsonl"):
+    for l in open(p):
+        r = json.loads(l); v = r.get("verdict", {})
+        j = judge.get(r["video"])
+        if j and "action" in v and "action" in j:
+            tot += 1; agree += (v["action"] == j["action"])
+print(f"8B vs 裁判 action 一致率: {agree}/{tot} = {agree/max(1,tot):.1%}  <- 决策门 ≥75%")
+PY
+  ;;
+# ---------------------------------------------------------------- ⑦ 报告
+s3)
+  python tools/data_audit/aggregate_report.py \
+    --scores "$OUT/s1_scores.*.jsonl" --flags "$OUT/s0_flags.jsonl" \
+    --verdicts "$OUT/s2_verdicts.*.jsonl" --target-precision 0.8 \
+    --out-buckets "$OUT/buckets.jsonl" --out-report "$OUT/report.md"
+  echo "== 诊断报告: $OUT/report.md（含问题率外推表；本轮到此为止，不改数据） =="
+  ;;
+*)
+  sed -n '2,/^set -euo/p' "$0" | grep -E '^#( |$)' | sed 's/^# \?//'
+  ;;
+esac
