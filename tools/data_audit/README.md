@@ -98,6 +98,12 @@ python tools/data_audit/apply_buckets.py --input $DATA \
    ```
    TUNA 超时就换 aliyun/ustc/sjtu 源；全不通说明机器要代理
    （`echo $https_proxy`，找管理员）。V100 路径不需要 vllm，别装。
+   conda 报 `HTTP 403 FORBIDDEN ... mirrors.tuna...anaconda/pkgs/main`
+   是 condarc 里的 TUNA anaconda 源被服务端拒绝：要么按上面方案跳过 conda，
+   要么 `conda create -n audit python=3.10 -y --override-channels -c
+   https://mirrors.aliyun.com/anaconda/pkgs/main` 绕开；torch 按驱动选构建
+   （`nvidia-smi` Driver ≥535 用默认 cu12 轮子，更老的 V100 集群用
+   `--index-url https://download.pytorch.org/whl/cu118`）。
 3. **完全离线**：在有网的同架构机器 `pip download -d audit_wheels
    --platform manylinux2014_x86_64 --python-version 310 --only-binary=:all:
    "transformers>=4.57" sentence-transformers requests`，拷过去
