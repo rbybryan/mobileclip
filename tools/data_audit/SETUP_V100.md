@@ -14,7 +14,10 @@
 >    服务，用 transformers 后端 `vlm_audit_hf.py` 8 卡数据并行；
 >    235B 裁判本地放不下（8×32GB < 权重 400GB+）→ 走云端 API。
 
-## 0. 环境（一次性，~20 分钟）
+> **并行提示**：标〖可并行〗的步骤互不依赖可同时开跑；完整调度表见
+> `README.md`「并行调度总览」。严格顺序链只有冒烟 → S1 → s2-sample → S2 → S3。
+
+## 0. 环境（一次性，~20 分钟）〖可并行：与 §2 S0、与 H100 机装环境同时进行；权重下载放后台〗
 
 ```bash
 # conda 源若报 TUNA 403，用 --override-channels 绕开
@@ -69,7 +72,7 @@ bash tools/data_audit/run_v100.sh smoke
 （fp16 推理 + 解码失败率，应 <2%）、S2 在 GPU0 审 8 条（首次会下载模型）。
 字段探测不对 → 各命令补 `--video-key/--zh-key/--en-key`。
 
-## 2. S0 规则画像（全量，CPU ~20 分钟，可先于装环境执行）
+## 2. S0 规则画像（全量，CPU ~20 分钟）〖可并行：零依赖纯 CPU，t0 就能跑，先于装环境执行，与 S1 全程互不干扰〗
 
 ```bash
 bash tools/data_audit/run_v100.sh s0
@@ -79,7 +82,7 @@ S0 只用标准库——**任何现成 Python 都能跑**，不必等 torch 装�
 **决策门**：拒答+未翻译+指令泄漏合计 >5% → 翻译管线先回炉；
 重复 caption 率 >10% → 假负例问题记为报告重点。
 
-## 3. S1 嵌入打分（全量 10M，8 卡 ~1.5–2 天，可断点续跑）
+## 3. S1 嵌入打分（全量 10M，8 卡 ~1.5–2 天，可断点续跑）〖可并行：卡内 8 分片并行；权重下载可同时进行；双机对半见下〗
 
 ```bash
 bash tools/data_audit/run_v100.sh s1        # 8 卡后台启动
@@ -88,7 +91,16 @@ bash tools/data_audit/run_v100.sh status    # 随时看进度
 瓶颈在 CPU 视频解码；中断后重跑 `s1` 自动续。
 **验收点**：`status` 显示 100%；`error` 率与冒烟一致。
 
-## 4. S2 分层抽样 + VLM 审核
+〖双机对半（H100 机同时在线且两机挂同一数据盘时，S1 总时长近乎减半）〗：
+
+```bash
+# 本机（V100）跑总 16 分片中的 0–7：
+S1_TOTAL_SHARDS=16 S1_SHARD_OFFSET=0 bash tools/data_audit/run_v100.sh s1
+# H100 机同时跑分片 8–15（命令见 SETUP_H100.md §3 双机段）
+# 注意：双机分片下本机 status 只到 ~50%，以两机产物行数之和为准
+```
+
+## 4. S2 分层抽样 + VLM 审核〖4.2 主力 / 4.3 裁判 / 4.4 人工抽检可并行：裁判走云端 API 不占本机 GPU，抽样(4.1)一完成即可与主力同时启动〗
 
 ```bash
 # 4.1 抽样（S1 ≥95% 后执行；V100 慢可 export PER_BUCKET=2000 收缩）
@@ -99,6 +111,7 @@ bash tools/data_audit/run_v100.sh s2
 bash tools/data_audit/run_v100.sh status
 
 # 4.3 裁判档：云端 235B（任何 OpenAI 兼容端点；2k 条约几十元）
+#     —— 不占本机 GPU，可与 4.2 主力同时跑（只依赖 4.1 抽样完成）
 export JUDGE_API_KEY=sk-...          # DashScope / OpenRouter 等
 bash tools/data_audit/run_v100.sh s2-judge   # 跑完自动打印一致率
 # （替代方案：两台机器都在时，把裁判放 H100 本地 235B-FP8，
@@ -111,7 +124,7 @@ shuf -n 500 <(cat $OUT/s2_verdicts.*.jsonl) > $OUT/human_check_500.jsonl
 fp16 若出现乱码/NaN 输出（罕见）：`export S2_MODEL=Qwen/Qwen3-VL-4B-Instruct`
 并在 `vlm_audit_hf.py` 加 `--dtype fp32` 重跑。
 
-## 5. S3 校准 + 全量分桶 + 诊断报告（CPU 分钟级）
+## 5. S3 校准 + 全量分桶 + 诊断报告（CPU 分钟级）〖不可并行：需 S0+S1+S2 全部产物，最后跑〗
 
 ```bash
 bash tools/data_audit/run_v100.sh s3
