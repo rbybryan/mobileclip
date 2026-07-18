@@ -83,14 +83,21 @@ s0)
 # ---------------------------------------------------------------- ③ S1 全量 8 卡
 s1)
   need_clips
+  # 双机对半加速：V100 机 S1_TOTAL_SHARDS=16 S1_SHARD_OFFSET=0 bash $0 s1
+  #              H100 机 S1_TOTAL_SHARDS=16 S1_SHARD_OFFSET=8 …（或手动循环）
+  TOT=${S1_TOTAL_SHARDS:-$NGPU}; OFF=${S1_SHARD_OFFSET:-0}
   for i in $(seq 0 $((NGPU-1))); do
+    sid=$((i+OFF))
     CUDA_VISIBLE_DEVICES=$i nohup python tools/data_audit/score_alignment.py \
       --input "$DATA" --video-root "$CLIPS" --output "$OUT/s1_scores.{shard}.jsonl" \
-      --num-shards "$NGPU" --shard-id "$i" --frames "$S1_FRAMES" --batch-clips 16 \
-      > "$OUT/s1_shard$i.log" 2>&1 &
-    echo "shard $i -> GPU$i (log: $OUT/s1_shard$i.log)"
+      --num-shards "$TOT" --shard-id "$sid" --frames "$S1_FRAMES" --batch-clips 16 \
+      > "$OUT/s1_shard$sid.log" 2>&1 &
+    echo "shard $sid/$TOT -> GPU$i (log: $OUT/s1_shard$sid.log)"
   done
   echo "已后台启动。中断后重跑本命令即可续跑；进度: bash $0 status"
+  if [ "$TOT" -gt "$NGPU" ]; then
+    echo "注意：双机分片下本机 status 只会到 ~$((NGPU*100/TOT))%，需两机产物汇总"
+  fi
   ;;
 # ---------------------------------------------------------------- 进度
 status)

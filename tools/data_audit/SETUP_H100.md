@@ -9,7 +9,11 @@
 > 235B 裁判用 FP8 版**本地 8 卡即可起**，不需要云端 API。
 > 本手册只覆盖审查 S0–S3（产出诊断报告），不改数据。
 
-## 0. 环境（一次性，~20 分钟）
+> **并行提示**：各节标了〖可并行〗的步骤互不依赖，可同时开跑；
+> 完整调度表见 `README.md`「并行调度总览」。严格顺序链只有
+> 冒烟 → S1 → s2-sample → S2 → S3。
+
+## 0. 环境（一次性，~20 分钟）〖可并行：与 §2 S0、与 V100 机装环境同时进行；235B 权重下载放后台，与 §1–§3 重叠〗
 
 ```bash
 # conda 源若报 TUNA 403，用 --override-channels 绕开
@@ -65,7 +69,7 @@ err=sum('error' in r for r in rows);print(f'decode error: {err}/{len(rows)} (应
 字段探测不对 → 后续所有命令加 `--video-key/--zh-key/--en-key`；
 解码失败率高 → 先查 `$CLIPS` 路径拼接。
 
-## 2. S0 规则画像（全量，CPU ~20 分钟）
+## 2. S0 规则画像（全量，CPU ~20 分钟）〖可并行：零依赖纯 CPU，t0 就能跑，与装环境/权重下载/S1 全程互不干扰〗
 
 ```bash
 python tools/data_audit/profile_jsonl.py --input $DATA \
@@ -75,7 +79,7 @@ python -m json.tool $OUT/s0_summary.json | head -60
 **决策门**：拒答+未翻译+指令泄漏合计 >5% → 翻译管线要整体回炉；
 重复 caption 率 >10% → 假负例问题记为报告重点。
 
-## 3. S1 嵌入打分（全量 10M，8 卡 ~1 天，可断点续跑）
+## 3. S1 嵌入打分（全量 10M，8 卡 ~1 天，可断点续跑）〖可并行：卡内 8 分片并行；235B 权重下载可同时进行；双机对半见下〗
 
 ```bash
 for i in $(seq 0 7); do
@@ -87,10 +91,24 @@ done
 # 进度（总数应逼近 10M）：
 watch -n 60 'cat outputs/audit_v0_1/s1_scores.*.jsonl | wc -l'
 ```
+
+〖双机对半（V100 机同时在线且两机挂同一数据盘时，S1 总时长近乎减半）〗：
+总分片改 16，本机跑 8–15，V100 机跑 0–7
+（V100 侧：`S1_TOTAL_SHARDS=16 S1_SHARD_OFFSET=0 bash tools/data_audit/run_v100.sh s1`）：
+
+```bash
+for i in $(seq 0 7); do
+  CUDA_VISIBLE_DEVICES=$i nohup python tools/data_audit/score_alignment.py \
+    --input $DATA --video-root $CLIPS --output "$OUT/s1_scores.{shard}.jsonl" \
+    --num-shards 16 --shard-id $((i+8)) --frames 4 --batch-clips 32 \
+    > $OUT/s1_shard$((i+8)).log 2>&1 &
+done
+# 两机产物需汇入同一 $OUT（同一挂载则天然同目录）；每台各自约完成 50%
+```
 瓶颈在 CPU 视频解码而非 H100 算力；中断后重跑同一命令自动续。
 **验收点**：8 分片行数之和 = 输入行数；`error` 率与冒烟一致。
 
-## 4. S2 分层抽样 + VLM 审核（~4.5 万条）
+## 4. S2 分层抽样 + VLM 审核（~4.5 万条）〖4.2 主力 / 4.3 裁判 / 4.5 人工抽检三线可并行：裁判只依赖 4.1 抽样，不依赖主力结果〗
 
 ```bash
 # 4.1 抽样（S1 完成 ≥95% 后执行）
@@ -111,6 +129,17 @@ python tools/data_audit/vlm_audit.py --input $OUT/s2_sample.jsonl \
   --output $OUT/s2_verdicts.jsonl
 # 跑完关掉服务释放显存：
 pkill -f "vllm serve ckpts/Qwen3-VL-8B-Instruct"
+```
+
+〖并行方案：主力+裁判同时跑（GPU 对半）〗——8B `dp=4` 占 GPU0-3、
+235B-FP8 `tp=4` 占 GPU4-7（tp4 时每卡 ~59GB 权重，KV 余量紧，
+`--max-model-len` 不要超 16384）；顺序跑也只多 1–2 小时，二选一即可：
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3 vllm serve ckpts/Qwen3-VL-8B-Instruct --port 8000 \
+  --data-parallel-size 4 --limit-mm-per-prompt image=8 --max-model-len 16384 &
+CUDA_VISIBLE_DEVICES=4,5,6,7 vllm serve ckpts/Qwen3-VL-235B-A22B-FP8 --port 8001 \
+  --tensor-parallel-size 4 --limit-mm-per-prompt image=8 --max-model-len 16384 &
 ```
 
 ```bash
@@ -138,11 +167,11 @@ for l in open(f"{out}/s2_verdicts.jsonl"):
 print(f"8B vs 235B action 一致率: {agree}/{tot} = {agree/max(1,tot):.1%}")
 PY
 
-# 4.5 人工抽检 500 条
+# 4.5 人工抽检 500 条（只依赖 4.2 主力产出，可与 4.3 裁判并行进行）
 shuf -n 500 $OUT/s2_verdicts.jsonl > $OUT/human_check_500.jsonl
 ```
 
-## 5. S3 校准 + 全量分桶 + 诊断报告（CPU 分钟级）
+## 5. S3 校准 + 全量分桶 + 诊断报告（CPU 分钟级）〖不可并行：需 S0+S1+S2 全部产物，最后跑〗
 
 ```bash
 python tools/data_audit/aggregate_report.py \
