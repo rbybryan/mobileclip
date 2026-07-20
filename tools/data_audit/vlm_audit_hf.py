@@ -34,7 +34,8 @@ import torch
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from vlm_audit import PROMPT, extract_json  # noqa: E402 - shared rubric/parser
+from vlm_audit import (PROMPT, extract_json,  # noqa: E402 - shared rubric/parser
+                       resolve_video_path)
 
 
 def sample_frames_pil(path, num_frames, max_side):
@@ -130,7 +131,7 @@ def main():
         for rec in todo:
             out = {"video": rec["video"], "stratum": rec.get("stratum"),
                    "s1": rec.get("s1"), "s0_flags": rec.get("s0_flags")}
-            path = os.path.join(args.video_root, str(rec["video"]))
+            path = resolve_video_path(args.video_root, rec, rec["video"])
             try:
                 frames = sample_frames_pil(path, args.frames, args.max_side)
                 prompt = PROMPT.format(n_frames=args.frames,

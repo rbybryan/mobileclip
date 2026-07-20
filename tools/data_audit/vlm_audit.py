@@ -69,6 +69,24 @@ PROMPT = """你是严格的视频-文本数据质检员。给你一个视频的 
 VERDICT_KEYS = {"video_readable", "en_score", "zh_score", "trans_score", "action"}
 
 
+def resolve_video_path(video_root, rec, video):
+    """video_root/<video> -> video_root/<InternVId-... suffix of abs_path> ->
+    raw abs_path; first existing wins (else first candidate)."""
+    cands = []
+    if video:
+        cands.append(os.path.join(video_root, str(video)))
+    ap = rec.get("abs_path")
+    if ap:
+        m = re.search(r"InternVId[^/]*/.*", str(ap))
+        if m:
+            cands.append(os.path.join(video_root, m.group(0)))
+        cands.append(str(ap))
+    for c in cands:
+        if os.path.exists(c):
+            return c
+    return cands[0] if cands else ""
+
+
 def sample_frames_b64(path, num_frames, max_side, quality=80):
     import decord
     vr = decord.VideoReader(path, num_threads=1)
@@ -112,7 +130,7 @@ def audit_one(rec, args, session):
     video = rec["video"]
     out = {"video": video, "stratum": rec.get("stratum"),
            "s1": rec.get("s1"), "s0_flags": rec.get("s0_flags")}
-    path = os.path.join(args.video_root, str(video))
+    path = resolve_video_path(args.video_root, rec, video)
     try:
         frames = sample_frames_b64(path, args.frames, args.max_side)
     except Exception as ex:  # noqa: BLE001 - decode failure is itself a verdict

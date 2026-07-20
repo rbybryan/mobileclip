@@ -38,7 +38,8 @@ from collections import Counter
 
 VIDEO_KEYS = ["video", "video_path", "video_id", "clip", "clip_name", "filename"]
 ZH_KEYS = ["caption_zh", "zh_caption", "caption_cn", "cn_caption", "translated_caption",
-           "translation", "zh", "chinese_caption"]
+           "translation", "zh", "chinese_caption", "raw_caption_zh_translated",
+           "caption_zh_translated"]
 EN_KEYS = ["caption", "caption_en", "en_caption", "source_caption", "src_caption", "en"]
 
 PREFIX_RE = re.compile(
