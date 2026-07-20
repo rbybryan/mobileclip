@@ -7,9 +7,8 @@
 #   bash tools/data_audit/run_v100.sh s0         # ② 规则画像（10k 秒级）
 #   bash tools/data_audit/run_v100.sh s1         # ③ 嵌入打分（10k 8 卡 ~10–30min，可续跑）
 #   bash tools/data_audit/run_v100.sh status     # 随时看 S1/S2 进度
-#   PER_BUCKET=100 FLAGGED=300 LOW_XLING=200 \
-#     bash tools/data_audit/run_v100.sh s2-sample  # ④ 分层抽样（10k 抽 ~1.4k）
-#   bash tools/data_audit/run_v100.sh s2         # ⑤ 8 卡 VLM 审核（HF 后端，~1h）
+#   bash tools/data_audit/run_v100.sh s2-sample  # ④ 抽样（默认参数在 10k 上=全覆盖）
+#   bash tools/data_audit/run_v100.sh s2         # ⑤ 8 卡 VLM 审核全部 10k（HF 后端，~2–3h）
 #   JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge  # ⑥ 云端裁判（可选，需 API key）
 #   bash tools/data_audit/run_v100.sh s3         # ⑦ 校准+分桶+诊断报告 report.md
 # 跑其他数据（如全量挂载后）：export DATA/CLIPS/OUT 覆盖默认值即可。

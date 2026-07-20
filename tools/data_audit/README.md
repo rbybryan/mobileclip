@@ -16,7 +16,7 @@
 | 机器 | 手册 | 数据范围 | S2 路径 | 耗时 |
 |---|---|---|---|---|
 | 8×H100-80G | **[`SETUP_H100.md`](SETUP_H100.md)** | **全量 10M** | vLLM 服务（8B dp=8 + 235B-FP8 裁判本地 tp8） | ~1.5 天 |
-| 8×V100-32G（101vector） | **[`SETUP_V100.md`](SETUP_V100.md)** | **仅 1 万条预抽样**（`/home/vca1/datasets/internvid_zh_10k`，本机没有全量数据） | transformers 后端 `run_v100.sh`（无 bf16/vLLM；torch 须用 cu118 构建；裁判走云端 API） | ~2–3 小时 |
+| 8×V100-32G（101vector） | **[`SETUP_V100.md`](SETUP_V100.md)** | **仅 1 万条预抽样**（`/home/vca1/datasets/internvid_zh_10k`，本机没有全量数据） | transformers 后端 `run_v100.sh`（无 bf16/vLLM；torch 须用 cu118 构建；裁判走云端 API；S2 推荐 10k 全覆盖） | ~3–4 小时 |
 
 推荐节奏：先在 V100 机把 10k 全流程跑完（半天内出 10k 报告 + 调好 rubric
 和 `sig_zh` 阈值），再在 H100 机开全量，校准结果直接复用、避免 10M 规模返工。
@@ -53,8 +53,8 @@ bash tools/data_audit/run_v100.sh smoke      # 冒烟：字段探测/解码/模�
 bash tools/data_audit/run_v100.sh s0         # 规则画像（10k 秒级）
 bash tools/data_audit/run_v100.sh s1         # 嵌入打分（10k 8 卡 ~10–30 分钟）
 bash tools/data_audit/run_v100.sh status     # 等 S1 到 10000/10000
-PER_BUCKET=100 FLAGGED=300 LOW_XLING=200 bash tools/data_audit/run_v100.sh s2-sample
-bash tools/data_audit/run_v100.sh s2         # 8 卡 VLM 审核（HF 后端，~1 小时）
+bash tools/data_audit/run_v100.sh s2-sample  # 默认参数在 10k 上即全覆盖
+bash tools/data_audit/run_v100.sh s2         # 8 卡 VLM 审核全部 10k（HF 后端，~2–3 小时）
 export JUDGE_API_KEY=sk-...                  # 可选：云端 235B 裁判
 JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge
 bash tools/data_audit/run_v100.sh s3         # 诊断报告 report.md + buckets.jsonl
