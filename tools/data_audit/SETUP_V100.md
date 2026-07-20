@@ -84,9 +84,10 @@ done
 # hf-mirror 通道试试（不同 CDN，同样断点续传，两边下到一半的进度互不冲突，
 # 哪个快用哪个；文件落同一目录，跑完任意一边即可）：
 #   pip install -U "huggingface_hub[cli]"
-#   until HF_ENDPOINT=https://hf-mirror.com huggingface-cli download \
+#   until HF_ENDPOINT=https://hf-mirror.com hf download \
 #     Qwen/Qwen3-VL-8B-Instruct --local-dir ckpts/Qwen3-VL-8B-Instruct; do
 #     sleep 10; done
+#   （huggingface_hub 1.0 起 CLI 改名：huggingface-cli → hf，参数不变）
 # SigLIP2 / LaBSE 体积小，S1 首次运行经 hf-mirror 自动下载即可
 ```
 
