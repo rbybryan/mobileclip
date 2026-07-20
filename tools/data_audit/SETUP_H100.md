@@ -55,6 +55,11 @@ modelscope download --model Qwen/Qwen3-VL-8B-Instruct \
   --local_dir ckpts/Qwen3-VL-8B-Instruct
 modelscope download --model Qwen/Qwen3-VL-235B-A22B-Instruct-FP8 \
   --local_dir ckpts/Qwen3-VL-235B-A22B-FP8        # 裁判档，~235GB，磁盘留够
+
+# 弱网反复报 IncompleteRead / Max retries exceeded：modelscope 支持断点
+# 续传，重跑同一条命令即接着下；稳妥做法是加 --max-workers 1 并用
+# until 循环包住放后台，或换 hf-mirror 通道——完整配方见 SETUP_V100.md §0
+# 与 TROUBLESHOOTING.md「modelscope download keeps failing」。
 ```
 
 ```bash

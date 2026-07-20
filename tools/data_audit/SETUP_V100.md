@@ -66,8 +66,27 @@ export HF_ENDPOINT=https://hf-mirror.com
 # S2 模型预下载（32GB 卡用 8B；若是 16GB 卡改 Qwen3-VL-4B-Instruct）
 pip install modelscope
 mkdir -p ckpts
-modelscope download --model Qwen/Qwen3-VL-8B-Instruct \
-  --local_dir ckpts/Qwen3-VL-8B-Instruct
+# 弱网加固版：--max-workers 1 串行下载（默认并发拉多个 ~5GB 分片，弱网上
+# 互相抢带宽、单条连接存活更久更易被掐断），外层 until 循环断了自动重连。
+# modelscope 支持断点续传（HTTP Range）：重跑同一条命令不会从头下——
+# 已完成的文件直接跳过，下到一半的文件从断点继续，Ctrl-C / 断网都不丢进度。
+until modelscope download --model Qwen/Qwen3-VL-8B-Instruct \
+    --local_dir ckpts/Qwen3-VL-8B-Instruct --max-workers 1; do
+  echo "[$(date '+%F %T')] 下载中断，10s 后续传……"; sleep 10
+done
+# 反复报 IncompleteRead(... bytes read, ... more expected) / Max retries
+# exceeded 就是链路断流，上面的循环会一直续传到下完，放后台挂着即可：
+#   nohup bash -c 'until modelscope download --model Qwen/Qwen3-VL-8B-Instruct \
+#     --local_dir ckpts/Qwen3-VL-8B-Instruct --max-workers 1; do sleep 10; done' \
+#     > ckpts/qwen3vl8b_download.log 2>&1 &
+#   tail -f ckpts/qwen3vl8b_download.log   # 看进度
+# 若速率长期只有几十 kB/s，多半是 ModelScope CDN 到本机的路由差：换
+# hf-mirror 通道试试（不同 CDN，同样断点续传，两边下到一半的进度互不冲突，
+# 哪个快用哪个；文件落同一目录，跑完任意一边即可）：
+#   pip install -U "huggingface_hub[cli]"
+#   until HF_ENDPOINT=https://hf-mirror.com huggingface-cli download \
+#     Qwen/Qwen3-VL-8B-Instruct --local-dir ckpts/Qwen3-VL-8B-Instruct; do
+#     sleep 10; done
 # SigLIP2 / LaBSE 体积小，S1 首次运行经 hf-mirror 自动下载即可
 ```
 

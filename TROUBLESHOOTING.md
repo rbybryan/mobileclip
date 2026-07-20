@@ -296,6 +296,63 @@ Then verify `data/hmdb51/videos_test/` holds ~6766 `.avi` and that
 
 ---
 
+## `modelscope download` keeps failing: `IncompleteRead(... bytes read, ... more expected)` / `Max retries exceeded`
+
+Seen while pre-downloading Qwen3-VL weights for the data audit
+(`tools/data_audit/SETUP_V100.md` §0 / `SETUP_H100.md` §0):
+
+```
+WARNING | modelscope_hub.download | Download failed for model-00002-of-00004.safetensors:
+('Connection broken: IncompleteRead(59314357 bytes read, 4510618059 more expected)', ...), will retry
+ERROR   | modelscope_hub.download | Failed to download model-00004-of-00004.safetensors:
+None: Max retries exceeded with url: ...
+```
+
+**What it means.** The TCP connection to the ModelScope CDN is being cut
+mid-transfer. On a slow/flaky link (tens of kB/s) each ~5 GB safetensors shard
+needs a connection that survives for hours, and the default snapshot download
+pulls several shards concurrently, which makes every connection slower and
+longer-lived — i.e. more likely to die. After the built-in retries are
+exhausted the file errors out and the snapshot ends incomplete.
+
+**Nothing is lost.** `modelscope` resumes partial files with HTTP `Range`
+requests: re-running the *same* command skips completed files and continues
+half-downloaded ones from where they stopped. So the fix is simply to retry in
+a loop, with concurrency turned down to one file at a time:
+
+```bash
+until modelscope download --model Qwen/Qwen3-VL-8B-Instruct \
+    --local_dir ckpts/Qwen3-VL-8B-Instruct --max-workers 1; do
+  echo "download interrupted, resuming in 10s"; sleep 10
+done
+```
+
+Wrap it in `nohup ... &` to keep it running unattended (full recipe in
+`SETUP_V100.md` §0).
+
+**If throughput stays pathological** (tens of kB/s for hours), the route to
+ModelScope's CDN is the bottleneck — try the hf-mirror channel instead, which
+uses a different CDN and also resumes; whichever is faster wins, and both write
+into the same `--local-dir`:
+
+```bash
+pip install -U "huggingface_hub[cli]"
+until HF_ENDPOINT=https://hf-mirror.com huggingface-cli download \
+  Qwen/Qwen3-VL-8B-Instruct --local-dir ckpts/Qwen3-VL-8B-Instruct; do
+  sleep 10
+done
+```
+
+Sanity check when a channel reports success — all four shards present and full
+size (the 8B model totals ~17 GB; a partially written shard fails loudly at
+load time):
+
+```bash
+ls -l ckpts/Qwen3-VL-8B-Instruct/model-0000*-of-00004.safetensors
+```
+
+---
+
 ## Running the next retrieval dataset (DiDeMo, ActivityNet)
 
 Once MSR-VTT works end-to-end, the other zero-shot **retrieval** benchmarks run
