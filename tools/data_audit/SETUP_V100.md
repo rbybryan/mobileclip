@@ -18,7 +18,7 @@
 
 > **并行提示**：标〖可并行〗的步骤互不依赖可同时开跑；完整调度表见
 > `README.md`「并行调度总览」。严格顺序链只有冒烟 → S1 → s2-sample → S2 → S3。
-> 10k 全流程很快（GPU 部分合计 ~2 小时），与 H100 机的全量审查完全独立、
+> 10k 全流程很快（GPU 部分合计 ~3–4 小时，S2 全覆盖），与 H100 机的全量审查完全独立、
 > 可同时进行。
 
 ## 0. 环境（一次性，~20 分钟）〖可并行：与 §2 S0、与 H100 机装环境同时进行；权重下载放后台〗
@@ -121,14 +121,18 @@ bash tools/data_audit/run_v100.sh status    # 随时看进度
 （`run_v100.sh` 的 `S1_TOTAL_SHARDS/S1_SHARD_OFFSET` 双机分片参数在本机
 **用不上**——那是两台机器共享全量数据盘时的加速项，本机没有全量数据。）
 
-## 4. S2 分层抽样 + VLM 审核（10k 中抽 ~1.4k 条）〖4.2 主力 / 4.3 裁判 / 4.4 人工抽检可并行：裁判走云端 API 不占本机 GPU〗
+## 4. S2 VLM 审核（**推荐 10k 全覆盖**，8 卡 ~2–3 小时）〖4.2 主力 / 4.3 裁判 / 4.4 人工抽检可并行：裁判走云端 API 不占本机 GPU〗
 
 ```bash
-# 4.1 抽样：10k 规模用收缩参数（十分位×100 + 规则命中 300 + 低跨语 200 ≈ 1.4k）
-PER_BUCKET=100 FLAGGED=300 LOW_XLING=200 bash tools/data_audit/run_v100.sh s2-sample
-wc -l $OUT/s2_sample.jsonl
+# 4.1 抽样——推荐全覆盖：默认参数（每分位桶 3000×10 桶）在 10k 上即选中
+#     全部有分记录，直接跑，不加任何收缩参数：
+bash tools/data_audit/run_v100.sh s2-sample
+wc -l $OUT/s2_sample.jsonl        # 应 ≈10000
+#     （赶时间的快速版才用收缩参数，~1.4k 条 1 小时：
+#      PER_BUCKET=100 FLAGGED=300 LOW_XLING=200 bash tools/data_audit/run_v100.sh s2-sample）
 
-# 4.2 主力档：Qwen3-VL-8B，transformers 后端 8 卡数据并行（~1.4k 条约 1 小时）
+# 4.2 主力档：Qwen3-VL-8B，transformers 后端 8 卡数据并行
+#     全覆盖 10k ≈ 每卡 1250 条 × 6–8s ≈ 2–3 小时；可断点续跑
 bash tools/data_audit/run_v100.sh s2
 bash tools/data_audit/run_v100.sh status
 
@@ -144,6 +148,9 @@ shuf -n 300 <(cat $OUT/s2_verdicts.*.jsonl) > $OUT/human_check_300.jsonl
 ```
 **决策门**：8B vs 裁判 action 一致率 ≥75%，不达标先改 rubric 再重跑——
 **在 10k 上把 rubric 调可信，正是全量（H100 机）开跑前最重要的准备**。
+全覆盖的额外收益：10k 报告是全量实测（零抽样误差）；1 万对
+（嵌入分, VLM 判定）配对点让 S3 的阈值校准曲线远比 1.4k 稳，直接
+作为 H100 全量跑的先验；且全部 10k 都拿到 `better_zh` 候选修复字幕。
 fp16 若出现乱码/NaN 输出（罕见）：`export S2_MODEL=Qwen/Qwen3-VL-4B-Instruct`
 并在 `vlm_audit_hf.py` 加 `--dtype fp32` 重跑。
 
@@ -209,10 +216,10 @@ S0–S3 的自动化产出为准，这个工具只承担三个定性任务：
 | 环境 + 权重 | ~0.5–1 h | ~0.5–2 h（多下 235B） |
 | S0 | 秒级 | ~20 min |
 | S1 | ~10–30 min | ~1 天 |
-| S2 主力 | ~1 h（1.4k 条，HF 后端） | 1–2 h（45k 条，vLLM dp=8） |
+| S2 主力 | ~2–3 h（**10k 全覆盖**，HF 后端） | 1–2 h（45k 条，vLLM dp=8） |
 | S2 裁判 | ~0.5 h（500 条云端） | 1–2 h（2k 条本地 FP8 tp8） |
 | S3 报告 | 秒级 | 分钟级 |
-| **总计** | **~2–3 小时** | **~1.5 天** |
+| **总计** | **~3–4 小时** | **~1.5 天** |
 
 推荐节奏：**先在本机把 10k 全流程跑完**（半天内拿到 10k 报告 + 调好
 rubric/阈值），再在 H100 机开全量——10k 校准出的 `sig_zh` 阈值和 rubric
