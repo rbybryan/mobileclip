@@ -47,7 +47,65 @@ python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_
 网络不通（pip/HF 被 reset）时，先按 `SETUP_H100.md` 开头的"联网"段配好
 代理，或参考 `README.md`「网络受限机器」一节换源/离线安装。
 
-### 1.2 下载 235B-FP8 权重（~235GB，放后台，看带宽 0.5–2h+）
+### 1.2 先检索机器上是否已有权重（可省 235GB 下载）
+
+```bash
+# ① 是否已有服务在跑（权重可能已经起好了）
+ps aux | grep -i vllm | grep -v grep
+ss -tlnp | grep -E ':(8000|8001)'
+
+# ② 按名字搜常见位置（秒级）
+for d in ~ /root /workspace /data /mnt /models /opt \
+         ~/.cache/huggingface/hub ~/.cache/modelscope/hub; do
+  [ -d "$d" ] && find "$d" -maxdepth 6 \( -type d -o -type l \) \
+    \( -iname "*235b*" -o -iname "*qwen3-vl*" \) 2>/dev/null
+done
+# 装了 mlocate 更快：locate -i 235b | head
+# HF 缓存的可用路径在 models--Qwen--*/snapshots/<hash>/ 那一层；
+# ModelScope 缓存在 ~/.cache/modelscope/hub/models/Qwen/ 下
+
+# ③ 名字搜不到按体积反查（235B 分片都是数 GB safetensors）
+find / -xdev -type f -name "*.safetensors" -size +3G -printf '%h\n' 2>/dev/null \
+  | sort | uniq -c | sort -rn | head
+# -xdev 不跨挂载；/workspace/mount 等 NFS 挂载点单独跑（慢，放后台）
+```
+
+找到后**必须验证完整性和版本**（断过的下载会缺分片）：
+
+```bash
+DIR=/找到的/路径
+du -sh "$DIR"    # FP8 版 ≈ 235G；BF16 原版 ≈ 470G
+python - "$DIR" <<'PY'
+import json, os, sys
+d = sys.argv[1]
+cfg = json.load(open(os.path.join(d, "config.json")))
+print("model_type:", cfg.get("model_type"))          # 应含 qwen3_vl
+qc = cfg.get("quantization_config", {})
+print("量化:", qc.get("quant_method", "无（BF16 原版）"))  # 期望 fp8
+idx = json.load(open(os.path.join(d, "model.safetensors.index.json")))
+need = sorted(set(idx["weight_map"].values()))
+have = [f for f in need if os.path.exists(os.path.join(d, f))]
+print(f"分片: {len(have)}/{len(need)} {'齐全' if len(have)==len(need) else '不完整!'}")
+tot = idx["metadata"]["total_size"]
+size = sum(os.path.getsize(os.path.join(d, f)) for f in have)
+print(f"字节: {size:,} / {tot:,} {'OK' if size >= tot else '下载不完整!'}")
+PY
+```
+
+验证通过后二选一接入，之后手册命令原样可用：
+
+```bash
+ln -s "$DIR" ckpts/Qwen3-VL-235B-A22B-FP8          # 方式 A：软链进 ckpts/
+# 方式 B：直接 serve 该路径，并用 --served-model-name 固定对外模型名：
+#   vllm serve "$DIR" --served-model-name ckpts/Qwen3-VL-235B-A22B-FP8 ...
+#   （V100 侧 JUDGE_MODEL 不用改）
+```
+
+若找到的是 **BF16 原版**（~470GB）：tp8 也能起（每卡 ~59GB 权重）但 KV
+很紧——`--max-model-len` 压到 16384、必要时 `--gpu-memory-utilization 0.95`，
+且无法再与 8B 主力对半分卡；裁判档对量化不敏感，长期用建议仍补 FP8 版。
+
+### 1.3 下载 235B-FP8 权重（§1.2 没找到才需要；~235GB，放后台，看带宽 0.5–2h+）
 
 ```bash
 pip install modelscope
