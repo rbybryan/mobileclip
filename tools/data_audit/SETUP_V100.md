@@ -124,6 +124,10 @@ PY
 # 一键版（自动按类别拆分到 outputs/audit_10k/s0_flag_split/ 并打印实例；
 # 优先读全量 s0_flags.jsonl，没有则退回冒烟的 smoke_s0_flags.jsonl）：
 SHOW_N=8 bash tools/data_audit/run_v100.sh s0-show
+# 只看指定类别时直接调实现脚本：
+python tools/data_audit/show_flags.py --flags outputs/audit_10k/s0_flags.jsonl \
+  --out-dir outputs/audit_10k/s0_flag_split --per-flag 8 \
+  --only zh_mostly_english,zh_low_cjk_ratio,instruction_leak,zh_very_short
 ```
 各旗标的判定规则速查表见 §2。
 

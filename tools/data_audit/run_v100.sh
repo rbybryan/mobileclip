@@ -109,31 +109,10 @@ s0-show)
   FLAGS_FILE="$OUT/s0_flags.jsonl"
   [ -f "$FLAGS_FILE" ] || FLAGS_FILE="$OUT/smoke_s0_flags.jsonl"
   [ -f "$FLAGS_FILE" ] || { echo "未找到 $OUT/s0_flags.jsonl（先跑: bash $0 s0）"; exit 1; }
-  SHOW_N="${SHOW_N:-5}" python - "$FLAGS_FILE" "$OUT/s0_flag_split" <<'PY'
-import json, os, sys
-from collections import defaultdict
-src, outdir = sys.argv[1], sys.argv[2]
-show_n = int(os.environ.get("SHOW_N", "5"))
-groups = defaultdict(list)
-for line in open(src, encoding="utf-8"):
-    r = json.loads(line)
-    for fl in r.get("flags", []):
-        groups[fl].append(r)
-os.makedirs(outdir, exist_ok=True)
-for fl, rows in sorted(groups.items(), key=lambda kv: -len(kv[1])):
-    path = os.path.join(outdir, f"{fl}.jsonl")
-    with open(path, "w", encoding="utf-8") as f:
-        for r in rows:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    print(f"\n===== {fl}  共 {len(rows)} 条  -> {path} =====")
-    for r in rows[:show_n]:
-        print(f"  [zh] {r.get('zh', '')[:120]}")
-        print(f"  [en] {r.get('en', '')[:120]}")
-        print(f"  [video] {r.get('video', '')}")
-        print("  ---")
-print(f"\n每类完整清单在 {outdir}/<flag>.jsonl，可直接喂给 Gradio 或 less 细看；"
-      f"多看几条: SHOW_N=20 bash tools/data_audit/run_v100.sh s0-show")
-PY
+  python tools/data_audit/show_flags.py --flags "$FLAGS_FILE" \
+    --out-dir "$OUT/s0_flag_split" --per-flag "${SHOW_N:-${2:-5}}" --width 120
+  echo "每类完整清单在 $OUT/s0_flag_split/<flag>.jsonl，可直接喂给 Gradio 或 less 细看；"
+  echo "多看几条: SHOW_N=20 bash $0 s0-show；只看部分类别加 --only 直接调 show_flags.py"
   ;;
 # ---------------------------------------------------------------- ③ S1 全量 8 卡
 s1)
