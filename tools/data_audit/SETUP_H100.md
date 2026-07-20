@@ -1,5 +1,11 @@
 # 8×H100-80G 数据审查完整配置与执行手册
 
+联网：
+# 重新统一设置所有变量为 3390
+export http_proxy=http://127.0.0.1:3390
+export https_proxy=http://127.0.0.1:3390
+export HTTP_PROXY=http://127.0.0.1:3390
+export HTTPS_PROXY=http://127.0.0.1:3390
 > 姊妹篇：V100 机器用 [`SETUP_V100.md`](SETUP_V100.md)（差异：torch 须
 > cu118 构建、fp16、transformers 后端、裁判走云端）。
 >
