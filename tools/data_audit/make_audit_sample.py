@@ -27,7 +27,8 @@ import sys
 
 VIDEO_KEYS = ["video", "video_path", "video_id", "clip", "clip_name", "filename"]
 ZH_KEYS = ["caption_zh", "zh_caption", "caption_cn", "cn_caption", "translated_caption",
-           "translation", "zh", "chinese_caption"]
+           "translation", "zh", "chinese_caption", "raw_caption_zh_translated",
+           "caption_zh_translated"]
 EN_KEYS = ["caption", "caption_en", "en_caption", "source_caption", "src_caption", "en"]
 
 
@@ -161,6 +162,8 @@ def main():
                 "video": vid,
                 "zh": rec.get(z),
                 "en": rec.get(e) if e else None,
+                # passthrough for path resolution in vlm_audit(_hf).py
+                **({"abs_path": rec["abs_path"]} if rec.get("abs_path") else {}),
                 "stratum": sc.get("_stratum"),
                 "s1": {k: sc[k] for k in
                        ("sig_zh_mean", "sig_zh_max", "sig_en_mean", "sig_en_max",

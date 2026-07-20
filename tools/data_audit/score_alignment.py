@@ -27,6 +27,7 @@ Deps: torch, transformers>=4.49 (siglip2), decord, pillow;
 import argparse
 import json
 import os
+import re
 import sys
 
 import numpy as np
@@ -35,7 +36,8 @@ from PIL import Image
 
 VIDEO_KEYS = ["video", "video_path", "video_id", "clip", "clip_name", "filename"]
 ZH_KEYS = ["caption_zh", "zh_caption", "caption_cn", "cn_caption", "translated_caption",
-           "translation", "zh", "chinese_caption"]
+           "translation", "zh", "chinese_caption", "raw_caption_zh_translated",
+           "caption_zh_translated"]
 EN_KEYS = ["caption", "caption_en", "en_caption", "source_caption", "src_caption", "en"]
 
 
@@ -46,6 +48,25 @@ def detect_keys(rec, args):
     if not (v and z):
         sys.exit(f"cannot detect keys in {sorted(rec.keys())}; pass --video-key/--zh-key")
     return v, z, e
+
+
+def resolve_video_path(video_root, rec, video):
+    """Try, in order: video_root/<video>, video_root/<InternVId-... suffix of
+    abs_path>, raw abs_path. First existing path wins (else first candidate,
+    so the decode error message still shows what was tried)."""
+    cands = []
+    if video:
+        cands.append(os.path.join(video_root, str(video)))
+    ap = rec.get("abs_path")
+    if ap:
+        m = re.search(r"InternVId[^/]*/.*", str(ap))
+        if m:
+            cands.append(os.path.join(video_root, m.group(0)))
+        cands.append(str(ap))
+    for c in cands:
+        if os.path.exists(c):
+            return c
+    return cands[0] if cands else ""
 
 
 def sample_frames(path, num_frames):
@@ -209,7 +230,7 @@ def main():
             vk, zk, ek = keys
             batch.append({
                 "video": rec.get(vk),
-                "path": os.path.join(args.video_root, str(rec.get(vk, ""))),
+                "path": resolve_video_path(args.video_root, rec, rec.get(vk)),
                 "zh": str(rec.get(zk, "") or "")[:512],
                 "en": (str(rec.get(ek, "") or "")[:512] if ek else ""),
             })

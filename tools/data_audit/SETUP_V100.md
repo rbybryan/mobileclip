@@ -82,12 +82,15 @@ cd ~/mobileclip                            # 仓库根目录
 ```bash
 bash tools/data_audit/run_v100.sh smoke
 ```
-做三件事：S0 字段探测（stderr 的 `[keys] video=... zh=... en=...` 必须与
-`internvid_zh_10k.jsonl` 的实际字段对上）、S1 前 2000 条（fp16 推理 +
-解码失败率，应 <2%；同时验证 `video` 字段相对 `videos/` 的路径拼接）、
+做三件事：S0 字段探测、S1 前 2000 条（fp16 推理 + 解码失败率，应 <2%）、
 S2 在 GPU0 审 8 条（首次会下载模型）。
-字段探测不对 → 各命令补 `--video-key/--zh-key/--en-key`；
-路径拼不上 → 检查 jsonl 里 `video` 是纯文件名还是带子目录，相应调整 `CLIPS`。
+
+本机 10k jsonl 的实际 schema **已内置支持**，冒烟应打印：
+`[keys] video=video zh=raw_caption_zh_translated en=caption`。
+视频为 `videos/InternVId-FLT_N/shard_XXXXX/` 两级目录，工具按三级顺序自动
+解析路径：`$CLIPS/<video>` → `$CLIPS/<abs_path 中 InternVId-FLT... 起的后缀>`
+→ 记录里的 `abs_path` 原值，取第一个存在的。若冒烟解码失败率仍高，把
+`head -1 $DATA | python -m json.tool` 的 `video`/`abs_path` 两个值发出来排查。
 
 ## 2. S0 规则画像（1 万条，CPU 秒级）〖可并行：零依赖纯 CPU，t0 就能跑，先于装环境执行〗
 
