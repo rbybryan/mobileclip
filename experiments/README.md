@@ -50,6 +50,35 @@ bash experiments/run_pretrain.sh experiments/configs/r0_baseline.py 1 debug True
 bash experiments/run_pretrain.sh experiments/configs/r1_both.py    1 debug True
 ```
 
+## 2b. 10k 试点(只有审查抽样、没有全量数据时;101vector 8×V100)
+
+全量 InternVid 未到位时,用数据审查的 1 万条抽样把训练链路和组件全部调通。
+**试点数字一律不外推、不进任何结论**(全量的千分之一,~180 步)。
+
+```bash
+# 1) jsonl -> 训练 anno(9k train + 1k held-out 自检索 eval;
+#    同时打印共享字幕统计 = caption_idx 多正例的实际影响面)
+python tools/make_pilot_anno.py \
+    --input /home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl \
+    --clips-root /home/vca1/datasets/internvid_zh_10k/videos \
+    --out-train anno_downstream/internvid_zh_10k_pilot.json \
+    --out-eval  anno_downstream/internvid_zh_10k_pilot_val.json
+
+# 2) 数据路径:videos 在 /home/vca1/datasets/internvid_zh_10k/videos
+export MVC_DATA_DIR=/home/vca1/datasets   # anno 用默认 anno_downstream/ 即可
+
+# 3) 冒烟(debug 几十步自停)→ 微型 A/B(等步数,~180 步)
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 debug True
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8
+```
+
+试点通过标准(全是动力学检查,不看绝对精度):两条损失曲线正常下降;
+r1 训完从 ckpt 读 `logit_scale`/`logit_bias` 已离开初始值(exp(t')≠10、
+b≠−10,否则 different_lr 没生效);`temporal_pool.proj` 权重非零;
+held-out 自检索 R@1 相对方向仅作参考。评测走 `ret_test`(1k 自检索),
+不依赖 MSR-VTT——MSR-VTT 下载完成后再走 §3 的 B0。
+
 ## 3. B0 — 锁定基线数字(官方权重,双口径)
 
 ```bash

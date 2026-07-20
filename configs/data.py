@@ -98,3 +98,19 @@ available_corpus["ssv2_mc_val"] = dict(
     data_root=__data("ssv2/20bn-something-something-v2"),
     media_type="video",
 )
+
+# ============== 10k pilot (101vector 8xV100; experiments/README.md §2b) =======
+# anno 由 tools/make_pilot_anno.py 从审查抽样 jsonl 生成;
+# 101vector 上 export MVC_DATA_DIR=/home/vca1/datasets 即可对上默认路径。
+available_corpus["internvid_zh_10k_pilot"] = dict(
+    anno_path=__anno("internvid_zh_10k_pilot.json"),
+    data_root=__data("internvid_zh_10k/videos"),
+    media_type="video",
+    jump_filter=True,
+)
+
+available_corpus["internvid_zh_10k_pilot_val"] = dict(
+    anno_path=__anno("internvid_zh_10k_pilot_val.json"),
+    data_root=__data("internvid_zh_10k/videos"),
+    media_type="video",
+)
