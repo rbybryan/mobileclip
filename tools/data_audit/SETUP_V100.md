@@ -121,15 +121,11 @@ PY
 直接决定 RETRANSLATE 桶的真实规模：
 
 ```bash
-python - <<'PY'
-import json
-rows=[json.loads(l) for l in open("outputs/audit_10k/smoke_s0_flags.jsonl")]
-for fl in ["zh_mostly_english","zh_low_cjk_ratio","instruction_leak","zh_very_short"]:
-    print(f"\n===== {fl} 示例 =====")
-    for r in [r for r in rows if fl in r["flags"]][:8]:
-        print(" zh:", r["zh"][:70], " | en:", (r["en"] or "")[:50])
-PY
+# 一键版（自动按类别拆分到 outputs/audit_10k/s0_flag_split/ 并打印实例；
+# 优先读全量 s0_flags.jsonl，没有则退回冒烟的 smoke_s0_flags.jsonl）：
+SHOW_N=8 bash tools/data_audit/run_v100.sh s0-show
 ```
+各旗标的判定规则速查表见 §2。
 
 **③ S1 + s2-sample 不用等 8B**——SigLIP2/LaBSE 一到就先把 S1 全量
 （10–30 分钟）和 `s2-sample`（全覆盖）跑完；8B 落地后直接开 `s2`。
@@ -192,6 +188,35 @@ S0 只用标准库——**任何现成 Python 都能跑**，不必等 torch 装�
 → 翻译管线先回炉；重复 caption 率 >10% → 假负例问题记为报告重点。
 可与目录里已有的 `QUALITY_ANALYSIS.md`、`quality_issue_candidates.jsonl`
 对照，看规则命中是否覆盖了人工已发现的问题类型。
+
+**看每类旗标的具体病例**（同样纯标准库，不用 venv）：
+
+```bash
+bash tools/data_audit/run_v100.sh s0-show          # 每类打印 5 条 zh/en 实例
+SHOW_N=20 bash tools/data_audit/run_v100.sh s0-show   # 想多看几条
+```
+
+它同时把 `outputs/audit_10k/s0_flags.jsonl`（所有被标记记录的总表，含
+原文和命中旗标）**按类别拆成单独文件** `outputs/audit_10k/s0_flag_split/<旗标名>.jsonl`
+（如 `zh_mostly_english.jsonl`、`instruction_leak.jsonl`），方便逐类
+`less` 细看或喂给 §6 的 Gradio。各旗标含义速查：
+
+| 旗标 | 判定规则 | 典型病例 |
+|---|---|---|
+| `zh_no_chinese` | 中文栏 0 个汉字 | 整句英文原样残留（完全没翻） |
+| `zh_mostly_english` | 英文字母占比 >50% | 大半句英文夹几个汉字 |
+| `zh_low_cjk_ratio` | 有汉字但占比 <40% | 中英混杂（"一只猫在 sofa 上 sleeping"） |
+| `zh_equals_en` | 去标点后 zh == en | 把英文原文当译文写回 |
+| `instruction_leak` | 以"以下是/翻译：/Here is…"开头 | 模型指令语残留在译文里 |
+| `refusal` | 含"抱歉/无法翻译/As an AI…" | 模型拒答文本进了数据 |
+| `think_leak` | 含 `<think>`/"让我想想…" | 思维链泄漏 |
+| `repetition_loop` | 单个 4-gram 覆盖 >50% 字符 | 复读机式循环输出 |
+| `zh_very_short` | 汉字数 <6 | 信息量过低（"日落"） |
+| `zh_too_short_vs_en` | 汉字数/英文词数 <0.5 | 疑似漏译了细节 |
+
+另：`s0_summary.json` 里的时长统计从 `start_timestamp`/`end_timestamp`
+字段直接计算（`duration_source.timestamps` 应 ≈10000、`none` 应 =0），
+不再依赖文件名格式——旧版的 `bad_clip_names=10000` 属误报，已移除。
 
 ## 3. S1 嵌入打分（1 万条，8 卡 ~10–30 分钟，可断点续跑）〖可并行：权重下载可同时进行〗
 

@@ -5,6 +5,7 @@
 #       逐条执行，s1/s2 是后台任务，用 status 等到 100% 再进下一步）：
 #   bash tools/data_audit/run_v100.sh smoke      # ① 冒烟（必须先跑，~10min）
 #   bash tools/data_audit/run_v100.sh s0         # ② 规则画像（10k 秒级）
+#   bash tools/data_audit/run_v100.sh s0-show    # ②b 按旗标类别拆分+打印实例（SHOW_N=5 可调）
 #   bash tools/data_audit/run_v100.sh s1         # ③ 嵌入打分（10k 8 卡 ~10–30min，可续跑）
 #   bash tools/data_audit/run_v100.sh status     # 随时看 S1/S2 进度
 #   bash tools/data_audit/run_v100.sh s2-sample  # ④ 抽样（默认参数在 10k 上=全覆盖）
@@ -101,6 +102,38 @@ s0)
     --out-summary "$OUT/s0_summary.json" --out-flags "$OUT/s0_flags.jsonl"
   echo "== 决策门：拒答+未翻译+指令泄漏合计 >5% 先修翻译管线；重复率 >10% 记入报告 =="
   echo "== 查看: python -m json.tool $OUT/s0_summary.json | head -60 =="
+  echo "== 看各类命中的具体例子: bash $0 s0-show =="
+  ;;
+# ------------------------------------------------- ②b 旗标实例展示（stdlib，无需 venv）
+s0-show)
+  FLAGS_FILE="$OUT/s0_flags.jsonl"
+  [ -f "$FLAGS_FILE" ] || FLAGS_FILE="$OUT/smoke_s0_flags.jsonl"
+  [ -f "$FLAGS_FILE" ] || { echo "未找到 $OUT/s0_flags.jsonl（先跑: bash $0 s0）"; exit 1; }
+  SHOW_N="${SHOW_N:-5}" python - "$FLAGS_FILE" "$OUT/s0_flag_split" <<'PY'
+import json, os, sys
+from collections import defaultdict
+src, outdir = sys.argv[1], sys.argv[2]
+show_n = int(os.environ.get("SHOW_N", "5"))
+groups = defaultdict(list)
+for line in open(src, encoding="utf-8"):
+    r = json.loads(line)
+    for fl in r.get("flags", []):
+        groups[fl].append(r)
+os.makedirs(outdir, exist_ok=True)
+for fl, rows in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+    path = os.path.join(outdir, f"{fl}.jsonl")
+    with open(path, "w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    print(f"\n===== {fl}  共 {len(rows)} 条  -> {path} =====")
+    for r in rows[:show_n]:
+        print(f"  [zh] {r.get('zh', '')[:120]}")
+        print(f"  [en] {r.get('en', '')[:120]}")
+        print(f"  [video] {r.get('video', '')}")
+        print("  ---")
+print(f"\n每类完整清单在 {outdir}/<flag>.jsonl，可直接喂给 Gradio 或 less 细看；"
+      f"多看几条: SHOW_N=20 bash tools/data_audit/run_v100.sh s0-show")
+PY
   ;;
 # ---------------------------------------------------------------- ③ S1 全量 8 卡
 s1)
