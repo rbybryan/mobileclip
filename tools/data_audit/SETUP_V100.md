@@ -259,8 +259,9 @@ bash tools/data_audit/run_v100.sh status
 #     —— 不占本机 GPU，可与 4.2 主力同时跑（只依赖 4.1 抽样完成）
 export JUDGE_API_KEY=sk-...          # DashScope / OpenRouter 等
 JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge   # 跑完自动打印一致率
-# （替代方案：H100 机在线时，把裁判放它的本地 235B-FP8，
-#   见 SETUP_H100.md §4.3，然后把 s2_verdicts_judge.jsonl 拷回来）
+# （替代方案：H100 机在线时，把裁判放它的本地 235B-FP8——H100 起
+#   --host 0.0.0.0 服务、本机把 JUDGE_API_BASE 指到其内网地址即可，
+#   零 API 费用；分步部署手册见 SETUP_JUDGE_API.md）
 
 # 4.4 人工抽检 300 条（在 §6 的 Gradio 里过）
 shuf -n 300 <(cat outputs/audit_10k/s2_verdicts.*.jsonl) > outputs/audit_10k/human_check_300.jsonl
