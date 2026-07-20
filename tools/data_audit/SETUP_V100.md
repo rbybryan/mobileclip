@@ -55,13 +55,44 @@ modelscope download --model Qwen/Qwen3-VL-8B-Instruct \
 ```
 
 ```bash
-# 路径变量（每个新 shell 都要；或写进 ~/.bashrc）
+# ---- 路径变量（每个新 shell 都要；或写进 ~/.bashrc）----
+
+# 本机已就位的 1 万条抽样（101vector:/home/vca1/datasets/internvid_zh_10k，
+# 含 internvid_zh_10k.jsonl + videos/ + Gradio 工具，见 §0.5 与 §6）
+export SAMPLE=/home/vca1/datasets/internvid_zh_10k
+
+# 全量 10M（仅当本机挂载了 b100 数据盘；未挂载则全量 S1/S2 放 H100 机跑，
+# 本机专注 §0.5 的 10k 试跑 + §6 人工查看）
 export DATA=/workspace/mount/b100_zaip_data/zyc/vibe_coding/low_resource_cv/MobileViCLIP/outputs/internvid_alignment/caption_translation_qwen36_v0_1/20_outputs/aligned_internvid_zh_translated_retry_merged.jsonl
-export CLIPS=/path/to/internvid/clips      # TODO: 视频根目录（video 字段相对它）
+export CLIPS=/path/to/internvid/clips      # TODO: 全量视频根目录（video 字段相对它）
+
 export OUT=outputs/audit_v0_1
 export S2_MODEL=ckpts/Qwen3-VL-8B-Instruct
-cd /path/to/mobileclip仓库根目录
+cd ~/mobileclip                            # 仓库根目录
 ```
+
+### 0.5 强烈推荐先做：用本机 1 万条抽样端到端试跑（~1–2 小时）〖可并行：不依赖全量数据盘〗
+
+跑通整条流水线 + 直接产出**10k 版问题率初版报告**（第一份可汇报的数字），
+之后放全量只是换路径重跑：
+
+```bash
+export DATA=$SAMPLE/internvid_zh_10k.jsonl
+export CLIPS=$SAMPLE/videos
+export OUT=outputs/audit_10k
+
+bash tools/data_audit/run_v100.sh smoke
+bash tools/data_audit/run_v100.sh s0     # 秒级
+bash tools/data_audit/run_v100.sh s1     # 10k 条 8 卡约 10–30 分钟
+PER_BUCKET=100 FLAGGED=300 LOW_XLING=200 bash tools/data_audit/run_v100.sh s2-sample
+bash tools/data_audit/run_v100.sh s2     # ~1.4k 条 VLM 审核，约 1 小时
+bash tools/data_audit/run_v100.sh s3     # outputs/audit_10k/report.md 即 10k 初版诊断
+```
+
+若 `[keys]` 探测或视频路径拼接不对（10k 的 jsonl 字段名/相对路径与全量
+可能不同），按 stderr 提示补 `--video-key/--zh-key/--en-key` 或调整 `CLIPS`。
+跑完全量时记得把 `DATA/CLIPS/OUT` 换回上面的全量值（`OUT` 分开目录，
+两份报告互不覆盖）。
 
 以下 §1–§5 全部封装在 `tools/data_audit/run_v100.sh`（内置 8 卡 fan-out、
 断点续跑、验收检查），每步给出一键命令；想看展开的等价命令可
@@ -138,12 +169,22 @@ bash tools/data_audit/run_v100.sh s3
 
 ## 6. 人工查看工具（Gradio，本机已就位）〖可并行：不依赖任何流水线步骤，随时可用，不占 GPU〗
 
-V100 机上已预抽样 **1 万条** 数据并配好浏览工具：
+V100 机上已预抽样 **1 万条** 数据并配好浏览工具，目录内容
+（`10.235.31.101:/home/vca1/datasets/internvid_zh_10k`）：
 
-- 数据位置：`10.235.31.101:/home/vca1/datasets/internvid_zh_10k`
+| 文件 | 说明 |
+|---|---|
+| `internvid_zh_10k.jsonl` | 1 万条抽样数据（§0.5 试跑的 `DATA`） |
+| `videos/` | 对应视频（§0.5 试跑的 `CLIPS`） |
+| `gradio_video_text_review.py` | Gradio 浏览工具 |
+| `REVIEW_README.md` | 工具自带说明（以它为准） |
+| `QUALITY_ANALYSIS.md` | 已有的一份初步质量分析，开工前先读 |
+| `quality_issue_candidates.jsonl` | 已筛出的疑似问题样本——**Gradio 里优先翻这批**，摸底效率最高 |
+| `sample_manifest.json` / `analyze_internvid_zh_10k.py` / `result/` | 抽样清单 / 分析脚本 / 分析产出 |
+
 - 启动：
   ```bash
-  ssh vca1@10.235.31.101
+  ssh vca1@10.235.31.101        # 或本机直接 cd
   cd /home/vca1/datasets/internvid_zh_10k
   python gradio_video_text_review.py
   ```
