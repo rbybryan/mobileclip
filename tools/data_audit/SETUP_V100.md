@@ -59,14 +59,18 @@ modelscope download --model Qwen/Qwen3-VL-8B-Instruct \
 ```
 
 ```bash
-# ---- 路径变量（每个新 shell 都要；或写进 ~/.bashrc）----
-# 本机数据就是这 1 万条抽样：DATA=抽样 jsonl，CLIPS=同目录的 videos/
-export SAMPLE=/home/vca1/datasets/internvid_zh_10k
-export DATA=$SAMPLE/internvid_zh_10k.jsonl
-export CLIPS=$SAMPLE/videos
-export OUT=outputs/audit_10k
+# ---- 路径变量 ----
+# 本机 10k 抽样路径已是 run_v100.sh 的内置默认值（DATA/CLIPS/OUT 均可不
+# export，直接 bash run_v100.sh <stage> 即可）。只需设模型路径并进仓库：
 export S2_MODEL=ckpts/Qwen3-VL-8B-Instruct
 cd ~/mobileclip                            # 仓库根目录
+
+# 内置默认（想覆盖时才 export；注意变量要在同一 shell 里生效）：
+#   DATA =/home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl
+#   CLIPS=/home/vca1/datasets/internvid_zh_10k/videos
+#   OUT  =outputs/audit_10k
+# 路径不对时脚本会立刻报 "错误：DATA 文件不存在：..." 并退出（快速失败），
+# 不会再让后续步骤连锁崩溃。
 ```
 
 以下 §1–§5 全部封装在 `tools/data_audit/run_v100.sh`（内置 8 卡 fan-out、
