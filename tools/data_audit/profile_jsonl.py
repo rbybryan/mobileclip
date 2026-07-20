@@ -12,7 +12,8 @@ per-record problems that need no vision:
     (truncation on one side, hallucinated expansion on the other)
   * intra-caption n-gram repetition loops
   * exact-duplicate zh captions across clips (generic caption detector)
-  * clip-name sanity (`<yid>_<start>_<end>.mp4`) + clip duration stats
+  * clip duration stats, from start/end timestamp fields when present
+    (falls back to parsing `<yid>_<start>_<end>.mp4` clip names)
 
 Outputs a summary JSON (global stats + flag rates + top duplicated captions)
 and a flags JSONL with one line per *flagged* record for downstream joins.
@@ -43,6 +44,29 @@ EN_KEYS = ["caption", "caption_en", "en_caption", "source_caption", "src_caption
 CLIP_NAME_RE = re.compile(
     r"^(?P<yid>[A-Za-z0-9_-]{11})_(?P<start>\d+(?:\.\d+)?)_(?P<end>\d+(?:\.\d+)?)\.mp4$"
 )
+
+START_TS_KEYS = ["start_timestamp", "start_time", "start_sec", "start"]
+END_TS_KEYS = ["end_timestamp", "end_time", "end_sec", "end"]
+TS_HMS_RE = re.compile(r"^(?:(\d+):)?(\d{1,2}):(\d{1,2}(?:[.,]\d+)?)$")
+
+
+def parse_ts(v):
+    """Timestamp -> seconds; accepts float/int, '12.5', 'MM:SS(.ms)', 'HH:MM:SS(.ms)'."""
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).strip()
+    if not s:
+        return None
+    m = TS_HMS_RE.match(s)
+    if m:
+        h = int(m.group(1) or 0)
+        return h * 3600 + int(m.group(2)) * 60 + float(m.group(3).replace(",", "."))
+    try:
+        return float(s)
+    except ValueError:
+        return None
 
 # ------------------------------------------------------------- text heuristics
 
@@ -154,9 +178,10 @@ def main():
     dup_hash = Counter()
     dup_example = {}
     video_seen = Counter()
-    bad_clip_names = 0
+    dur_from_ts = dur_from_name = no_duration_info = 0
 
     os.makedirs(os.path.dirname(os.path.abspath(args.out_flags)) or ".", exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(args.out_summary)) or ".", exist_ok=True)
     fout = open(args.out_flags, "w", encoding="utf-8")
 
     with open(args.input, "r", encoding="utf-8", errors="replace") as f:
@@ -192,12 +217,23 @@ def main():
                 flags.append("video_missing")
             else:
                 video_seen[video] += 1
-                base = os.path.basename(video)
-                m = CLIP_NAME_RE.match(base)
-                if m:
-                    durations.append(float(m.group("end")) - float(m.group("start")))
+                st = et = None
+                for k in START_TS_KEYS:
+                    if k in rec:
+                        st = parse_ts(rec[k]); break
+                for k in END_TS_KEYS:
+                    if k in rec:
+                        et = parse_ts(rec[k]); break
+                if st is not None and et is not None and et > st:
+                    durations.append(et - st)
+                    dur_from_ts += 1
                 else:
-                    bad_clip_names += 1
+                    m = CLIP_NAME_RE.match(os.path.basename(video))
+                    if m:
+                        durations.append(float(m.group("end")) - float(m.group("start")))
+                        dur_from_name += 1
+                    else:
+                        no_duration_info += 1
 
             check_record(zh, en, flags)
 
@@ -241,7 +277,8 @@ def main():
         "zh_cjk_len_pctl": {p: pctl(zh_lens, p) for p in (1, 5, 25, 50, 75, 95, 99)},
         "en_word_len_pctl": {p: pctl(en_lens, p) for p in (1, 5, 25, 50, 75, 95, 99)},
         "clip_duration_pctl": {p: pctl(durations, p) for p in (1, 5, 25, 50, 75, 95, 99)},
-        "bad_clip_names": bad_clip_names,
+        "duration_source": {"timestamps": dur_from_ts, "clip_name": dur_from_name,
+                            "none": no_duration_info},
         "duplicate_video_entries": dup_videos,
         "duplicate_zh_captions": n_dup_captions,
         "duplicate_zh_caption_rate": round(n_dup_captions / max(1, n_total), 6),

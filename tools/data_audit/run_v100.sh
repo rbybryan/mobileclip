@@ -5,6 +5,7 @@
 #       逐条执行，s1/s2 是后台任务，用 status 等到 100% 再进下一步）：
 #   bash tools/data_audit/run_v100.sh smoke      # ① 冒烟（必须先跑，~10min）
 #   bash tools/data_audit/run_v100.sh s0         # ② 规则画像（10k 秒级）
+#   bash tools/data_audit/run_v100.sh s0-show    # ②b 按旗标类别拆分+打印实例（SHOW_N=5 可调）
 #   bash tools/data_audit/run_v100.sh s1         # ③ 嵌入打分（10k 8 卡 ~10–30min，可续跑）
 #   bash tools/data_audit/run_v100.sh status     # 随时看 S1/S2 进度
 #   bash tools/data_audit/run_v100.sh s2-sample  # ④ 抽样（默认参数在 10k 上=全覆盖）
@@ -43,13 +44,27 @@ mkdir -p "$OUT"
 need_data() { [ -f "$DATA" ] || { echo "错误：DATA 文件不存在：'$DATA'
   （若用了 \$SAMPLE 等变量，确认已在当前 shell export；本机默认无需 export）"; exit 1; }; }
 need_clips() { [ -d "$CLIPS" ] || { echo "错误：CLIPS 目录不存在：'$CLIPS'"; exit 1; }; }
+# 依赖预检：最常见的失败是跑在 conda (base) 而不是 venv 里（提示符应为 (audit_env)）
+need_py() {
+  missing=$(python -c 'import importlib.util as u, sys
+print(" ".join(m for m in sys.argv[1:] if u.find_spec(m) is None))' \
+    numpy torch transformers sentence_transformers decord PIL requests)
+  if [ -n "$missing" ]; then
+    echo "错误：当前 Python（$(command -v python)）缺依赖：$missing"
+    echo "  多半是没激活虚拟环境（提示符还是 (base)）。先执行："
+    echo "    source ~/audit_env/bin/activate"
+    echo "  若激活后仍缺，按 SETUP_V100.md §0 安装："
+    echo "    pip install \"numpy<2\" \"transformers>=4.57\" sentence-transformers decord pillow requests"
+    exit 1
+  fi
+}
 expected_total() { wc -l < "$DATA"; }
 s1_lines() { cat "$OUT"/s1_scores.*.jsonl 2>/dev/null | wc -l; }
 
 case "${1:-}" in
 # ---------------------------------------------------------------- ① 冒烟
 smoke)
-  need_data; need_clips
+  need_data; need_clips; need_py
   echo "== S0 冒烟：前 2 万条，确认字段探测 =="
   python tools/data_audit/profile_jsonl.py --input "$DATA" --limit 20000 \
     --out-summary "$OUT/smoke_s0.json" --out-flags "$OUT/smoke_s0_flags.jsonl"
@@ -86,10 +101,43 @@ s0)
   python tools/data_audit/profile_jsonl.py --input "$DATA" \
     --out-summary "$OUT/s0_summary.json" --out-flags "$OUT/s0_flags.jsonl"
   echo "== 决策门：拒答+未翻译+指令泄漏合计 >5% 先修翻译管线；重复率 >10% 记入报告 =="
+  echo "== 查看: python -m json.tool $OUT/s0_summary.json | head -60 =="
+  echo "== 看各类命中的具体例子: bash $0 s0-show =="
+  ;;
+# ------------------------------------------------- ②b 旗标实例展示（stdlib，无需 venv）
+s0-show)
+  FLAGS_FILE="$OUT/s0_flags.jsonl"
+  [ -f "$FLAGS_FILE" ] || FLAGS_FILE="$OUT/smoke_s0_flags.jsonl"
+  [ -f "$FLAGS_FILE" ] || { echo "未找到 $OUT/s0_flags.jsonl（先跑: bash $0 s0）"; exit 1; }
+  SHOW_N="${SHOW_N:-5}" python - "$FLAGS_FILE" "$OUT/s0_flag_split" <<'PY'
+import json, os, sys
+from collections import defaultdict
+src, outdir = sys.argv[1], sys.argv[2]
+show_n = int(os.environ.get("SHOW_N", "5"))
+groups = defaultdict(list)
+for line in open(src, encoding="utf-8"):
+    r = json.loads(line)
+    for fl in r.get("flags", []):
+        groups[fl].append(r)
+os.makedirs(outdir, exist_ok=True)
+for fl, rows in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+    path = os.path.join(outdir, f"{fl}.jsonl")
+    with open(path, "w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    print(f"\n===== {fl}  共 {len(rows)} 条  -> {path} =====")
+    for r in rows[:show_n]:
+        print(f"  [zh] {r.get('zh', '')[:120]}")
+        print(f"  [en] {r.get('en', '')[:120]}")
+        print(f"  [video] {r.get('video', '')}")
+        print("  ---")
+print(f"\n每类完整清单在 {outdir}/<flag>.jsonl，可直接喂给 Gradio 或 less 细看；"
+      f"多看几条: SHOW_N=20 bash tools/data_audit/run_v100.sh s0-show")
+PY
   ;;
 # ---------------------------------------------------------------- ③ S1 全量 8 卡
 s1)
-  need_data; need_clips
+  need_data; need_clips; need_py
   # 双机对半加速：V100 机 S1_TOTAL_SHARDS=16 S1_SHARD_OFFSET=0 bash $0 s1
   #              H100 机 S1_TOTAL_SHARDS=16 S1_SHARD_OFFSET=8 …（或手动循环）
   TOT=${S1_TOTAL_SHARDS:-$NGPU}; OFF=${S1_SHARD_OFFSET:-0}
@@ -130,7 +178,7 @@ s2-sample)
   ;;
 # ---------------------------------------------------------------- ⑤ S2 8 卡 HF 审核
 s2)
-  need_clips
+  need_clips; need_py
   [ -f "$OUT/s2_sample.jsonl" ] || { echo "先跑 s2-sample"; exit 1; }
   for i in $(seq 0 $((NGPU-1))); do
     CUDA_VISIBLE_DEVICES=$i nohup python tools/data_audit/vlm_audit_hf.py \
@@ -145,7 +193,7 @@ s2)
 # ---------------------------------------------------------------- ⑥ 云端裁判（可选）
 s2-judge)
   [ -n "$JUDGE_API_KEY" ] || { echo "export JUDGE_API_KEY=... （DashScope/OpenRouter 等）"; exit 1; }
-  need_clips
+  need_clips; need_py
   head -n "$JUDGE_N" "$OUT/s2_sample.jsonl" > "$OUT/s2_judge_sample.jsonl"
   python tools/data_audit/vlm_audit.py --input "$OUT/s2_judge_sample.jsonl" \
     --video-root "$CLIPS" --api-base "$JUDGE_API_BASE" --api-key "$JUDGE_API_KEY" \
