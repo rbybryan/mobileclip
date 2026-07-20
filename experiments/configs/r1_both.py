@@ -8,4 +8,11 @@ from scripts.pretraining.clip.mobileviclip_small.config import *  # noqa: F401,F
 model["use_sigmoid_loss"] = True
 model["vision_encoder"]["temporal_pooling"] = "attn"
 
+# 与 r1a 一致:caption 哈希 idx(多正例生效)+ t/b 大学习率(审核修正 1/3)
+for __c in available_corpus["internvid_all"]:
+    __c["caption_idx"] = True
+optimizer["different_lr"] = dict(
+    enable=True, module_names=["logit_scale", "logit_bias"], lr=1e-3
+)
+
 output_dir = "experiments/runs/r1_both"

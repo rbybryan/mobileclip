@@ -59,6 +59,16 @@ def test_sigmoid_loss_multi_positive_with_duplicate_idx():
     assert not torch.allclose(l_dup, l_unique, atol=1e-6)
 
 
+def test_caption_to_idx_stable_shared_and_bounded():
+    pytest.importorskip("decord")  # dataset 模块链会 import decord
+    from dataset.pt_dataset import caption_to_idx
+
+    a = caption_to_idx("a dog runs in the park")
+    assert a == caption_to_idx("a dog runs in the park"), "同字幕必须同 idx(跨进程稳定)"
+    assert a != caption_to_idx("a cat sits on the mat")
+    assert 0 <= a < 2 ** 63, "必须能装进 int64(torch.eq 跨 rank 比较)"
+
+
 def test_temporal_attention_pool_zero_init_equals_mean():
     pytest.importorskip("timm")
     from models.mobileviclip_small import TemporalAttentionPool

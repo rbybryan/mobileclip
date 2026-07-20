@@ -26,8 +26,11 @@ PREFERRED_METRICS = [
     "img_r1", "img_r5", "img_r10", "img_r_mean",
     "t2v_r1", "t2v_r5", "t2v_r10",
     "v2t_r1", "v2t_r5", "v2t_r10",
-    "r_mean", "accuracy",
+    "r_mean", "r_sum", "accuracy",
 ]
+
+# kill 判据统一用 R-Sum(6 项召回之和);eval json 里没有就现算
+R_SUM_COMPONENTS = ["txt_r1", "txt_r5", "txt_r10", "img_r1", "img_r5", "img_r10"]
 
 RESULT_FILES = ("eval_res.json", "eval_res_best.json", "eval_res_latest.json")
 
@@ -54,6 +57,8 @@ def load_result(path):
     out = OrderedDict()
     for protocol, metrics in raw.items():
         if isinstance(metrics, dict):
+            if "r_sum" not in metrics and all(c in metrics for c in R_SUM_COMPONENTS):
+                metrics["r_sum"] = sum(metrics[c] for c in R_SUM_COMPONENTS)
             out[protocol] = metrics
     return out
 
@@ -104,16 +109,17 @@ def main():
         cols = list(all_metrics)
         base = per_run.get(args.baseline) if args.baseline else None
 
+        delta_metric = "r_sum" if (base is not None and "r_sum" in base) else "r_mean"
         header = ["run"] + cols
         if base is not None:
-            header += ["Δr_mean(vs %s)" % args.baseline]
+            header += [f"Δ{delta_metric}(vs {args.baseline})"]
         lines.append("| " + " | ".join(header) + " |")
         lines.append("|" + "---|" * len(header))
         for run, metrics in per_run.items():
             cells = [run] + [fmt(metrics.get(m, "-")) for m in cols]
             if base is not None:
-                if run != args.baseline and "r_mean" in metrics and "r_mean" in base:
-                    cells.append(f"{metrics['r_mean'] - base['r_mean']:+.2f}")
+                if run != args.baseline and delta_metric in metrics and delta_metric in base:
+                    cells.append(f"{metrics[delta_metric] - base[delta_metric]:+.2f}")
                 else:
                     cells.append("-")
             lines.append("| " + " | ".join(cells) + " |")

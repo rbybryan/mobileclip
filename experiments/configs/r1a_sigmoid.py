@@ -11,4 +11,15 @@ from scripts.pretraining.clip.mobileviclip_small.config import *  # noqa: F401,F
 
 model["use_sigmoid_loss"] = True
 
+# 数据侧前置(审核修正 1):共享字幕的 clip 返回相同 idx(caption 哈希),
+# 多正例掩码才真正生效——否则 idx 逐样本唯一,get_mask 退化为单位阵。
+for __c in available_corpus["internvid_all"]:
+    __c["caption_idx"] = True
+
+# 审核修正 3:logit_scale/logit_bias 必须用大学习率才能离开 SigLIP 初始值
+# (主 lr 1e-5 下 b=-10 几乎不动,等于训固定 t/b)。
+optimizer["different_lr"] = dict(
+    enable=True, module_names=["logit_scale", "logit_bias"], lr=1e-3
+)
+
 output_dir = "experiments/runs/r1a_sigmoid"

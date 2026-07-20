@@ -5,6 +5,9 @@
 frame encoding, dual trigger); **P9** upgraded from "only if needed" to an
 explicit week-8 export decision point (it is likely a prerequisite of C4's
 latency table).
+**Revised 2:** 2026-07-20 — nine corrections from a red-team audit, see
+**§6**; where §6 conflicts with earlier text, §6 wins (the C4 benchmark
+list, the Wk4–6 run list, and the kill criteria are rewritten in place).
 **Goal shift:** the previous notes (`model-architecture-improvements{,-zh}.md`,
 `script-level-optimizations-zh.md`) were a *replication + improvement backlog* —
 10 proposals + 13 script fixes, all worth doing in the abstract. This document
@@ -54,7 +57,7 @@ Why this spine and not the others we considered:
 | C1 | **Video Dataset Reinforcement**: offline InternVideo2 teacher (video+text embeddings, real + synthetic recaptioned captions) stored once over InternVid-10M-FLT; student trains with VTC + embedding-KD + similarity-matrix-KD | P5 + `data-quality-caprl-scheme.md` | First for video; recipe-level |
 | C2 | **Temporal-elastic distillation**: T-agnostic temporal ops + random-T training against a fixed 16-frame teacher target → one model, frames-as-knob; Pareto curve beats fixed-T baselines at every budget | P2 **merged into** P5 | The new idea — this is what makes it a paper, not a port |
 | C3 | **Recipe components with ablations**: sigmoid multi-positive loss (learnable t/b, `get_mask` ported), temporal attention-pool head (zero-init, strictly-no-regression) | P4 + P3 | Known techniques, our ablation table |
-| C4 | **Results**: ZS retrieval (MSR-VTT/DiDeMo/ANet/MSVD/LSMDC) + ZS classification (K400, SSv2-MC) at multiple T, **on-device latency table**, vs MobileViCLIP / InternVideo2-S/B / TempMe-class efficient baselines | eval harness | — |
+| C4 | **Results**: ZS retrieval (MSR-VTT/DiDeMo/ANet) + ZS classification & multi-choice (K400/UCF101/HMDB51/SSv2-MC) at multiple T, **on-device latency table**, vs MobileViCLIP / InternVideo2-S/B / TempMe-class efficient baselines. (07-20: MSVD/LSMDC removed from the committed list — no annotations/configs in the repo; re-add only if built) | eval harness | — |
 
 Free bonus folded into C1's loss loop: Matryoshka prefixes (P10) — one
 paragraph + one table column, zero extra runs.
@@ -133,7 +136,13 @@ Wk 4-6    Main runs (the paper's table 1):
             R1 + C3 components                         (best of Wk 2)
             R2 + C1 DR loss (fixed T=8)                → isolates DR gain
             R3 + C2 random-T (full method)             → the headline model
-          Each ~3 epochs on InternVid-10M ≈ the original training budget.
+            R3b fixed-T=4 baseline (added 07-20)       → the control for C2's
+                 gate; reuses C2's T-agnostic code with a fixed 4-frame
+                 sampler, runs alongside R3
+          Each ~3 epochs on InternVid-10M ≈ the original training budget;
+          (07-20) measure single-epoch wall-clock on day 1 of R0 and, if over
+          budget, cut in priority order R0 > R2 > R3 > R3b > R1 (R1 may
+          demote to short-run evidence).
 Wk 7      Ablations: λ1/λ2, caption mix, T-distribution; MRL column;
           (stretch) temporal hard negatives; (if needed) P9 deployment variant.
 Wk 8      On-device latency (Core ML / ONNX at T ∈ {2,4,8,16}), TempMe +
@@ -182,6 +191,56 @@ loss, one ablation row + export demo).
   dual trigger (post-R2/R3 it is just one self-distillation fine-tune);
   **P9** upgraded from "if needed" to an explicit week-8 export decision
   point — if direct export fails, it is a prerequisite of the latency table.
+
+## 6. Audit corrections (2026-07-20 red-team pass)
+
+An adversarial audit of the plan, with key assumptions re-verified against the
+code. Nine findings and their dispositions:
+
+**Fixed in code (`exp/opt-vs-baseline` branch):**
+
+1. **Multi-positive handling was a no-op**: `pt_dataset.__getitem__` returns a
+   per-sample-unique `idx` (verified in code), so `get_mask(idx)` degenerates
+   to the identity — shared captions stayed false negatives. Fix: corpus-level
+   `caption_idx` switch (idx = md5 hash of the caption, stable across ranks),
+   enabled by default in the R1a/R1 configs. Novelty-defense point (b) only
+   holds from here on.
+2. **t/b learning-rate trap**: `logit_scale`/`logit_bias` under the main
+   lr=1e-5 barely move from the SigLIP init (b=−10) — effectively fixed t/b.
+   Fix: `different_lr` (1e-3) enabled in the R1a/R1 configs.
+3. **H2 pulled forward**: `with_cp` is now wired to the
+   `gradient_checkpointing` config (default True = original behavior).
+   Disabling it where memory allows saves 20–40% backward time on every main
+   run — schedule value outweighs its "zero paper value" label.
+
+**Plan amendments (already rewritten in place above):**
+
+4. **Primary protocol = raw cosine**: DSL uses the whole test-set query
+   distribution — reviewers treat it as a test-time prior incompatible with
+   "zero-shot" claims. DSL survives only in an appendix row for aligning with
+   the original paper's numbers.
+5. **Run-budget addition**: R3b (fixed-T=4 baseline, the control for C2's
+   gate) added to Wk4–6; measure single-epoch wall-clock on R0 day 1 and cut
+   R0 > R2 > R3 > R3b > R1 if over budget.
+6. **C4 benchmarks trimmed**: MSVD/LSMDC have no repo support; removed from
+   the committed list.
+7. **Kill criteria tightened**: a single-benchmark +0.3 R-Sum is below seed
+   noise; now multi-benchmark aggregated R-Sum, same direction in both
+   protocols, second seed for borderline (<0.5) calls.
+8. **P1 demoted**: torch≥2.0 bump moves from Wk-1 default to conditional
+   (naive attention at 512 tokens runs today; DeepSpeed-compat validation
+   risks more schedule than it saves). Wk 1 keeps only the 4 correctness items.
+9. **Three C1 design details added to R2**: teacher embedding dim ≠ 512 needs
+   a projection scheme; the offline pass must record teacher frame indices and
+   the sampling protocol (reproducibility); low-T reachability of the 16-frame
+   teacher target (per-T weighting / curriculum KD) is an explicit design
+   decision. Also: R2 gains a planned ablation "unfreeze the last N text
+   layers" (under LiT freezing, text-KD can only train the projection);
+   before submission, re-sweep the literature for the "first video DR" claim
+   and check InternVid / InternVideo2 licenses for releasing derived
+   embeddings (decides whether "dataset release" can be a contribution).
+
+---
 
 *Line/file references inherit from the two validated notes; all facts cited
 here were code- or literature-verified there.*

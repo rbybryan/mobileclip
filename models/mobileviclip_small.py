@@ -210,6 +210,7 @@ class MobileViCLIP_Small(nn.Module):
             pretrained_cfg_overlay=None,
             projection_dim=512,
             temporal_pooling=self.config.model.vision_encoder.get("temporal_pooling", "mean"),
+            with_cp=self.config.get("gradient_checkpointing", True),
         )
         return model
 
@@ -1195,6 +1196,7 @@ class FastViT(nn.Module):
         attn_pool_num_heads=16,
         head_drop_path_rate=0,
         temporal_pooling="mean",
+        with_cp=True,
         **kwargs,
     ) -> None:
 
@@ -1234,7 +1236,7 @@ class FastViT(nn.Module):
                 use_layer_scale=use_layer_scale,
                 layer_scale_init_value=layer_scale_init_value,
                 inference_mode=inference_mode,
-                with_cp=True,
+                with_cp=with_cp,
                 use_flash_attn=True,
                 use_fused_rmsnorm=True,
                 use_fused_mlp=True,

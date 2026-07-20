@@ -17,6 +17,8 @@
 | 路径参数化 | `configs/data.py` 支持 `MVC_DATA_DIR` / `MVC_ANNO_DIR` 环境变量 | 无(默认值 = 原相对路径) |
 | 组件 P4 | `model.use_sigmoid_loss`(默认 **False**):接通 `vtc_loss_sigmoid`,可学习 t/b(SigLIP 初始化),共享字幕按多正例处理 | 默认关闭 = 原行为 |
 | 组件 P3 | `model.vision_encoder.temporal_pooling`(默认 **"mean"**):`"attn"` 启用零初始化时间维注意力池化 | 默认关闭 = 原行为;开启时 step 0 与 mean 逐位等价 |
+| 卫生 H2 | `with_cp`(梯度检查点)接到 `gradient_checkpointing` 配置(原先写死 True) | 默认 True = 原行为;显存足够时置 False 可省 20–40% 反向时间 |
+| 数据 idx | `caption_idx`(corpus 级,默认 **False**):置 True 时 idx = 字幕哈希,共享字幕的 clip 共享 idx,多正例掩码才真正生效 | 默认关闭 = 原行为(idx 逐样本唯一) |
 
 两个组件开关都写进了全部 16 个配置文件(默认关闭),因此**基线路径的数学
 行为与原 repo 完全一致**。
@@ -99,11 +101,16 @@ python experiments/collect_results.py --baseline r0_baseline --out experiments/R
 # 与官方权重对照:--baseline baseline_official
 ```
 
-## 6. 判据(与 paper-plan 一致)
+## 6. 判据(与 paper-plan 一致,07-20 审核后加严)
 
-- **保留组件**:等步数下相对 R0 **≥ +0.3 R-Sum**,且 DSL 与 raw 两口径同向;
+- **保留组件**:等步数下相对 R0 的 **多基准聚合 R-Sum**(MSR-VTT + DiDeMo +
+  ANet)提升同向,且 DSL 与 raw 两口径同向;单基准 +0.3 R-Sum 量级低于
+  种子噪声,**临界情况(聚合优势 < 0.5)必须补第二种子**再下结论;
+- 论文**主口径 = raw 余弦**(`_emb/`),DSL 仅用于与原论文数字对齐;
 - R1 叠加若低于单项最优 → 取单项最优作为后续 DR 实验(R2/R3)的底座;
-- R0 若无法逼近官方权重的量级 → 先排查复现问题,不进入组件结论。
+- R0 若无法逼近官方权重的量级 → 先排查复现问题,不进入组件结论;
+- R0 启动第一天记录**单 epoch wall-clock**,据此校准 paper-plan 的
+  Wk4–6 排期(并实测 `gradient_checkpointing False` 能否放下、省多少时间)。
 
 ## 7. 后续(本框架预留、尚未实现)
 
