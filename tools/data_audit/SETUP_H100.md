@@ -16,11 +16,13 @@
 ## 0. 环境（一次性，~20 分钟）〖可并行：与 §2 S0、与 V100 机装环境同时进行；235B 权重下载放后台，与 §1–§3 重叠〗
 
 ```bash
-# conda 源若报 TUNA 403，用 --override-channels 绕开
-conda create -n audit python=3.10 -y --override-channels \
-  -c https://mirrors.aliyun.com/anaconda/pkgs/main
-conda activate audit
+# 首选 venv（实测国内 conda 镜像不可靠：TUNA anaconda 403、aliyun anaconda 404；
+# base 的 conda python ≥3.9 即可，之后每个新 shell 记得 source activate）
+python -m venv ~/audit_env && source ~/audit_env/bin/activate
 pip config set global.index-url https://mirrors.aliyun.com/pypi/simple
+# 备选：一定要 conda 时换 BFSU 镜像：
+#   conda create -n audit python=3.10 -y --override-channels \
+#     -c https://mirrors.bfsu.edu.cn/anaconda/pkgs/main
 
 # 先装 vllm（会带上匹配的 torch cu12x），再补其余依赖
 pip install "vllm>=0.11"
