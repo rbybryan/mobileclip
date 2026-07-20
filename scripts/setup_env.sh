@@ -51,8 +51,9 @@ pip install --no-cache-dir \
     fvcore==0.1.5.post20221221 iopath==0.1.10 termcolor==2.4.0 rich==13.4.2 \
     "setuptools==69.5.1" sentencepiece
 
-L "=== Stage 5: spiking-neuron libs (MobileOne reparam block imports these) ==="
-pip install --no-cache-dir "spikingjelly==0.0.0.0.14" "snntorch==0.9.4"
+L "=== Stage 5 removed: spiking-neuron libs no longer needed ==="
+# spikingjelly/snntorch were dead imports (no LIF neurons anywhere in the model);
+# the imports were removed from mobileone.py and retrieval_utils.py.
 
 L "=== Stage 6: open_clip + peft (--no-deps is CRITICAL) ==="
 # Both must be installed with --no-deps: their metadata lists an unpinned torch,

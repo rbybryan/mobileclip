@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import json
@@ -15,6 +16,17 @@ from dataset.serialize import get_local_rank, TorchShmSerializedList
 from dataset.text_prompt import kinetics_templates_action_clip as kinetics_templates
 
 logger = logging.getLogger(__name__)
+
+def caption_to_idx(caption):
+    """Stable 63-bit id of a caption string (same caption -> same idx).
+
+    Deterministic across processes/ranks (unlike builtin hash), so idx-aware
+    losses (`get_mask` in models/criterions.py) can identify shared-caption
+    positives after all_gather.
+    """
+    digest = hashlib.md5(caption.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "little") & 0x7FFFFFFFFFFFFFFF
+
 
 def preprocess_para_retrieval_data(anno_list):
     processed_anno_list = []
@@ -38,6 +50,12 @@ class ImgTxtPtTrainDataset(BaseDataset):
         self.data_root_prefix = ann_file.get("data_root_prefix", "")
         self.min_caption_length = ann_file.get("min_caption_length", 1) 
         self.caption_augmentation = ann_file.get("caption_augmentation", None)
+        # When True, __getitem__ returns a stable hash of the caption text as
+        # `idx` instead of the sample index, so clips sharing a caption share
+        # an idx and idx-aware losses treat them as positives instead of
+        # false negatives. Default False = original behavior (idx = sample
+        # index, unique per sample, so get_mask degenerates to the identity).
+        self.use_caption_idx = ann_file.get("caption_idx", False)
         self.transform = transform
         # each caption has multiple image as ground_truth, e.g., ssv2
         self.has_multi_vision_gt = ann_file.get("has_multi_vision_gt", False)
@@ -220,6 +238,8 @@ class ImgTxtPtTrainDataset(BaseDataset):
                 image, index = self.load_and_transform_media_data(index, data_path)
             else:
                 image, index = self.load_and_transform_media_data(index, ann["image"])
+            if self.use_caption_idx and isinstance(caption, str):
+                return image, caption, caption_to_idx(caption)
             return image, caption, index
         except Exception as e:
             logger.warning(f"Caught exception {e} when loading image {ann}")
@@ -288,6 +308,8 @@ class VidTxtPtTrainDataset(ImgTxtPtTrainDataset):
 
             video, index = self.load_and_transform_media_data(index, data_path)
 
+            if self.use_caption_idx and isinstance(caption, str):
+                return video, caption, caption_to_idx(caption)
             return video, caption, index
         
         except Exception as e:

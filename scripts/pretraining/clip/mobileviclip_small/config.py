@@ -123,3 +123,9 @@ deepspeed = dict(
     enable=True,
     stage=1,
 )
+
+# ========== optimization-component switches (defaults = original baseline) ==========
+# Set via experiment config or CLI override (e.g. `model.vision_encoder.temporal_pooling attn`)
+# when training with / evaluating a checkpoint that uses these components.
+model["use_sigmoid_loss"] = False
+model["vision_encoder"]["temporal_pooling"] = "mean"

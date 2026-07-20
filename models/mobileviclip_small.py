@@ -14,6 +14,7 @@ from .backbones.internvideo2 import InternVideo2, TextTransformer, ClipTokenizer
 from .criterions import VTC_VTM_Loss
 
 import copy
+import math
 from functools import partial
 from typing import List, Tuple, Optional, Union
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
@@ -53,9 +54,15 @@ class MobileViCLIP_Small(nn.Module):
         # freeze model
         if self.config.model.freeze_vision:
             for name, p in self.vision_encoder.named_parameters():
-                if self.config.model.open_vision_clip_projector and hasattr(name, '_1d'):
+                # NOTE: this branch used `hasattr(name, '_1d')`, which is always
+                # False on a string, so the projector was silently frozen.
+                if self.config.model.open_vision_clip_projector and name.startswith("head."):
                     logger.info(f"Unfreeze {name}")
                 elif  "mixer_1d" in name or "norm_1d" in name or "layer_scale_1d" in name:
+                    logger.info(f"Unfreeze {name}")
+                elif "temporal_pool" in name:
+                    # newly added temporal-aggregation head has no pretrained
+                    # weights and must stay trainable
                     logger.info(f"Unfreeze {name}")
                 else:
                     logger.info(f"Freeze {name}")
@@ -88,8 +95,15 @@ class MobileViCLIP_Small(nn.Module):
         # criterions
         self.clip_loss = VTC_VTM_Loss(False)
 
+        # SigLIP-style sigmoid contrastive loss (config: model.use_sigmoid_loss).
+        # Learnable logit scale/bias with the SigLIP init (t' = log 10, b = -10).
+        self.use_sigmoid_loss = self.config.model.get("use_sigmoid_loss", False)
+        if self.use_sigmoid_loss:
+            self.logit_scale = nn.parameter.Parameter(torch.ones([]) * math.log(10.0))
+            self.logit_bias = nn.parameter.Parameter(torch.ones([]) * -10.0)
+
     def no_weight_decay(self):
-        ret = {"temp"}
+        ret = {"temp", "logit_scale", "logit_bias"}
         ret.update(
             {"vision_encoder." + k for k in self.vision_encoder.no_weight_decay()}
         )
@@ -121,9 +135,16 @@ class MobileViCLIP_Small(nn.Module):
         text_embeds = self.encode_text(text)
 
         # VTC loss
-        loss_vtc = self.clip_loss.vtc_loss(
-            vision_embeds, text_embeds, idx, self.temp, all_gather=True
-        )
+        if self.use_sigmoid_loss:
+            loss_vtc = self.clip_loss.vtc_loss_sigmoid(
+                vision_embeds, text_embeds, idx,
+                temp=1.0, t=self.logit_scale.exp(), b=self.logit_bias,
+                all_gather=True,
+            )
+        else:
+            loss_vtc = self.clip_loss.vtc_loss(
+                vision_embeds, text_embeds, idx, self.temp, all_gather=True
+            )
 
         return dict(
             loss_vtc=loss_vtc,
@@ -188,6 +209,8 @@ class MobileViCLIP_Small(nn.Module):
             pretrained_cfg=None,
             pretrained_cfg_overlay=None,
             projection_dim=512,
+            temporal_pooling=self.config.model.vision_encoder.get("temporal_pooling", "mean"),
+            with_cp=self.config.get("gradient_checkpointing", True),
         )
         return model
 
@@ -1172,6 +1195,8 @@ class FastViT(nn.Module):
         clip_embed_dim=512,
         attn_pool_num_heads=16,
         head_drop_path_rate=0,
+        temporal_pooling="mean",
+        with_cp=True,
         **kwargs,
     ) -> None:
 
@@ -1211,7 +1236,7 @@ class FastViT(nn.Module):
                 use_layer_scale=use_layer_scale,
                 layer_scale_init_value=layer_scale_init_value,
                 inference_mode=inference_mode,
-                with_cp=True,
+                with_cp=with_cp,
                 use_flash_attn=True,
                 use_fused_rmsnorm=True,
                 use_fused_mlp=True,
@@ -1248,6 +1273,16 @@ class FastViT(nn.Module):
         )
         self.head = GlobalPool2D(in_dim=int(embed_dims[-1] * cls_ratio),out_dim=512)
         self.apply(self.cls_init_weights)
+        # Optional attention pooling over the T per-frame embeddings (config:
+        # model.vision_encoder.temporal_pooling = "mean" | "attn"). Built after
+        # cls_init_weights so the zero-init of its output projection (exact
+        # mean-pool equivalence at step 0) is not overwritten.
+        if temporal_pooling == "attn":
+            self.temporal_pool = TemporalAttentionPool(self.head.out_dim)
+        elif temporal_pooling == "mean":
+            self.temporal_pool = None
+        else:
+            raise ValueError(f"Unknown temporal_pooling: {temporal_pooling}")
         self.init_cfg = copy.deepcopy(init_cfg)
     
     @torch.jit.ignore
@@ -1287,9 +1322,48 @@ class FastViT(nn.Module):
         x_temp = self.conv_exp(x_temp) 
         x_temp = self.head(x_temp)
         x_new_stack = x_temp.reshape(T,B,x_temp.shape[-1])
-        #时序暴力平均
-        x_new_stack = x_new_stack.mean(0, keepdim=False) 
+        if self.temporal_pool is not None:
+            # attention pooling over frames (query = mean of frame embeddings)
+            x_new_stack = self.temporal_pool(x_new_stack.permute(1, 0, 2))
+        else:
+            #时序暴力平均
+            x_new_stack = x_new_stack.mean(0, keepdim=False)
         return  x_new_stack
+
+
+class TemporalAttentionPool(nn.Module):
+    """One cross-attention block over the T per-frame embeddings.
+
+    Query = mean over frames; output = mean + proj(attention output), with the
+    output projection zero-initialized so that at initialization this module
+    is exactly the mean-pool baseline (strictly-no-regression start).
+    """
+
+    def __init__(self, dim, num_heads=8):
+        super().__init__()
+        assert dim % num_heads == 0, f"dim {dim} not divisible by num_heads {num_heads}"
+        self.num_heads = num_heads
+        self.scale = (dim // num_heads) ** -0.5
+        self.q = nn.Linear(dim, dim, bias=False)
+        self.k = nn.Linear(dim, dim, bias=False)
+        self.v = nn.Linear(dim, dim, bias=False)
+        self.proj = nn.Linear(dim, dim)
+        nn.init.zeros_(self.proj.weight)
+        nn.init.zeros_(self.proj.bias)
+
+    def forward(self, x):
+        # x: [B, T, C] per-frame embeddings
+        B, T, C = x.shape
+        hd = C // self.num_heads
+        mean = x.mean(1)  # [B, C]
+        q = self.q(mean).reshape(B, self.num_heads, 1, hd)
+        k = self.k(x).reshape(B, T, self.num_heads, hd).permute(0, 2, 1, 3)
+        v = self.v(x).reshape(B, T, self.num_heads, hd).permute(0, 2, 1, 3)
+        attn = (q * self.scale) @ k.transpose(-2, -1)  # [B, H, 1, T]
+        attn = attn.softmax(dim=-1)
+        out = (attn @ v).reshape(B, C)  # [B, H, 1, hd] -> [B, C]
+        return mean + self.proj(out)
+
 
 class GlobalPool2D(nn.Module):
     """This class implements global pooling with linear projection."""
