@@ -11,15 +11,15 @@
 | S3 校准分桶 | `aggregate_report.py` | 全量外推 | CPU |
 | S4 落地 v0.2 | `apply_buckets.py` | 全量 | CPU |
 
-## 按机器选手册（两台服务器各一份，均可独立跑完全流程）
+## 按机器选手册（两台服务器分工不同）
 
-| 机器 | 手册 | S2 路径 | 全流程耗时 |
-|---|---|---|---|
-| 8×H100-80G | **[`SETUP_H100.md`](SETUP_H100.md)** | vLLM 服务（8B dp=8 + 235B-FP8 裁判本地 tp8） | ~1.5 天 |
-| 8×V100-32G | **[`SETUP_V100.md`](SETUP_V100.md)** | transformers 后端 `run_v100.sh`（无 bf16/vLLM；torch 须用 cu118 构建；裁判走云端 API） | ~2–2.5 天 |
+| 机器 | 手册 | 数据范围 | S2 路径 | 耗时 |
+|---|---|---|---|---|
+| 8×H100-80G | **[`SETUP_H100.md`](SETUP_H100.md)** | **全量 10M** | vLLM 服务（8B dp=8 + 235B-FP8 裁判本地 tp8） | ~1.5 天 |
+| 8×V100-32G（101vector） | **[`SETUP_V100.md`](SETUP_V100.md)** | **仅 1 万条预抽样**（`/home/vca1/datasets/internvid_zh_10k`，本机没有全量数据） | transformers 后端 `run_v100.sh`（无 bf16/vLLM；torch 须用 cu118 构建；裁判走云端 API） | ~2–3 小时 |
 
-两台都可用时的分工建议见 `SETUP_V100.md` 末节：S1（解码瓶颈）放 V100，
-S2 主力+裁判（卡型差距最大）放 H100。
+推荐节奏：先在 V100 机把 10k 全流程跑完（半天内出 10k 报告 + 调好 rubric
+和 `sig_zh` 阈值），再在 H100 机开全量，校准结果直接复用、避免 10M 规模返工。
 
 人工查看：V100 机（10.235.31.101）已备 1 万条预抽样 + Gradio 浏览工具
 （`gradio_video_text_review.py`），定位是**看数据做定性校验、不是标注任务**，
