@@ -149,28 +149,28 @@ caprl-scheme §7：3M 片 × K=3 约 1.5k–3k A100·时。
 **审查阶段只需 7.0–7.5（产出诊断报告即止）；7.6 起是数据优化阶段，
 待报告评审后再启动。**
 
-> **按机器选手册**（两台服务器各一份完整手册，均含环境配置到 S3 全部命令）：
-> 8×H100-80G → `tools/data_audit/SETUP_H100.md`（vLLM 路径，8B dp=8 +
-> 235B-FP8 裁判本地 tp8，~1.5 天）；8×V100-32G →
-> `tools/data_audit/SETUP_V100.md`（torch 须 cu118 构建、fp16、
-> transformers 后端、裁判走云端 API，~2–2.5 天）。双机分工建议见
-> SETUP_V100.md 末节。
+> **按机器选手册**（分工不同，两份手册均含环境配置到 S3 全部命令）：
+> 8×H100-80G → `tools/data_audit/SETUP_H100.md`：**全量 10M**，vLLM 路径
+> （8B dp=8 + 235B-FP8 裁判本地 tp8），~1.5 天；
+> 8×V100-32G（101vector）→ `tools/data_audit/SETUP_V100.md`：**仅本机
+> 1 万条预抽样**（没有全量数据），torch 须 cu118 构建、fp16、
+> transformers 后端、裁判走云端 API，全流程 ~2–3 小时。
+> 推荐先在 V100 跑完 10k（出初版问题率 + 校准 rubric/阈值），再上 H100 全量。
 >
 > **8×V100 一键通道**：全部审查步骤已封装为
 > `bash tools/data_audit/run_v100.sh {smoke|s0|s1|status|s2-sample|s2|s2-judge|s3}`，
-> 只需先 `export CLIPS=视频根目录`。V100（Volta）与下文 A100 命令的三个差异
+> **DATA/CLIPS/OUT 默认即本机 10k 抽样路径，无需任何 export**（路径缺失会
+> 快速失败并给出清晰报错）。V100（Volta）与下文 A100 命令的三个差异
 > 已在脚本内处理：
 > ① 无 bf16 → S1/S2 自动落 fp16（`--dtype` 可强制）；
 > ② vLLM V1 引擎不支持 Volta、而 Qwen3-VL 需要新版 vLLM → S2 不起服务，
 >   改用 transformers 后端 `vlm_audit_hf.py` 做 8 卡数据并行（同一 rubric/
 >   输出格式，S3 无感）；
 > ③ 235B 裁判 8×32GB 放不下（权重就 >400GB）→ `s2-judge` 走 OpenAI 兼容
->   云端 API（DashScope/OpenRouter 的 qwen3-vl-235b，2k 条约几十元），
->   或降级为本地换一个模型家族（InternVL3.5-8B）交叉验证。
+>   云端 API（DashScope/OpenRouter 的 qwen3-vl-235b），
+>   或借 H100 机的本地 235B-FP8。
 > 显存注意：32GB 卡用 Qwen3-VL-8B（fp16 约 17GB）；**16GB 卡请
 > `export S2_MODEL=Qwen/Qwen3-VL-4B-Instruct`**。
-> 时间预估（8×V100，解码为主瓶颈）：S1 全量 ~1–2 天；S2 4.5 万条 ~半天
-> （每卡 ~5.6k 条 × 5–8 s）；嫌慢可 `export PER_BUCKET=2000` 收缩抽样。
 
 ### 7.0 环境准备（一次性，~15 分钟）
 

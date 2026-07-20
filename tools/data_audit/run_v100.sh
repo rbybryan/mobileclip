@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # InternVid-zh v0.1 数据审查一键脚本 —— 8x V100 版（只做审查 S0–S3，不改数据）
 #
-# 用法：
-#   export CLIPS=/path/to/internvid/clips        # 唯一必须手改的变量
-#   bash tools/data_audit/run_v100.sh smoke      # ① 冒烟（必须先跑）
-#   bash tools/data_audit/run_v100.sh s0         # ② 全量规则画像（CPU ~20min）
-#   bash tools/data_audit/run_v100.sh s1         # ③ 全量嵌入打分（8 卡 ~1–2 天，可续跑）
+# 用法（DATA/CLIPS/OUT 默认即本机 101vector 的 1 万条抽样，无需 export；
+#       逐条执行，s1/s2 是后台任务，用 status 等到 100% 再进下一步）：
+#   bash tools/data_audit/run_v100.sh smoke      # ① 冒烟（必须先跑，~10min）
+#   bash tools/data_audit/run_v100.sh s0         # ② 规则画像（10k 秒级）
+#   bash tools/data_audit/run_v100.sh s1         # ③ 嵌入打分（10k 8 卡 ~10–30min，可续跑）
 #   bash tools/data_audit/run_v100.sh status     # 随时看 S1/S2 进度
-#   bash tools/data_audit/run_v100.sh s2-sample  # ④ 分层抽样 ~4.5 万条
-#   bash tools/data_audit/run_v100.sh s2         # ⑤ 8 卡 VLM 审核（HF 后端，~半天）
-#   bash tools/data_audit/run_v100.sh s2-judge   # ⑥ 云端大模型裁判 2k 条（可选，需 API key）
+#   PER_BUCKET=100 FLAGGED=300 LOW_XLING=200 \
+#     bash tools/data_audit/run_v100.sh s2-sample  # ④ 分层抽样（10k 抽 ~1.4k）
+#   bash tools/data_audit/run_v100.sh s2         # ⑤ 8 卡 VLM 审核（HF 后端，~1h）
+#   JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge  # ⑥ 云端裁判（可选，需 API key）
 #   bash tools/data_audit/run_v100.sh s3         # ⑦ 校准+分桶+诊断报告 report.md
+# 跑其他数据（如全量挂载后）：export DATA/CLIPS/OUT 覆盖默认值即可。
 #
 # V100 三个硬件差异已在脚本/工具内处理：
 #   1. Volta 无 bf16      -> score_alignment.py / vlm_audit_hf.py 自动落到 fp16
