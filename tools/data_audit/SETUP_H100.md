@@ -158,7 +158,9 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 vllm serve ckpts/Qwen3-VL-235B-A22B-FP8 --port 8001
 
 ```bash
 # 4.3 裁判档：235B-A22B FP8 本地 8 卡（2k 条约 1–2 小时）
-vllm serve ckpts/Qwen3-VL-235B-A22B-FP8 --port 8001 \
+#     （加 --host 0.0.0.0 可同时给 V100 机的 s2-judge 当裁判端点用，
+#      跨机部署分步手册见 SETUP_JUDGE_API.md）
+vllm serve ckpts/Qwen3-VL-235B-A22B-FP8 --port 8001 --host 0.0.0.0 \
   --tensor-parallel-size 8 --limit-mm-per-prompt image=8 --max-model-len 32768 &
 head -n 2000 $OUT/s2_sample.jsonl > $OUT/s2_judge_sample.jsonl
 python tools/data_audit/vlm_audit.py --input $OUT/s2_judge_sample.jsonl \
