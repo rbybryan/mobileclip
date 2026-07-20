@@ -3,6 +3,8 @@
 联网：
 
 ```bash
+ssh -R 3390:proxyhk.zte.com.cn:80 root@10.55.84.132 -p 31000 -o ServerAliveInterval=240
+
 #重新统一设置所有变量为 3390
 export http_proxy=http://127.0.0.1:3390
 export https_proxy=http://127.0.0.1:3390
