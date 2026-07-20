@@ -18,6 +18,7 @@
   - [2.1 安装(macOS)](#21-安装macos)
   - [2.2 安装(Linux,无 root)](#22-安装linux无-root)
   - [2.3 连接 VPN](#23-连接-vpn)
+  - [2.3.1 如果 VPN 用 SSO 单点登录(浏览器网页认证)](#231-如果-vpn-用-sso-单点登录浏览器网页认证)
   - [2.4 日常使用:哪些命令走 VPN,怎么走](#24-日常使用哪些命令走-vpn怎么走)
 - [第 3 步(备选):官方客户端 + 公网 VPS 反向隧道](#第-3-步备选官方客户端--公网-vps-反向隧道)
 - [常见问题排查](#常见问题排查)
@@ -197,6 +198,60 @@ openconnect \
 - 如果公司用的是分组(Group)登录,加 `--authgroup=组名`。
 - 如果证书报错,先看[常见问题排查](#常见问题排查),不要盲目加 `--no-cert-check`。
 
+### 2.3.1 如果 VPN 用 SSO 单点登录(浏览器网页认证)
+
+现在很多高校/机构的 VPN 不再是"账号密码直登",而是**跳转到一个网页做 SSO(单点登录)**——
+用官方 AnyConnect 连接时会**弹出一个浏览器登录页**,就是这种。此时上面的账号密码方式会
+陷入"输完密码又跳回密码框"的死循环,因为你的账号根本不走密码认证。
+
+openconnect 9.x 支持外部浏览器 SSO,用 `--external-browser`:
+
+```bash
+openconnect --external-browser=xdg-open \
+  --script "ocproxy -D 11080" \
+  vpn.company.com
+```
+
+流程:openconnect 自动打开浏览器 → 你在网页里完成 SSO 登录 → 浏览器跳回一个
+`http://localhost:<port>/...` 地址 → openconnect 捕获令牌、建立隧道。
+
+**关键坑与排查(按顺序):**
+
+1. **确认 openconnect 编进了 SSO 支持**:
+   ```bash
+   openconnect --version
+   openconnect --help 2>&1 | grep -i external-browser   # 有输出才支持
+   ```
+2. **确认当前 shell 有图形环境**:`xdg-open` 只有在有桌面时才能弹浏览器。
+   ```bash
+   echo "$DISPLAY"                    # 空 = 当前 shell 没图形环境(比如 SSH 进来的)
+   xdg-open https://example.com       # 能弹出浏览器才行
+   ```
+   `$DISPLAY` 为空时,要么改到图形桌面的终端里跑,要么用下面的"手动令牌"兜底。
+3. **最容易忽略:必须连到正确的 SSO 分组(group-url)**。`--external-browser`
+   只有在**服务器真的发来 SSO 请求**时才会弹浏览器;如果你连的是裸地址而服务器
+   把你分到了"密码分组",openconnect 拿到的还是账号密码表单,永远不会弹网页。
+   很多机构同时存在"密码分组"和"SSO 分组",官方客户端连的是后者。
+   - **从官方客户端配置里挖出它用的分组**(以下是分组名/地址,非敏感):
+     ```bash
+     # Cisco Secure Client / AnyConnect 记录的默认主机与分组
+     cat ~/.cisco/vpn/preferences 2>/dev/null      # 看 DefaultGroup / DefaultHostAddress
+     cat ~/.anyconnect 2>/dev/null
+     # 连接 profile 里的 HostAddress / GroupURL / UserGroup
+     grep -rhoE '<(HostName|HostAddress|UserGroup|GroupURL)>[^<]+' /opt/cisco 2>/dev/null
+     ```
+   - 拿到分组名 `XXX`(DefaultGroup / UserGroup,或 GroupURL 末段)后,把它接到地址后面:
+     ```bash
+     openconnect --external-browser=xdg-open --script "ocproxy -D 11080" \
+       vpn.company.com/XXX
+     # 或等价地:--authgroup=XXX
+     ```
+
+**兜底:无图形环境 / 挖不到分组时**,用封装脚本
+[`openconnect-sso`](https://github.com/vlaci/openconnect-sso)(内置浏览器自动完成 SAML,
+`pipx install openconnect-sso` 免 root 安装),或在有浏览器的机器上手动完成 SSO、
+把最终 `localhost:<port>` 回调里的令牌用 `--cookie` 传给 openconnect。
+
 ### 2.4 日常使用:哪些命令走 VPN,怎么走
 
 连接成功后,`127.0.0.1:11080` 就是通往 VPN 内网的 SOCKS5 代理。
@@ -280,6 +335,8 @@ ssh -J vps_user@your-vps.com -p 2222 user@localhost
 | `ssh` 报 `nc: invalid option -- X` | 该系统的 netcat 不支持 SOCKS,改用 ncat(见 2.4)或 `connect-proxy` |
 | DNS 解析不到内网域名 | 用 `--socks5-hostname`(curl)/ ProxyCommand 里的 `%h`(ssh)让**代理端**解析域名,不要本地先解析;ocproxy 会用 VPN 下发的 DNS |
 | 二次验证(OTP/Duo) | openconnect 会交互式提示,照常输入;Duo Push 选项一般输入 `push` |
+| 输完密码又跳回 `Password:` 死循环 | ① 账号名/密码错;② 账号走 **SSO** 而非密码认证——见 [2.3.1](#231-如果-vpn-用-sso-单点登录浏览器网页认证)。用 `--dump-http-traffic` 看返回 XML:无 `<error>`、无 `group_list` 而反复回同一表单 = 认证被拒或分组不对(**dump 含明文密码,贴前务必删除 `password=` 行**) |
+| `--external-browser` 不弹网页 | 多半是连错分组:服务器发的是密码表单而非 SSO,openconnect 没机会弹浏览器。按 [2.3.1](#231-如果-vpn-用-sso-单点登录浏览器网页认证) 挖出 SSO 分组并接到地址后(`vpn.company.com/分组`);另确认 `$DISPLAY` 非空、`--help` 里有 `external-browser` |
 | 官方 AnyConnect 自动重连抢占 | 在官方客户端里彻底 Disconnect 并退出程序,再启动 openconnect |
 
 ---
