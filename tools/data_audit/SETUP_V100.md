@@ -1,9 +1,11 @@
-# 8×V100-32G 数据审查完整配置与执行手册
+# 8×V100-32G 数据审查配置与执行手册（10k 抽样专用）
 
-> 目标机器：8×V100-SXM2-32GB（Volta，CC 7.0）。与 H100 手册
-> （`SETUP_H100.md`）互为姊妹篇——两台机器都可独立跑完全流程；
-> H100 空闲时优先用 H100（S2 快一个量级）。
-> 本手册只覆盖审查 S0–S3（产出诊断报告），不改数据。
+> 目标机器：`101vector`（10.235.31.101），8×V100-SXM2-32GB（Volta，CC 7.0）。
+> **本机只有预抽取的 1 万条样本**（`/home/vca1/datasets/internvid_zh_10k`），
+> 没有全量 10M 数据——所以本手册的全部测试都在这 1 万条上做，产出
+> **10k 版诊断报告**；全量 10M 的审查在 H100 机上跑（`SETUP_H100.md`）。
+> 本机双任务：① 10k 样本跑完整 S0–S3 流水线；② Gradio 人工查看（§6）。
+> 只做审查，不改数据。
 >
 > **V100 三个硬性差异**（工具已内置处理，但装环境时必须知道）：
 > 1. **新 torch wheel 不支持 Volta**：cu126/cu128 构建（torch≥2.7）已删掉
@@ -16,6 +18,8 @@
 
 > **并行提示**：标〖可并行〗的步骤互不依赖可同时开跑；完整调度表见
 > `README.md`「并行调度总览」。严格顺序链只有冒烟 → S1 → s2-sample → S2 → S3。
+> 10k 全流程很快（GPU 部分合计 ~2 小时），与 H100 机的全量审查完全独立、
+> 可同时进行。
 
 ## 0. 环境（一次性，~20 分钟）〖可并行：与 §2 S0、与 H100 机装环境同时进行；权重下载放后台〗
 
@@ -56,43 +60,14 @@ modelscope download --model Qwen/Qwen3-VL-8B-Instruct \
 
 ```bash
 # ---- 路径变量（每个新 shell 都要；或写进 ~/.bashrc）----
-
-# 本机已就位的 1 万条抽样（101vector:/home/vca1/datasets/internvid_zh_10k，
-# 含 internvid_zh_10k.jsonl + videos/ + Gradio 工具，见 §0.5 与 §6）
+# 本机数据就是这 1 万条抽样：DATA=抽样 jsonl，CLIPS=同目录的 videos/
 export SAMPLE=/home/vca1/datasets/internvid_zh_10k
-
-# 全量 10M（仅当本机挂载了 b100 数据盘；未挂载则全量 S1/S2 放 H100 机跑，
-# 本机专注 §0.5 的 10k 试跑 + §6 人工查看）
-export DATA=/workspace/mount/b100_zaip_data/zyc/vibe_coding/low_resource_cv/MobileViCLIP/outputs/internvid_alignment/caption_translation_qwen36_v0_1/20_outputs/aligned_internvid_zh_translated_retry_merged.jsonl
-export CLIPS=/path/to/internvid/clips      # TODO: 全量视频根目录（video 字段相对它）
-
-export OUT=outputs/audit_v0_1
-export S2_MODEL=ckpts/Qwen3-VL-8B-Instruct
-cd ~/mobileclip                            # 仓库根目录
-```
-
-### 0.5 强烈推荐先做：用本机 1 万条抽样端到端试跑（~1–2 小时）〖可并行：不依赖全量数据盘〗
-
-跑通整条流水线 + 直接产出**10k 版问题率初版报告**（第一份可汇报的数字），
-之后放全量只是换路径重跑：
-
-```bash
 export DATA=$SAMPLE/internvid_zh_10k.jsonl
 export CLIPS=$SAMPLE/videos
 export OUT=outputs/audit_10k
-
-bash tools/data_audit/run_v100.sh smoke
-bash tools/data_audit/run_v100.sh s0     # 秒级
-bash tools/data_audit/run_v100.sh s1     # 10k 条 8 卡约 10–30 分钟
-PER_BUCKET=100 FLAGGED=300 LOW_XLING=200 bash tools/data_audit/run_v100.sh s2-sample
-bash tools/data_audit/run_v100.sh s2     # ~1.4k 条 VLM 审核，约 1 小时
-bash tools/data_audit/run_v100.sh s3     # outputs/audit_10k/report.md 即 10k 初版诊断
+export S2_MODEL=ckpts/Qwen3-VL-8B-Instruct
+cd ~/mobileclip                            # 仓库根目录
 ```
-
-若 `[keys]` 探测或视频路径拼接不对（10k 的 jsonl 字段名/相对路径与全量
-可能不同），按 stderr 提示补 `--video-key/--zh-key/--en-key` 或调整 `CLIPS`。
-跑完全量时记得把 `DATA/CLIPS/OUT` 换回上面的全量值（`OUT` 分开目录，
-两份报告互不覆盖）。
 
 以下 §1–§5 全部封装在 `tools/data_audit/run_v100.sh`（内置 8 卡 fan-out、
 断点续跑、验收检查），每步给出一键命令；想看展开的等价命令可
@@ -103,79 +78,82 @@ bash tools/data_audit/run_v100.sh s3     # outputs/audit_10k/report.md 即 10k �
 ```bash
 bash tools/data_audit/run_v100.sh smoke
 ```
-做三件事：S0 前 2 万条（看 `[keys]` 字段探测）、S1 前 2000 条
-（fp16 推理 + 解码失败率，应 <2%）、S2 在 GPU0 审 8 条（首次会下载模型）。
-字段探测不对 → 各命令补 `--video-key/--zh-key/--en-key`。
+做三件事：S0 字段探测（stderr 的 `[keys] video=... zh=... en=...` 必须与
+`internvid_zh_10k.jsonl` 的实际字段对上）、S1 前 2000 条（fp16 推理 +
+解码失败率，应 <2%；同时验证 `video` 字段相对 `videos/` 的路径拼接）、
+S2 在 GPU0 审 8 条（首次会下载模型）。
+字段探测不对 → 各命令补 `--video-key/--zh-key/--en-key`；
+路径拼不上 → 检查 jsonl 里 `video` 是纯文件名还是带子目录，相应调整 `CLIPS`。
 
-## 2. S0 规则画像（全量，CPU ~20 分钟）〖可并行：零依赖纯 CPU，t0 就能跑，先于装环境执行，与 S1 全程互不干扰〗
+## 2. S0 规则画像（1 万条，CPU 秒级）〖可并行：零依赖纯 CPU，t0 就能跑，先于装环境执行〗
 
 ```bash
 bash tools/data_audit/run_v100.sh s0
 python -m json.tool $OUT/s0_summary.json | head -60
 ```
 S0 只用标准库——**任何现成 Python 都能跑**，不必等 torch 装好。
-**决策门**：拒答+未翻译+指令泄漏合计 >5% → 翻译管线先回炉；
-重复 caption 率 >10% → 假负例问题记为报告重点。
+**决策门**（10k 上的比例可直接外推参考）：拒答+未翻译+指令泄漏合计 >5%
+→ 翻译管线先回炉；重复 caption 率 >10% → 假负例问题记为报告重点。
+可与目录里已有的 `QUALITY_ANALYSIS.md`、`quality_issue_candidates.jsonl`
+对照，看规则命中是否覆盖了人工已发现的问题类型。
 
-## 3. S1 嵌入打分（全量 10M，8 卡 ~1.5–2 天，可断点续跑）〖可并行：卡内 8 分片并行；权重下载可同时进行；双机对半见下〗
+## 3. S1 嵌入打分（1 万条，8 卡 ~10–30 分钟，可断点续跑）〖可并行：权重下载可同时进行〗
 
 ```bash
 bash tools/data_audit/run_v100.sh s1        # 8 卡后台启动
 bash tools/data_audit/run_v100.sh status    # 随时看进度
 ```
-瓶颈在 CPU 视频解码；中断后重跑 `s1` 自动续。
-**验收点**：`status` 显示 100%；`error` 率与冒烟一致。
+中断后重跑 `s1` 自动续。
+**验收点**：`status` 显示 100%（8 分片行数之和 = 10000）；`error` 率与冒烟一致。
 
-〖双机对半（H100 机同时在线且两机挂同一数据盘时，S1 总时长近乎减半）〗：
+（`run_v100.sh` 的 `S1_TOTAL_SHARDS/S1_SHARD_OFFSET` 双机分片参数在本机
+**用不上**——那是两台机器共享全量数据盘时的加速项，本机没有全量数据。）
 
-```bash
-# 本机（V100）跑总 16 分片中的 0–7：
-S1_TOTAL_SHARDS=16 S1_SHARD_OFFSET=0 bash tools/data_audit/run_v100.sh s1
-# H100 机同时跑分片 8–15（命令见 SETUP_H100.md §3 双机段）
-# 注意：双机分片下本机 status 只到 ~50%，以两机产物行数之和为准
-```
-
-## 4. S2 分层抽样 + VLM 审核〖4.2 主力 / 4.3 裁判 / 4.4 人工抽检可并行：裁判走云端 API 不占本机 GPU，抽样(4.1)一完成即可与主力同时启动〗
+## 4. S2 分层抽样 + VLM 审核（10k 中抽 ~1.4k 条）〖4.2 主力 / 4.3 裁判 / 4.4 人工抽检可并行：裁判走云端 API 不占本机 GPU〗
 
 ```bash
-# 4.1 抽样（S1 ≥95% 后执行；V100 慢可 export PER_BUCKET=2000 收缩）
-bash tools/data_audit/run_v100.sh s2-sample
+# 4.1 抽样：10k 规模用收缩参数（十分位×100 + 规则命中 300 + 低跨语 200 ≈ 1.4k）
+PER_BUCKET=100 FLAGGED=300 LOW_XLING=200 bash tools/data_audit/run_v100.sh s2-sample
+wc -l $OUT/s2_sample.jsonl
 
-# 4.2 主力档：Qwen3-VL-8B，transformers 后端 8 卡数据并行（~半天）
+# 4.2 主力档：Qwen3-VL-8B，transformers 后端 8 卡数据并行（~1.4k 条约 1 小时）
 bash tools/data_audit/run_v100.sh s2
 bash tools/data_audit/run_v100.sh status
 
-# 4.3 裁判档：云端 235B（任何 OpenAI 兼容端点；2k 条约几十元）
+# 4.3 裁判档：云端 235B（任何 OpenAI 兼容端点；500 条约十几元）
 #     —— 不占本机 GPU，可与 4.2 主力同时跑（只依赖 4.1 抽样完成）
 export JUDGE_API_KEY=sk-...          # DashScope / OpenRouter 等
-bash tools/data_audit/run_v100.sh s2-judge   # 跑完自动打印一致率
-# （替代方案：两台机器都在时，把裁判放 H100 本地 235B-FP8，
+JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge   # 跑完自动打印一致率
+# （替代方案：H100 机在线时，把裁判放它的本地 235B-FP8，
 #   见 SETUP_H100.md §4.3，然后把 s2_verdicts_judge.jsonl 拷回来）
 
-# 4.4 人工抽检 500 条
-shuf -n 500 <(cat $OUT/s2_verdicts.*.jsonl) > $OUT/human_check_500.jsonl
+# 4.4 人工抽检 300 条（在 §6 的 Gradio 里过）
+shuf -n 300 <(cat $OUT/s2_verdicts.*.jsonl) > $OUT/human_check_300.jsonl
 ```
-**决策门**：8B vs 裁判 action 一致率 ≥75%，不达标先改 rubric 再重跑。
+**决策门**：8B vs 裁判 action 一致率 ≥75%，不达标先改 rubric 再重跑——
+**在 10k 上把 rubric 调可信，正是全量（H100 机）开跑前最重要的准备**。
 fp16 若出现乱码/NaN 输出（罕见）：`export S2_MODEL=Qwen/Qwen3-VL-4B-Instruct`
 并在 `vlm_audit_hf.py` 加 `--dtype fp32` 重跑。
 
-## 5. S3 校准 + 全量分桶 + 诊断报告（CPU 分钟级）〖不可并行：需 S0+S1+S2 全部产物，最后跑〗
+## 5. S3 校准 + 分桶 + 10k 诊断报告（CPU 秒级）〖不可并行：需 S0+S1+S2 全部产物，最后跑〗
 
 ```bash
 bash tools/data_audit/run_v100.sh s3
 ```
-产出 `$OUT/report.md`（问题率外推表 + 校准表）和 `buckets.jsonl`。
-**审查到此为止**；后续优化见 `notes/internvid-zh-data-audit-plan.md` §5、§7.6+。
+产出 `$OUT/report.md`（10k 问题率表 + sig_zh 分位校准表）和 `buckets.jsonl`。
+**这份 10k 报告的两个用途**：① 第一份可汇报的问题率数字（抽样是分层随机的，
+比例可外推到全量）；② 校准出的 `sig_zh` 阈值直接作为 H100 机全量 S3 的
+`--sig-zh-threshold` 先验。审查到此为止；后续优化见
+`notes/internvid-zh-data-audit-plan.md` §5、§7.6+。
 
 ## 6. 人工查看工具（Gradio，本机已就位）〖可并行：不依赖任何流水线步骤，随时可用，不占 GPU〗
 
-V100 机上已预抽样 **1 万条** 数据并配好浏览工具，目录内容
-（`10.235.31.101:/home/vca1/datasets/internvid_zh_10k`）：
+抽样目录（`10.235.31.101:/home/vca1/datasets/internvid_zh_10k`）内容：
 
 | 文件 | 说明 |
 |---|---|
-| `internvid_zh_10k.jsonl` | 1 万条抽样数据（§0.5 试跑的 `DATA`） |
-| `videos/` | 对应视频（§0.5 试跑的 `CLIPS`） |
+| `internvid_zh_10k.jsonl` | 1 万条抽样数据（即 §0 的 `DATA`） |
+| `videos/` | 对应视频（即 §0 的 `CLIPS`） |
 | `gradio_video_text_review.py` | Gradio 浏览工具 |
 | `REVIEW_README.md` | 工具自带说明（以它为准） |
 | `QUALITY_ANALYSIS.md` | 已有的一份初步质量分析，开工前先读 |
@@ -205,24 +183,25 @@ S0–S3 的自动化产出为准，这个工具只承担三个定性任务：
 2. **S2 期间抽查 VLM 判定**：从 `s2_verdicts.*.jsonl` 里挑十几条
    `action=recaption/drop` 的样本对着画面看，快速人肉 sanity check
    （正式可信度以 §4 的 8B vs 裁判一致率决策门为准，这里只防系统性跑偏）。
-3. **承接 §4 的 500 条人工抽检**：`human_check_500.jsonl` 的样本在此工具里
+3. **承接 §4 的 300 条人工抽检**：`human_check_300.jsonl` 的样本在此工具里
    过一遍即可；也不必逐条全标——与 VLM 判定一致的快速翻过，只在发现
    系统性分歧（某类问题 VLM 集体看错）时再扩量核对并记录。
 
 产出物：一份简短的《人工摸底笔记》（问题类型频次 + 典型 video id 清单），
 附到 S3 的 `report.md` 旁边，作为自动化外推数字的定性佐证。
 
-## 时间线汇总（8×V100 vs 8×H100）
+## 时间线与双机分工
 
-| 步骤 | 8×V100 | 8×H100（见 SETUP_H100.md） |
+| 步骤 | 本机（10k） | H100 机（全量 10M，见 SETUP_H100.md） |
 |---|---|---|
 | 环境 + 权重 | ~0.5–1 h | ~0.5–2 h（多下 235B） |
-| S0 全量 | ~20 min（CPU，两边一样） | ~20 min |
-| S1 全量 10M | ~1.5–2 天 | ~1 天 |
-| S2 主力 45k | ~半天（HF 后端） | 1–2 h（vLLM dp=8） |
-| S2 裁判 2k | ~1 h（云端 API） | 1–2 h（本地 FP8 tp8） |
-| S3 报告 | 分钟级 | 分钟级 |
-| **总计** | **~2–2.5 天** | **~1.5 天** |
+| S0 | 秒级 | ~20 min |
+| S1 | ~10–30 min | ~1 天 |
+| S2 主力 | ~1 h（1.4k 条，HF 后端） | 1–2 h（45k 条，vLLM dp=8） |
+| S2 裁判 | ~0.5 h（500 条云端） | 1–2 h（2k 条本地 FP8 tp8） |
+| S3 报告 | 秒级 | 分钟级 |
+| **总计** | **~2–3 小时** | **~1.5 天** |
 
-两台都可用时的推荐分工：S0 哪台闲跑哪台；S1 放 V100（解码瓶颈，卡型差距
-小）；S2 主力 + 裁判放 H100（差距最大）；S3 在有全部产物的一台上跑。
+推荐节奏：**先在本机把 10k 全流程跑完**（半天内拿到 10k 报告 + 调好
+rubric/阈值），再在 H100 机开全量——10k 校准出的 `sig_zh` 阈值和 rubric
+修订直接复用，全量一次跑对，避免在 10M 规模上返工。
