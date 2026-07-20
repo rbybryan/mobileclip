@@ -29,7 +29,9 @@
 python -V
 python -m venv ~/audit_env && source ~/audit_env/bin/activate
 pip config set global.index-url https://mirrors.aliyun.com/pypi/simple
-# （之后每个新 shell：source ~/audit_env/bin/activate）
+# （之后每个新 shell：source ~/audit_env/bin/activate ——
+#   提示符应显示 (audit_env)；若还是 (base) 就是没激活，跑 S1/S2 会报
+#   No module named 'numpy'。run_v100.sh 已内置该预检并会给出同样提示。）
 # 备选：一定要 conda 时换 BFSU 镜像：
 #   conda create -n audit python=3.10 -y --override-channels \
 #     -c https://mirrors.bfsu.edu.cn/anaconda/pkgs/main
@@ -174,13 +176,16 @@ S2 在 GPU0 审 8 条（首次会下载模型）。
 视频为 `videos/InternVId-FLT_N/shard_XXXXX/` 两级目录，工具按三级顺序自动
 解析路径：`$CLIPS/<video>` → `$CLIPS/<abs_path 中 InternVId-FLT... 起的后缀>`
 → 记录里的 `abs_path` 原值，取第一个存在的。若冒烟解码失败率仍高，把
-`head -1 $DATA | python -m json.tool` 的 `video`/`abs_path` 两个值发出来排查。
+`head -1 /home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl | python -m json.tool`
+的 `video`/`abs_path` 两个值发出来排查。
 
 ## 2. S0 规则画像（1 万条，CPU 秒级）〖可并行：零依赖纯 CPU，t0 就能跑，先于装环境执行〗
 
 ```bash
 bash tools/data_audit/run_v100.sh s0
-python -m json.tool $OUT/s0_summary.json | head -60
+python -m json.tool outputs/audit_10k/s0_summary.json | head -60
+# （产物都在仓库根的 outputs/audit_10k/ 下；$OUT 只是 run_v100.sh 内部变量，
+#   新开的 shell 里没有定义，别在命令里直接用）
 ```
 S0 只用标准库——**任何现成 Python 都能跑**，不必等 torch 装好。
 **决策门**（10k 上的比例可直接外推参考）：拒答+未翻译+指令泄漏合计 >5%
@@ -206,7 +211,7 @@ bash tools/data_audit/run_v100.sh status    # 随时看进度
 # 4.1 抽样——推荐全覆盖：默认参数（每分位桶 3000×10 桶）在 10k 上即选中
 #     全部有分记录，直接跑，不加任何收缩参数：
 bash tools/data_audit/run_v100.sh s2-sample
-wc -l $OUT/s2_sample.jsonl        # 应 ≈10000
+wc -l outputs/audit_10k/s2_sample.jsonl        # 应 ≈10000
 #     （赶时间的快速版才用收缩参数，~1.4k 条 1 小时：
 #      PER_BUCKET=100 FLAGGED=300 LOW_XLING=200 bash tools/data_audit/run_v100.sh s2-sample）
 
@@ -223,7 +228,7 @@ JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge   # 跑完自动打印一
 #   见 SETUP_H100.md §4.3，然后把 s2_verdicts_judge.jsonl 拷回来）
 
 # 4.4 人工抽检 300 条（在 §6 的 Gradio 里过）
-shuf -n 300 <(cat $OUT/s2_verdicts.*.jsonl) > $OUT/human_check_300.jsonl
+shuf -n 300 <(cat outputs/audit_10k/s2_verdicts.*.jsonl) > outputs/audit_10k/human_check_300.jsonl
 ```
 **决策门**：8B vs 裁判 action 一致率 ≥75%，不达标先改 rubric 再重跑——
 **在 10k 上把 rubric 调可信，正是全量（H100 机）开跑前最重要的准备**。
@@ -238,7 +243,7 @@ fp16 若出现乱码/NaN 输出（罕见）：`export S2_MODEL=Qwen/Qwen3-VL-4B-
 ```bash
 bash tools/data_audit/run_v100.sh s3
 ```
-产出 `$OUT/report.md`（10k 问题率表 + sig_zh 分位校准表）和 `buckets.jsonl`。
+产出 `outputs/audit_10k/report.md`（10k 问题率表 + sig_zh 分位校准表）和 `buckets.jsonl`。
 **这份 10k 报告的两个用途**：① 第一份可汇报的问题率数字（抽样是分层随机的，
 比例可外推到全量）；② 校准出的 `sig_zh` 阈值直接作为 H100 机全量 S3 的
 `--sig-zh-threshold` 先验。审查到此为止；后续优化见
