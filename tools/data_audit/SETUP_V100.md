@@ -37,8 +37,14 @@ pip config set global.index-url https://mirrors.aliyun.com/pypi/simple
 #     -c https://mirrors.bfsu.edu.cn/anaconda/pkgs/main
 
 # ⚠️ V100 关键一步：torch 必须装带 sm_70 内核的 cu118 构建，
-#    不能用默认 PyPI 的新构建（cu126/cu128 无 Volta 支持）
-pip install "torch==2.4.1" --index-url https://download.pytorch.org/whl/cu118
+#    不能用默认 PyPI 的新构建（cu126/cu128 无 Volta 支持）。
+#    版本必须 ≥2.5：新版 transformers 无条件 import
+#    torch.distributed.tensor.DTensor（2.5 起才是公开路径），
+#    2.4.1 会报 "cannot import name 'DTensor'"
+pip install "torch==2.5.1" --index-url https://download.pytorch.org/whl/cu118
+# 若升 torch 后仍有 transformers 侧 import 报错，退而求其次锁旧版
+# transformers（4.57 已支持 Qwen3-VL 与 SigLIP2，可配 torch 2.4/2.5）：
+#   pip install "transformers==4.57.1"
 
 pip install "numpy<2" "transformers>=4.57" sentence-transformers decord pillow requests
 # numpy 必须 <2：decord 0.6 预编译 wheel 在 numpy 2.x 下报 _ARRAY_API 错误
