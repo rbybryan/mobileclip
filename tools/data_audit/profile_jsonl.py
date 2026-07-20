@@ -71,16 +71,38 @@ def parse_ts(v):
 # ------------------------------------------------------------- text heuristics
 
 ARTIFACT_PATTERNS = [
+    # Anchored at caption start; bare "这是/以下是/Here is" openers are normal
+    # captions, so the Chinese ones must mention 翻译/译文 nearby to count.
     ("instruction_leak", re.compile(
-        r"^\s*(以下是|这是|好的[，,]|翻译[：:如]|译文[：:]|中文翻译[：:]|将.{0,12}翻译|"
-        r"Translation[:：]|Here is|Sure[,!]|The translation)", re.I)),
+        r"^\s*((以下|这里?)是.{0,10}(翻译|译文)|好的[，,].{0,8}(翻译|译文|以下)|"
+        r"翻译[：:如]|译文[：:]|中文翻译[：:]|将.{0,12}翻译|"
+        r"Translation[:：]|Here('s| is) (the |a |your )?translat|The translation)", re.I)),
+    # A refusal needs the refusal construction, not just an apology word:
+    # captions legitimately transcribe on-screen "抱歉/sorry" (e.g. show titles).
     ("refusal", re.compile(
-        r"(抱歉|无法翻译|不能翻译|作为(一个)?(AI|人工智能|语言模型)|I('m| am) sorry|"
-        r"I cannot|As an AI)", re.I)),
-    ("think_leak", re.compile(r"</?think>|让我(先|来)?(想|分析|看看)|首先[，,]?我", re.I)),
+        r"(抱歉|对不起|很遗憾)[，,]?\s*(我|这边)?(无法|不能|没法|做不到)|"
+        r"无法(为您?)?(翻译|提供|处理)|不能翻译|作为(一个)?(AI|人工智能|语言模型)|"
+        r"I('m| am) sorry[^.!?]{0,20}(cannot|can't|unable)|"
+        r"I can(no|')t (translate|assist|help|fulfill)|"
+        r"unable to (translate|assist)|As an AI", re.I)),
+    # CoT leaks sit at the caption start; "首先，我们…" is normal tutorial
+    # narration, so only first-person singular counts.
+    ("think_leak", re.compile(
+        r"</?think>|^\s*让我(先|来)?(想|分析|看看)|^\s*首先[，,]?我(?!们)", re.I)),
     ("meta_note", re.compile(r"[（(]?(注|注意|说明|备注)[：:）)]")),
     ("html_or_escape", re.compile(r"&\w{2,6};|\\u[0-9a-fA-F]{4}|<[a-zA-Z/][^>]*>")),
 ]
+
+# Pipeline artifacts are *additions* relative to the en source. If the source
+# itself contains the trigger's counterpart, the zh hit is just a faithful
+# translation of on-screen text / speech — skip the flag.
+ARTIFACT_EN_EXEMPT = {
+    "refusal": re.compile(r"sorry|pardon|apolog|excuse|can(no|')?t|unable", re.I),
+    "think_leak": re.compile(r"\bfirst\b|let me|let's|\bthink", re.I),
+    "meta_note": re.compile(r"\bnote|caution|warning|attention|notice|remark", re.I),
+    "instruction_leak": re.compile(
+        r"^\s*(here('s| is)|this is|the following|translation\b|sure\b|okay?\b)", re.I),
+}
 
 WRAPPING_QUOTES = [("“", "”"), ("\"", "\""), ("'", "'"), ("「", "」"), ("《", "》")]
 
@@ -126,8 +148,12 @@ def check_record(zh, en, flags):
         flags.append("zh_equals_en")
 
     for name, pat in ARTIFACT_PATTERNS:
-        if pat.search(zh_s):
-            flags.append(name)
+        if not pat.search(zh_s):
+            continue
+        exempt = ARTIFACT_EN_EXEMPT.get(name)
+        if exempt is not None and en_s and exempt.search(en_s):
+            continue
+        flags.append(name)
     for lq, rq in WRAPPING_QUOTES:
         if zh_s.startswith(lq) and zh_s.endswith(rq) and len(zh_s) > 2:
             flags.append("wrapping_quotes")
