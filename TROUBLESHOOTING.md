@@ -337,8 +337,9 @@ into the same `--local-dir`:
 
 ```bash
 pip install -U "huggingface_hub[cli]"
-until HF_ENDPOINT=https://hf-mirror.com hf download \
-  Qwen/Qwen3-VL-8B-Instruct --local-dir ckpts/Qwen3-VL-8B-Instruct; do
+export HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1
+until hf download Qwen/Qwen3-VL-8B-Instruct \
+  --local-dir ckpts/Qwen3-VL-8B-Instruct; do
   sleep 10
 done
 ```
@@ -346,6 +347,17 @@ done
 (`huggingface_hub` ≥1.0 renamed the CLI: `huggingface-cli` prints a
 deprecation notice and exits — use `hf` with the same arguments. On older
 hub versions `huggingface-cli download` still works.)
+
+`HF_HUB_DISABLE_XET=1` is required on the mirror channel: hf-mirror's
+metadata responses for Xet-stored files are incomplete, producing
+`Distant resource does not seem to be on huggingface.co` — the same
+failure mode as the HMDB51 entry above. A related benign variant:
+`Couldn't access the Hub to check for update but local file already
+exists. Defaulting to existing file.` just means an already-complete
+local file couldn't be re-validated against the Hub and is used as-is —
+harmless for finished files. Note the model is public: no HF token is
+needed, so an auth error message never means you should paste a token
+somewhere.
 
 Sanity check when a channel reports success — all four shards present and full
 size (the 8B model totals ~17 GB; a partially written shard fails loudly at

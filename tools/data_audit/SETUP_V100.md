@@ -84,10 +84,13 @@ done
 # hf-mirror 通道试试（不同 CDN，同样断点续传，两边下到一半的进度互不冲突，
 # 哪个快用哪个；文件落同一目录，跑完任意一边即可）：
 #   pip install -U "huggingface_hub[cli]"
-#   until HF_ENDPOINT=https://hf-mirror.com hf download \
-#     Qwen/Qwen3-VL-8B-Instruct --local-dir ckpts/Qwen3-VL-8B-Instruct; do
-#     sleep 10; done
-#   （huggingface_hub 1.0 起 CLI 改名：huggingface-cli → hf，参数不变）
+#   export HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1
+#   until hf download Qwen/Qwen3-VL-8B-Instruct \
+#     --local-dir ckpts/Qwen3-VL-8B-Instruct; do sleep 10; done
+#   （huggingface_hub 1.0 起 CLI 改名：huggingface-cli → hf，参数不变。
+#    HF_HUB_DISABLE_XET=1 必加：hf-mirror 对 Xet 存储文件的元数据响应
+#    不完整，否则报 "Distant resource does not seem to be on
+#    huggingface.co"，详见 TROUBLESHOOTING.md。模型是公开的，无需 token。）
 # SigLIP2 / LaBSE 体积小，S1 首次运行经 hf-mirror 自动下载即可
 ```
 
