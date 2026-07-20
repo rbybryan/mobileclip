@@ -217,22 +217,36 @@ openconnect --external-browser=xdg-open \
 
 **关键坑与排查(按顺序):**
 
-1. **确认 openconnect 编进了 SSO 支持**:
+1. **⭐ 头号坑:User-Agent 不对导致服务器返回 404,SSO 通道根本不开。**
+   openconnect 默认的 UA 是 `Open AnyConnect VPN Agent v9.12`,**以 `Open` 开头**。
+   很多 Cisco ASA 会检查 UA 是否**以 `AnyConnect` 开头**,不匹配就对初始的
+   `POST /` 返回 **404**,于是退化成老式账号密码门户,`--external-browser` 永远不弹网页。
+   加 `--useragent` 伪装成官方客户端即可:
+   ```bash
+   openconnect --useragent='AnyConnect Windows 4.10.06079' \
+     --external-browser=xdg-open \
+     --script "ocproxy -D 11080" \
+     vpn.company.com
+   ```
+   判断是否踩中此坑:用 `--dump-http-traffic` 看初始 `POST /` 是不是返回 `404 Not Found`
+   然后才退回 `/+webvpn+/index.html` 密码表单——是的话就是 UA 问题,不是分组问题。
+   个别 ASA 还会看版本号,可再试更完整的
+   `--useragent='Cisco AnyConnect VPN Agent for Windows 4.10.06079'`。
+2. **确认 openconnect 编进了 SSO 支持**:
    ```bash
    openconnect --version
    openconnect --help 2>&1 | grep -i external-browser   # 有输出才支持
    ```
-2. **确认当前 shell 有图形环境**:`xdg-open` 只有在有桌面时才能弹浏览器。
+3. **确认当前 shell 有图形环境**:`xdg-open` 只有在有桌面时才能弹浏览器。
    ```bash
    echo "$DISPLAY"                    # 空 = 当前 shell 没图形环境(比如 SSH 进来的)
    xdg-open https://example.com       # 能弹出浏览器才行
    ```
    `$DISPLAY` 为空时,要么改到图形桌面的终端里跑,要么用下面的"手动令牌"兜底。
-3. **最容易忽略:必须连到正确的 SSO 分组(group-url)**。`--external-browser`
-   只有在**服务器真的发来 SSO 请求**时才会弹浏览器;如果你连的是裸地址而服务器
-   把你分到了"密码分组",openconnect 拿到的还是账号密码表单,永远不会弹网页。
-   很多机构同时存在"密码分组"和"SSO 分组",官方客户端连的是后者。
-   - **从官方客户端配置里挖出它用的分组**(以下是分组名/地址,非敏感):
+4. **确认分组(group-url)**。改对 UA 后若服务器仍只给密码表单,才考虑分组:
+   `--external-browser` 只有在**服务器真的发来 SSO 请求**时才弹浏览器。很多机构同时
+   存在"密码分组"和"SSO 分组",官方客户端连的是后者。
+   - **从官方客户端配置里挖分组**(以下是分组名/地址,非敏感):
      ```bash
      # Cisco Secure Client / AnyConnect 记录的默认主机与分组
      cat ~/.cisco/vpn/preferences 2>/dev/null      # 看 DefaultGroup / DefaultHostAddress
@@ -240,12 +254,16 @@ openconnect --external-browser=xdg-open \
      # 连接 profile 里的 HostAddress / GroupURL / UserGroup
      grep -rhoE '<(HostName|HostAddress|UserGroup|GroupURL)>[^<]+' /opt/cisco 2>/dev/null
      ```
-   - 拿到分组名 `XXX`(DefaultGroup / UserGroup,或 GroupURL 末段)后,把它接到地址后面:
+   - 拿到分组名 `XXX`(DefaultGroup / UserGroup,或 GroupURL 末段)后接到地址后面:
      ```bash
-     openconnect --external-browser=xdg-open --script "ocproxy -D 11080" \
+     openconnect --useragent='AnyConnect Windows 4.10.06079' \
+       --external-browser=xdg-open --script "ocproxy -D 11080" \
        vpn.company.com/XXX
      # 或等价地:--authgroup=XXX
      ```
+   - ⚠️ 注意:profile 里若**没有** GroupURL/UserGroup(官方客户端连裸地址就行),
+     那 404 十有八九是坑 1 的 UA 问题,**别乱猜分组**——瞎接 `/xxx` 会得到
+     `Invalid host entry`。
 
 **兜底:无图形环境 / 挖不到分组时**,用封装脚本
 [`openconnect-sso`](https://github.com/vlaci/openconnect-sso)(内置浏览器自动完成 SAML,
@@ -336,7 +354,8 @@ ssh -J vps_user@your-vps.com -p 2222 user@localhost
 | DNS 解析不到内网域名 | 用 `--socks5-hostname`(curl)/ ProxyCommand 里的 `%h`(ssh)让**代理端**解析域名,不要本地先解析;ocproxy 会用 VPN 下发的 DNS |
 | 二次验证(OTP/Duo) | openconnect 会交互式提示,照常输入;Duo Push 选项一般输入 `push` |
 | 输完密码又跳回 `Password:` 死循环 | ① 账号名/密码错;② 账号走 **SSO** 而非密码认证——见 [2.3.1](#231-如果-vpn-用-sso-单点登录浏览器网页认证)。用 `--dump-http-traffic` 看返回 XML:无 `<error>`、无 `group_list` 而反复回同一表单 = 认证被拒或分组不对(**dump 含明文密码,贴前务必删除 `password=` 行**) |
-| `--external-browser` 不弹网页 | 多半是连错分组:服务器发的是密码表单而非 SSO,openconnect 没机会弹浏览器。按 [2.3.1](#231-如果-vpn-用-sso-单点登录浏览器网页认证) 挖出 SSO 分组并接到地址后(`vpn.company.com/分组`);另确认 `$DISPLAY` 非空、`--help` 里有 `external-browser` |
+| `--external-browser` 不弹网页 / 初始 `POST /` 返回 404 | **头号原因是 User-Agent**:openconnect 默认 UA 以 `Open` 开头,ASA 只认以 `AnyConnect` 开头的,不匹配就 404 并退回密码门户。加 `--useragent='AnyConnect Windows 4.10.06079'`。其次才是分组/`$DISPLAY`,详见 [2.3.1](#231-如果-vpn-用-sso-单点登录浏览器网页认证) |
+| SSO 连接报 `Invalid host entry. Please re-enter.` | 你在地址后接了错误的分组路径(如 `/zedat`),而该服务器本无此 group-url。去掉分组用裸地址,先按坑 1 修 UA |
 | 官方 AnyConnect 自动重连抢占 | 在官方客户端里彻底 Disconnect 并退出程序,再启动 openconnect |
 
 ---
