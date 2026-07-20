@@ -337,11 +337,15 @@ into the same `--local-dir`:
 
 ```bash
 pip install -U "huggingface_hub[cli]"
-until HF_ENDPOINT=https://hf-mirror.com huggingface-cli download \
+until HF_ENDPOINT=https://hf-mirror.com hf download \
   Qwen/Qwen3-VL-8B-Instruct --local-dir ckpts/Qwen3-VL-8B-Instruct; do
   sleep 10
 done
 ```
+
+(`huggingface_hub` ≥1.0 renamed the CLI: `huggingface-cli` prints a
+deprecation notice and exits — use `hf` with the same arguments. On older
+hub versions `huggingface-cli download` still works.)
 
 Sanity check when a channel reports success — all four shards present and full
 size (the 8B model totals ~17 GB; a partially written shard fails loudly at
