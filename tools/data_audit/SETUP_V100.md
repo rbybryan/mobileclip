@@ -78,6 +78,85 @@ cd ~/mobileclip                            # 仓库根目录
 # 不会再让后续步骤连锁崩溃。
 ```
 
+### 0.5 权重下载期间可先做的测试〖可并行：五项互不依赖，1/2 现在就能跑〗
+
+真正慢的下载只有 Qwen3-VL-8B（~17GB）；SigLIP2/LaBSE 只有几 GB 很快到位。
+等待期间按价值排序可做：
+
+**① 全量视频解码体检（零权重，~10–20 分钟，最值得先跑）**——提前清点
+H 类工程问题（缺失/不可解码），并实测三级路径解析在全部 10k 上的命中率
+（`ok` 应 ≥98%，过了后面 S1/S2 解码环节就不会有惊喜）：
+
+```bash
+source ~/audit_env/bin/activate && cd ~/mobileclip
+python - <<'PY'
+import json, sys, os, collections
+sys.path.insert(0, "tools/data_audit")
+from vlm_audit import resolve_video_path
+import decord
+DATA="/home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl"
+ROOT="/home/vca1/datasets/internvid_zh_10k/videos"
+stats=collections.Counter(); bad=[]
+for i,line in enumerate(open(DATA)):
+    rec=json.loads(line)
+    p=resolve_video_path(ROOT, rec, rec.get("video"))
+    if not os.path.exists(p):
+        stats["missing"]+=1; bad.append((rec.get("video"), "missing:"+p)); continue
+    try:
+        n=len(decord.VideoReader(p, num_threads=1))
+        stats["ok" if n>0 else "empty"]+=1
+        if n==0: bad.append((rec.get("video"),"empty"))
+    except Exception as e:
+        stats["decode_fail"]+=1; bad.append((rec.get("video"), type(e).__name__))
+    if (i+1)%2000==0: print(i+1, dict(stats), flush=True)
+print("FINAL", dict(stats))
+[print("bad:", b) for b in bad[:10]]
+PY
+```
+
+**② S0 命中样本人工过目（零权重，10 分钟）**——重点看 `zh_mostly_english`
+那批：是"专有名词/歌名保留英文"（可接受）还是"整句没翻"（要重翻），
+直接决定 RETRANSLATE 桶的真实规模：
+
+```bash
+python - <<'PY'
+import json
+rows=[json.loads(l) for l in open("outputs/audit_10k/smoke_s0_flags.jsonl")]
+for fl in ["zh_mostly_english","zh_low_cjk_ratio","instruction_leak","zh_very_short"]:
+    print(f"\n===== {fl} 示例 =====")
+    for r in [r for r in rows if fl in r["flags"]][:8]:
+        print(" zh:", r["zh"][:70], " | en:", (r["en"] or "")[:50])
+PY
+```
+
+**③ S1 + s2-sample 不用等 8B**——SigLIP2/LaBSE 一到就先把 S1 全量
+（10–30 分钟）和 `s2-sample`（全覆盖）跑完；8B 落地后直接开 `s2`。
+
+**④ 云端裁判链路冒烟（不依赖任何本地权重）**——若 API key 已就绪，
+用 5 条验证 `vlm_audit.py` 完整链路（路径解析→抽帧→base64→API→JSON 解析），
+顺便提前看 235B 的判定质量：
+
+```bash
+python - <<'PY'
+import json
+recs=[json.loads(l) for _,l in zip(range(5), open("/home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl"))]
+with open("outputs/audit_10k/api_smoke.jsonl","w") as f:
+    for r in recs:
+        f.write(json.dumps({"video":r["video"],"abs_path":r.get("abs_path"),
+          "zh":r["raw_caption_zh_translated"],"en":r["caption"]},ensure_ascii=False)+"\n")
+PY
+export JUDGE_API_KEY=sk-...
+python tools/data_audit/vlm_audit.py --input outputs/audit_10k/api_smoke.jsonl \
+  --video-root /home/vca1/datasets/internvid_zh_10k/videos \
+  --api-base https://dashscope.aliyuncs.com/compatible-mode/v1 --api-key $JUDGE_API_KEY \
+  --model qwen3-vl-235b-a22b-instruct --frames 8 --concurrency 2 \
+  --output outputs/audit_10k/api_smoke_verdicts.jsonl
+cat outputs/audit_10k/api_smoke_verdicts.jsonl
+```
+
+**⑤ Gradio 人工摸底（零权重、零 GPU）**——按 §6 优先翻
+`quality_issue_candidates.jsonl`，频次表与 ② 的观察互相印证。
+
 以下 §1–§5 全部封装在 `tools/data_audit/run_v100.sh`（内置 8 卡 fan-out、
 断点续跑、验收检查），每步给出一键命令；想看展开的等价命令可
 `cat tools/data_audit/run_v100.sh` 对应分支。
