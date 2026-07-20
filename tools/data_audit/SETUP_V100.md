@@ -38,8 +38,13 @@ pip config set global.index-url https://mirrors.aliyun.com/pypi/simple
 #    不能用默认 PyPI 的新构建（cu126/cu128 无 Volta 支持）
 pip install "torch==2.4.1" --index-url https://download.pytorch.org/whl/cu118
 
-pip install "transformers>=4.57" sentence-transformers decord pillow numpy requests
+pip install "numpy<2" "transformers>=4.57" sentence-transformers decord pillow requests
+# numpy 必须 <2：decord 0.6 预编译 wheel 在 numpy 2.x 下报 _ARRAY_API 错误
 # 不要装 vllm —— V100 路径用不上
+# ⚠️ 这一步不能跳过（只装 torch 会在 S1 冒烟时报 No module named 'numpy'）；
+#    装完自检：
+python -c "import numpy, torch, transformers, sentence_transformers, decord, PIL, requests; \
+  print('deps OK', numpy.__version__)"
 
 # 验证：必须打印 tensor(...) 和 V100 且无 "no kernel image" 报错
 python -c "import torch; print(torch.zeros(1).cuda(), torch.__version__, \

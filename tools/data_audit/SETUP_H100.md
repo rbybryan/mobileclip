@@ -32,7 +32,8 @@ pip config set global.index-url https://mirrors.aliyun.com/pypi/simple
 
 # 先装 vllm（会带上匹配的 torch cu12x），再补其余依赖
 pip install "vllm>=0.11"
-pip install "transformers>=4.57" sentence-transformers decord pillow numpy requests
+pip install "transformers>=4.57" sentence-transformers decord pillow requests
+# 若 decord 报 numpy _ARRAY_API 错误，降级：pip install "numpy<2"
 
 # 验证：应打印 True 和 H100
 python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
