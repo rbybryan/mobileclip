@@ -47,15 +47,16 @@ V100（Volta）无 bf16、且新版 vLLM（Qwen3-VL 所需）不支持 Volta，
 8 卡数据并行（输出格式与 `vlm_audit.py` 相同）：
 
 ```bash
-export CLIPS=/path/to/internvid/clips        # 唯一必改项；DATA/OUT 有默认值
+# DATA/CLIPS/OUT 默认即本机（101vector）的 1 万条抽样，无需任何 export；
+# 逐条执行——s1/s2 是后台任务，用 status 等到 100% 再进下一步
 bash tools/data_audit/run_v100.sh smoke      # 冒烟：字段探测/解码/模型下载
-bash tools/data_audit/run_v100.sh s0         # 全量规则画像（CPU）
-bash tools/data_audit/run_v100.sh s1         # 全量嵌入打分（8 卡后台，可续跑）
-bash tools/data_audit/run_v100.sh status     # 进度
-bash tools/data_audit/run_v100.sh s2-sample  # 分层抽样
-bash tools/data_audit/run_v100.sh s2         # 8 卡 VLM 审核（HF 后端）
-export JUDGE_API_KEY=sk-...                  # 可选：云端 235B 裁判 2k 条
-bash tools/data_audit/run_v100.sh s2-judge
+bash tools/data_audit/run_v100.sh s0         # 规则画像（10k 秒级）
+bash tools/data_audit/run_v100.sh s1         # 嵌入打分（10k 8 卡 ~10–30 分钟）
+bash tools/data_audit/run_v100.sh status     # 等 S1 到 10000/10000
+PER_BUCKET=100 FLAGGED=300 LOW_XLING=200 bash tools/data_audit/run_v100.sh s2-sample
+bash tools/data_audit/run_v100.sh s2         # 8 卡 VLM 审核（HF 后端，~1 小时）
+export JUDGE_API_KEY=sk-...                  # 可选：云端 235B 裁判
+JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge
 bash tools/data_audit/run_v100.sh s3         # 诊断报告 report.md + buckets.jsonl
 ```
 
