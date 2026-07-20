@@ -20,9 +20,10 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."   # 仓库根目录
 
 # ---------------- 配置（可用环境变量覆盖） ----------------
-DATA=${DATA:-/workspace/mount/b100_zaip_data/zyc/vibe_coding/low_resource_cv/MobileViCLIP/outputs/internvid_alignment/caption_translation_qwen36_v0_1/20_outputs/aligned_internvid_zh_translated_retry_merged.jsonl}
-CLIPS=${CLIPS:-}                                  # 视频根目录（video 字段相对它）
-OUT=${OUT:-outputs/audit_v0_1}
+# 默认即本机（101vector）的 1 万条抽样——不 export 任何变量也能直接跑
+DATA=${DATA:-/home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl}
+CLIPS=${CLIPS:-/home/vca1/datasets/internvid_zh_10k/videos}   # 视频根目录（video 字段相对它）
+OUT=${OUT:-outputs/audit_10k}
 NGPU=${NGPU:-8}
 S1_FRAMES=${S1_FRAMES:-4}
 S2_FRAMES=${S2_FRAMES:-8}
@@ -36,14 +37,18 @@ JUDGE_MODEL=${JUDGE_MODEL:-qwen3-vl-235b-a22b-instruct}
 JUDGE_N=${JUDGE_N:-2000}
 
 mkdir -p "$OUT"
-need_clips() { [ -n "$CLIPS" ] || { echo "请先 export CLIPS=视频根目录"; exit 1; }; }
+# 快速失败守卫：变量拼错（如 $SAMPLE 未 export 导致 DATA=/xxx.jsonl）时
+# 立即报清晰错误，而不是让后续步骤连锁崩溃
+need_data() { [ -f "$DATA" ] || { echo "错误：DATA 文件不存在：'$DATA'
+  （若用了 \$SAMPLE 等变量，确认已在当前 shell export；本机默认无需 export）"; exit 1; }; }
+need_clips() { [ -d "$CLIPS" ] || { echo "错误：CLIPS 目录不存在：'$CLIPS'"; exit 1; }; }
 expected_total() { wc -l < "$DATA"; }
 s1_lines() { cat "$OUT"/s1_scores.*.jsonl 2>/dev/null | wc -l; }
 
 case "${1:-}" in
 # ---------------------------------------------------------------- ① 冒烟
 smoke)
-  need_clips
+  need_data; need_clips
   echo "== S0 冒烟：前 2 万条，确认字段探测 =="
   python tools/data_audit/profile_jsonl.py --input "$DATA" --limit 20000 \
     --out-summary "$OUT/smoke_s0.json" --out-flags "$OUT/smoke_s0_flags.jsonl"
@@ -76,13 +81,14 @@ PY
   ;;
 # ---------------------------------------------------------------- ② S0 全量
 s0)
+  need_data
   python tools/data_audit/profile_jsonl.py --input "$DATA" \
     --out-summary "$OUT/s0_summary.json" --out-flags "$OUT/s0_flags.jsonl"
   echo "== 决策门：拒答+未翻译+指令泄漏合计 >5% 先修翻译管线；重复率 >10% 记入报告 =="
   ;;
 # ---------------------------------------------------------------- ③ S1 全量 8 卡
 s1)
-  need_clips
+  need_data; need_clips
   # 双机对半加速：V100 机 S1_TOTAL_SHARDS=16 S1_SHARD_OFFSET=0 bash $0 s1
   #              H100 机 S1_TOTAL_SHARDS=16 S1_SHARD_OFFSET=8 …（或手动循环）
   TOT=${S1_TOTAL_SHARDS:-$NGPU}; OFF=${S1_SHARD_OFFSET:-0}
@@ -101,6 +107,7 @@ s1)
   ;;
 # ---------------------------------------------------------------- 进度
 status)
+  need_data
   total=$(expected_total)
   s1=$(s1_lines)
   echo "S1: $s1 / $total ($(python3 -c "print(f'{$s1/$total:.1%}')"))"
@@ -111,6 +118,7 @@ status)
   ;;
 # ---------------------------------------------------------------- ④ 抽样
 s2-sample)
+  need_data
   [ "$(s1_lines)" -ge "$(( $(expected_total) * 95 / 100 ))" ] || \
     { echo "S1 完成度不足 95%，先等 S1（bash $0 status）"; exit 1; }
   python tools/data_audit/make_audit_sample.py --input "$DATA" \

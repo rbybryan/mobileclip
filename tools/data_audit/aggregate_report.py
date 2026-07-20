@@ -58,7 +58,12 @@ def calibrate(verdict_path, target_precision):
     rows = []
     action_counter, issue_counter = Counter(), Counter()
     gran_counter = Counter()
-    verdict_files = sorted(glob.glob(verdict_path)) or [verdict_path]
+    verdict_files = sorted(glob.glob(verdict_path))
+    if not verdict_files:
+        print(f"[warn] no verdict files match {verdict_path}; "
+              "skipping calibration (bucketing on flags/thresholds only)",
+              file=sys.stderr)
+        return None
     for rec in iter_jsonl(verdict_files):
         v = rec.get("verdict") or {}
         if "error" in v and "action" not in v:
@@ -136,6 +141,10 @@ def main():
     ap.add_argument("--out-report", required=True)
     args = ap.parse_args()
 
+    score_files = sorted(glob.glob(args.scores))
+    if not score_files:
+        sys.exit(f"no stage-1 score files match {args.scores} — run S1 first")
+
     calib = calibrate(args.verdicts, args.target_precision) if args.verdicts else None
     t_zh = args.sig_zh_threshold or (calib or {}).get("suggested_sig_zh_threshold")
     if t_zh is None:
@@ -151,7 +160,7 @@ def main():
     bucket_counter = Counter()
     n = 0
     with open(args.out_buckets, "w", encoding="utf-8") as fout:
-        for rec in iter_jsonl(sorted(glob.glob(args.scores))):
+        for rec in iter_jsonl(score_files):
             v = rec.get("video")
             if not v:
                 bucket_counter["DROP"] += 1
