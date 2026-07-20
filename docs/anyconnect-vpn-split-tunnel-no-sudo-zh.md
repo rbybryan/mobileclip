@@ -96,7 +96,11 @@ which ocproxy
 
 ### 2.2 安装(Linux,无 root)
 
-方式 A —— 用 conda / mamba(最简单,推荐):
+> ⚠️ **重要**:`openconnect` 在 conda-forge 里有,但 **`ocproxy` 不在 conda-forge**,
+> 需要自己从源码编译。下面的方式 A 用 conda 装 openconnect + libevent + 编译工具,
+> 再编译 ocproxy —— 全程无 root。以下步骤已实测通过。
+
+方式 A —— conda 装依赖 + 编译 ocproxy(推荐):
 
 ```bash
 # 如果还没有 conda,先装 Miniforge(纯用户目录安装,不需要 root)
@@ -105,19 +109,43 @@ curl -fsSL -o Miniforge3.sh \
 bash Miniforge3.sh -b -p "$HOME/miniforge3"
 source "$HOME/miniforge3/bin/activate"
 
-# 安装 openconnect 和 ocproxy
-conda install -c conda-forge openconnect ocproxy
+# 1. openconnect + libevent + 编译工具全部从 conda 装(ocproxy 不在 conda,要自己编)
+conda install -c conda-forge openconnect libevent autoconf automake libtool pkg-config make
+
+# 2. 编译 ocproxy 到 ~/.local
+#    坑:ocproxy 的 configure 不认 PKG_CONFIG_PATH,必须用 CPPFLAGS/LDFLAGS 手动指向 libevent;
+#    再用 -Wl,-rpath 把 libevent 路径写进二进制,免得每次都要设 LD_LIBRARY_PATH。
+git clone https://github.com/cernekee/ocproxy
+cd ocproxy
+./autogen.sh
+./configure --prefix="$HOME/.local" \
+  CPPFLAGS="-I$CONDA_PREFIX/include" \
+  LDFLAGS="-L$CONDA_PREFIX/lib -Wl,-rpath,$CONDA_PREFIX/lib"
+make && make install
+cd ..
+
+# 3. 加入 PATH(写进 ~/.bashrc 或 ~/.zshrc 永久生效)
+export PATH="$HOME/.local/bin:$PATH"
+
+# 4. 验证:打印用法即成功(单独跑会提示 "VPNFD is not set",正常,那是没接 openconnect 时的提示)
+ocproxy -h
+openconnect --version
 ```
 
-方式 B —— 源码编译到 `$HOME/.local`(conda 不可用时):
+方式 B —— 完全不用 conda,libevent 也从源码编译(系统连 conda 都没有时):
 
 ```bash
 mkdir -p ~/.local ~/build && cd ~/build
+# 前提:系统已有 gcc / make / git / autoconf / automake / libtool(多数开发机自带)
 
-# 依赖:需要系统已有 gcc/make/pkg-config 和 gnutls/libxml2 的开发头文件。
-# 如果缺开发头文件且装不了,请改用方式 A。
+# 1. 编译 libevent 到 ~/.local
+git clone --depth 1 --branch release-2.1.12-stable https://github.com/libevent/libevent
+cd libevent && ./autogen.sh
+./configure --prefix="$HOME/.local" --disable-openssl
+make -j4 && make install
+cd ..
 
-# 编译 openconnect
+# 2. 编译 openconnect 到 ~/.local(需要 gnutls/libxml2 的开发头文件;缺了且装不上就改用方式 A)
 curl -fsSL -o openconnect.tar.gz \
   https://www.infradead.org/openconnect/download/openconnect-9.12.tar.gz
 tar xzf openconnect.tar.gz && cd openconnect-9.12
@@ -125,12 +153,16 @@ tar xzf openconnect.tar.gz && cd openconnect-9.12
 make -j4 && make install
 cd ..
 
-# 编译 ocproxy(依赖 libevent)
+# 3. 编译 ocproxy(指向上面装好的 libevent)
 git clone https://github.com/cernekee/ocproxy && cd ocproxy
-./autogen.sh && ./configure --prefix="$HOME/.local"
+./autogen.sh
+./configure --prefix="$HOME/.local" \
+  CPPFLAGS="-I$HOME/.local/include" \
+  LDFLAGS="-L$HOME/.local/lib -Wl,-rpath,$HOME/.local/lib"
 make && make install
+cd ..
 
-# 加入 PATH(写进 ~/.bashrc 或 ~/.zshrc 永久生效)
+# 4. 加入 PATH(写进 ~/.bashrc 或 ~/.zshrc 永久生效)
 export PATH="$HOME/.local/bin:$PATH"
 export LD_LIBRARY_PATH="$HOME/.local/lib:$LD_LIBRARY_PATH"
 ```
@@ -239,6 +271,9 @@ ssh -J vps_user@your-vps.com -p 2222 user@localhost
 | 现象 | 原因与解决 |
 |---|---|
 | `openconnect: command not found` | PATH 没生效,重新 `source ~/.bashrc` 或确认安装前缀在 PATH 里 |
+| conda 报 `PackagesNotFoundError: ocproxy` | 正常,ocproxy 不在 conda-forge,按 [2.2 方式 A](#22-安装linux无-root) 自己编译 |
+| 编译 ocproxy 时 `Missing development files for libevent2` | configure 没找到 libevent。**不是** 加 `PKG_CONFIG_PATH`,而是加 `CPPFLAGS="-I<libevent前缀>/include"` 和 `LDFLAGS="-L<libevent前缀>/lib"`(conda 装的用 `$CONDA_PREFIX`) |
+| ocproxy 运行报 `libevent-2.1.so.7: cannot open shared object file` | 编译时漏了 `-Wl,-rpath,...`;临时用 `LD_LIBRARY_PATH=$CONDA_PREFIX/lib ocproxy ...`,或按 2.2 重新 configure |
 | 证书校验失败(certificate verify failed) | 先用 `--servercert` 固定服务器证书指纹(openconnect 报错信息里会给出 pin 值,确认无误后加上),比 `--no-cert-check` 安全 |
 | 提示需要 CSD/HostScan | 尝试加 `--csd-wrapper` 脚本(openconnect 源码 `trojans/` 目录里有 `csd-post.sh`/`hostscan-bypass`);仍失败则此路不通,考虑第 3 步 |
 | 连接成功但代理不通 | 确认 ocproxy 进程在(`pgrep ocproxy`);确认命令确实指定了 `127.0.0.1:11080`;换个端口试试(把 11080 全部替换) |
