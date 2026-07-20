@@ -1,7 +1,7 @@
 # 8×H100-80G 数据审查完整配置与执行手册
 
 联网：
-# 重新统一设置所有变量为 3390
+重新统一设置所有变量为 3390
 export http_proxy=http://127.0.0.1:3390
 export https_proxy=http://127.0.0.1:3390
 export HTTP_PROXY=http://127.0.0.1:3390
