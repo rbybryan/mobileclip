@@ -76,7 +76,9 @@ def sample_frames(path, num_frames):
     n = len(vr)
     if n == 0:
         raise RuntimeError("empty video")
-    idx = np.linspace(0, n - 1, num_frames).round().astype(int)
+    # TSN-style segment centers: InternVid clips are shot-cut, so the first/last
+    # frames are often transitions/black frames — never sample the boundaries.
+    idx = ((np.arange(num_frames) + 0.5) / num_frames * n).astype(int)
     batch = vr.get_batch(idx).asnumpy()
     return [Image.fromarray(fr) for fr in batch]
 
