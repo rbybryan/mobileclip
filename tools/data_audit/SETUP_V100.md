@@ -412,15 +412,35 @@ H100 机用不上、又不想调商业 API 时走这条：**32B 是 8×V100-32G 
 
 #### 步骤 0：预检（1 分钟）
 
+**不需要新建环境——直接用 §0 的 `audit_env`，零新增依赖。** 32B 与 8B 主力
+走的是**同一个脚本、同一套依赖**（`vlm_audit_hf.py` + torch 2.5.1+cu118 +
+transformers≥4.57 + accelerate），区别只在 `--model` 和 `--device-map`。
+§0 里 `accelerate` 已经装了（8B 用 `device_map` 流式载入就依赖它），
+所以这里**什么都不用装**。
+
 ```bash
 source ~/audit_env/bin/activate && cd ~/mobileclip
-df -h .                     # 验收点：剩余 ≥80GB（权重 ~64GB + 余量）
+df -h .                     # 验收点：剩余 ≥80GB（权重 ~64GB + 余量；8B 的 17GB 已占）
 nvidia-smi --query-gpu=index,memory.total,memory.used --format=csv
                             # 验收点：8 张 32GB 卡，且 4.2 主力已结束（used 接近 0）
-python -c "import transformers, accelerate; print(transformers.__version__, accelerate.__version__)"
-                            # 验收点：transformers ≥4.57；accelerate 必装（device_map 依赖它）
-pip install accelerate      # 若上一行 ImportError
+python -c "import torch, transformers, accelerate; print(torch.__version__, \
+  transformers.__version__, accelerate.__version__)"
+                            # 验收点：torch 2.5.1+cu118 / transformers ≥4.57 / accelerate 有版本号
+                            # 三者齐全即可开跑；缺 accelerate 才需 pip install accelerate
 ```
+
+> ⚠️ **审核期间不要动这个环境的版本**。两条红线：
+> ① **`pip install -U torch/transformers` 属于高危操作**——不只是可能打断
+> 正在跑的 4.2，更要命的是**换了库版本，8B 的输出也会变**，先后跑出来的
+> 分片判定不再可比，一致率和 S3 校准都失去意义。整个审核周期内把
+> `audit_env` 当成冻结环境，要升级就等 S3 出完报告。
+> ② **绝对不要往 `audit_env` 里装 vllm**——它会带上自己的 cu12x torch，
+> 直接废掉 Volta（同 `CLAUDE.md` 里 open_clip_torch 那个坑）。V100 路径全程用不到 vllm。
+>
+> **什么时候才真的需要另开环境**：换用**非 Qwen 系**裁判且它要求不同的
+> transformers 版本时（例如某些 InternVL 版本需 `trust_remote_code` 配特定
+> 版本）。这时新建 `~/judge_env` 装它那套，让 `audit_env` 保持冻结——
+> 隔离的目的是**保住主力判定的可复现性**，不是怕装不上。
 
 #### 步骤 1：下载权重（~64GB，放后台，看带宽 0.5–3h）
 
