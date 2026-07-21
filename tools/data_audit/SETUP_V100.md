@@ -46,12 +46,14 @@ pip install "torch==2.5.1" --index-url https://download.pytorch.org/whl/cu118
 # transformers（4.57 已支持 Qwen3-VL 与 SigLIP2，可配 torch 2.4/2.5）：
 #   pip install "transformers==4.57.1"
 
-pip install "numpy<2" "transformers>=4.57" sentence-transformers decord pillow requests
+pip install "numpy<2" "transformers>=4.57" accelerate sentence-transformers decord pillow requests
 # numpy 必须 <2：decord 0.6 预编译 wheel 在 numpy 2.x 下报 _ARRAY_API 错误
+# accelerate 必装：S2 用 device_map 直接把权重流式载入显存（8 进程并发加载
+#   时不在 CPU 内存里展开 8×16GB），缺它报 "requires `accelerate`"
 # 不要装 vllm —— V100 路径用不上
 # ⚠️ 这一步不能跳过（只装 torch 会在 S1 冒烟时报 No module named 'numpy'）；
 #    装完自检：
-python -c "import numpy, torch, transformers, sentence_transformers, decord, PIL, requests; \
+python -c "import numpy, torch, transformers, accelerate, sentence_transformers, decord, PIL, requests; \
   print('deps OK', numpy.__version__)"
 
 # 验证：必须打印 tensor(...) 和 V100 且无 "no kernel image" 报错
