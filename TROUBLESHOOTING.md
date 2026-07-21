@@ -724,3 +724,49 @@ Read the two lines it prints before moving on:
 
 Then continue with §2b steps 2–4 (`export MVC_DATA_DIR`, the sm_70 pre-flight,
 smoke, and the equal-step r0/r1 A/B pair).
+
+### Variant: `make_pilot_anno.py` exits with `没有可用记录`
+
+If step 1 above prints only
+
+```
+没有可用记录——检查 --input 字段名或 --clips-root
+```
+
+you are on the pre-fix script: it dropped **every** record and exited *before*
+printing its own counters, so the message cannot distinguish a field-name miss
+from a file-location miss. `git pull` first — the script now prints a per-reason
+breakdown (parse / missing `video` / missing `caption` / file not found /
+resolved outside `--clips-root`), the first record's actual key names, and the
+exact paths it tried.
+
+**The usual cause is clip layout.** The clips are **not** flat under `videos/`;
+they sit in a nested `InternVId-*/…` tree, and the jsonl's `video` field is
+often just the bare clip name. The audit tooling has always handled this in
+`resolve_video_path()` (`tools/data_audit/score_alignment.py`), which tries, in
+order: `clips_root/<video>` → `clips_root/<the InternVId-* suffix of the
+record's abs_path>` → the raw `abs_path`. `make_pilot_anno.py` originally did a
+naive `os.path.join(clips_root, video)` and so dropped all 10k records; it now
+shares that same resolution order and writes the **`clips_root`-relative** path
+into the anno (dataset loading joins it onto `data_root`, so an absolute path
+would break).
+
+Re-run step 1 after pulling. Read the breakdown it prints:
+
+- **`没有 video 字段` / `没有 caption 字段` large** → the key names are not in the
+  guess table. The printed `首条记录的字段` shows the real ones; pass them with
+  the new `--video-key` / `--caption-key` flags.
+- **`文件缺失` large** → the tried paths are printed; check `--clips-root` really
+  is the directory holding the clips, and that records carry `abs_path` if the
+  clips are nested.
+- **`root 外` large** → files resolve, but only via an absolute path outside
+  `--clips-root`, which cannot be written as a relative anno path. Raise
+  `--clips-root` to a common parent and point `data_root` (`configs/data.py`) at
+  the same place.
+
+> Note on captions: `--caption-field` defaults to `en` because the text tower is
+> CLIP's English BPE. This corpus is the zh-translated InternVid, so if the
+> English side turns out to be absent, do **not** silently switch to `zh` — a
+> Chinese caption through an English BPE tokenizer is a different experiment,
+> not a drop-in substitute, and would invalidate comparison with the baseline.
+> Report it instead.
