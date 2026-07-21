@@ -476,11 +476,21 @@ proxychains4 -f ~/.proxychains.conf \
   ssh -N -f -L 48655:c061的完整主机名:48655 你的账号名@curta.zedat.fu-berlin.de
 ```
 
+要点:
+
+- 前提:在**新终端**跑,要有 `(base)`(能用 proxychains)且 openconnect 那个终端一直开着。
 - `-L 本地端口:c061:远程端口` 中的 `c061` 由 **curta 端解析**(计算节点只有登录节点能到),
   所以这一跳不经代理、天然可达;proxychains 只负责把本机到 curta 的 ssh 连接送进 VPN。
-- `-N`(不执行远程命令)`-f`(认证后转入后台)。之后浏览器打开 `http://localhost:48655/`
-  (带上 Jupyter 的 token)即可。
+- **两个 `48655` 含义不同**:前者是**本机**监听端口(可自选),后者是 **Jupyter 在 c061 上
+  实际监听的端口**(按 jupyter 启动输出里的实际值填)。
+- `-N`(不执行远程命令)`-f`(认证后转入后台)。**`-f` 只在认证完成后才转后台**,所以
+  密码/SSO 要先正常输入;之后命令返回、转发在后台运行。
+- 成功后浏览器打开 **`http://localhost:48655/`**,带上 Jupyter 的 token(在你启动 jupyter
+  的输出里,形如 `http://127.0.0.1:48655/?token=xxxx` 或 `jupyter server list` 可查)。
+- 查到 c061 的准确主机名:短名 curta 解析不了时,在 curta 上执行
+  `getent hosts c061` 或 `ssh c061 hostname -f` 拿完整域名/IP 再填 `-L`。
 - 查看/停止转发:`ss -tlnp | grep 48655`;`pkill -f 'ssh -N -f -L 48655'`。
+- 若本机 `48655` 已被占用:换一个本机端口,如 `-L 8888:c061:48655`,浏览器改开 `:8888`。
 - ⚠️ 端口转发空闲同样会触发 [2.6](#26-防止-idle-timeout-被踢保活) 的 idle timeout,配合保活使用。
 
 ---
