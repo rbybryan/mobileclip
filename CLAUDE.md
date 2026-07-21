@@ -55,8 +55,21 @@ Two kinds of branch, so no rotating name has to be remembered:
   new docs, experiments). One per topic, merged into `main` by PR, then deleted.
 
 Push to whichever branch is checked out. For the server to pull instructions from `main`, the
-branch has to be **merged** — do that via a PR **only when the maintainer asks**, or tell them
-the branch is ready to merge. Never push directly to `main` without explicit permission.
+branch has to be **merged** into it.
+
+**Merging is pre-authorized (standing instruction, 2026-07-21).** Do not stop to ask, and do
+not end a session with work parked on a branch waiting for permission: once the work is
+committed and pushed, open a PR and merge it into `main` yourself. This applies to every
+session — `handoff` and `claude/<topic>` alike.
+
+Two constraints remain:
+
+- **Merge by PR** (`gh pr create` → `gh pr merge`), never `git push origin main`. The PR is
+  the audit trail; a direct push to `main` is still off-limits.
+- **Merge finished work only.** If something is half-done, known-broken, or awaiting a server
+  result before it can be verified, leave it on its branch and say so — the standing
+  authorization covers the *asking*, not the *judgement*.
+
 The maintainer can also just `git pull origin <branch>` on the server to read new instructions
 before any merge.
 
