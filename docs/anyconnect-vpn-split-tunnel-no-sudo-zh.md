@@ -328,10 +328,20 @@ ssh user@192.168.1.100        # 本地服务器,直连,和没连 VPN 一样
 需要访问 VPN 内网 / remote server 时,给命令加上代理。**SSH 到内网远程服务器**是最常见的:
 
 ```bash
-# 需要 ncat(来自 nmap;缺就 conda install -c conda-forge nmap,无需 root)
+# 前提:先装 ncat(SSH 本身不会 SOCKS,靠 ncat 把连接经代理转出去)。无需 root:
+# 新终端若报 "conda: 未找到命令"(提示符没有 (base) 前缀),先激活 conda:
+source ~/miniforge3/bin/activate         # 路径按你的 conda 安装位置调整
+conda install -c conda-forge nmap        # 提供 ncat
+which ncat                               # 确认装好(通常在 ~/miniforge3/bin/ncat)
+
+# 然后 SSH(用户名/地址换成你的):
 ssh -o ProxyCommand='ncat --proxy-type socks5 --proxy 127.0.0.1:11080 %h %p' \
   用户名@内网服务器地址
 ```
+
+> ⚠️ 若报 `exec: ncat: 未找到` + `kex_exchange_identification: Connection closed`,
+> 就是 ncat 没装(ProxyCommand 起不来),按上面装 nmap 即可;不想装、且系统 nc 支持
+> `-X` 时,可改用 `nc -X 5 -x 127.0.0.1:11080 %h %p`。
 
 其它命令:
 
@@ -353,17 +363,27 @@ git config --global http.http://git.company.internal/.proxy socks5://127.0.0.1:1
 export ALL_PROXY=socks5://127.0.0.1:11080
 ```
 
-推荐把常用内网机器写进 `~/.ssh/config`,以后 `ssh 内网别名` 一步到位:
+推荐把常用内网机器写进 `~/.ssh/config`,以后 `ssh 内网别名` 一步到位(前提是 openconnect
+那个终端还开着):
 
 ```
 # ~/.ssh/config
 Host intranet-*
-    ProxyCommand nc -X 5 -x 127.0.0.1:11080 %h %p   # Linux 用 ncat 那行替换
+    ProxyCommand ncat --proxy-type socks5 --proxy 127.0.0.1:11080 %h %p
+    # 系统 nc 支持 -X 时也可:ProxyCommand nc -X 5 -x 127.0.0.1:11080 %h %p
 
 Host intranet-dev
     HostName 10.0.0.5
     User your_name
+
+# 实例:FU Berlin 的 Curta HPC 集群
+Host curta
+    HostName curta.zedat.fu-berlin.de
+    User 你的账号名
+    ProxyCommand ncat --proxy-type socks5 --proxy 127.0.0.1:11080 %h %p
 ```
+
+写好后直接 `ssh curta` 即可。
 
 对不支持 SOCKS 代理的程序,用 [proxychains-ng](https://github.com/rofl0r/proxychains-ng)
 (同样可 conda/brew 安装)强制接管:
