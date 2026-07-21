@@ -29,7 +29,18 @@ OUT=${OUT:-outputs/audit_10k}
 NGPU=${NGPU:-8}
 S1_FRAMES=${S1_FRAMES:-4}
 S2_FRAMES=${S2_FRAMES:-8}
-S2_MODEL=${S2_MODEL:-Qwen/Qwen3-VL-8B-Instruct}   # 16GB 卡改 Qwen/Qwen3-VL-4B-Instruct
+# 权重镜像默认走 hf-mirror（直连 huggingface.co 在本网络会无限卡 0%）
+export HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
+# S2 模型自动探测：优先用 §0 预下载的本地权重（零联网）；没有才回退在线仓库名。
+# 注意在线回退时 8 个分片会并发下载同一份 ~17GB 权重（共享缓存带文件锁，
+# 实际近似串行），弱网上表现为全部卡在 "Fetching ... 0%"——强烈建议先预下载。
+if [ -z "${S2_MODEL:-}" ]; then
+  if ls ckpts/Qwen3-VL-8B-Instruct/*.safetensors >/dev/null 2>&1; then
+    S2_MODEL=ckpts/Qwen3-VL-8B-Instruct
+  else
+    S2_MODEL=Qwen/Qwen3-VL-8B-Instruct   # 16GB 卡改 Qwen/Qwen3-VL-4B-Instruct
+  fi
+fi
 # 抽样规模（V100 吞吐低于 A100，默认略收缩；嫌慢再调小 PER_BUCKET）
 PER_BUCKET=${PER_BUCKET:-3000}; FLAGGED=${FLAGGED:-10000}; LOW_XLING=${LOW_XLING:-5000}
 # 云端裁判（示例为 DashScope 兼容模式；OpenRouter 等任何 OpenAI 兼容端点均可）
@@ -167,6 +178,12 @@ s2-sample)
 s2)
   need_clips; need_py
   [ -f "$OUT/s2_sample.jsonl" ] || { echo "先跑 s2-sample"; exit 1; }
+  echo "[model] S2_MODEL=$S2_MODEL"
+  if [ ! -d "$S2_MODEL" ]; then
+    echo "警告：用的是在线仓库名（本地未发现 ckpts/Qwen3-VL-8B-Instruct 的 safetensors）。"
+    echo "  8 个分片将并发下载 ~17GB 权重，弱网上会长时间卡 'Fetching 0%'；"
+    echo "  建议 Ctrl-C 后先按 SETUP_V100.md §0 预下载到 ckpts/ 再跑本步。"
+  fi
   for i in $(seq 0 $((NGPU-1))); do
     CUDA_VISIBLE_DEVICES=$i nohup python tools/data_audit/vlm_audit_hf.py \
       --input "$OUT/s2_sample.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
