@@ -23,6 +23,73 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-21 (6) — DeepSpeed 起来了、训练循环也起来了;死在第一次 forward 的 dtype
+
+**大进展:** FusedAdam 那关过了 —— `Use deepspeed to initialize model!!!` 之后
+显存分配正常(211M),`Start training` / `Epoch: 0` / `MetaLoader has 1
+dataloaders, 17 batches in total` 全部打出来了。**优化器、DeepSpeed、数据集、
+decord 这四层现在都是通的**,只差最后一步。
+
+**Diagnosis:** 8 个 rank 全部死在第一个卷积:
+
+```
+RuntimeError: Input type (torch.cuda.FloatTensor) and weight type (torch.cuda.HalfTensor) should be the same
+```
+
+关键线索是崩溃前那行 warning:
+
+```
+[WARNING] [torch_autocast.py:122:autocast_if_enabled] torch.autocast is enabled
+outside DeepSpeed but disabled within the DeepSpeed engine.
+```
+
+仓库的混合精度是「**模型整体 `.half()` + 训练循环外套一层 `torch.cuda.amp.autocast`**」:
+权重是 fp16,batch 还是 fp32,靠 autocast 在算子层面把输入转过去。而新版 DeepSpeed
+的 `engine.forward` 会**显式关掉外层 autocast**(`torch_autocast.py` 的
+`autocast_if_enabled`:没配 `torch_autocast` 段时,用 `enabled=False` 覆盖外层
+上下文)。于是那层 autocast 在 DeepSpeed 路径上成了空操作,fp32 输入直接撞上
+fp16 权重。**这是 DeepSpeed 版本回归,不是机器配置问题,也跟 Volta/sm_70 无关。**
+
+**Fix(已合进 main,pull 即可):** `tasks_clip/pretrain.py` 在 forward 前把 batch
+转成**模型参数的真实 dtype**。我在本地用 `nn.Conv2d(...).half()` 复现了同一类
+报错并验证了修复,fp32 路径下是空操作。
+
+用「模型参数的 dtype」而不是现成的 `data_type`,是因为顺手查出精度开关在仓库里
+**有三处、两个键名、两个默认值**,只有配置把它们都显式写对时才一致:
+
+| 文件 | 键 | 默认 | 决定 |
+|---|---|---|---|
+| `shared_utils.py:57` | **`bf16`** | `True` | 模型转 bf16 还是 fp16 |
+| `pretrain.py` | `use_bf16` | `True` | autocast 的 `data_type` |
+| `config_utils.py:130` | `use_bf16` | `False` | ds 配置写 bf16 段还是 fp16 段 |
+
+试点配置三个都显式写了 False,所以这次没出事;但以后新配置只写一个就会踩雷。
+直接问模型要 dtype 就绕开了整个问题。(细节全部记进 `TROUBLESHOOTING.md`。)
+
+**Do this next:**
+
+```bash
+cd ~/mobileclip && git pull origin main
+
+export MVC_DATA_DIR=/home/vca1/datasets
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 debug True
+```
+
+**这次要看的是损失能不能正常打出来。** 心里先有个数:
+
+- 外层 autocast 被 DeepSpeed 关掉后,前向是**纯 fp16**,靠 DeepSpeed 的动态
+  loss scaling(`initial_scale_power: 16`)兜底。**开头刷几条
+  `OVERFLOW! ... Skipping step` 是正常的**,那是缩放系数在找合适的量级。
+- **不正常的是**:loss 从第 0 步就是 `nan`,或者 loss scale 一路掉到
+  `min_loss_scale` 就再也不动了。真出现这个,就得把对比损失(`log_softmax`
+  那两行)single out 到 fp32 算 —— 但先别改,让数据说话。
+
+**Then report back:** `Train Epoch: [0]` 之后的头十几行(带 `loss_vtc`、`lr`、
+`temperature` 的那些),以及跑完 17 个 batch 有没有干净退出。若又崩,把 traceback
+最后 30 行贴回来即可。
+
+---
+
 ## 2026-07-21 (5) — 更正:那个「共享字幕 0.0%」不能当成「全量重复率低」
 
 **问的是:** 为什么共享字幕会是 0%?

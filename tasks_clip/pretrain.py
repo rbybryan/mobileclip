@@ -66,9 +66,27 @@ def train(
 
     model_without_ddp = model.module if config.distributed else model
 
+    # 输入要对齐的是**权重的真实 dtype**,不是 data_type。精度开关在仓库里有三处
+    # 且互不一致:shared_utils.py 读 `bf16`(默认 True)决定模型转 bf16 还是 fp16,
+    # 本文件读 `use_bf16`(默认 True)决定 data_type,config_utils.py 读
+    # `use_bf16`(默认 **False**)决定 deepspeed 配置写 bf16 段还是 fp16 段。
+    # 只有配置把三个都显式写对时它们才一致(试点配置是这么写的)。直接问模型要
+    # dtype 就绕开了这个雷;非半精度时它是 float32,下面的 .to() 即为空操作。
+    param_dtype = next(model_without_ddp.parameters()).dtype
+
     iterator = metric_logger.log_every(train_loader, log_freq, header)
     for i, (media_type, (image, text, idx)) in enumerate(iterator):
-        image = image.to(device, non_blocking=True)
+        # 模型已被 shared_utils 整体转成 fp16/bf16,输入却还是 fp32——原本靠下面那个
+        # autocast 兜住。但 DeepSpeed 的 engine.forward 会**显式关掉**外层
+        # torch.autocast(deepspeed/runtime/torch_autocast.py 的 autocast_if_enabled:
+        # 未配置 torch_autocast 时用 enabled=False 覆盖外层上下文,并打印
+        # "torch.autocast is enabled outside DeepSpeed but disabled within the
+        # DeepSpeed engine"),于是第一个 conv2d 就报 "Input type
+        # (torch.cuda.FloatTensor) and weight type (torch.cuda.HalfTensor) should be
+        # the same"。见 TROUBLESHOOTING.md。这里显式对齐 dtype,不依赖 deepspeed 版本
+        # (fp16 段的 `auto_cast: true` 只能救 fp16,bf16 段没有对应开关)。
+        # 用 param_dtype 而非 data_type:见循环外的说明,精度开关有三处且不一致。
+        image = image.to(device, dtype=param_dtype, non_blocking=True)
         idx = idx.to(device, non_blocking=True)
         text_input = tokenizer(text).to(device)
 
