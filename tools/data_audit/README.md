@@ -11,6 +11,18 @@
 | S3 校准分桶 | `aggregate_report.py`（前置：`calibrate_xling.py` 裁决 xling 阈值） | 全量外推 | CPU |
 | S4 落地 v0.2 | `apply_buckets.py` | 全量 | CPU |
 
+辅助脚本：**`find_models.sh`** —— 上机第一件事，探测「这台服务器上到底有哪些
+模型能用」（本地权重目录 + 分片是否齐全 + 已经在跑的 vLLM 服务 + 磁盘/GPU），
+并按结果给裁判选型建议。**别默认 235B 裁判权重一定在机器上**：
+
+```bash
+bash tools/data_audit/find_models.sh            # 本地扫描 + 选型建议（秒级）
+bash tools/data_audit/find_models.sh --remote   # 镜像连通性 + 还能下哪些同族仓库
+bash tools/data_audit/find_models.sh --deep     # 名字搜不到时按 >3GB safetensors 反查
+bash tools/data_audit/find_models.sh --verify DIR   # 单个目录分片完整性核验
+ROOTS="/nas/models" bash tools/data_audit/find_models.sh  # 自定义搜索根
+```
+
 > **跑到哪了 / 发现了什么问题** → **[`DATA_ISSUES.md`](DATA_ISSUES.md)**（活账本：
 > 流水线状态 + 问题登记 + 待决策）。统计细节见
 > [`notes/audit-10k-findings.md`](../../notes/audit-10k-findings.md)。
@@ -36,7 +48,7 @@
 
 | 时间窗 | 可同时进行（互不依赖） |
 |---|---|
-| **t0 开工即并行** | ① 两台机器各自装环境（H100/V100 手册 §0）；② **S0 全量画像**（纯 CPU、零依赖，不用等环境）；③ 大模型权重 ModelScope 下载（后台挂着）；④ **Gradio 人工摸底**（V100 机 1 万条预抽样，翻 100–200 条记问题频次，见 SETUP_V100.md §6） |
+| **t0 开工即并行** | ① 两台机器各自装环境（H100/V100 手册 §0）；② **S0 全量画像**（纯 CPU、零依赖，不用等环境）；③ **先 `find_models.sh` 探测本机已有模型**，确实缺的再 ModelScope 下载（后台挂着）；④ **Gradio 人工摸底**（V100 机 1 万条预抽样，翻 100–200 条记问题频次，见 SETUP_V100.md §6） |
 | **冒烟通过后** | ① **S1**（单机 8 卡分片并行；**双机对半**：`S1_TOTAL_SHARDS=16`，V100 跑分片 0–7、H100 跑 8–15，前提是两机挂同一数据盘，S1 时长近乎减半）；② 权重下载没完可继续；③ S0 若还没跑完不影响 S1 |
 | **S1 完成后** | s2-sample（分钟级）→ 然后 ① **S2 主力**、② **S2 裁判**（只依赖 s2-sample，**不依赖主力结果**）、③ 人工抽检（依赖主力产出，可边出边标）三线并行。V100 裁判走云端 API 天然不占卡；H100 可 GPU 对半（8B dp=4 + 235B tp=4，见 SETUP_H100.md §4）；双机则主力/裁判各占一台 |
 | **收尾** | S3 需要 S0+S1+S2 全部产物，最后跑（分钟级）；4.4 一致率检查需主力+裁判都完成 |

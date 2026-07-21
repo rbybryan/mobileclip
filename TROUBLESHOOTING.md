@@ -609,3 +609,49 @@ cores, so `use_bf16=False` / `bf16=False` / fp16 AMP
 (`scripts/pretraining/clip/mobileviclip_small/config.py`). `flash_attn` is also
 unavailable on `sm_70`; the `FusedMLP of flash_attn is not installed!!!` lines
 are harmless fallback notices, not errors (see README_zh Q9).
+
+---
+
+## The 235B judge model isn't on the H100 box (or you don't know what models *are*)
+
+`tools/data_audit/SETUP_H100.md` §4.3 defaults the S2 judge to
+`Qwen3-VL-235B-A22B-Instruct-FP8`, but a given server may never have downloaded
+it, may hold a half-finished copy, may keep it on a different mount, or may not
+have the ~300GB free to fetch another one. Symptoms:
+
+```
+# vLLM can't find it
+ValueError: Model architectures ... not found / does not appear to have a file named config.json
+# or a partial download blows up mid-load
+OSError: model-00042-of-00098.safetensors not found
+```
+
+**Cause**: assuming the weights are present instead of checking.
+
+**Fix**: probe the machine before downloading anything —
+
+```bash
+bash tools/data_audit/find_models.sh            # local weights + running vLLM services + disk/GPU + a judge recommendation
+bash tools/data_audit/find_models.sh --remote   # mirror reachability + which sibling repos are still downloadable
+bash tools/data_audit/find_models.sh --deep     # name search found nothing → reverse-lookup by >3GB safetensors
+bash tools/data_audit/find_models.sh --verify /path/to/dir   # shard-completeness check before serving
+ROOTS="/nas/models /workspace/mount" bash tools/data_audit/find_models.sh  # non-default mounts
+```
+
+Section 3 of the output lists every weight directory with `model_type`,
+quantization, and **shard count** — `缺N片!` means the download was interrupted:
+re-run the *same* `modelscope download` command to resume, don't delete and
+restart. Section 4 turns what it found into a decision:
+
+| Found | Do |
+|---|---|
+| 235B, shards complete | `ln -s <dir> ckpts/Qwen3-VL-235B-A22B-FP8`, manual works unchanged |
+| 235B, missing shards | re-run the same `modelscope download` (resumable) |
+| only 32B / 30B / InternVL | use it as judge — `SETUP_H100.md` §4.3-替代 has the serve command (InternVL is cross-family, which makes the §4.4 agreement rate *more* informative) |
+| nothing, ≥300GB free | background-download 235B-FP8 in parallel with S0/S1 |
+| nothing, <300GB free | 32B (~64GB, tp1), else `tools/data_audit/SETUP_JUDGE_API.md` §0 route D |
+
+Note that a model already being served counts: section 2 lists running
+vLLM/SGLang processes and probes ports 8000/8001/8002/8080/30000 for an
+OpenAI-compatible `/v1/models`, so an existing endpoint can be reused as the
+judge instead of loading a second copy.

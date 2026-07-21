@@ -161,6 +161,16 @@ python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_
 
 ### 1.2 先检索机器上是否已有权重（可省 235GB 下载）
 
+**一条命令版**（下面的手工命令 + 完整性核验 + 选型建议都打包在里面）：
+
+```bash
+bash tools/data_audit/find_models.sh            # 本地权重 / 在跑的服务 / 磁盘 / 建议
+bash tools/data_audit/find_models.sh --deep     # 名字搜不到时按体积反查
+bash tools/data_audit/find_models.sh --verify /找到的/路径   # 分片完整性核验
+```
+
+想手工来（或脚本不可用）时逐条执行：
+
 ```bash
 # ① 是否已有服务在跑（权重可能已经起好了）
 ps aux | grep -i vllm | grep -v grep

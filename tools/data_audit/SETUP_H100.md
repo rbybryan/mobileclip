@@ -18,6 +18,8 @@ export HTTPS_PROXY=http://127.0.0.1:3390
 > wheel）；可联网但 PyPI/HF 直连不稳 → 全程走 aliyun pip 源 + hf-mirror/ModelScope。
 > H100 结论：**用 vLLM 服务路径**（比 V100 的 HF 后端快一个量级），
 > 235B 裁判用 FP8 版**本地 8 卡即可起**，不需要云端 API。
+> ⚠️ 但**别假设 235B 权重已经在机器上** —— 开工先跑 §0.1
+> `find_models.sh` 探测本机实际有哪些模型，再决定用它还是退到 32B/跨族/路线 D。
 > 本手册只覆盖审查 S0–S3（产出诊断报告），不改数据。
 
 > **并行提示**：各节标了〖可并行〗的步骤互不依赖，可同时开跑；
@@ -44,15 +46,51 @@ pip install "transformers>=4.57" sentence-transformers decord pillow requests
 python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 ```
 
+### 0.1 先查这台机器上有哪些模型可用（必做，30 秒，能省 235GB 下载）
+
+**不要默认 235B 裁判一定在机器上。** 它可能压根没下过、下了一半、
+放在别的挂载点，或磁盘已经放不下第二份。先探测再决定：
+
+```bash
+bash tools/data_audit/find_models.sh          # 本地权重 + 在跑的服务 + 磁盘/GPU + 选型建议
+bash tools/data_audit/find_models.sh --remote # 加：镜像连通性 + 还能下哪些同族仓库
+bash tools/data_audit/find_models.sh --deep   # 名字搜不到时：按 >3GB safetensors 体积反查（慢）
+ROOTS="/nas/models /workspace/mount" bash tools/data_audit/find_models.sh   # 指定挂载点
+```
+
+输出四段：①GPU/磁盘 ②已经在跑的 vLLM 服务（权重可能已起好，端口直接复用）
+③本机每一份权重的 `model_type`/量化/**分片齐不齐**/路径 ④按找到的东西给的裁判选型建议。
+
+找到候选后先核验再用（断过的下载会缺分片，vLLM 起到一半才报错）：
+
+```bash
+bash tools/data_audit/find_models.sh --verify /找到的/路径
+ln -s /找到的/路径 ckpts/Qwen3-VL-235B-A22B-FP8   # 核验通过 → 软链进来，后续命令原样可用
+# （找到的是 32B/InternVL 就换成对应名字，并同步改 §4.3 的 serve/--model 参数）
+```
+
+**按探测结果分流**（详见 §4.3 裁判选型表）：
+
+| find_models.sh 的结论 | 怎么走 |
+|---|---|
+| 有 235B 且分片齐全 | 软链进 `ckpts/`，按手册原样跑 |
+| 有 235B 但缺分片 | 重跑同一条 `modelscope download` 断点续传（**别删重下**） |
+| 只有 32B/30B/InternVL | 直接拿它当裁判（InternVL 还是**跨族**，比同族 235B 更有信息量） |
+| 什么大模型都没有、磁盘 ≥300GB | 下 235B-FP8（下面一段），下载与 S0/S1 并行 |
+| 什么都没有、磁盘 <300GB | 下 32B（~64GB，单卡 tp1）；再不行走 `SETUP_JUDGE_API.md` §0 路线 D |
+
+### 0.2 补下缺的权重（§0.1 已经有的跳过）
+
 ```bash
 # 权重镜像（写进 ~/.bashrc）：SigLIP2/LaBSE 体积小，首次运行自动经镜像下载
 export HF_ENDPOINT=https://hf-mirror.com
 
-# 两个大模型建议用 ModelScope 预下载（国内直连、可断点）
+# 两个大模型建议用 ModelScope 预下载（国内直连、可断点）；§0.1 已找到的不用重下
 pip install modelscope
 mkdir -p ckpts
 modelscope download --model Qwen/Qwen3-VL-8B-Instruct \
   --local_dir ckpts/Qwen3-VL-8B-Instruct
+df -h .                                          # 验收点：≥300GB 才开下 235B
 modelscope download --model Qwen/Qwen3-VL-235B-A22B-Instruct-FP8 \
   --local_dir ckpts/Qwen3-VL-235B-A22B-FP8        # 裁判档，~235GB，磁盘留够
 
@@ -162,7 +200,9 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 vllm serve ckpts/Qwen3-VL-235B-A22B-FP8 --port 8001
 ```
 
 **4.3 用哪个裁判模型**——默认的 235B **本身就是开源权重**（Apache-2.0，
-本地 vLLM 服务，全程不碰任何商业 API），无需替换。按约束选：
+本地 vLLM 服务，全程不碰任何商业 API），无需替换。
+**先跑 `bash tools/data_audit/find_models.sh`**（§0.1）看这台机器实际有什么，
+再按下表在「有的」里面挑——235B 不在机器上就走 32B/InternVL 行，不必等 235GB 下完：
 
 | 场景 | 模型 | 显存/下载 | 说明 |
 |---|---|---|---|
@@ -192,6 +232,22 @@ python tools/data_audit/vlm_audit.py --input $OUT/s2_judge_sample.jsonl \
   --model ckpts/Qwen3-VL-235B-A22B-FP8 --frames 8 --concurrency 16 \
   --output $OUT/s2_verdicts_judge.jsonl
 pkill -f "vllm serve ckpts/Qwen3-VL-235B-A22B-FP8"
+
+# 4.3-替代：235B 不在这台机器上（§0.1 探测为准）时的裁判，二选一——
+#   ① 32B BF16（~64GB，单卡 tp1，剩 7 卡继续跑 4.2 主力）
+JUDGE=ckpts/Qwen3-VL-32B-Instruct
+CUDA_VISIBLE_DEVICES=7 vllm serve $JUDGE --port 8001 --host 0.0.0.0 \
+  --tensor-parallel-size 1 --limit-mm-per-prompt image=8 --max-model-len 16384 &
+#   ② InternVL3.5-38B（跨族，tp2，一致率更有信息量）
+#   JUDGE=ckpts/InternVL3_5-38B
+#   CUDA_VISIBLE_DEVICES=6,7 vllm serve $JUDGE --port 8001 --host 0.0.0.0 \
+#     --tensor-parallel-size 2 --limit-mm-per-prompt image=8 --max-model-len 16384 &
+python tools/data_audit/vlm_audit.py --input $OUT/s2_judge_sample.jsonl \
+  --video-root $CLIPS --api-base http://localhost:8001/v1 \
+  --model $JUDGE --frames 8 --concurrency 16 \
+  --output $OUT/s2_verdicts_judge.jsonl
+# 换了裁判要在报告里写清楚是哪个模型；4.4 的一致率口径不变。
+# 连 32B 都跑不动/下不动 → SETUP_JUDGE_API.md §0 路线 D（换族 8B 找分歧 + 定向人工抽检）。
 
 # 4.4 一致率检查（决策门 ≥75%，不达标先改 rubric 再重跑 S2）
 python - <<'PY'
@@ -230,7 +286,8 @@ python tools/data_audit/aggregate_report.py \
 
 | 步骤 | 耗时 | 卡数 |
 |---|---|---|
-| 环境 + 权重下载 | ~0.5–2 h（235B 下载看带宽） | — |
+| 环境 + §0.1 探测已有模型 | ~20 min + 30 s | — |
+| 权重下载 | 0（§0.1 已找到）～ 0.5–2 h（235B 看带宽） | — |
 | 冒烟 | ~10 min | 1 |
 | S0 全量 | ~20 min | CPU |
 | S1 全量 10M | ~1 天（解码瓶颈） | 8 |
