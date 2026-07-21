@@ -149,7 +149,8 @@ vLLM 端点，模型均为 `Qwen3.6-27B`（`172.30.85.198:8000`、`172.30.62.177
   `abs_path`（`resolve_video_path` 第三候选），**很可能不用拷视频，
   只需搬一个 500 行的 `s2_judge_sample.jsonl`**。环境也轻——`vlm_audit.py`
   只要 `requests/numpy/pillow/decord`，**不需要 torch、不占 GPU**。
-  步骤见 [`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0 路线 A′「指定中转机」。
+  **逐条命令见 [`SETUP_JUDGE_RELAY.md`](SETUP_JUDGE_RELAY.md)**（选型理由见
+  [`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0 路线 A′）。
 
   **三个仍待实测的前提**（按顺序）：① 该机到 `172.30.x.x` 的连通性；
   ② 101vector → 该机的文件通道；③ 那 500 条视频在该机上能否解析。

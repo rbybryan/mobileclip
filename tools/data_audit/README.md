@@ -20,6 +20,7 @@
 | 机器 | 手册 | 数据范围 | S2 路径 | 耗时 |
 |---|---|---|---|---|
 | 8×H100-80G | **[`SETUP_H100.md`](SETUP_H100.md)** | **全量 10M** | vLLM 服务（8B dp=8 + 235B-FP8 裁判本地 tp8） | ~1.5 天 |
+| 7×V100（`10.55.87.68`，中转机） | **[`SETUP_JUDGE_RELAY.md`](SETUP_JUDGE_RELAY.md)** | 只跑 **4.3 裁判档** | 内网 `Qwen3.6-27B` 端点（101vector/H100 都连不上，只有它连得到） | ~1 小时 |
 | 8×V100-32G（101vector） | **[`SETUP_V100.md`](SETUP_V100.md)** | **仅 1 万条预抽样**（`/home/vca1/datasets/internvid_zh_10k`，本机没有全量数据） | transformers 后端 `run_v100.sh`（无 bf16/vLLM；torch 须用 cu118 构建；裁判走云端 API；S2 推荐 10k 全覆盖） | ~3–4 小时 |
 
 推荐节奏：先在 V100 机把 10k 全流程跑完（半天内出 10k 报告 + 调好 rubric
