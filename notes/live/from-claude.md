@@ -23,6 +23,55 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-21 (7) — InternVL 探针:仓库在、格式对,但「跨族」只对了一半
+
+**探针结论:通过,可以下。** `OpenGVLab/InternVL3_5-38B-HF` 仓库存在,
+`config.json` 拿到了,而且是**原生 transformers 实现** ——
+`"architectures": ["InternVLForConditionalGeneration"]`、`"model_type": "internvl"`、
+**没有 `auto_map`**。所以 `SETUP_V100.md` §4.3 里最担心的两件事可以划掉了:
+
+- **不需要 `trust_remote_code`**;
+- **不用另建 `judge_env`** —— `audit_env` 现有的 transformers ≥4.57 已满足它要的
+  ≥4.52.1,冻结环境不用动。
+
+**但同一份 config 也翻出了一张底牌,方向相反:**
+
+```json
+"vision_config": { "model_type": "internvl_vision", "hidden_size": 3200, "num_hidden_layers": 45 },
+"text_config":   { "model_type": "qwen3", "_name_or_path": ".../Qwen3-32B", "num_hidden_layers": 64 }
+```
+
+**InternVL3.5-38B ＝ InternViT(~6B) ＋ Qwen3-32B。** 视觉塔确实换了族,
+**但语言塔还是 Qwen3** —— 跟主力 `Qwen3-VL-8B`、A′ 裁判 `Qwen3.6-27B` 同族。
+我之前在 `DATA_ISSUES.md` 里写的「跨族 → 买得到独立误差」**说过头了**,已改。
+
+**为什么这条要紧,而不只是个冷知识:** 裁判要打的分里,
+**`trans_score`(翻译忠实度)几乎是纯语言任务**,走的正是那个共享的 Qwen3 语言塔;
+而 `DATA_ISSUES.md` §3 的 T4 白纸黑字写着**「决策 1 的全部差率都建立在
+`trans_bad` 那一行上」**。也就是说 —— **最需要独立第二意见的那一维,恰好是这个
+模型最不独立的一维。** 反过来 `en_score`/`zh_score` 这类吃视觉塔的对齐判断,
+换族收益是实打实的。
+
+**所以怎么办(没有改计划,只是把话说准):**
+
+- 它仍然比 `Qwen3-VL-32B` 独立(后者两塔全同族),真触发 C 时**还是选它**;
+- 但 **`trans_score` 上一致率高,不要读成「判定可信」** —— 那更可能是同族语言塔
+  的共有盲区。这一维要么挂人工抽检(T4 的路线 D),要么写进报告的方法学局限;
+- 语言塔也想跨族的话有 `Gemma-3-27B-IT`(Gemma + SigLIP,真跨族),但中文和
+  rubric 遵循度在本项目都没验证过,且视觉侧与 S1 用的 SigLIP2 同源。
+  **别为此加跑一档。**
+- 另外确认一条:`torch_dtype` 是 **`bfloat16`**,V100 没有 bf16 —— 真要跑必须
+  fp16 载入,并先过 §4.3 那两条冒烟(中文会不会乱码 / `action` 字段解不解得出来)。
+
+**Do this next:不用做任何事。** 这条纯属把探针结果记账。**别开那个 76GB 的下载**
+—— 路线 C 是兜底,A′(中转机 `10.55.87.68`)还没排除,`DATA_ISSUES.md` §1
+的顺序表没变:① `run_v100.sh status` 看 S2 到没到 10000 → ② 照
+`SETUP_JUDGE_RELAY.md` 测中转机 → ③ S2 一满就 `xling-check`。
+
+**训练那边的待办也没变** —— 见下面 (6),`git pull origin main` 之后重跑冒烟。
+
+---
+
 ## 2026-07-21 (6) — DeepSpeed 起来了、训练循环也起来了;死在第一次 forward 的 dtype
 
 **大进展:** FusedAdam 那关过了 —— `Use deepspeed to initialize model!!!` 之后

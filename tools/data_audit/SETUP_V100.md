@@ -529,9 +529,40 @@ H100 机用不上、又不想调商业 API 时走这条：**32B 是 8×V100-32G 
 
 | | `Qwen3-VL-32B-Instruct`（~64GB） | `OpenGVLab/InternVL3_5-38B-HF`（~76GB） |
 |---|---|---|
-| 与主力 8B 的关系 | **同族**（同为 Qwen3-VL） | **跨族** ✅ |
-| 一致率的含义 | 共有盲区会让两边一起错，偏乐观 | 误差独立，一致率才真正有信息量 |
-| 集成风险 | 几乎为零（与已跑通的 8B 同架构） | 中等（见下方 `-HF` 陷阱、rubric 兼容） |
+| 与主力 8B 的关系 | **同族**（同为 Qwen3-VL） | **半跨族**：视觉塔跨族、语言塔同族 ⚠️ |
+| 一致率的含义 | 共有盲区会让两边一起错，偏乐观 | **画面对齐**维度误差较独立；**翻译忠实度**维度仍共享 Qwen3 盲区 |
+| 集成风险 | 几乎为零（与已跑通的 8B 同架构） | **低**（已实测：原生 HF 格式，无 `trust_remote_code`，不用动环境） |
+
+> 📌 **2026-07-21 实测更正——「跨族」只对了一半。** 上面那条探针命令跑通了，
+> 仓库存在，`config.json` 同时也把独立性的底牌翻了出来：
+>
+> ```json
+> "model_type": "internvl",
+> "architectures": ["InternVLForConditionalGeneration"],
+> "vision_config": { "model_type": "internvl_vision", "hidden_size": 3200, "num_hidden_layers": 45 },
+> "text_config":   { "model_type": "qwen3", "_name_or_path": ".../Qwen3-32B", "num_hidden_layers": 64 }
+> ```
+>
+> **InternVL3.5-38B ＝ InternViT（~6B）＋ Qwen3-32B。** 视觉塔确实换了族，
+> 但**语言塔还是 Qwen3** —— 与主力 `Qwen3-VL-8B`、A′ 裁判 `Qwen3.6-27B` 同族。
+>
+> 这件事直接影响该信谁：裁判要打的几个分里，**`trans_score`（翻译忠实度）
+> 几乎是纯语言任务**，走的正是共享的 Qwen3 语言塔；而 §3 的 T4 明说
+> **「决策 1 的全部差率都建立在 `trans_bad` 那一行上」**。也就是说
+> **最需要独立第二意见的那一维，恰恰是这个模型最不独立的一维。**
+> 反过来，`en_score`/`zh_score` 这类**画面对齐**判断吃视觉塔，换族收益是真的。
+>
+> **怎么用**：它仍比 Qwen3-VL-32B 独立（后者两塔同族），值得选；但
+> **`trans_score` 上一致率高不要读成「判定可信」**，那更可能是同族语言塔的
+> 共有盲区。这一维要么挂人工抽检（§3 T4 的路线 D），要么另找语言塔也跨族的
+> 模型（如 Gemma-3-27B-IT，Gemma 语言塔 + SigLIP 视觉塔，真跨族；代价是
+> 中文与 rubric 遵循度都没在本项目验证过，且视觉侧与 S1 用的 SigLIP2 同源）。
+> **别为此加跑一档**——先按现有计划走，把这条写进报告的方法学局限即可。
+>
+> 另两条已确认：**无 `auto_map`** → 原生 transformers 实现，`trust_remote_code`
+> 不需要，§0 的 `audit_env`（transformers ≥4.57 ≥ 所需的 4.52.1）直接能加载，
+> **不用另建 `judge_env`**；`torch_dtype` 为 **`bfloat16`** → V100 无 bf16，
+> 必须按下面的冒烟检查 ① 用 fp16 载入并验中文是否乱码。
 
 > ⚠️ **`-HF` 后缀是硬性要求，下错等于白下。** InternVL 官方发两种格式：
 > **GitHub 格式**（`OpenGVLab/InternVL3_5-38B`，无后缀）要 `trust_remote_code`，
