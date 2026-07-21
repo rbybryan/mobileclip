@@ -127,7 +127,68 @@ for ep in 172.30.85.198:8000 172.30.62.177:8000 172.30.86.57:5000; do
 done
 ```
 
-连不上就只剩：把 S2 产物 + 视频拷到能连的机器上再跑，或退回路线 C / D。
+**探针二不通时：借一台中转机跑裁判**（例如 7 卡 V100 `10.55.87.68 -p 31179`，
+或任何既能连 `172.30.x.x` 又能收文件的机器）。
+
+关键是**不用拷全部 1 万条视频**——裁判只看 `JUDGE_N` 条（默认 500）。
+先在 101vector 上挑出那批视频的清单：
+
+```bash
+source ~/audit_env/bin/activate && cd ~/mobileclip
+OUT=outputs/audit_10k
+CLIPS=/home/vca1/datasets/internvid_zh_10k/videos
+head -n "${JUDGE_N:-500}" $OUT/s2_sample.jsonl > $OUT/s2_judge_sample.jsonl
+
+python - "$OUT/s2_judge_sample.jsonl" "$CLIPS" > $OUT/judge_video_list.txt <<'PY'
+import json, os, sys
+sys.path.insert(0, "tools/data_audit")
+from vlm_audit import resolve_video_path          # 复用三级路径解析，避免手工拼错
+sample, root = sys.argv[1], os.path.abspath(sys.argv[2])
+missing = outside = 0
+for line in open(sample, encoding="utf-8"):
+    rec = json.loads(line)
+    p = os.path.abspath(resolve_video_path(root, rec, rec.get("video")))
+    if not os.path.exists(p):
+        missing += 1; continue
+    if p.startswith(root + os.sep):
+        print(os.path.relpath(p, root))           # rsync --files-from 要相对路径
+    else:
+        outside += 1
+        print("OUTSIDE_ROOT:", p, file=sys.stderr)
+print(f"[missing] {missing}  [outside_root] {outside}", file=sys.stderr)
+PY
+
+wc -l $OUT/judge_video_list.txt        # 应 ≈ JUDGE_N；差太多先看上面的 stderr
+```
+
+拷过去（保持相对目录结构，中转机上的 `--video-root` 才能原样解析）：
+
+```bash
+RELAY="-p 31179 root@10.55.87.68"      # 按实际改；rsync 用 -e 传端口
+rsync -av -e "ssh -p 31179" --files-from=$OUT/judge_video_list.txt \
+  $CLIPS/ root@10.55.87.68:/data/judge_videos/
+scp -P 31179 $OUT/s2_judge_sample.jsonl root@10.55.87.68:/data/
+```
+
+在中转机上跑裁判（只需 `requests`/`pillow`/`decord`，**不需要 GPU**——
+推理在端点那边）：
+
+```bash
+python tools/data_audit/vlm_audit.py --input /data/s2_judge_sample.jsonl \
+  --video-root /data/judge_videos \
+  --api-base http://172.30.85.198:8000/v1 --api-key EMPTY \
+  --model /workspace/mount/b100_zaip_data/model_zoo/Qwen3.6-27B \
+  --frames 8 --concurrency 8 --output /data/s2_verdicts_judge.jsonl
+```
+
+拷回来后在 101vector 上算一致率（**不必重跑裁判**）：
+
+```bash
+scp -P 31179 root@10.55.87.68:/data/s2_verdicts_judge.jsonl outputs/audit_10k/
+bash tools/data_audit/run_v100.sh judge-agree
+```
+
+都不可行时退回路线 C（本地 32B）/ 路线 D（无大裁判协议）。
 
 **两个探针都过 → 接进 `s2-judge`：**
 
