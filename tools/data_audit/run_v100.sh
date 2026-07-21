@@ -12,7 +12,8 @@
 #   bash tools/data_audit/run_v100.sh s2-sample  # ④ 抽样（默认参数在 10k 上=全覆盖）
 #   bash tools/data_audit/run_v100.sh s2         # ⑤ 8 卡 VLM 审核全部 10k（HF 后端，~2–3h）
 #   JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge  # ⑥ 云端裁判（可选，需 API key）
-#   bash tools/data_audit/run_v100.sh xling-check # ⑥b 裁决 xling 阈值（s3 前必做）
+#   bash tools/data_audit/run_v100.sh judge-agree # ⑥b 一致率+Cohen's κ（可对外来裁判文件独立重算）
+#   bash tools/data_audit/run_v100.sh xling-check # ⑥c 裁决 xling 阈值（s3 前必做）
 #   bash tools/data_audit/run_v100.sh s3         # ⑦ 校准+分桶+诊断报告 report.md
 # 跑其他数据（如全量挂载后）：export DATA/CLIPS/OUT 覆盖默认值即可。
 #
@@ -230,20 +231,19 @@ s2-judge)
     --video-root "$CLIPS" --api-base "$JUDGE_API_BASE" --api-key "$JUDGE_API_KEY" \
     --model "$JUDGE_MODEL" --frames "$S2_FRAMES" --concurrency 8 \
     --output "$OUT/s2_verdicts_judge.jsonl"
-  python - "$OUT" <<'PY'
-import glob, json, sys
-out = sys.argv[1]
-judge = {json.loads(l)["video"]: json.loads(l).get("verdict", {})
-         for l in open(f"{out}/s2_verdicts_judge.jsonl")}
-agree = tot = 0
-for p in glob.glob(f"{out}/s2_verdicts.*.jsonl"):
-    for l in open(p):
-        r = json.loads(l); v = r.get("verdict", {})
-        j = judge.get(r["video"])
-        if j and "action" in v and "action" in j:
-            tot += 1; agree += (v["action"] == j["action"])
-print(f"8B vs 裁判 action 一致率: {agree}/{tot} = {agree/max(1,tot):.1%}  <- 决策门 ≥75%")
-PY
+  exec "$0" judge-agree
+  ;;
+# ------------------------------------------- ⑥b 一致率 + Cohen's κ（可独立重算）
+judge-agree)
+  ls "$OUT"/s2_verdicts.*.jsonl >/dev/null 2>&1 || \
+    { echo "未找到 $OUT/s2_verdicts.*.jsonl（先跑: bash $0 s2）"; exit 1; }
+  [ -f "$OUT/s2_verdicts_judge.jsonl" ] || \
+    { echo "未找到 $OUT/s2_verdicts_judge.jsonl"
+      echo "  —— 跑 bash $0 s2-judge；或裁判在别的机器上跑完后把该文件拷回来"
+      echo "     （见 SETUP_JUDGE_API.md §0 路线 A′「探针二不通时」）"; exit 1; }
+  python tools/data_audit/judge_agreement.py \
+    --main "$OUT/s2_verdicts.*.jsonl" --judge "$OUT/s2_verdicts_judge.jsonl" \
+    --out-md "$OUT/judge_agreement.md"
   ;;
 # ------------------------------------------------- ⑥.5 xling 阈值裁决（跑 s3 前）
 xling-check)
