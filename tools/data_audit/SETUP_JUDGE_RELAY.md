@@ -99,6 +99,10 @@ PY
 
 **验收点**：`核心三件套 OK` 且 `可用视频后端` 非空 → **环境就绪，直接进第 3 步**。
 
+> ✅ **实测（2026-07-21）**：base 里已有 `numpy, PIL, requests, cv2`，
+> 缺 `decord` 和 `av`。**核心三件套 OK，视频后端 = `cv2`，零安装即可开跑。**
+> 下面第 5/6 步的命令已显式带上 `--frame-backend opencv`。
+
 **若缺视频后端**（三个都没有），按成功率排序试：
 
 ```bash
@@ -216,6 +220,7 @@ python vlm_audit.py \
   --api-base "$JUDGE_EP" --api-key EMPTY \
   --model /workspace/mount/b100_zaip_data/model_zoo/Qwen3.6-27B \
   --frames 8 --concurrency 2 --limit 5 \
+  --frame-backend opencv \
   --output s2_verdicts_judge.jsonl
 
 head -1 s2_verdicts_judge.jsonl | python -m json.tool
@@ -246,6 +251,7 @@ nohup python vlm_audit.py \
   --api-base "$JUDGE_EP" --api-key EMPTY \
   --model /workspace/mount/b100_zaip_data/model_zoo/Qwen3.6-27B \
   --frames 8 --concurrency 8 \
+  --frame-backend opencv \
   --output s2_verdicts_judge.jsonl > judge.log 2>&1 &
 
 watch -n 30 'wc -l ~/judge/s2_verdicts_judge.jsonl; tail -3 ~/judge/judge.log'
