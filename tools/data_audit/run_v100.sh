@@ -7,6 +7,7 @@
 #   bash tools/data_audit/run_v100.sh s0         # ② 规则画像（10k 秒级）
 #   bash tools/data_audit/run_v100.sh s0-show    # ②b 按旗标类别拆分+打印实例（SHOW_N=5 可调）
 #   bash tools/data_audit/run_v100.sh s1         # ③ 嵌入打分（10k 8 卡 ~10–30min，可续跑）
+#   bash tools/data_audit/run_v100.sh s1-report  # ③b S1 联合分析 -> s1_analysis.md（秒级）
 #   bash tools/data_audit/run_v100.sh status     # 随时看 S1/S2 进度
 #   bash tools/data_audit/run_v100.sh s2-sample  # ④ 抽样（默认参数在 10k 上=全覆盖）
 #   bash tools/data_audit/run_v100.sh s2         # ⑤ 8 卡 VLM 审核全部 10k（HF 后端，~2–3h）
@@ -146,6 +147,24 @@ s1)
   if [ "$TOT" -gt "$NGPU" ]; then
     echo "注意：双机分片下本机 status 只会到 ~$((NGPU*100/TOT))%，需两机产物汇总"
   fi
+  ;;
+# ---------------------------------------------------------------- ③.5 S1 联合分析
+s1-report)
+  # 只需 numpy（纯 CPU 读 jsonl），不要求 torch/decord 那套 GPU 依赖
+  python -c 'import numpy' 2>/dev/null || {
+    echo "错误：当前 Python（$(command -v python)）缺 numpy。"
+    echo "  多半是没激活虚拟环境：source ~/audit_env/bin/activate"; exit 1; }
+  ls "$OUT"/s1_scores.*.jsonl >/dev/null 2>&1 || \
+    { echo "未找到 $OUT/s1_scores.*.jsonl（先跑: bash $0 s1）"; exit 1; }
+  FLAGS_ARG=""
+  if [ -f "$OUT/s0_flags.jsonl" ]; then
+    FLAGS_ARG="--flags $OUT/s0_flags.jsonl"
+  else
+    echo "提示：没有 $OUT/s0_flags.jsonl，将跳过「高 xling = 未翻译」交叉核对"
+    echo "      （补跑 bash $0 s0 后重跑本命令即可，秒级）"
+  fi
+  python tools/data_audit/analyze_s1.py --scores "$OUT/s1_scores.*.jsonl" \
+    $FLAGS_ARG --out-md "$OUT/s1_analysis.md"
   ;;
 # ---------------------------------------------------------------- 进度
 status)
