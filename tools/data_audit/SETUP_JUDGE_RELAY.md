@@ -129,9 +129,17 @@ pip install opencv-python-headless \
 `vlm_audit.py` 不依赖仓库里任何其他文件，**只拷这一个脚本即可**，
 不必在中转机上 clone 私有仓库。
 
+> 🔴 **拷之前必须 `git pull`。** 有**两个**关键修复只存在于新版
+> `vlm_audit.py` 里，拷了旧版会在第 5 步以很有迷惑性的方式失败：
+> ① `chat_template_kwargs.enable_thinking=False`（不发的话 Qwen3.x 的 thinking
+> 会吃光 `max_tokens`，**每一条都返回 `no valid verdict JSON`**）；
+> ② `--frame-backend`（旧版硬依赖 `decord`，而中转机装不上）。
+
 ```bash
+# [101] 先更新到最新代码
+cd ~/mobileclip && git pull origin main
+
 # [101] 生成裁判样本（s2_sample.jsonl 的前 500 行）
-cd ~/mobileclip
 head -n 500 outputs/audit_10k/s2_sample.jsonl > outputs/audit_10k/s2_judge_sample.jsonl
 wc -l outputs/audit_10k/s2_judge_sample.jsonl        # 应是 500
 
@@ -141,6 +149,13 @@ scp -P 31179 tools/data_audit/vlm_audit.py \
              root@10.55.87.68:~/judge/
 ```
 
+```bash
+# [中转] 确认拷过去的是新版（两个都必须 ≥1，任一为 0 就是拷了旧版）
+cd ~/judge
+echo -n "enable_thinking: "; grep -c enable_thinking vlm_audit.py
+echo -n "frame-backend:   "; grep -c "frame-backend" vlm_audit.py
+```
+
 > ⛔ **不要在中转机上重新抽样。** 裁判必须评**主力判过的同一批记录**；
 > 从全量 10M 另抽一批与 101vector 那 10k 的交集可能为空，
 > 最后 `judge-agree` 只会告诉你「重叠不足 30 条」，几百条推理全白跑。
@@ -148,7 +163,8 @@ scp -P 31179 tools/data_audit/vlm_audit.py \
 > **两机直连不通时**走两跳：先 `scp` 到你本地，再 `scp` 上去。文件只有几百 KB。
 
 **验收点**：`[中转] ls -l ~/judge/` 能看到 `vlm_audit.py` 和
-`s2_judge_sample.jsonl`（500 行）。
+`s2_judge_sample.jsonl`（500 行）；上面两个 `grep -c` 分别是 **2** 和 **1**
+（只要都 ≥1 即可）。
 
 ---
 
