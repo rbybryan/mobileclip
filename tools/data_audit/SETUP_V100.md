@@ -483,8 +483,10 @@ done
   多半在 B100 网内。10k 记录保留了 `abs_path`（`resolve_video_path` 第三候选），
   **很可能连视频都不用拷，只需搬一个 500 行的 `s2_judge_sample.jsonl`**；
   真要拷也**只拷 `JUDGE_N` 条，不是全部 1 万条**。
-  完整流程（轻量环境、三项前提实测、视频解析预检、冒烟、拷回算分）见
-  **[`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0 路线 A′「指定中转机」**。
+  **逐条命令见 [`SETUP_JUDGE_RELAY.md`](SETUP_JUDGE_RELAY.md)**
+  （三项前提实测 → 轻量环境 → 送脚本和样本 → 视频解析预检 → 冒烟 →
+  正式跑 500 → 回传算分 → 常见问题表）；选型理由见
+  [`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0 路线 A′。
 
   > ⛔ **别在中转机上重新抽样**：裁判必须评的是主力判过的**同一批记录**，
   > 从全量 10M 另抽一批与本机 10k 交集可能为空，`judge-agree` 会直接报
