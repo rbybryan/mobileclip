@@ -18,7 +18,10 @@
 # V100 三个硬件差异已在脚本/工具内处理：
 #   1. Volta 无 bf16      -> score_alignment.py / vlm_audit_hf.py 自动落到 fp16
 #   2. vLLM V1 不支持 Volta -> S2 用 transformers 后端 (vlm_audit_hf.py) 8 卡数据并行
-#   3. 235B 裁判本地放不下(8x32GB=256GB < 权重) -> s2-judge 走 OpenAI 兼容云端 API
+#   3. 235B 裁判本地放不下(8x32GB=256GB < 权重, 且 Volta 无 FP8) -> s2-judge 走
+#      OpenAI 兼容端点。不想用云端商业 API 时改指向 H100 机自托管的同一份开源权重
+#      (JUDGE_API_BASE=http://<H100_IP>:8001/v1)，判定完全一致；选型见
+#      SETUP_JUDGE_API.md §0
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # 仓库根目录
 

@@ -81,6 +81,11 @@ def main():
                     help="output jsonl; '{shard}' is replaced by shard id")
     ap.add_argument("--model", default="Qwen/Qwen3-VL-8B-Instruct")
     ap.add_argument("--dtype", default="auto", choices=["auto", "bf16", "fp16", "fp32"])
+    ap.add_argument("--device-map", default="cuda",
+                    help="'cuda' = whole model on one card (default, pairs with "
+                         "--num-shards data parallelism); 'auto' = shard the model "
+                         "across all visible GPUs, for models too big for one card "
+                         "(e.g. a 32B fp16 judge on 8xV100-32G; use --num-shards 1)")
     ap.add_argument("--frames", type=int, default=8)
     ap.add_argument("--max-side", type=int, default=448)
     ap.add_argument("--max-new-tokens", type=int, default=768)
@@ -102,7 +107,7 @@ def main():
     print(f"[load] {args.model} dtype={dtype} (Volta: fp16+sdpa)", file=sys.stderr)
     model = AutoModelForImageTextToText.from_pretrained(
         args.model, torch_dtype=dtype, attn_implementation="sdpa",
-        device_map="cuda" if torch.cuda.is_available() else "cpu").eval()
+        device_map=args.device_map if torch.cuda.is_available() else "cpu").eval()
     processor = AutoProcessor.from_pretrained(args.model)
 
     out_path = args.output.replace("{shard}", str(args.shard_id))

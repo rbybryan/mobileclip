@@ -60,7 +60,8 @@ bash tools/data_audit/run_v100.sh status     # 等 S1 到 10000/10000
 bash tools/data_audit/run_v100.sh s1-report  # S1 联合分析 s1_analysis.md（秒级，进 S2 前必做）
 bash tools/data_audit/run_v100.sh s2-sample  # 默认参数在 10k 上即全覆盖
 bash tools/data_audit/run_v100.sh s2         # 8 卡 VLM 审核全部 10k（HF 后端，~2–3 小时）
-export JUDGE_API_KEY=sk-...                  # 可选：云端 235B 裁判
+export JUDGE_API_KEY=sk-...                  # 可选：235B 裁判（不想用商业 API →
+                                             # 自托管同一份开源权重，见 SETUP_JUDGE_API.md §0）
 JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge
 bash tools/data_audit/run_v100.sh s3         # 诊断报告 report.md + buckets.jsonl
 ```

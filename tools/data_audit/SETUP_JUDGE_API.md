@@ -25,6 +25,64 @@ V100 机 (101vector)                     H100 机
 
 ---
 
+## 0. 裁判选型：不用商业模型会不会掉质量？
+
+**先澄清两件事：**
+
+1. **S3（`aggregate_report.py`）不含任何模型**——纯 Python 标准库、CPU，
+   只做「按 S1 分位统计 S2 差率 → 选阈值 → 全量分桶 → 出报告」。
+   那里没有任何商业依赖可去掉。
+2. **整条流水线唯一的商业触点是 `s2-judge`，而它调的也不是商业模型**：
+   `run_v100.sh` 默认 `JUDGE_MODEL=qwen3-vl-235b-a22b-instruct`，
+   模型本身是 **Apache-2.0 开源权重**，DashScope 只是它的一个托管端点。
+   所以「不用商业模型」= **换成自托管同一份权重**，判定完全一致、零质量损失。
+
+按优先级选：
+
+| 路线 | 裁判模型 | 需要什么 | 相对 235B 的质量 |
+|---|---|---|---|
+| **A（首选）** | Qwen3-VL-235B-A22B-Instruct-**FP8**，H100 机自托管 | 8×H100-80G + 两机内网互通 | **完全一致**（同一份权重）；见下文 §1–§5 |
+| B | InternVL3.5-241B-A28B（同为开源） | 同上 | 同档；作为 A 的第二意见（plan §2 的交叉验证档） |
+| C | Qwen3-VL-32B-Instruct，V100 本地 | 仅 8×V100-32G | 有损但可用（≈主力 8B 的 4 倍） |
+| D | 不用大裁判：换一个**不同**的 8B 交叉验证 + 300 条人工抽检 | 零额外资源 | κ 不再有意义，但人工抽检本就是真正的金标准 |
+
+### 为什么 V100 上不了 235B（不是许可问题，是硬件）
+
+Volta **没有 FP8 支持**，FP8 版权重跑不了；BF16 原版 ~470GB，
+8×32GB=256GB 也放不下。所以 V100 本地裁判的天花板就是 ~32B 档。
+
+### 路线 C：V100 本地 32B 裁判（A/B 都不可用时）
+
+32B fp16 约 64GB，单卡放不下 → 必须**模型并行**（`--device-map auto`），
+放弃 8 卡数据并行。裁判只跑 500–2000 条，慢一点可以接受：
+
+```bash
+source ~/audit_env/bin/activate && cd ~/mobileclip
+OUT=outputs/audit_10k
+head -n 500 $OUT/s2_sample.jsonl > $OUT/s2_judge_sample.jsonl
+
+python tools/data_audit/vlm_audit_hf.py \
+  --input $OUT/s2_judge_sample.jsonl --video-root /home/vca1/datasets/internvid_zh_10k/videos \
+  --model Qwen/Qwen3-VL-32B-Instruct --dtype fp16 \
+  --device-map auto --num-shards 1 --shard-id 0 \
+  --output "$OUT/s2_verdicts_judge.jsonl"
+```
+
+输出格式与 `vlm_audit.py` 相同，一致率统计照抄 §4 末尾那段（或直接跑
+`run_v100.sh s2-judge` 的对比片段）。**注意**：`--device-map auto` 时
+必须 `--num-shards 1`——模型已占满所有卡，再起 8 个进程会 OOM。
+
+### 路线 D：没有大裁判时怎么保证判定可信
+
+- 换一个**不同架构**的同档模型跑同一批校准集（InternVL3.5-8B /
+  MiniCPM-V-4.5），**判定不一致的维度 = rubric 要改的维度**；
+- 真正的效度锚点是 `SETUP_V100.md` §6 的 **300 条人工抽检**——大裁判的作用
+  只是把人工判定「放大」到几千条，它替代不了人工，人工却能替代它。
+- 同档模型互查**不能**代替更强裁判去验证 8B 的绝对可信度（T4 的 ≥75%
+  决策门），此时应把决策门改挂在人工抽检上。
+
+---
+
 ## 1.（H100 机）环境与权重
 
 已按 `SETUP_H100.md` §0 装好环境的直接跳到 §2。
