@@ -161,9 +161,11 @@ def main():
             fout.write(json.dumps(out, ensure_ascii=False) + "\n")
             fout.flush()
             n_done += 1
-            if n_done % 100 == 0:
+            # first verdict logged immediately so a fresh launch is visibly alive;
+            # V100 throughput is ~1-3 clips/min per shard, so every-10 ≈ every few min
+            if n_done == 1 or n_done % 10 == 0:
                 print(f"[progress] shard {args.shard_id}: {n_done}/{len(todo)}",
-                      file=sys.stderr)
+                      file=sys.stderr, flush=True)
     print(f"[done] shard {args.shard_id}: {n_done} verdicts -> {out_path}")
 
 

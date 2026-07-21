@@ -160,6 +160,10 @@ status)
   echo "S2: $s2 / $s2t  存活进程: $s2_alive"
   echo "（刚启动时行数为 0 是正常的：各分片要先下载/加载模型权重，看下方日志尾行确认在动；"
   echo "  进程数 0 且未到 100% = 分片已退出，查对应日志的 Traceback 后重跑即可断点续跑）"
+  if ls "$OUT"/s2_verdicts.*.jsonl >/dev/null 2>&1; then
+    echo "---- S2 各分片已写行数（每审完 1 条实时 +1；V100 单条约 20–60s）----"
+    for f in "$OUT"/s2_verdicts.*.jsonl; do echo "  $(wc -l < "$f")  $f"; done
+  fi
   echo "---- 各分片日志尾行 ----"
   tail -n 1 "$OUT"/s1_shard*.log "$OUT"/s2_shard*.log 2>/dev/null || true
   ;;
