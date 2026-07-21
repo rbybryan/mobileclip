@@ -5,6 +5,10 @@
 与基线的对比表。实验设计对应 `notes/paper-plan-zh.md` 的第 1–2 周
 (卫生闸门 + C3 组件 A/B)。
 
+> **当前该做哪一步 → 看 `experiments/ROADMAP.md`(总入口)。**
+> 数据集/权重到位了没有 → `python experiments/check_readiness.py`
+> 自动检查全部基准、训练语料和 checkpoints,并报告已解锁的步骤。
+
 ---
 
 ## 0. 本分支包含的代码变更(一次性说明)
