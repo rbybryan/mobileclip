@@ -23,7 +23,7 @@
 | S1 嵌入打分 | ✅ 完成 | `s1_scores.*.jsonl` | error 0%，SigLIP 信号健康；**`xling_cos` 是弱工具** |
 | S1 联合分析 | ✅ 完成 | `s1_analysis.md` | 翻译损伤真实但小、只在极低尾；S3 阈值有雷 |
 | **S2 VLM 审核** | 🔄 **运行中** | `s2_verdicts.*.jsonl` | 10k 全覆盖，8 卡 HF 后端，预计 ~2–3 h |
-| S2 裁判（云端 235B） | ⬜ 未开始 | `s2_verdicts_judge.jsonl` | 需 `JUDGE_API_KEY`；**可与主力并行，不占本机 GPU** |
+| S2 裁判（云端 235B） | ⬜ 未开始 | `s2_verdicts_judge.jsonl` | 需 `JUDGE_API_KEY`；**可与主力并行，不占本机 GPU**。主力/裁判的分工见 [`SETUP_V100.md`](SETUP_V100.md) §4.2–4.3 |
 | S2 人工抽检 300 | ⬜ 未开始 | `human_check_300.jsonl` | 在 §6 Gradio 里过 |
 | **xling 阈值裁决** | ⬜ 未开始（工具已就位） | `xling_calibration.md` | `run_v100.sh xling-check`，**S2 一完成就跑，裁决 §4 决策 1** |
 | S3 校准 + 分桶 | ⬜ 未开始 | `report.md` / `buckets.jsonl` | **开跑前先解决 §4 的两个待决策** |
