@@ -55,12 +55,25 @@ bash tools/data_audit/run_v100.sh status        # S1/S2 行数 + 存活进程 + 
 > （见 [`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0.5 与 `SETUP_H100.md` §4.3）。
 > 所以除「能不能连上」外，**C 在每个维度上都被 A′ 支配**，不值得抢跑。
 >
-> **真触发 C 时值得重挑模型**：既然横竖要下几小时，下**跨族**的
-> `InternVL3.5-38B`（~76GB，同量级）才买得到独立误差，证据强度明显更高；
-> 代价是 Volta 集成风险更大（`trust_remote_code`、默认 flash-attn 需强制
-> eager、可能要求不同 `transformers` 版本，而 `audit_env` 审核期间必须冻结）。
+> **真触发 C 时值得重挑模型**：既然横竖要下几小时，`InternVL3_5-38B-HF`
+> （~76GB，同量级）比 `Qwen3-VL-32B` 更独立，值得选。
+>
+> > 📌 **2026-07-21 探针实测，把这里原来的两条判断都改了**（详见
+> > [`SETUP_V100.md`](SETUP_V100.md) §4.3 的更正块）：
+> > - **集成风险原先高估了。** `-HF` 是原生 transformers 实现，`config.json`
+> >   里**没有 `auto_map`** → 不需要 `trust_remote_code`；`audit_env` 现有的
+> >   transformers ≥4.57 已满足其 ≥4.52.1 的要求，**不用动冻结环境**。
+> > - **「跨族」原先高估了。** `text_config` 是
+> >   **`Qwen3-32B`**（`model_type: qwen3`）—— 它 ＝ InternViT ＋ Qwen3-32B，
+> >   **只有视觉塔跨族，语言塔与主力 8B / A′ 裁判同族**。于是
+> >   **`trans_score`（纯语言任务）上的一致率仍受同族共有盲区污染**，而 §3 T4
+> >   写明决策 1 的差率全押在 `trans_bad` 那一行 —— **最需要独立意见的一维，
+> >   恰恰是它最不独立的一维。** `en_score`/`zh_score` 这类吃视觉塔的维度收益是真的。
+> > - 另：`torch_dtype` 为 `bfloat16`，V100 无 bf16，必须 fp16 载入并先验中文冒烟。
+>
 > **求稳 → Qwen3-VL-32B（与已跑通的 8B 同架构，几乎零集成风险）；
-> 求证据强度 → InternVL3.5-38B。** 等真触发时再定。
+> 求证据强度 → InternVL3_5-38B-HF（但 `trans_score` 一维仍需人工兜底）。**
+> 等真触发时再定。
 >
 > 只有当中转机（`10.55.87.68`）也走不通时才回来下它；真要下，
 > **hf-mirror 通道已实测不可用**（新版
