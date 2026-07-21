@@ -528,6 +528,31 @@ rsync -avP --partial <user>@<H100_IP>:~/mobileclip/ckpts/Qwen3-VL-32B-Instruct/ 
 > **下到一半的文件**在换工具后多半要从头来（临时文件命名和续传约定不同）。
 > 换通道请在"当前文件下完"的间隙换，且换完就别再换回去。
 
+> ⚠️ **同一时刻只跑一个下载进程**。手滑把 `nohup ... &` 敲了两遍时：
+> ① 两个进程都用 `>` 打开**同一个日志文件**，后者截断前者、两边各按自己的
+> 偏移量写——**日志直接变成乱码，进度和报错都看不到了**，而这恰恰是你现在
+> 最需要的信息；② `hf_transfer` 本身已是多线程，再开一个只是抢带宽，
+> 限速链路上反而更慢。（写坏文件的风险倒不大：`huggingface_hub` 对每个文件
+> 加锁 `.cache/huggingface/download/*.lock`，两边会按文件串行。）
+>
+> ```bash
+> pgrep -af "hf download|modelscope download"   # 看清楚在跑几个
+> kill %3            # 多开的那个 job（%N 见 jobs 输出）
+> pkill -f "hf download"   # until 循环已停，收掉残留子进程不会自动重启
+> ```
+>
+> 杀掉不丢进度（`.incomplete` + 元数据续传），重启一个即可。
+>
+> **`HF_HUB_ENABLE_HF_TRANSFER=1` 的坑**：若 `hf_transfer` 包没装，
+> `hf download` 会**秒退**并报 "Fast download using 'hf_transfer' is enabled
+> but 'hf_transfer' package is not available"——外层 `until` 循环会每 10 秒
+> 重试一次、**永远下不动**。所以启动后**第一件事是看日志**：
+>
+> ```bash
+> tail -20 download_32b.log
+> python -c "import hf_transfer; print('OK', hf_transfer.__version__)"  # 没装就 pip install hf_transfer
+> ```
+
 下完必做完整性校验（步骤 2）——半个分片会在加载时才报错，很浪费时间。
 
 #### 步骤 2：验完整性（必做——断过的下载会缺分片，加载时才报错很浪费时间）
