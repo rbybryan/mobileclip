@@ -68,9 +68,12 @@ python tools/data_audit/vlm_audit_hf.py \
   --output "$OUT/s2_verdicts_judge.jsonl"
 ```
 
-输出格式与 `vlm_audit.py` 相同，一致率统计照抄 §4 末尾那段（或直接跑
-`run_v100.sh s2-judge` 的对比片段）。**注意**：`--device-map auto` 时
-必须 `--num-shards 1`——模型已占满所有卡，再起 8 个进程会 OOM。
+输出格式与 `vlm_audit.py` 相同。**注意**：`--device-map auto` 时模型已跨多卡，
+不能再按卡起 8 个进程（必 OOM）——单进程用 `--num-shards 1`。
+
+> 📖 **完整实操**（下载 / 校验 / 冒烟 / 两进程 ×4 卡把墙钟减半 / 一致率脚本 /
+> 常见问题）见 **[`SETUP_V100.md`](SETUP_V100.md) §4.3-本地**。上面这条命令
+> 只是最小可跑版本。
 
 ### 路线 D：**完全没有大裁判**时的替代校准协议（H100 用不上时走这条）
 
