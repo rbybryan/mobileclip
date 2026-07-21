@@ -443,7 +443,8 @@ H100 机用不上、又不想调商业 API 时走这条：**32B 是 8×V100-32G 
 最强裁判**（235B 在 Volta 上不可能——无 FP8 硬件支持，BF16 原版 ~470GB
 也放不下 256GB 显存）。32B 仍是主力 8B 的 4 倍档，一致率有意义。
 
-选型与其他备选的权衡见 [`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0；
+选型与其他备选的权衡见 [`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) 的
+「裁判选型」一节；
 **连 32B 都跑不动就走那里的路线 D**（换族 8B + 分歧定向人工抽检）。
 
 > ⏱ **排期提醒**：与云端裁判不同，本地裁判**要占本机 GPU**，不能和 4.2 主力
@@ -483,26 +484,92 @@ python -c "import torch, transformers, accelerate; print(torch.__version__, \
 > 版本）。这时新建 `~/judge_env` 装它那套，让 `audit_env` 保持冻结——
 > 隔离的目的是**保住主力判定的可复现性**，不是怕装不上。
 
-#### 步骤 1：下载权重（~64GB，放后台，看带宽 0.5–3h）
+#### 步骤 1：下载权重（~64GB）
+
+**先测速再选通道——不要盲目挂着等。** 64GB 在不同速率下差别是几十倍：
 
 ```bash
-mkdir -p ckpts
-nohup modelscope download --model Qwen/Qwen3-VL-32B-Instruct \
-  --local_dir ckpts/Qwen3-VL-32B-Instruct --max-workers 1 \
-  > download_32b.log 2>&1 &
-tail -f download_32b.log     # 断了重跑同一条命令即断点续传
+D=ckpts/Qwen3-VL-32B-Instruct
+a=$(du -sm $D 2>/dev/null | cut -f1 || echo 0); sleep 60; b=$(du -sm $D | cut -f1)
+echo "速率 $(( (b-a) )) MB/s ；已下 ${b} MB / 65536 MB ；按此速率还需 $(( (65536-b)/((b-a>0?b-a:1)*60) )) 小时"
 ```
 
-弱网反复 `IncompleteRead` 时用 until 循环兜住（同 §0 的配方）：
+| 实测速率 | 64GB 预计耗时 | 该怎么办 |
+|---|---|---|
+| **< 2 MB/s** | > 9 小时 | **必须换通道**，按下面 A→D 逐级试 |
+| 2–10 MB/s | 2–9 小时 | 先试 A（多连接），不行就后台挂着过夜 |
+| > 10 MB/s | < 2 小时 | 就这样，别折腾 |
+
+> **注意区分两种"慢"**（§0 和 `TROUBLESHOOTING.md` 讲的是前者）：
+> **链路不稳**（反复 `IncompleteRead`）→ 降并发 `--max-workers 1` + until 循环；
+> **链路稳但慢**（速率恒定在几百 kB/s，不报错）→ **降并发是反效果**，
+> 要的是**多连接并行**（下面方案 A/C）。
+
+**方案 A：aria2c 多连接（单连接被限速时提升最明显，通常 3–10×）**
+
+```bash
+# aria2c：优先包管理器；无 sudo 时用 conda 或静态二进制
+sudo apt install -y aria2 || conda install -y -c conda-forge aria2
+aria2c --version    # 验收点：打印版本号
+
+wget https://hf-mirror.com/hfd/hfd.sh && chmod +x hfd.sh
+./hfd.sh -h         # 先看本版支持哪些参数（不同版本 --local-dir 名称有差异）
+export HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1
+nohup ./hfd.sh Qwen/Qwen3-VL-32B-Instruct --tool aria2c -x 16 \
+  --local-dir ckpts/Qwen3-VL-32B-Instruct > download_32b.log 2>&1 &
+tail -f download_32b.log
+```
+
+`-x 16` = 每个文件 16 条连接。**若速率没变化**，说明瓶颈是总带宽而非
+单连接限速，直接跳到方案 D。
+
+**方案 B：hf_transfer（Rust 多线程后端，装起来最省事）**
+
+```bash
+pip install -U "huggingface_hub[cli]" hf_transfer
+export HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1 HF_HUB_ENABLE_HF_TRANSFER=1
+nohup bash -c 'until hf download Qwen/Qwen3-VL-32B-Instruct \
+  --local-dir ckpts/Qwen3-VL-32B-Instruct; do sleep 10; done' \
+  > download_32b.log 2>&1 &
+```
+
+代价：hf_transfer 没有细粒度进度条、报错信息也更含糊；出问题就
+`unset HF_HUB_ENABLE_HF_TRANSFER` 退回普通模式定位。
+
+**方案 C：ModelScope 提高并发**（Qwen 系在国内通常 ModelScope 路由最好）
 
 ```bash
 nohup bash -c 'until modelscope download --model Qwen/Qwen3-VL-32B-Instruct \
-  --local_dir ckpts/Qwen3-VL-32B-Instruct --max-workers 1; do sleep 30; done' \
+  --local_dir ckpts/Qwen3-VL-32B-Instruct --max-workers 4; do sleep 10; done' \
   > download_32b.log 2>&1 &
 ```
 
-ModelScope 不通就换 HF 镜像：
-`HF_ENDPOINT=https://hf-mirror.com huggingface-cli download Qwen/Qwen3-VL-32B-Instruct --local-dir ckpts/Qwen3-VL-32B-Instruct`
+注意这里是 `--max-workers 4` 而非 §0 的 `1`——**稳但慢**用 4，**不稳**才用 1。
+
+**方案 D：内网直接拷（有第二台机器时最快，且不吃外网）**
+
+H100 机（或任何已有该权重的机器）到本机通常是千兆内网 ≈ 110 MB/s，
+**64GB 约 10 分钟**，比任何外网通道都快：
+
+```bash
+# 先按 SETUP_JUDGE_API.md §1.2 的检索脚本确认对方机器上有没有现成权重
+rsync -avP --partial <user>@<H100_IP>:~/mobileclip/ckpts/Qwen3-VL-32B-Instruct/ \
+  ckpts/Qwen3-VL-32B-Instruct/
+```
+
+`-P` 断点续传，中断了重跑同一条命令即可。若两机挂同一存储，直接 `ln -s`
+省掉拷贝。
+
+**方案 E：换更小的裁判**——上面都试过仍要 5 小时以上时，权衡一下：
+`InternVL3_5-8B` 只有 ~17GB（1/4 体量），走
+[`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) 的 **「路线 D：完全没有大裁判时的
+替代校准协议」**（换族 8B + 分歧定向人工抽检）。判定强度弱于 32B，但**今晚就能跑完**，而不是明天还在下载。
+
+> ⚠️ **不要在多个工具之间反复横跳**：已完整下好的分片各家都会跳过，但
+> **下到一半的文件**在换工具后多半要从头来（临时文件命名和续传约定不同）。
+> 换通道请在"当前文件下完"的间隙换，且换完就别再换回去。
+
+下完必做完整性校验（步骤 2）——半个分片会在加载时才报错，很浪费时间。
 
 #### 步骤 2：验完整性（必做——断过的下载会缺分片，加载时才报错很浪费时间）
 
@@ -620,7 +687,7 @@ PY
 ```
 
 不达标先改 `vlm_audit.py` 的 rubric 再重跑 S2，**不要拿不可信判定去校准
-S3 阈值**。二值口径的理由见 `SETUP_JUDGE_API.md` §0 路线 D3
+S3 阈值**。二值口径的理由见 `SETUP_JUDGE_API.md`「路线 D」的 D3
 （`recaption` vs `retranslate` 的边界连人都会犹豫，五类精确匹配偏苛刻）。
 
 #### 常见问题
@@ -629,7 +696,7 @@ S3 阈值**。二值口径的理由见 `SETUP_JUDGE_API.md` §0 路线 D3
 |---|---|
 | `CUDA out of memory` | 每进程给的卡不足 4 张，或有残留进程占卡（`nvidia-smi` 后 `pkill -f vlm_audit_hf`）；确认没同时在跑 4.2 主力 |
 | 加载后 `hf_device_map` 里出现 `cpu`/`disk` | 可用显存不够 → 释放残留进程；跑起来也是 10 倍慢，务必先解决 |
-| 输出乱码 / NaN / 全是空判定 | fp16 溢出（32B 比 8B 更易触发，因为原始权重是 bf16）→ 改 `--dtype fp32`（128GB，8 卡单进程可放下，速度约减半），或退回 `SETUP_JUDGE_API.md` §0 路线 D |
+| 输出乱码 / NaN / 全是空判定 | fp16 溢出（32B 比 8B 更易触发，因为原始权重是 bf16）→ 改 `--dtype fp32`（128GB，8 卡单进程可放下，速度约减半），或退回 `SETUP_JUDGE_API.md`「路线 D」|
 | 比预估慢很多（>2 分钟/条） | 多半是 offload（见上）或视频解码慢（`--frames 6` 降一档）；流水线并行本身单卡串行，属预期 |
 | `KeyError: 'qwen3_vl'` | `transformers < 4.57` → `pip install -U "transformers>=4.57"` |
 
