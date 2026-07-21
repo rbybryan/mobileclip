@@ -369,6 +369,54 @@ ls -l ckpts/Qwen3-VL-8B-Instruct/model-0000*-of-00004.safetensors
 
 ---
 
+## Weight download is *slow but stable* (constant few hundred kB/s, no errors)
+
+Different failure from the entry above, and the fix is the **opposite**. That
+one is a *flaky* link — connections die, `IncompleteRead` is logged, and the
+cure is fewer concurrent workers plus a retry loop. This one never errors: the
+transfer just crawls. Turning concurrency **down** here makes it worse.
+
+Seen while pre-downloading Qwen3-VL-32B (~64 GB) for the local judge
+(`tools/data_audit/SETUP_V100.md` §4.3-本地).
+
+**Measure before choosing** — at 64 GB the difference between channels is hours:
+
+```bash
+D=ckpts/Qwen3-VL-32B-Instruct
+a=$(du -sm $D 2>/dev/null | cut -f1 || echo 0); sleep 60; b=$(du -sm $D | cut -f1)
+echo "$(( b - a )) MB/s"
+```
+
+Under ~2 MB/s a 64 GB download needs 9+ hours — switch channels rather than
+wait. The ladder, cheapest first:
+
+1. **aria2c multi-connection** (`hfd.sh --tool aria2c -x 16`). Biggest win when
+   the CDN throttles *per connection* rather than per client — commonly 3–10×.
+2. **`hf_transfer`** (`HF_HUB_ENABLE_HF_TRANSFER=1`), a Rust multi-threaded
+   backend for the `hf` CLI. Easiest to try; costs you progress detail and
+   legible error messages, so unset it when debugging.
+3. **More ModelScope workers** (`--max-workers 4`). Note this contradicts the
+   flaky-link recipe above on purpose: *stable but slow* wants more parallelism,
+   *unstable* wants less.
+4. **Copy over the LAN from a machine that already has the weights.** Gigabit
+   intranet ≈ 110 MB/s puts 64 GB at ~10 minutes, beating any public channel:
+   `rsync -avP --partial user@host:.../Qwen3-VL-32B-Instruct/ ckpts/Qwen3-VL-32B-Instruct/`
+   (search the other machine first with the recipe in
+   `tools/data_audit/SETUP_JUDGE_API.md` §1.2).
+5. **Downsize the model.** If every channel still says 5+ hours, a 17 GB
+   alternative that runs tonight beats a 64 GB one that lands tomorrow.
+
+**Don't ping-pong between tools.** Every downloader skips files that are
+already complete, but a *half-written* file generally restarts from zero under
+a different tool, since temp-file naming and resume conventions differ. Switch
+channels between files, and once switched, stay switched.
+
+Whichever channel finishes, verify shard count and total bytes against
+`model.safetensors.index.json` before loading — a truncated shard only
+announces itself minutes into model loading.
+
+---
+
 ## Running the next retrieval dataset (DiDeMo, ActivityNet)
 
 Once MSR-VTT works end-to-end, the other zero-shot **retrieval** benchmarks run
