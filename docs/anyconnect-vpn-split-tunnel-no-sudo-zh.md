@@ -191,9 +191,16 @@ openconnect \
 > - 正确写法就是上面这条:`--script-tun --script "ocproxy -D 11080"`。
 
 按提示输入密码(和二次验证,如果有)。看到类似
-`Connected as 10.x.x.x` / `Session established` 即成功。
+`Connected as 10.x.x.x` / `Configured as 87.x.x.x, with SSL connected` / `Session established`
+即**连接成功**。
 
-- 这个终端窗口要**保持开着**(它就是 VPN 会话)。想放后台:
+> 💡 **常见无害警告**,看到不用管,连接照常可用:
+> - `Failed to open /dev/vhost-net: 权限不够` —— ocproxy 想用 vhost-net 加速但无权限,
+>   自动回退到用户态转发,功能不受影响(只是稍慢一点)。
+> - `Set up UDP failed; using SSL instead` / `DTLS disabled` —— 通过 HTTP 代理时用不了
+>   DTLS/UDP,自动改用 SSL(TCP)承载,正常。
+
+- 这个终端窗口要**保持开着**(它就是 VPN 会话);后续用代理的操作都在**另开的新终端**里做。想放后台:
 
   ```bash
   # 方式一:tmux(推荐,断线可恢复交互输密码)
@@ -302,14 +309,31 @@ openconnect --useragent='AnyConnect Windows 4.10.06079' \
 
 ### 2.4 日常使用:哪些命令走 VPN,怎么走
 
-连接成功后,`127.0.0.1:11080` 就是通往 VPN 内网的 SOCKS5 代理。
+连接成功后,`127.0.0.1:11080` 就是通往 VPN 内网的 SOCKS5 代理。**在另开的新终端里**操作
+(跑 openconnect 的终端保持开着)。
+
+先确认代理在跑:
+
+```bash
+ss -tlnp | grep 11080          # 应看到 127.0.0.1:11080 LISTEN
+pgrep -a ocproxy               # 应看到 ocproxy 进程
+```
+
 **默认什么都不变**——本地服务器照常直连:
 
 ```bash
 ssh user@192.168.1.100        # 本地服务器,直连,和没连 VPN 一样
 ```
 
-需要访问 VPN 内网时,给命令加上代理:
+需要访问 VPN 内网 / remote server 时,给命令加上代理。**SSH 到内网远程服务器**是最常见的:
+
+```bash
+# 需要 ncat(来自 nmap;缺就 conda install -c conda-forge nmap,无需 root)
+ssh -o ProxyCommand='ncat --proxy-type socks5 --proxy 127.0.0.1:11080 %h %p' \
+  用户名@内网服务器地址
+```
+
+其它命令:
 
 ```bash
 # ssh 到内网服务器(10.0.0.5 换成实际内网 IP / 主机名)
@@ -416,6 +440,9 @@ ssh -J vps_user@your-vps.com -p 2222 user@localhost
 | 提示需要 CSD/HostScan | 尝试加 `--csd-wrapper` 脚本(openconnect 源码 `trojans/` 目录里有 `csd-post.sh`/`hostscan-bypass`);仍失败则此路不通,考虑第 3 步 |
 | 认证成功后报 `VPNFD is not set` / `TUNSETIFF 不允许的操作` / `必须以 root 权限运行` | 漏了 `--script-tun` 开关,openconnect 去建真 tun 网卡了。正确写法:`--script-tun --script "ocproxy -D 11080"`(两个都要) |
 | 报 `命令行有太多参数 / too many arguments` | 把 ocproxy 命令塞给了 `--script-tun`(它是不带参数的开关)。命令要放 `--script` 里:`--script-tun --script "ocproxy -D 11080"` |
+| 连上后出现 `Failed to open /dev/vhost-net: 权限不够` | **无害**。ocproxy 想用 vhost-net 加速但无权限,自动回退用户态转发,功能正常,忽略即可 |
+| `Set up UDP failed; using SSL instead` / `DTLS disabled` | **无害**。通过 HTTP 代理时用不了 DTLS/UDP,自动改用 SSL(TCP),正常 |
+| `ssh` 走代理报 `ncat: command not found` | 装 ncat:`conda install -c conda-forge nmap`;或用支持 `-X` 的 nc:`nc -X 5 -x 127.0.0.1:11080 %h %p` |
 | 连接成功但代理不通 | 确认 ocproxy 进程在(`pgrep ocproxy`);确认命令确实指定了 `127.0.0.1:11080`;换个端口试试(把 11080 全部替换) |
 | `ssh` 报 `nc: invalid option -- X` | 该系统的 netcat 不支持 SOCKS,改用 ncat(见 2.4)或 `connect-proxy` |
 | DNS 解析不到内网域名 | 用 `--socks5-hostname`(curl)/ ProxyCommand 里的 `%h`(ssh)让**代理端**解析域名,不要本地先解析;ocproxy 会用 VPN 下发的 DNS |
