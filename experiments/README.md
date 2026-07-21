@@ -154,25 +154,30 @@ python experiments/collect_results.py --baseline r0_baseline --out experiments/R
 
 ## 故障排查
 
-### 启动即崩:`PydanticUserError: @root_validator ... skip_on_failure=True`(import deepspeed 处)
+### 启动即崩在 `import deepspeed`:pydantic `root_validator` 报错,或 `cannot import name 'log' from torch.distributed.elastic`
 
-老版 DeepSpeed 与 **pydantic ≥ 2** 不兼容(2026-07-21 在 101vector 的
-`mobileviclip` conda 环境实测踩中)。`shared_utils.py` 的 import 已改为可选,
-现在有三条路,任选其一:
+老版 DeepSpeed 在 torch 2.x 环境里有**两重不兼容**(101vector 2026-07-21
+两种都踩了):pydantic ≥ 2 炸 `@root_validator`;torch ≥ 2.0 移除了它要
+import 的 `log`。**`pip install "pydantic<2"` 只修第一重**,修完会接着死在
+第二重——torch 2.x 环境里老 deepspeed 就是跑不起来。完整分析见
+`TROUBLESHOOTING.md` 对应小节。按序处理:
 
 ```bash
-# 方案 A(最快,推荐):pydantic 降回 1.x —— 老 deepspeed 是按 v1 写的
-pip install "pydantic<2"
+# 第 0 步:先 git pull!PR #84 起 import 已有防护(deepspeed 坏了也不炸);
+#          堆栈若指向 shared_utils.py:8 的裸 import deepspeed = 还在跑旧代码。
 
-# 方案 B:升级 deepspeed 到支持 pydantic 2 的版本(编译关掉省事)
+# 正解(torch 2.x 环境):升级 deepspeed(需要 pydantic>=2,降过的升回来)
+pip install -U pydantic
 DS_BUILD_OPS=0 pip install -U "deepspeed>=0.14"
+python -c "import deepspeed; print(deepspeed.__version__)"   # 不报错才算好
 
-# 方案 C(不修环境,直接绕开):试点/短训用 DDP+AMP 跑,不用 DeepSpeed
+# 或绕开(试点/冒烟专用,DDP+AMP 路径,完全不碰 deepspeed):
 bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 deepspeed.enable False
 ```
 
 注意:**正式 R0–R3 复现必须回到 DeepSpeed 路径**(原配方是 DeepSpeed
-stage-1 + fp16),方案 C 只用于试点和链路调通;A/B 双方用同一路径即可公平。
+stage-1 + fp16),绕开只用于试点和链路调通;A/B 双方用同一路径即可公平。
+按 `mobileviclip.yml` 装的原版环境(torch 1.13.1)两重都不会踩。
 
 其余日志噪音无害:pydantic 的 `Valid config keys have changed`、torch 的
 `custom_fwd deprecated`、`FusedMLP/DropoutAddRMSNorm of flash_attn is not

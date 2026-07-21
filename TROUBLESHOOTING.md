@@ -472,3 +472,58 @@ bash scripts/evaluation/clip/zero_shot/mobileviclip_tiny/eval_anet.sh
 
 Landing within ~1 point of these confirms the model, video decoding, and the
 annotation split are all wired up correctly for that dataset.
+
+## `import deepspeed` crashes: pydantic `root_validator` error, or `cannot import name 'log' from torch.distributed.elastic`
+
+### Symptom
+
+Any `tasks_clip/*` entry point dies at startup, once per rank, with a traceback
+ending inside `import deepspeed` — one of two variants:
+
+```
+pydantic.errors.PydanticUserError: If you use `@root_validator` with pre=False
+(the default) you MUST specify `skip_on_failure=True`.
+```
+
+```
+ImportError: cannot import name 'log' from
+'torch.distributed.elastic.agent.server.api'
+```
+
+Both hit on 101vector (2026-07-21) in a conda env with torch 2.x.
+
+### Cause
+
+An **old DeepSpeed build is incompatible with the modern env on two separate
+axes**:
+
+1. old DeepSpeed uses pydantic-v1 style validators → crashes under
+   **pydantic ≥ 2** (first variant);
+2. old DeepSpeed's `elasticity/elastic_agent.py` imports `log`, which was
+   removed from torch's elastic API in **torch ≥ 2.0** (second variant).
+
+`pip install "pydantic<2"` only fixes axis 1 — in a torch 2.x env the import
+then fails on axis 2. The old DeepSpeed simply cannot run with torch 2.x.
+
+### Fix
+
+```bash
+# 0) FIRST: git pull. Since PR #84 the repo guards the import
+#    (tasks_clip/shared_utils.py) so a broken deepspeed no longer kills
+#    runs that don't use it. A traceback pointing at a bare
+#    `import deepspeed` on shared_utils.py line 8 means you are on old code.
+
+# 1) Real fix in a torch 2.x env: upgrade deepspeed (needs pydantic >= 2 —
+#    if you downgraded pydantic for axis 1, upgrade it back):
+pip install -U pydantic
+DS_BUILD_OPS=0 pip install -U "deepspeed>=0.14"
+python -c "import deepspeed; print(deepspeed.__version__)"   # must not raise
+
+# 2) Or bypass for pilots/smoke runs (DDP+AMP path, no deepspeed at all):
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 deepspeed.enable False
+```
+
+Note: the pinned-original env (`mobileviclip.yml`, torch 1.13.1) does not hit
+either axis — this only bites self-built torch 2.x envs. Official R0–R3
+replication runs must use the DeepSpeed path (original recipe is DeepSpeed
+stage-1 + fp16); the bypass is for pilots and plumbing checks only.
