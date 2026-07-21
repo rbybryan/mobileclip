@@ -41,6 +41,9 @@ CUDA 13 已经**彻底删掉 Volta(sm_70)**,所以 warning 里列出的架构是
 **Do this next:**
 
 ```bash
+# 0) 先拉最新(本条修复 + §2b 的 sm_70 预检都在里面)
+cd ~/mobileclip && git pull origin handoff
+
 conda activate mobileviclip
 
 # 1) 卸掉 CUDA-13 构建
@@ -62,6 +65,15 @@ python -c "import deepspeed; print('deepspeed', deepspeed.__version__)"
 # 5) sm_70 出现后再重开冒烟
 bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 debug True
 ```
+
+**冒烟过了之后**:回 `experiments/README.md` §2b 按原顺序续跑,不用另记命令 ——
+§2b 的 4 步已经是完整的(1 建 anno → 2 `export MVC_DATA_DIR` → 3 sm_70 预检 →
+4 冒烟 + 等步数 A/B)。两个提醒:
+
+- §2b 第 1 步 `tools/make_pilot_anno.py` **必须先跑过一次**,否则 r0 配置找不到
+  `anno_downstream/internvid_zh_10k_pilot.json`;已经跑过就跳过。
+- 第 4 步的等步数 A/B 是**成对**的,两条都要跑完才能比:
+  `pilot_10k_r0.py 8` 与 `pilot_10k_r1.py 8`。
 
 ⚠️ 以后**不要再在这个环境里 `pip install -U torch/torchvision/torchaudio`,
 也不要裸 `pip install torchvision`** —— PyPI 默认 wheel 是 CUDA 12.8/13 构建,

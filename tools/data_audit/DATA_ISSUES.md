@@ -23,8 +23,9 @@
 | S1 嵌入打分 | ✅ 完成 | `s1_scores.*.jsonl` | error 0%，SigLIP 信号健康；**`xling_cos` 是弱工具** |
 | S1 联合分析 | ✅ 完成 | `s1_analysis.md` | 翻译损伤真实但小、只在极低尾；S3 阈值有雷 |
 | **S2 VLM 审核** | 🔄 **运行中** | `s2_verdicts.*.jsonl` | 10k 全覆盖，8 卡 HF 后端，预计 ~2–3 h |
-| S2 裁判（云端 235B） | ⬜ 未开始 | `s2_verdicts_judge.jsonl` | 需 `JUDGE_API_KEY`；**可与主力并行，不占本机 GPU** |
+| S2 裁判（云端 235B） | ⬜ 未开始 | `s2_verdicts_judge.jsonl` | 需 `JUDGE_API_KEY`；**可与主力并行，不占本机 GPU**。主力/裁判的分工见 [`SETUP_V100.md`](SETUP_V100.md) §4.2–4.3 |
 | S2 人工抽检 300 | ⬜ 未开始 | `human_check_300.jsonl` | 在 §6 Gradio 里过 |
+| **xling 阈值裁决** | ⬜ 未开始（工具已就位） | `xling_calibration.md` | `run_v100.sh xling-check`，**S2 一完成就跑，裁决 §4 决策 1** |
 | S3 校准 + 分桶 | ⬜ 未开始 | `report.md` / `buckets.jsonl` | **开跑前先解决 §4 的两个待决策** |
 
 刷新状态：
@@ -96,11 +97,25 @@ elif (fl & RETRANSLATE_FLAGS) or (rec["xling_cos"] < args.xling_threshold):
 会把约 **23% 的语料**仅凭一个 ρ≈0 的弱信号扫进重翻队列。这是「用未校准的
 绝对阈值去切未校准的分数」。
 
-**判据**（等 S2 回来）：VLM `trans_score≤2` 差率随 xling 十分位的变化——
+**工具已就位**——S2 一跑完就执行，它会直接给出建议：
 
-- 曲线**平坦** → 阈值压到极低尾（≈p5=0.611），或让 xling 完全退出分桶规则，
-  只留 S0 旗标 + `sig_*` 作判据；
-- 曲线**单调下降** → xling 确有判别力，按 §7.5 正常选阈值。
+```bash
+bash tools/data_audit/run_v100.sh xling-check     # -> outputs/audit_10k/xling_calibration.md
+```
+
+`calibrate_xling.py` 产出的正是 `report.md` **不产出**的那份证据（后者的十分位
+是按 `sig_zh` 切的，不是按 `xling`）：`trans_score≤2` 差率 × xling 十分位、
+当前 0.7 阈值的精度/召回、阈值扫描，以及**改用 S0 旗标做检测器**的对照。
+
+三种可能的结论，脚本会自己判并给出改法：
+
+- 曲线**平坦** → 让 xling 退出分桶规则（`--xling-threshold 0`）或压到极低尾；
+- 曲线**单调下降且能达标** → 直接给出校准后的阈值；
+- 曲线**有判别力但达不到目标精度** → 注意这可能是**算术上不可达**而非 xling
+  的错（精度 ≤ 基准率 × lift；基准率若只有 ~9%，要 80% 精度需要整个被选集合上
+  维持 ~9× lift）。此时三选一：降低 `--target-precision`、改成「xling 低 **且**
+  有 S0 旗标」的**合取**条件（把 `aggregate_report.py:179` 的 `or` 改成 `and`）、
+  或只保留极低尾。
 
 > 现在**不要**改死默认值——没有 S2 判定就改，只是把一个未经验证的猜测
 > 换成另一个。
