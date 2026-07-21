@@ -68,23 +68,33 @@ Volta **没有 FP8 支持**，FP8 版权重跑不了；BF16 原版 ~470GB，
 `Qwen3.6-27B` **支持视觉输入**，`vlm_audit.py` 的 `image_url` 内容块可用，
 路线 A′ 成立。**剩下的唯一关卡是探针二（网段连通性）。**
 
-> 📌 **本地已有参考实现**（调用这批端点的既有代码，house convention 以它为准）：
-> `/workspace/mount/b100_zaip_data/wky_b100/project/Qwen3_5_vllm_dev/request_multilabel_v3_resume.py`
->
-> **接入前拿它对照下面几项**——我们的 `vlm_audit.py` 默认值若与之不符，
-> 用命令行参数改（括号内为我们的默认）：
->
-> | 项 | 我们的默认 | 怎么改 | 为什么要对 |
-> |---|---|---|---|
-> | 鉴权头 | 恒发 `Authorization: Bearer <key>` | `--api-key`（vLLM 未开鉴权时填 `EMPTY` 即可，不校验） | 若那边用别的头/无头，多发一个 Bearer 通常无害，但被网关拦就要改 |
-> | 模型 ID | `--model` 原样传 | 以 `curl $EP/models` 为准 | 未设 `--served-model-name` 时对外 ID 就是那串权重路径 |
-> | 并发 | `s2-judge` 里写死 `--concurrency 8` | 改 `run_v100.sh` 或直调 `vlm_audit.py` | 端点是共享资源，**别把别人的服务打满**；参考脚本里的并发即安全上限 |
-> | 单请求超时 | `--timeout 180`（秒） | 同上 | 27B + 8 帧长上下文可能更慢 |
-> | 图像尺寸 | `--max-side 448`，JPEG q80 | `--max-side` | 参考脚本若用更大分辨率，判定质量会有差异 |
-> | `max_tokens` | 1024 | `--max-tokens` | rubric 要输出完整 JSON + `better_zh`，截断会导致解析失败 |
->
-> ⚠️ 该文件在 B100 集群上，**本仓库无法读取**，以上是"要核对哪些项"的清单，
-> 不是它的实际内容。若其中任何一项与参考实现不同，请把差异补记到本表。
+#### 已按内网参考实现对齐（2026-07，**已核对完毕**）
+
+house convention 取自调用这批端点的既有代码
+`/workspace/mount/b100_zaip_data/wky_b100/project/Qwen3_5_vllm_dev/request_multilabel_v3_resume.py`
+（用 `openai` SDK + `ThreadPoolExecutor`）。逐项比对结果：
+
+| 项 | 参考实现 | 我们的现状 | 结论 |
+|---|---|---|---|
+| **thinking 开关** | `extra_body={"chat_template_kwargs": {"enable_thinking": False}}` | **原本没发** → 已改为默认发送 | ⚠️ **最关键的一项，见下** |
+| 单请求超时 | `timeout=600` | 原 180 → **已改默认 600** | 已对齐 |
+| 重试 | 3 次，`sleep(2 ** attempt)` 退避 | 原本重试**无退避**（立刻重打） → 已加同款指数退避 | 已修 |
+| 并发 | `MAX_WORKERS = 32` | `s2-judge` 用 8 | ✅ **8 远低于 house 值，安全**（不必再担心打满） |
+| 鉴权 | `api_key="EMPTY"` | `--api-key EMPTY` | 一致 |
+| 模型 ID | 权重路径原样 | `--model` 原样传 | 一致 |
+| 图像编码 | `data:image/{mime};base64,...`，**原图不缩放** | 同格式，但缩到 `--max-side 448` JPEG q80 | 我们更省，安全（对方全分辨率都跑得动） |
+| 消息结构 | `system` + `user`(image→text) | 全部放 `user`(image→text) | 顺序一致，可用 |
+| `temperature` | `0.0` | `0.0` | 一致 |
+| `max_tokens` | 512（其任务） | 1024（我们要出 `better_zh`，需更多） | 合理 |
+
+> 🔴 **`enable_thinking: False` 是必须的，不是可选优化。**
+> Qwen3.x 的 thinking 模式**默认开启**。不关的话，模型会把整个 `max_tokens`
+> 预算花在 `<think>` 里，还没轮到输出裁判 JSON 就被截断；而**被截断的 think 块
+> 没有闭合的 `</think>`**，`extract_json` 的剥离正则也救不回来——结果是
+> **每一条都返回 `{"error": "no valid verdict JSON in response"}`**，
+> 整轮裁判白跑且报错信息还很有迷惑性。
+> `vlm_audit.py` 现在**默认发送**该字段；只有当端点拒收这个字段时（某些云端
+> 网关）才加 `--allow-thinking` 关掉。
 
 （探针一的复测命令保留在此，换端点/换模型时可复用：）
 

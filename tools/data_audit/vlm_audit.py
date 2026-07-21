@@ -31,6 +31,7 @@ import os
 import re
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -149,6 +150,14 @@ def audit_one(rec, args, session):
         "temperature": 0.0,
         "max_tokens": args.max_tokens,
     }
+    if not args.allow_thinking:
+        # Qwen3.x ships a thinking mode that is ON by default. Left on, the model
+        # spends the whole max_tokens budget inside <think> and gets truncated
+        # before it ever emits the verdict JSON -- and a truncated block has no
+        # closing </think>, so extract_json's strip cannot even recover it. Every
+        # record would come back {"error": "no valid verdict JSON in response"}.
+        # Matches the in-house client for these endpoints.
+        body["chat_template_kwargs"] = {"enable_thinking": False}
     last_err = None
     for attempt in range(args.retries + 1):
         try:
@@ -161,6 +170,10 @@ def audit_one(rec, args, session):
             return out
         except Exception as ex:  # noqa: BLE001
             last_err = f"{type(ex).__name__}: {ex}"
+            if attempt < args.retries:
+                # exponential backoff: a shared endpoint under load returns 429/503,
+                # and retrying instantly just adds to the pile
+                time.sleep(2 ** attempt)
     out["verdict"] = {"error": last_err}
     return out
 
@@ -179,7 +192,13 @@ def main():
     ap.add_argument("--max-tokens", type=int, default=1024)
     ap.add_argument("--concurrency", type=int, default=32)
     ap.add_argument("--retries", type=int, default=2)
-    ap.add_argument("--timeout", type=float, default=180.0)
+    ap.add_argument("--timeout", type=float, default=600.0,
+                    help="per-request timeout; 600 matches the in-house client for "
+                         "these endpoints (a shared 27B with 8 frames can be slow)")
+    ap.add_argument("--allow-thinking", action="store_true",
+                    help="do NOT send chat_template_kwargs.enable_thinking=False. "
+                         "Only for endpoints that reject that field; on Qwen3.x "
+                         "leaving thinking on makes every verdict fail to parse")
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
 
