@@ -71,7 +71,13 @@ python tools/make_pilot_anno.py \
 # 2) 数据路径:videos 在 /home/vca1/datasets/internvid_zh_10k/videos
 export MVC_DATA_DIR=/home/vca1/datasets   # anno 用默认 anno_downstream/ 即可
 
-# 3) 冒烟(debug 几十步自停)→ 微型 A/B(等步数,~180 步)
+# 3) 开跑前必做的 V100 预检:torch 必须带 sm_70 内核
+#    (env 里若是 cu126/cu128/CUDA-13 构建,8 卡会在第一个 barrier 就全部
+#     报 "no kernel image is available";修法见 TROUBLESHOOTING.md 末节)
+python -c "import torch; a=torch.cuda.get_arch_list(); print(torch.__version__, a); \
+  assert 'sm_70' in a, 'torch 无 Volta 内核 → 见 TROUBLESHOOTING.md'; print(torch.zeros(1).cuda())"
+
+# 4) 冒烟(debug 几十步自停)→ 微型 A/B(等步数,~180 步)
 bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 debug True
 bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8
 bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8
