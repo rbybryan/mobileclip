@@ -59,7 +59,10 @@ print(" ".join(m for m in sys.argv[1:] if u.find_spec(m) is None))' \
   fi
 }
 expected_total() { wc -l < "$DATA"; }
-s1_lines() { cat "$OUT"/s1_scores.*.jsonl 2>/dev/null | wc -l; }
+# 注意 { cat ... || true; }：无匹配文件时 cat 失败，在 set -o pipefail 下会把
+# 整条管道判 1，再被 set -e 杀掉整个脚本（症状：status 一行都不输出就退出）
+s1_lines() { { cat "$OUT"/s1_scores.*.jsonl 2>/dev/null || true; } | wc -l; }
+s2_lines() { { cat "$OUT"/s2_verdicts.*.jsonl 2>/dev/null || true; } | wc -l; }
 
 case "${1:-}" in
 # ---------------------------------------------------------------- ① 冒烟
@@ -138,11 +141,16 @@ status)
   need_data
   total=$(expected_total)
   s1=$(s1_lines)
-  echo "S1: $s1 / $total ($(python3 -c "print(f'{$s1/$total:.1%}')"))"
-  s2=$(cat "$OUT"/s2_verdicts.*.jsonl 2>/dev/null | wc -l)
+  s1_alive=$(pgrep -fc score_alignment.py || true)
+  s2_alive=$(pgrep -fc vlm_audit_hf.py || true)
+  echo "S1: $s1 / $total ($(python3 -c "print(f'{$s1/$total:.1%}')"))  存活进程: $s1_alive"
+  s2=$(s2_lines)
   s2t=$( [ -f "$OUT/s2_sample.jsonl" ] && wc -l < "$OUT/s2_sample.jsonl" || echo 0)
-  echo "S2: $s2 / $s2t"
-  tail -n 2 "$OUT"/s1_shard*.log 2>/dev/null | grep -a progress | tail -4 || true
+  echo "S2: $s2 / $s2t  存活进程: $s2_alive"
+  echo "（刚启动时行数为 0 是正常的：各分片要先下载/加载模型权重，看下方日志尾行确认在动；"
+  echo "  进程数 0 且未到 100% = 分片已退出，查对应日志的 Traceback 后重跑即可断点续跑）"
+  echo "---- 各分片日志尾行 ----"
+  tail -n 1 "$OUT"/s1_shard*.log "$OUT"/s2_shard*.log 2>/dev/null || true
   ;;
 # ---------------------------------------------------------------- ④ 抽样
 s2-sample)
