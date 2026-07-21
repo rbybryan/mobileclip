@@ -59,7 +59,7 @@ need_clips() { [ -d "$CLIPS" ] || { echo "错误：CLIPS 目录不存在：'$CLI
 need_py() {
   missing=$(python -c 'import importlib.util as u, sys
 print(" ".join(m for m in sys.argv[1:] if u.find_spec(m) is None))' \
-    numpy torch transformers accelerate sentence_transformers decord PIL requests)
+    numpy torch torchvision transformers accelerate sentence_transformers decord PIL requests)
   if [ -n "$missing" ]; then
     echo "错误：当前 Python（$(command -v python)）缺依赖：$missing"
     echo "  多半是没激活虚拟环境（提示符还是 (base)）。先执行："
