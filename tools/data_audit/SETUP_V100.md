@@ -168,9 +168,10 @@ python tools/data_audit/show_flags.py --flags outputs/audit_10k/s0_flags.jsonl \
 **③ S1 + s2-sample 不用等 8B**——SigLIP2/LaBSE 一到就先把 S1 全量
 （10–30 分钟）和 `s2-sample`（全覆盖）跑完；8B 落地后直接开 `s2`。
 
-**④ 云端裁判链路冒烟（不依赖任何本地权重）**——若 API key 已就绪，
-用 5 条验证 `vlm_audit.py` 完整链路（路径解析→抽帧→base64→API→JSON 解析），
-顺便提前看 235B 的判定质量：
+**④ 裁判链路冒烟（不依赖任何本地权重）**——用 5 条验证 `vlm_audit.py` 完整链路
+（路径解析→抽帧→base64→API→JSON 解析），顺便提前看裁判的判定质量。
+**默认走内网 `Qwen3.6-27B` 端点，不需要任何 API key**（前提是本机连得到
+`172.30.x.x`，见 §4.3-端点）：
 
 ```bash
 python - <<'PY'
@@ -181,13 +182,15 @@ with open("outputs/audit_10k/api_smoke.jsonl","w") as f:
         f.write(json.dumps({"video":r["video"],"abs_path":r.get("abs_path"),
           "zh":r["raw_caption_zh_translated"],"en":r["caption"]},ensure_ascii=False)+"\n")
 PY
-export JUDGE_API_KEY=sk-...
 python tools/data_audit/vlm_audit.py --input outputs/audit_10k/api_smoke.jsonl \
   --video-root /home/vca1/datasets/internvid_zh_10k/videos \
-  --api-base https://dashscope.aliyuncs.com/compatible-mode/v1 --api-key $JUDGE_API_KEY \
-  --model qwen3-vl-235b-a22b-instruct --frames 8 --concurrency 2 \
+  --api-base http://172.30.85.198:8000/v1 --api-key EMPTY \
+  --model /workspace/mount/b100_zaip_data/model_zoo/Qwen3.6-27B \
+  --frames 8 --concurrency 2 \
   --output outputs/audit_10k/api_smoke_verdicts.jsonl
 cat outputs/audit_10k/api_smoke_verdicts.jsonl
+# 用云端 key 时改回：--api-base https://dashscope.aliyuncs.com/compatible-mode/v1
+#   --api-key $JUDGE_API_KEY --model qwen3-vl-235b-a22b-instruct
 ```
 
 **⑤ Gradio 人工摸底（零权重、零 GPU）**——按 §6 优先翻
@@ -360,7 +363,7 @@ bash tools/data_audit/run_v100.sh s1-report      # -> outputs/audit_10k/s1_analy
 > xling；且 S3 默认 `--xling-threshold=0.7` 正落在本批 p25 附近，**跑 s3 前
 > 先读那份笔记**。
 
-## 4. S2 VLM 审核（**推荐 10k 全覆盖**，8 卡 ~2–3 小时）〖4.2 主力 / 4.3 裁判 / 4.4 人工抽检可并行：裁判走云端 API 不占本机 GPU〗
+## 4. S2 VLM 审核（**推荐 10k 全覆盖**，8 卡 ~2–3 小时）〖4.2 主力 / 4.3 裁判 / 4.4 人工抽检可并行：裁判走外部端点，不占本机 GPU〗
 
 ```bash
 # 4.1 抽样——推荐全覆盖：默认参数（每分位桶 3000×10 桶）在 10k 上即选中
@@ -375,13 +378,17 @@ wc -l outputs/audit_10k/s2_sample.jsonl        # 应 ≈10000
 bash tools/data_audit/run_v100.sh s2
 bash tools/data_audit/run_v100.sh status
 
-# 4.3 裁判档：云端 235B（任何 OpenAI 兼容端点；500 条约十几元）
-#     —— 不占本机 GPU，可与 4.2 主力同时跑（只依赖 4.1 抽样完成）
-export JUDGE_API_KEY=sk-...          # DashScope / OpenRouter 等
-JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge   # 跑完自动打印一致率
-# （替代方案：H100 机在线时，把裁判放它的本地 235B-FP8——H100 起
-#   --host 0.0.0.0 服务、本机把 JUDGE_API_BASE 指到其内网地址即可，
-#   零 API 费用；分步部署手册见 SETUP_JUDGE_API.md）
+# 4.3 裁判档 —— 当前默认走【内网已有的 Qwen3.6-27B 端点】（无需 API key、
+#     无需下权重、不占本机 GPU，可与 4.2 主力同时跑，只依赖 4.1 抽样完成）
+#     ⚠️ 前提：本机能连到 172.30.x.x（不同网段，必须先实测，见下方 4.3-端点）
+export JUDGE_API_BASE=http://172.30.85.198:8000/v1    # 优先 8 卡端点
+export JUDGE_MODEL=/workspace/mount/b100_zaip_data/model_zoo/Qwen3.6-27B
+export JUDGE_API_KEY=EMPTY                            # vLLM 不校验，但脚本要求非空
+JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge   # 跑完自动算一致率+κ
+# 裁判在别的机器上跑完、只把 s2_verdicts_judge.jsonl 拷回来时，单独重算：
+#   bash tools/data_audit/run_v100.sh judge-agree
+# （其他裁判路线——H100 本地 235B-FP8 / 本机 32B / 无大裁判协议——
+#   全部选型与命令见 SETUP_JUDGE_API.md §0 的路线表）
 
 # 4.4 人工抽检 300 条（在 §6 的 Gradio 里过）
 shuf -n 300 <(cat outputs/audit_10k/s2_verdicts.*.jsonl) > outputs/audit_10k/human_check_300.jsonl
@@ -427,7 +434,13 @@ shuf -n 300 <(cat outputs/audit_10k/s2_verdicts.*.jsonl) > outputs/audit_10k/hum
    落在 8 张卡上、且都排在各分片靠前的位置，所以重叠很快就有、一致率能提前算出来。
    早发现 rubric 有问题 = 少浪费两三个小时的 8 卡时间。
 
-**决策门**：8B vs 裁判 action 一致率 ≥75%，不达标先改 rubric 再重跑——
+**决策门**（由 `bash tools/data_audit/run_v100.sh judge-agree` 一次算全，
+产出 `judge_agreement.md`）：五类 `action` 一致率 **≥75%**、二值
+`{keep,fix_text}` vs 其余 **≥80%**、**各维度 Cohen's κ ≥0.6**（plan §4）。
+**别只看一致率**——类别不平衡时双方一起说 `keep` 就能堆出高一致率，κ 才是
+扣掉「碰巧一致」后的真实一致程度；混淆矩阵里的偏斜（如主力判 `recaption`、
+裁判判 `retranslate`）说明 rubric 边界没写清，改 rubric 比换模型有用。
+不达标先改 rubric 再重跑——
 **在 10k 上把 rubric 调可信，正是全量（H100 机）开跑前最重要的准备**。
 全覆盖的额外收益：10k 报告是全量实测（零抽样误差）；1 万对
 （嵌入分, VLM 判定）配对点让 S3 的阈值校准曲线远比 1.4k 稳，直接
@@ -436,6 +449,52 @@ fp16 若出现乱码/NaN 输出（罕见）：`export S2_MODEL=Qwen/Qwen3-VL-4B-
 并在 `vlm_audit_hf.py` 加 `--dtype fp32` 重跑。
 
 ---
+
+### 4.3-端点 裁判档首选：内网已有的 Qwen3.6-27B 端点（零部署，**先试这条**）
+
+B100 集群上已经有别人起好的 vLLM OpenAI 兼容服务，**模型已确认支持视觉输入**
+（2026-07 实测），可直接当裁判——不用下权重、不占本机 8 张卡、不花 API 费用。
+**能连通的话，这条优于 4.3-本地的 32B**（那个要下 64GB 还要占满本机卡）。
+
+| 端点 | 起法 | 建议 |
+|---|---|---|
+| `http://172.30.85.198:8000/v1` | 8 卡 | **首选**（并发余量大） |
+| `http://172.30.62.177:8000/v1` | 8 卡 | 备选 |
+| `http://172.30.86.57:5000/v1` | 4 卡 | 前两个不可用时再用 |
+
+模型 ID 均为 `/workspace/mount/b100_zaip_data/model_zoo/Qwen3.6-27B`
+（起服务时没设 `--served-model-name`，**对外 ID 就是这串权重路径，原样传**；
+不确定时先 `curl $JUDGE_API_BASE/models` 看一眼）。
+
+**第一步永远是连通性实测**——`172.30.x.x` 与本机 `10.235.31.101` 不同网段：
+
+```bash
+for ep in 172.30.85.198:8000 172.30.62.177:8000 172.30.86.57:5000; do
+  echo -n "$ep: "
+  timeout 5 curl -s -o /dev/null -w "%{http_code}\n" "http://$ep/v1/models" || echo unreachable
+done
+```
+
+- **连得上** → 用 §4 命令块里 4.3 的三个 `export` 直接跑 `s2-judge`；
+  正式跑之前先用 §0.5 ④ 的 5 条冒烟验证整条链路。
+- **连不上** → **不必放弃这条路线**：借一台既能连该网段、又能收文件的中转机
+  （如 7 卡 V100 `10.55.87.68 -p 31179`）跑裁判，**只需拷 `JUDGE_N` 条视频而非全部 1 万条**，
+  跑完把 `s2_verdicts_judge.jsonl` 拷回本机 `run_v100.sh judge-agree` 算分。
+  完整步骤（含生成视频清单的脚本、rsync 命令）见
+  **[`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0 路线 A′「探针二不通时」**。
+
+**接入前请对照** `SETUP_JUDGE_API.md` §0 路线 A′ 的六项参数核对表
+（鉴权头 / 模型 ID / **并发** / 超时 / 图像尺寸 / `max_tokens`），
+house convention 以内网既有调用代码
+`.../Qwen3_5_vllm_dev/request_multilabel_v3_resume.py` 为准。
+**并发尤其要核**：`s2-judge` 目前写死 `--concurrency 8`，而端点是**共享资源**，
+别把别人在用的服务打满。
+
+> ⚠️ **证据强度打折**：27B 裁 8B 只有约 3 倍参数差距，且同厂同族——
+> 方案 §2 原本要的是 235B **加换一家**（InternVL）互为第二意见，正是为了避开
+> 共同盲区。**同族模型的一致率会被共同盲区抬高，一致不等于正确。**
+> 所以跑完 `judge-agree` **要看 κ 而不只是一致率**，并按
+> `SETUP_JUDGE_API.md` §0 路线 D 的 D2/D3 提高 4.4 人工抽检的权重。
 
 ### 4.3-本地 裁判档备选：本机部署 Qwen3-VL-32B（不用 H100、不用云端 API）
 
