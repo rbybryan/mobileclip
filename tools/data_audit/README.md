@@ -8,7 +8,7 @@
 | S0 规则画像 | `profile_jsonl.py` | 全量 10M | CPU，~20 分钟 |
 | S1 嵌入打分 | `score_alignment.py` | 全量 10M | SigLIP2，~100–200 GPU·h |
 | S2 VLM 审核 | `make_audit_sample.py` + `vlm_audit.py`（vLLM 服务，Ampere+）或 `vlm_audit_hf.py`（transformers 后端，V100 可用） | 分层抽样 ~4–5 万 | Qwen3-VL-8B，~15–30 GPU·h |
-| S3 校准分桶 | `aggregate_report.py` | 全量外推 | CPU |
+| S3 校准分桶 | `aggregate_report.py`（前置：`calibrate_xling.py` 裁决 xling 阈值） | 全量外推 | CPU |
 | S4 落地 v0.2 | `apply_buckets.py` | 全量 | CPU |
 
 > **跑到哪了 / 发现了什么问题** → **[`DATA_ISSUES.md`](DATA_ISSUES.md)**（活账本：
@@ -62,6 +62,7 @@ bash tools/data_audit/run_v100.sh s2-sample  # 默认参数在 10k 上即全覆�
 bash tools/data_audit/run_v100.sh s2         # 8 卡 VLM 审核全部 10k（HF 后端，~2–3 小时）
 export JUDGE_API_KEY=sk-...                  # 可选：云端 235B 裁判
 JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge
+bash tools/data_audit/run_v100.sh xling-check # 裁决 xling 阈值（s3 前必做，见 DATA_ISSUES.md §4）
 bash tools/data_audit/run_v100.sh s3         # 诊断报告 report.md + buckets.jsonl
 ```
 

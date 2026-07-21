@@ -12,6 +12,7 @@
 #   bash tools/data_audit/run_v100.sh s2-sample  # ④ 抽样（默认参数在 10k 上=全覆盖）
 #   bash tools/data_audit/run_v100.sh s2         # ⑤ 8 卡 VLM 审核全部 10k（HF 后端，~2–3h）
 #   JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge  # ⑥ 云端裁判（可选，需 API key）
+#   bash tools/data_audit/run_v100.sh xling-check # ⑥b 裁决 xling 阈值（s3 前必做）
 #   bash tools/data_audit/run_v100.sh s3         # ⑦ 校准+分桶+诊断报告 report.md
 # 跑其他数据（如全量挂载后）：export DATA/CLIPS/OUT 覆盖默认值即可。
 #
@@ -240,6 +241,20 @@ for p in glob.glob(f"{out}/s2_verdicts.*.jsonl"):
             tot += 1; agree += (v["action"] == j["action"])
 print(f"8B vs 裁判 action 一致率: {agree}/{tot} = {agree/max(1,tot):.1%}  <- 决策门 ≥75%")
 PY
+  ;;
+# ------------------------------------------------- ⑥.5 xling 阈值裁决（跑 s3 前）
+xling-check)
+  python -c 'import numpy' 2>/dev/null || {
+    echo "错误：当前 Python（$(command -v python)）缺 numpy。"
+    echo "  多半是没激活虚拟环境：source ~/audit_env/bin/activate"; exit 1; }
+  ls "$OUT"/s2_verdicts.*.jsonl >/dev/null 2>&1 || \
+    { echo "未找到 $OUT/s2_verdicts.*.jsonl（先跑完: bash $0 s2）"; exit 1; }
+  python tools/data_audit/calibrate_xling.py \
+    --verdicts "$OUT/s2_verdicts.*.jsonl" --scores "$OUT/s1_scores.*.jsonl" \
+    --target-precision "${TARGET_PRECISION:-0.8}" \
+    --out-md "$OUT/xling_calibration.md"
+  echo
+  echo "== 把结论记进 tools/data_audit/DATA_ISSUES.md §4 决策 1，再跑 s3 =="
   ;;
 # ---------------------------------------------------------------- ⑦ 报告
 s3)
