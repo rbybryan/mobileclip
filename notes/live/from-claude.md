@@ -23,6 +23,59 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-21 (5) — 更正:那个「共享字幕 0.0%」不能当成「全量重复率低」
+
+**问的是:** 为什么共享字幕会是 0%?
+
+**答:主要是抽样造成的,不是数据的性质。** 上一条笔记里我写的
+「多正例要等全量数据才谈得上验证」说对了一半,但结论下得太软 —— 准确的说法是:
+**这个 0.0% 对全量几乎没有任何约束力,不能拿它去判 `DATA_ISSUES.md` 里
+「重复 caption 率 >10%」那个决策门。**
+
+三条原因,按重要性排:
+
+1. **抽样率只有 0.1%(10k / 10M),这是决定性的。** 一组出现 2 次的重复字幕,
+   要**两条都**被抽中才看得见,概率 = 0.001² = **1e-6**。假设全量有 5% 的
+   clip(50 万条 = 25 万组)处在重复对里,这 10k 里的期望命中 =
+   25 万 × 1e-6 ≈ **0.5 组**。实测 1 组 —— 和「全量 5% 重复」完全相容。
+   换句话说,**观测 0.0% 和全量重复 5%,在统计上区分不开**。
+   这个抽样只对**全局重复上千次**的模板句有检出力(k=1000 时 P(≥2)≈26%),
+   对 k=2…100 的中低频重复完全瞎。
+2. **只算精确重复。** 训练侧 `caption_to_idx` 是 `pre_text` 归一化后取 md5,
+   "a man is talking to the camera" 和 "a man talks to the camera" 是两个 idx。
+   语义近重复一律不计。(顺带修了个小口径 bug:`make_pilot_anno.py` 之前按
+   **原始**串统计,比训练口径还严;现已改成先过同一套归一化再计数,
+   held-out 评测集的判重也跟着改了。)
+3. **InternVid 的构造方式本来就不产生共享字幕。** 每个 clip 由 captioner 独立
+   生成描述,不存在 MSR-VTT「一个视频 20 条 caption」那种结构性重复。
+
+**没变的结论:** 试点 A/B 里 `caption_idx` 仍然是空操作(全库就一对同字幕 clip,
+落进同一 batch=512 的概率单个 epoch 才 ~5.7%),所以 **r1 - r0 的差异照旧只能
+归给 sigmoid 损失 + 注意力池化 + t/b 大学习率**。这点不受上面影响。
+
+**要真判多正例值不值得做,唯一的办法是全量跑一遍:**
+
+```bash
+# 只有拿到全量 10M jsonl 时才做(H100 那边),CPU ~20 分钟
+python tools/data_audit/profile_jsonl.py --input <全量 jsonl> --out outputs/audit_v0_1/s0_summary.json
+python -m json.tool outputs/audit_v0_1/s0_summary.json | grep -A3 duplicate
+```
+
+看 `duplicate_zh_caption_rate`。注意口径:它数的是 **zh** 侧,试点训练喂的是
+**en** 侧字幕;英文重复经逐条翻译可能被打散,所以它是英文侧重复率的**下界**。
+
+**另外提一个可能更值钱的方向(留给 v0.2,先不动):** InternVid 里同一支源视频
+被切成多个 clip,画面高度相似但字幕各不相同 —— 它们在 batch 里互为负例,是
+**真的**假负例,而按字幕哈希的 `caption_idx` 一条也抓不到。若全量重复率证明偏
+低,比「共享字幕多正例」更值得做的是**按源视频 id 分组**(同 `video_id` 共享
+idx,或采样器层面禁止同视频 clip 进同一 batch)。
+
+**这条不需要服务器做任何事** —— 推导已落到 `notes/audit-10k-findings.md`
+结论 5、`experiments/README.md` §2b、`tools/data_audit/DATA_ISSUES.md`。
+**当前待办仍然是下面 (4) 里那三行命令。**
+
+---
+
 ## 2026-07-21 (4) — anno 成了;死在 DeepSpeed 现编 FusedAdam(nvcc 配不上 gcc 11)
 
 **先说好消息:** anno 这步彻底通了 —— `可用 10000 / 缺失 0 / root 外 0`,

@@ -31,6 +31,22 @@ ZH_KEYS = ["caption_zh", "zh_caption", "caption_cn", "cn_caption", "translated_c
            "caption_zh_translated"]
 EN_KEYS = ["caption", "caption_en", "en_caption", "source_caption", "src_caption", "en"]
 
+# 训练时字幕先过 dataset/utils.py:pre_text() 再喂给 caption_to_idx() 求哈希,
+# 所以「共享字幕」要按 **pre_text 之后**的串来数——按原始串数会低估(大小写、
+# 句末标点、连字符的差异都会被 pre_text 抹平)。这里复刻同一套规则(不 import
+# dataset.utils,那会连带拖进 torch)。改动时两边要同步。
+_PUNCT_RE = re.compile(r"([,.'!?\"()*#:;~])")
+_WS_RE = re.compile(r"\s{2,}")
+
+
+def normalize_caption(text):
+    """与 dataset/utils.py:pre_text() 等价的归一化(不截断)。"""
+    text = _PUNCT_RE.sub("", text.lower())
+    text = text.replace("-", " ").replace("/", " ").replace("<person>", "person")
+    text = _WS_RE.sub(" ", text)
+    return text.rstrip("\n").strip(" ")
+
+
 # 片段实际存放在 InternVId-*/… 的嵌套目录里,而 `video` 字段常常只是裸文件名,
 # 真正定位文件的是记录里的 `abs_path`。与
 # tools/data_audit/score_alignment.py: resolve_video_path() 保持同一套解析顺序。
@@ -155,27 +171,36 @@ def main():
                   "(并让 configs/data.py 的 data_root 与之对应)。", file=sys.stderr)
         sys.exit(1)
 
-    # 共享字幕统计(caption_idx 多正例修复的影响面)
-    counts = Counter(r["caption"] for r in records)
+    # 共享字幕统计(caption_idx 多正例修复的影响面)。按 pre_text 归一化后统计,
+    # 与训练时 caption_to_idx 的口径一致。
+    counts = Counter(normalize_caption(r["caption"]) for r in records)
     dup_groups = sum(1 for c in counts.values() if c > 1)
     dup_clips = sum(c for c in counts.values() if c > 1)
     print(f"记录: 可用 {len(records)}  解析失败 {n_parse}  缺 video {n_no_video}  "
           f"缺 caption {n_no_caption}  文件缺失 {n_missing}  root 外 {n_outside}")
     print(f"共享字幕: {dup_groups} 组 / 覆盖 {dup_clips} 条 clip "
-          f"({dup_clips / len(records):.1%}) —— caption_idx 多正例的实际影响面")
+          f"({dup_clips / len(records):.1%}) —— caption_idx 多正例在**这批抽样上**的影响面")
+    # 这个数字**不能外推到全量**:10k 是 10M 的 0.1% 抽样,一对(k=2)重复字幕
+    # 要两条都被抽中才看得见,概率 = 0.001² = 1e-6。全量哪怕 5% 的 clip 处在
+    # 重复对里,这里的期望命中也只有约 0.5 组。要判 DATA_ISSUES.md 的
+    # 「重复 caption 率 >10%」决策门,只能用 profile_jsonl.py 跑全量 jsonl。
+    print("  ↑ 抽样率 0.1%,该数字对全量无约束力;全量重复率见 "
+          "tools/data_audit/profile_jsonl.py 的 duplicate_zh_caption_rate")
 
     rng = random.Random(args.seed)
     rng.shuffle(records)
 
     eval_recs = []
     if args.eval_split > 0:
-        # 评测集内字幕必须唯一,否则自检索的 txt->video 映射不适定
+        # 评测集内字幕必须唯一,否则自检索的 txt->video 映射不适定。按归一化后
+        # 的串判重——文本塔看到的就是 pre_text 之后的串。
         seen = set()
         rest = []
         for r in records:
-            if len(eval_recs) < args.eval_split and r["caption"] not in seen:
+            key = normalize_caption(r["caption"])
+            if len(eval_recs) < args.eval_split and key not in seen:
                 eval_recs.append(r)
-                seen.add(r["caption"])
+                seen.add(key)
             else:
                 rest.append(r)
         records = rest

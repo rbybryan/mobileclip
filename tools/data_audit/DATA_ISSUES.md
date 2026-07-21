@@ -69,6 +69,14 @@ python -m json.tool outputs/audit_10k/s0_summary.json | head -60
 → 翻译管线要回炉；**重复 caption 率 >10%** → 假负例治理升为必做项。
 把数字填进上表并在此说明是否触发。
 
+> ⚠️ **「重复 caption 率」这个门,只能用全量判,抽样判不了。** 10k 是 10M 的
+> 0.1% 抽样,一组 k=2 的重复要两条都被抽中才可见(概率 1e-6);全量哪怕 5% 的
+> clip 处在重复对里,10k 里的期望命中也只有约 0.5 组。`make_pilot_anno.py`
+> 在 10k 上报的 0.0% 因此**对全量毫无约束力**,`outputs/audit_10k/s0_summary.json`
+> 里的 `duplicate_zh_caption_rate` 同理。推导与副作用见
+> [`notes/audit-10k-findings.md` 结论 5](../../notes/audit-10k-findings.md)。
+> 另注意口径:该字段数的是 **zh** 侧重复,而试点训练喂的是 **en** 侧字幕。
+
 ---
 
 ## 3. 待 S2 裁决
