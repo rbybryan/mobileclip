@@ -69,6 +69,16 @@ def resolve_video_path(video_root, rec, video):
     return cands[0] if cands else ""
 
 
+def pooled_output(feats):
+    """transformers >=4.56 returns BaseModelOutputWithPooling from
+    get_image_features/get_text_features; older versions return the pooled
+    tensor directly."""
+    if isinstance(feats, torch.Tensor):
+        return feats
+    po = getattr(feats, "pooler_output", None)
+    return po if po is not None else feats[0]
+
+
 def sample_frames(path, num_frames):
     import decord
     decord.bridge.set_bridge("native")
@@ -156,8 +166,9 @@ def main():
         img_emb = None
         if flat:
             inputs = processor(images=flat, return_tensors="pt").to(args.device)
-            img_emb = model.get_image_features(**{k: v.to(dtype) if v.is_floating_point()
-                                                  else v for k, v in inputs.items()})
+            img_emb = pooled_output(
+                model.get_image_features(**{k: v.to(dtype) if v.is_floating_point()
+                                            else v for k, v in inputs.items()}))
             img_emb = torch.nn.functional.normalize(img_emb, dim=-1).float()
         texts, owners = [], []
         for i, rec in enumerate(batch):
@@ -170,7 +181,7 @@ def main():
         if texts:
             tin = processor(text=texts, return_tensors="pt",
                             padding="max_length", truncation=True).to(args.device)
-            txt_emb = model.get_text_features(**tin)
+            txt_emb = pooled_output(model.get_text_features(**tin))
             txt_emb = torch.nn.functional.normalize(txt_emb, dim=-1).float()
         xl = None
         if xling is not None:
