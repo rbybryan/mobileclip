@@ -23,6 +23,49 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-21 (3) — `没有可用记录` 已修:片段在 InternVId-*/ 嵌套目录里
+
+**Diagnosis:** 不是你命令打错,是 `make_pilot_anno.py` 的 bug。片段**不是平铺在
+`videos/` 下**,而是在嵌套的 `InternVId-*/…` 目录里,jsonl 的 `video` 字段常常只是
+裸文件名,真正定位文件的是记录里的 `abs_path`。审查工具一直有这套三候选解析
+(`tools/data_audit/score_alignment.py: resolve_video_path()`),但
+`make_pilot_anno.py` 只做了朴素的 `os.path.join(clips_root, video)` ——
+于是 1 万条全部判为「文件缺失」。而且它在打印计数**之前**就 `sys.exit`,
+所以那句话没法区分「字段名不对」还是「路径不对」。两个问题都已修并合进 `main`。
+
+**Do this next:**
+
+```bash
+cd ~/mobileclip && git pull origin main     # 必须先拉,否则还是旧脚本
+
+python tools/make_pilot_anno.py \
+    --input /home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl \
+    --clips-root /home/vca1/datasets/internvid_zh_10k/videos \
+    --out-train anno_downstream/internvid_zh_10k_pilot.json \
+    --out-eval  anno_downstream/internvid_zh_10k_pilot_val.json
+
+ls -l anno_downstream/internvid_zh_10k_pilot*.json
+
+# 成功后接 §2b 第 2–4 步
+export MVC_DATA_DIR=/home/vca1/datasets
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 debug True
+```
+
+**若还是没记录**:新脚本会打印**分项计数** + 首条记录的**真实字段名** + 试过的路径。
+把那一整段贴回来,一轮就能定位。对应处理见 `TROUBLESHOOTING.md`:
+- 缺 video/caption 多 → 用新加的 `--video-key` / `--caption-key` 指定真实字段名;
+- 文件缺失多 → `--clips-root` 指错了,或记录没有 `abs_path`;
+- `root 外` 多 → 文件在 `--clips-root` 之外,anno 写不出相对路径。
+
+⚠️ **不要**因为跑不通就改 `--caption-field zh`。文本塔是 CLIP 英文 BPE,
+中文字幕喂进去是**另一个实验**,不是等价替代,会让 r0/r1 对照失效。
+英文字幕若真的缺失,先报回来再一起定。
+
+**Then report back** in from-server.md:脚本打印的那两行(可用条数 / 共享字幕比例),
+或失败时的完整分项计数。
+
+---
+
 ## 2026-07-21 (2) — sm_70 修好了;现在缺的是试点 anno(§2b 第 1 步没跑)
 
 **Diagnosis:** 好消息:**torch 的问题解决了**。这次报错发生在
