@@ -822,3 +822,73 @@ Re-run step 1 after pulling. Read the breakdown it prints:
 > Chinese caption through an English BPE tokenizer is a different experiment,
 > not a drop-in substitute, and would invalidate comparison with the baseline.
 > Report it instead.
+
+---
+
+## DeepSpeed startup dies in `FusedAdamBuilder().load()`: `parameter packs not expanded with ‘...’`
+
+**Symptom.** The 8-GPU pilot gets all the way through dataset construction, model
+build and optimizer grouping, then every rank dies inside
+`deepspeed.initialize` → `_configure_basic_optimizer` → `FusedAdam(...)`:
+
+```
+RuntimeError: Error building extension 'fused_adam': ... ninja ...
+/usr/include/c++/11/bits/std_function.h:435:145: error: parameter packs not expanded with ‘...’:
+  435 |         function(_Functor&& __f)
+```
+
+Ranks that lose the race to build it report the follow-on error instead:
+
+```
+ImportError: ~/.cache/torch_extensions/py310_cu118/fused_adam/fused_adam.so:
+cannot open shared object file: No such file or directory
+```
+
+**Cause.** DeepSpeed's default Adam is `FusedAdam`, a CUDA extension that is
+**JIT-compiled on first use** with the *system* `nvcc` (`/usr/bin/nvcc`) — not
+with the CUDA that ships inside the torch wheel. On 101vector the system nvcc
+predates the system GCC, and old nvcc cannot parse GCC 11's `<functional>`
+header; `parameter packs not expanded with ‘...’` in `std_function.h` is the
+signature of exactly that mismatch. Note the second `.so` error is *downstream
+noise*: only one rank compiles, the other seven wait for the artefact that the
+failed build never produced. Fix the compile and both go away.
+
+This is independent of the Volta/`sm_70` issue above — the nvcc command line
+here already carries `-gencode=arch=compute_70,code=sm_70` correctly.
+
+**Fix (already in the repo — just pull).** `utils/config_utils.py` now writes
+`"torch_adam": true` into the generated `deepspeed_config.json`, so DeepSpeed
+builds `torch.optim.AdamW` instead of `FusedAdam`. Same algorithm, no fused
+kernel, and **nothing to compile**. Nothing to run — pull and re-launch.
+
+Two details worth knowing if you touch that code:
+
+- `torch_adam` and `adam_w_mode` must sit inside `optimizer.params`; DeepSpeed
+  pops them from there and passes every *remaining* key as a kwarg to the
+  optimizer constructor. (The old config put `adam_w_mode` one level up, where
+  it was silently ignored.)
+- Because the rest of `params` is forwarded verbatim, `bias_correction` — a
+  `FusedAdam`-only argument — must be dropped in the torch path or
+  `torch.optim.AdamW` raises `TypeError`. The code only adds it on the fused
+  branch. torch's AdamW does bias correction unconditionally, so the behaviour
+  is unchanged.
+
+**If you ever want the fused kernel back** (marginal gain at this model size;
+the optimizer is not the bottleneck here), re-enable it *and* give nvcc a host
+compiler it can handle:
+
+```bash
+# option A: keep system nvcc, point it at an older host compiler
+export NVCC_PREPEND_FLAGS='-ccbin /usr/bin/g++-10'      # only if g++-10 exists
+
+# option B: use an nvcc matching the cu118 torch build (CUDA 11.8 supports GCC 11)
+conda install -c nvidia cuda-nvcc=11.8 cuda-cudart-dev=11.8
+export CUDA_HOME="$CONDA_PREFIX"
+
+rm -rf ~/.cache/torch_extensions/py310_cu118/fused_adam   # stale failed build
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 \
+    deepspeed.torch_adam False debug True
+```
+
+Useful for the record when diagnosing: `nvcc --version`, `g++ --version`,
+`echo $CUDA_HOME`.
