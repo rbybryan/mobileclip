@@ -23,6 +23,60 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-21 (4) — anno 成了;死在 DeepSpeed 现编 FusedAdam(nvcc 配不上 gcc 11)
+
+**先说好消息:** anno 这步彻底通了 —— `可用 10000 / 缺失 0 / root 外 0`,
+9k train + 1k val 都写出来了。冒烟也比上次走远得多:数据集建好(9000 条已序列化)、
+`mobileclip_s2.pt` 双塔权重加载、优化器分组(458 + 875 个参数)全过,
+说明 sm_70、路径、配置这三层都对了。
+
+**Diagnosis:** 新报错在 `deepspeed.initialize` → `FusedAdam` 这一步。
+DeepSpeed 默认的 Adam 是 **FusedAdam**,它要在首次运行时用**系统 `/usr/bin/nvcc`
+现编一个 CUDA 扩展**(不是 torch wheel 里自带的那份 CUDA)。101vector 上系统
+nvcc 比系统 g++ 老,老 nvcc 解析不了 gcc 11 的 `<functional>`,于是:
+
+```
+/usr/include/c++/11/bits/std_function.h:435:145: error: parameter packs not expanded with ‘...’
+```
+
+其余 7 张卡刷的 `fused_adam.so: cannot open shared object file` 是**下游噪音** ——
+只有一张卡负责编译,其它卡在等那个从没被生成出来的 `.so`。编译修好就一起没了。
+跟上次的 Volta 问题**无关**:这条 nvcc 命令行里 `-gencode=…sm_70` 是对的。
+
+**修法(代码里已经改好,你只要 pull):** `utils/config_utils.py` 现在往生成的
+`deepspeed_config.json` 里写 `"torch_adam": true`,DeepSpeed 就改用
+`torch.optim.AdamW` —— 同一个算法,只是没有融合核,**什么都不用编译**。
+(顺带修了两个坑:`adam_w_mode` 原来写在 `optimizer` 顶层,DeepSpeed 只从
+`params` 里 pop,一直被静默忽略;还有 `bias_correction` 是 FusedAdam 专有参数,
+原样传给 torch AdamW 会直接 `TypeError`,torch 路径下已去掉。)
+
+**Do this next:**
+
+```bash
+cd ~/mobileclip && git pull origin main
+
+# 上次失败留下的半成品编译缓存,清掉免得干扰
+rm -rf ~/.cache/torch_extensions/py310_cu118/fused_adam
+
+export MVC_DATA_DIR=/home/vca1/datasets
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 debug True
+```
+
+anno 那两个 json 已经生成好了,**不用再跑 `make_pilot_anno.py`**。
+
+**顺手记一笔(重要,别忘):** 共享字幕 = **1 组 / 2 条 clip(0.0%)**。
+意味着 r1 里的 **`caption_idx` 多正例在这批 10k 上是空操作** —— 批内基本撞不上
+同字幕的两条 clip。所以试点 A/B 的差异只能归给 sigmoid 损失 + 注意力池化 +
+t/b 大学习率这三项,**不能记到多正例头上**;多正例要等全量数据才谈得上验证。
+这条已经写进 `experiments/README.md` §2b。
+
+**Then report back** in from-server.md:冒烟的头几十行 —— 具体看
+`Use deepspeed to initialize model!!!` 之后有没有顺利进到训练循环、
+损失有没有正常打印。若还卡在编译上,把 `nvcc --version` / `g++ --version` /
+`echo $CUDA_HOME` 三条的输出一起贴回来。
+
+---
+
 ## 2026-07-21 (3) — `没有可用记录` 已修:片段在 InternVId-*/ 嵌套目录里
 
 **Diagnosis:** 不是你命令打错,是 `make_pilot_anno.py` 的 bug。片段**不是平铺在

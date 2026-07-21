@@ -89,6 +89,30 @@ def setup_deepspeed_config(config):
     
     os.makedirs(config.output_dir, exist_ok=True)
 
+    # DeepSpeed 默认用 FusedAdam,而 FusedAdam 要在首次运行时用 nvcc **现编** CUDA
+    # 扩展。系统 nvcc 比系统 g++ 老时(101vector 上 nvcc 解析 gcc 11 的
+    # std_function.h 直接报 "parameter packs not expanded",见 TROUBLESHOOTING.md)
+    # 这一步必然失败,训练起不来。torch_adam 让 DeepSpeed 改用 torch.optim.AdamW ——
+    # 同一个算法,只是没有融合核,不需要任何编译。要融合核时:`deepspeed.torch_adam False`。
+    # 注:adam_w_mode / torch_adam 必须放在 params 里,DeepSpeed 从那里 pop,
+    # 放在 optimizer 顶层会被静默忽略。
+    torch_adam = config.deepspeed.get("torch_adam", True)
+    adam_params = {
+        "lr": opts.lr,
+        "weight_decay": opts.weight_decay,
+        "betas": [
+            opts.opt_betas[0],
+            opts.opt_betas[1],
+        ],
+        "eps": 1e-8,
+        "adam_w_mode": True,
+    }
+    if torch_adam:
+        # torch.optim.AdamW 不接受 bias_correction(它本来就一直做偏置校正)
+        adam_params["torch_adam"] = True
+    else:
+        adam_params["bias_correction"] = True
+
     with open(config.deepspeed_config, mode="w") as writer:
         ds_config = {
             "train_batch_size": config.batch_size * dist.get_world_size(),
@@ -96,17 +120,7 @@ def setup_deepspeed_config(config):
             "steps_per_print": 100,
             "optimizer": {
                 "type": "Adam",
-                "adam_w_mode": True,
-                "params": {
-                    "lr": opts.lr,
-                    "weight_decay": opts.weight_decay,
-                    "bias_correction": True,
-                    "betas": [
-                        opts.opt_betas[0],
-                        opts.opt_betas[1],
-                    ],
-                    "eps": 1e-8
-                }
+                "params": adam_params,
             }
         }
         if config.deepspeed.stage != 0:
