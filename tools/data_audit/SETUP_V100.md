@@ -518,6 +518,19 @@ nohup bash -c 'until hf download Qwen/Qwen3-VL-32B-Instruct \
 代价：hf_transfer 没有细粒度进度条、报错信息也更含糊；出问题就
 `unset HF_HUB_ENABLE_HF_TRANSFER` 退回普通模式定位。
 
+> ⛔ **101vector 实测：方案 B 在本机走不通，别浪费时间。** `audit_env` 里的
+> `huggingface_hub` 是新版，**已弃用 `hf_transfer`、改用 Xet**（会打
+> FutureWarning 让你改用 `HF_XET_HIGH_PERFORMANCE`），而 hf-mirror 给不出
+> Xet 文件的完整元数据 → 本地没有的文件一律 `Error: Local entry not found`
+> 致命退出，`until` 循环每 10 秒空转一次、一个字节都下不来。
+> `HF_HUB_DISABLE_XET=1` 在这个版本救不回来。**直接走方案 C**（ModelScope，
+> 另一套服务、不涉及 Xet）。诊断细节见 `TROUBLESHOOTING.md` 同名条目。
+>
+> 日志里 `Couldn't access the Hub ... Defaulting to existing file` 是**良性**的
+> （小文件本地已有、跳过校验）；`Error: Local entry not found` 才是致命的那条。
+> 也**不要为此降级 `huggingface_hub`**——它是 `transformers` 的依赖，
+> 审核期间 `audit_env` 必须冻结（步骤 0 的红线）。
+
 **方案 C：ModelScope 提高并发**（Qwen 系在国内通常 ModelScope 路由最好）
 
 ```bash

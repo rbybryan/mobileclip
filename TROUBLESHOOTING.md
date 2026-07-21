@@ -369,6 +369,58 @@ ls -l ckpts/Qwen3-VL-8B-Instruct/model-0000*-of-00004.safetensors
 
 ---
 
+## hf-mirror + new `huggingface_hub`: `Error: Local entry not found` on every retry
+
+Symptom — an `until hf download ...` loop that never downloads anything, each
+iteration failing in seconds:
+
+```
+FutureWarning: The `HF_HUB_ENABLE_HF_TRANSFER` environment variable is deprecated
+  as 'hf_transfer' is not used anymore. Please use `HF_XET_HIGH_PERFORMANCE` instead
+Fetching 26 files:   4%|▍  | 1/26
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file.
+Error: Local entry not found. Distant resource does not seem to be on huggingface.co.
+```
+
+**Cause.** Recent `huggingface_hub` (the version in `audit_env` on 101vector)
+**dropped `hf_transfer` in favour of Xet** as its transfer backend — the
+FutureWarning says so outright. hf-mirror cannot serve complete metadata for
+Xet-backed files, so any file **not already present locally** fails hard with
+`Local entry not found`. `HF_HUB_DISABLE_XET=1` was the cure on older hub
+versions and no longer rescues this one.
+
+Read the two messages correctly, they mean opposite things:
+
+- `Couldn't access the Hub ... Defaulting to existing file` — **benign**: a small
+  file is already local and revalidation was skipped.
+- `Error: Local entry not found` — **fatal**: a file is missing locally *and*
+  unfetchable from the mirror. This is the one that ends the run.
+
+**Fix — switch service, not settings.** Use ModelScope: a different service
+with its own client, no Xet involved, and the best domestic route for Qwen
+models anyway.
+
+```bash
+pkill -f "hf download"; sleep 2; pgrep -af "hf download"    # stop the spinning loop
+unset HF_HUB_ENABLE_HF_TRANSFER HF_HUB_DISABLE_XET          # both now useless here
+nohup bash -c 'until modelscope download --model Qwen/Qwen3-VL-32B-Instruct \
+  --local_dir ckpts/Qwen3-VL-32B-Instruct --max-workers 4; do sleep 10; done' \
+  > download_32b_ms.log 2>&1 &
+```
+
+**Do not downgrade `huggingface_hub` to get the old behaviour back.**
+`transformers` depends on it, and during an audit `audit_env` is a frozen
+environment — changing library versions mid-run can change model outputs and
+break comparability between shards already computed and shards computed later
+(`tools/data_audit/SETUP_V100.md` §4.3-本地 步骤 0). ModelScope sidesteps the
+whole issue at zero cost.
+
+If ModelScope is also slow, `hfd.sh --tool aria2c` is still worth a try: it hits
+hf-mirror's plain `resolve` URLs with curl/aria2c and never touches the Python
+client's Xet path, so it can succeed where the CLI fails.
+
+---
+
 ## Weight download is *slow but stable* (constant few hundred kB/s, no errors)
 
 Different failure from the entry above, and the fix is the **opposite**. That
