@@ -263,6 +263,49 @@ bash tools/data_audit/run_v100.sh status    # 随时看进度
 （`run_v100.sh` 的 `S1_TOTAL_SHARDS/S1_SHARD_OFFSET` 双机分片参数在本机
 **用不上**——那是两台机器共享全量数据盘时的加速项，本机没有全量数据。）
 
+### 3.5 完成后体检（错误率 + 分数分布，CPU 秒级）
+
+先确认每个分片正常收尾（结尾应是 `[done]` 而非 Traceback）：
+
+```bash
+wc -l outputs/audit_10k/s1_scores.*.jsonl        # 8 个分片行数之和 = 10000
+tail -n1 outputs/audit_10k/s1_shard*.log         # 每个都应是 "[done] shard N: wrote ..."
+```
+
+再跑分布体检：
+
+```bash
+source ~/audit_env/bin/activate && cd ~/mobileclip
+python - <<'PY'
+import json, glob, collections
+import numpy as np
+rows = [json.loads(l) for f in glob.glob("outputs/audit_10k/s1_scores.*.jsonl") for l in open(f)]
+print("总条数:", len(rows))
+err = [r for r in rows if "error" in r]
+print(f"error: {len(err)} ({len(err)/len(rows):.1%})", collections.Counter(r["error"] for r in err))
+for k in ("sig_zh_mean", "sig_en_mean", "xling_cos"):
+    v = np.array([r[k] for r in rows if k in r])
+    print(f"{k}: n={len(v)} min={v.min():.3f} p5={np.percentile(v,5):.3f} "
+          f"中位={np.median(v):.3f} p95={np.percentile(v,95):.3f} max={v.max():.3f}")
+PY
+```
+
+判读标准：
+
+- **error 率应 <2%** 且与冒烟一致（§0.5 解码体检 `ok≥98%` 过了的话这里
+  不会有惊喜）。`decode:` 开头的错误是数据本身的工程问题（H 类桶），
+  属于正常信号，不用修。
+- **三列分数应有正常散布**：`n` 接近 10000（带 error 的记录没有分数）、
+  无 NaN、不是所有值挤在同一个数上。SigLIP 余弦典型在 0~0.4 之间铺开；
+  `xling_cos`（LaBSE 中英一致性）大部分应偏高、留一条低分尾巴——低尾
+  就是疑似翻译坏掉的，交给 S3 分桶，这一步不用逐条解读。
+- 若 `sig_zh_mean` 整体几乎为 0 或大量 NaN，是 fp16 推理出了问题
+  （非数据问题）：按 §4 末尾的办法换 fp32 或排查。
+
+体检过了直接 `bash tools/data_audit/run_v100.sh s2-sample`（§4.1）——它
+自带 S1 完成度 ≥95% 的门槛，能正常产出 ~10000 条即说明 S1 产物结构与
+覆盖度均无问题。
+
 ## 4. S2 VLM 审核（**推荐 10k 全覆盖**，8 卡 ~2–3 小时）〖4.2 主力 / 4.3 裁判 / 4.4 人工抽检可并行：裁判走云端 API 不占本机 GPU〗
 
 ```bash
