@@ -215,6 +215,25 @@ git push
 
 ---
 
+## 6. Live handoff with Claude (server ⇄ Claude via git)
+
+The server has no Claude Code, so you "talk" to Claude through git — a turn-based loop.
+Full guide: [notes/git-handoff-workflow.md](notes/git-handoff-workflow.md).
+
+```bash
+# server → Claude: paste your output/error/question into notes/live/from-server.md, then:
+git add notes/live/from-server.md
+git commit -m "handoff: server update $(date +%F_%H%M)"
+git push origin <branch>
+# ...then ping Claude in chat: "拉一下 from-server.md"
+
+# read Claude's reply and act:
+git pull origin <branch>
+cat notes/live/from-claude.md      # newest block at the top
+```
+
+---
+
 ## Reference results (from upstream, MSR-VTT retrieval, tiny)
 
 ```
