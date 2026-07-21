@@ -657,3 +657,70 @@ cores, so `use_bf16=False` / `bf16=False` / fp16 AMP
 (`scripts/pretraining/clip/mobileviclip_small/config.py`). `flash_attn` is also
 unavailable on `sm_70`; the `FusedMLP of flash_attn is not installed!!!` lines
 are harmless fallback notices, not errors (see README_zh Q9).
+
+## `FileNotFoundError: anno_downstream/internvid_zh_10k_pilot.json` (10k pilot)
+
+### Symptom
+
+The V100 torch fix above worked — the run gets past CUDA init, model build and
+`init_distributed_mode`, then dies in dataset construction:
+
+```
+File "/home/vca1/rby/mobileclip/dataset/pt_dataset.py", line 88, in __init__
+    with open(self.label_file, 'r') as f:
+FileNotFoundError: [Errno 2] No such file or directory: 'anno_downstream/internvid_zh_10k_pilot.json'
+```
+
+### Cause
+
+Nothing is mis-pathed — **the annotation file simply has not been generated yet.**
+It is not shipped with the repo and is not part of the audit sample; it is built
+from the 10k audit jsonl by `tools/make_pilot_anno.py`, which is
+`experiments/README.md` §2b **step 1**. Jumping straight to the training command
+skips it.
+
+The paths involved all agree already (verified against `tools/data_audit/`):
+
+| Thing | Value on 101vector | Where it comes from |
+|---|---|---|
+| audit jsonl | `/home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl` | `tools/data_audit/run_v100.sh` `$DATA`, `SETUP_V100.md` §0 |
+| clips root | `/home/vca1/datasets/internvid_zh_10k/videos` | `run_v100.sh` `$CLIPS` |
+| `data_root` | `$MVC_DATA_DIR/internvid_zh_10k/videos` | `configs/data.py` `internvid_zh_10k_pilot` |
+| `anno_path` | `$MVC_ANNO_DIR/internvid_zh_10k_pilot.json` | same entry; `MVC_ANNO_DIR` defaults to `anno_downstream` |
+
+So with `MVC_DATA_DIR=/home/vca1/datasets` the `data_root` resolves to the same
+`videos/` directory the audit tooling uses, and the `video` field written by
+`make_pilot_anno.py` is relative to that root — consistent by construction,
+because the script validates every record against `--clips-root` and drops
+records whose file is missing.
+
+### Fix
+
+Run §2b step 1 once, from the repo root:
+
+```bash
+cd ~/mobileclip
+python tools/make_pilot_anno.py \
+    --input /home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl \
+    --clips-root /home/vca1/datasets/internvid_zh_10k/videos \
+    --out-train anno_downstream/internvid_zh_10k_pilot.json \
+    --out-eval  anno_downstream/internvid_zh_10k_pilot_val.json
+
+ls -l anno_downstream/internvid_zh_10k_pilot*.json    # ~9k train + 1k eval
+```
+
+Read the two lines it prints before moving on:
+
+- `记录: 可用 N  解析失败 …  文件缺失 M` — **M is the count of jsonl records whose
+  video is missing on disk.** A large M means the `video` field is not relative to
+  `--clips-root` (e.g. it carries a subdirectory or an absolute path); inspect the
+  schema with
+  `head -1 /home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl | python -m json.tool`
+  and adjust `--clips-root` accordingly. If *every* record is dropped the script
+  exits with `没有可用记录——检查 --input 字段名或 --clips-root`.
+- `共享字幕: … 组 / 覆盖 … 条 clip (…%)` — the share of clips with duplicate
+  captions, i.e. the real blast radius of the `caption_idx` multi-positive fix.
+  Worth recording; it bounds how much that component can possibly matter here.
+
+Then continue with §2b steps 2–4 (`export MVC_DATA_DIR`, the sm_70 pre-flight,
+smoke, and the equal-step r0/r1 A/B pair).
