@@ -34,6 +34,34 @@
 bash tools/data_audit/run_v100.sh status        # S1/S2 行数 + 存活进程 + 日志尾行
 ```
 
+### 下一步做什么（按顺序，2026-07-21）
+
+散在几个手册里的步骤在这里排个先后——**站在终端前照这个顺序做**：
+
+| # | 动作 | 为什么是这个顺序 |
+|---|---|---|
+| 1 | `run_v100.sh status` 看 S2 主力到没到 10000 | 后面每一步都吃它的产物 |
+| 2 | **裁判走 H100 中转（路线 A′）**：先做那 500 条视频在 H100 上的解析预检 | 探针二已实测不通（§4 决策 2b），H100 中转是当前首选；**零下载、零占卡** |
+| 3 | S2 一到 100% 立刻 `run_v100.sh xling-check` | 裁决 §4 决策 1，**阻塞 S3**；不依赖裁判，可与第 2 步并行 |
+| 4 | Gradio 人工抽检 300（§6） | 不占 GPU、不依赖裁判，随时可插空做；裁判若最终跑不成，它就是唯一的独立效度锚点 |
+| 5 | 两个决策都裁完 → `run_v100.sh s3` | 需要 S0+S1+S2 全部产物 |
+
+> ⚠️ **本地 32B 下载（路线 C）是兜底，不是当前主线——A′ 没排除之前别耗在它上面。**
+> 那是 64GB / 数小时的投入，而第 2 步的预检只要几分钟。只有当 H100 中转也
+> 走不通时才回来下它；真要下，**hf-mirror 通道已实测不可用**（新版
+> `huggingface_hub` 弃用 `hf_transfer` 改走 Xet，镜像给不出元数据 →
+> `Local entry not found`），改用 ModelScope：
+>
+> ```bash
+> pkill -f "hf download"; unset HF_HUB_ENABLE_HF_TRANSFER HF_HUB_DISABLE_XET
+> nohup bash -c 'until modelscope download --model Qwen/Qwen3-VL-32B-Instruct \
+>   --local_dir ckpts/Qwen3-VL-32B-Instruct --max-workers 4; do sleep 10; done' \
+>   > download_32b_ms.log 2>&1 &
+> ```
+>
+> 完整流程见 [`SETUP_V100.md`](SETUP_V100.md) §4.3-本地，诊断详情见
+> `TROUBLESHOOTING.md`。
+
 > S2 刚启动时行数为 0 是正常的（各分片要先加载权重）；
 > **进程数 0 且未到 100% = 分片已退出**，查对应 `s2_shard*.log` 的 Traceback，
 > 修好后重跑 `s2` 即可断点续跑。
