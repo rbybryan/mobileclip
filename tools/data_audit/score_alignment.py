@@ -121,7 +121,10 @@ def main():
     if args.dtype == "auto":
         if not torch.cuda.is_available():
             dtype = torch.float32
-        elif torch.cuda.is_bf16_supported():
+        # capability check, NOT is_bf16_supported(): the latter reports True on
+        # Volta (software-emulated bf16, painfully slow); hardware bf16 is
+        # Ampere+ (compute capability >= 8.0)
+        elif torch.cuda.get_device_capability()[0] >= 8:
             dtype = torch.bfloat16
         else:  # pre-Ampere (V100 etc.): no bf16 in hardware
             dtype = torch.float16

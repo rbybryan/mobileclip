@@ -41,7 +41,10 @@ pip config set global.index-url https://mirrors.aliyun.com/pypi/simple
 #    版本必须 ≥2.5：新版 transformers 无条件 import
 #    torch.distributed.tensor.DTensor（2.5 起才是公开路径），
 #    2.4.1 会报 "cannot import name 'DTensor'"
-pip install "torch==2.5.1" --index-url https://download.pytorch.org/whl/cu118
+pip install "torch==2.5.1" "torchvision==0.20.1" --index-url https://download.pytorch.org/whl/cu118
+# torchvision 必装（Qwen3-VL 的视频 processor 依赖）且必须与 torch 同源同版：
+# 0.20.1+cu118 恰好锁定 torch 2.5.1。⚠️ 千万不要裸 `pip install torchvision`——
+# 会从 PyPI 拉最新版并连带把 torch 换成 cu126/cu128 构建，Volta 直接废掉
 # 若升 torch 后仍有 transformers 侧 import 报错，退而求其次锁旧版
 # transformers（4.57 已支持 Qwen3-VL 与 SigLIP2，可配 torch 2.4/2.5）：
 #   pip install "transformers==4.57.1"
@@ -53,7 +56,7 @@ pip install "numpy<2" "transformers>=4.57" accelerate sentence-transformers deco
 # 不要装 vllm —— V100 路径用不上
 # ⚠️ 这一步不能跳过（只装 torch 会在 S1 冒烟时报 No module named 'numpy'）；
 #    装完自检：
-python -c "import numpy, torch, transformers, accelerate, sentence_transformers, decord, PIL, requests; \
+python -c "import numpy, torch, torchvision, transformers, accelerate, sentence_transformers, decord, PIL, requests; \
   print('deps OK', numpy.__version__)"
 
 # 验证：必须打印 tensor(...) 和 V100 且无 "no kernel image" 报错

@@ -90,7 +90,9 @@ def main():
     args = ap.parse_args()
 
     if args.dtype == "auto":
-        dtype = (torch.bfloat16 if torch.cuda.is_bf16_supported()
+        # capability >= 8.0 (Ampere+), NOT is_bf16_supported(): that reports
+        # True on Volta where bf16 is only software-emulated and crawls
+        dtype = (torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8
                  else torch.float16) if torch.cuda.is_available() else torch.float32
     else:
         dtype = {"bf16": torch.bfloat16, "fp16": torch.float16,
