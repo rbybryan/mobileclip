@@ -521,6 +521,43 @@ H100 机用不上、又不想调商业 API 时走这条：**32B 是 8×V100-32G 
 > `NGPU=4` 用 GPU0-3，裁判用 GPU4-7（见下方"两进程并行"，把
 > `CUDA_VISIBLE_DEVICES` 改成 `4,5,6,7` 单进程即可）。
 
+#### 选哪个模型：Qwen3-VL-32B（求稳）vs InternVL3.5-38B-HF（求证据强度）
+
+下面步骤 0–5 对两者通用，**只有 `--model` 不同**。取舍：
+
+| | `Qwen3-VL-32B-Instruct`（~64GB） | `OpenGVLab/InternVL3_5-38B-HF`（~76GB） |
+|---|---|---|
+| 与主力 8B 的关系 | **同族**（同为 Qwen3-VL） | **跨族** ✅ |
+| 一致率的含义 | 共有盲区会让两边一起错，偏乐观 | 误差独立，一致率才真正有信息量 |
+| 集成风险 | 几乎为零（与已跑通的 8B 同架构） | 中等（见下方 `-HF` 陷阱、rubric 兼容） |
+
+> ⚠️ **`-HF` 后缀是硬性要求，下错等于白下。** InternVL 官方发两种格式：
+> **GitHub 格式**（`OpenGVLab/InternVL3_5-38B`，无后缀）要 `trust_remote_code`，
+> 调用方式是自定义的 `model.chat()` + 自建 `pixel_values`，与
+> `vlm_audit_hf.py` 用的 `AutoModelForImageTextToText`/`AutoProcessor`
+> **完全不兼容**，等于重写审核脚本；
+> **`-HF` 格式**是原生 transformers 实现，支持 `eager`/`sdpa`
+> （Volta 没有 flash-attn，这点必须满足），现有脚本 `--model` 一换就能跑。
+> 需 `transformers>=4.52.1`（§0 装的 ≥4.57 已满足，**不用动环境**）。
+>
+> 开下之前先花 10 秒确认仓库存在：
+>
+> ```bash
+> modelscope download --model OpenGVLab/InternVL3_5-38B-HF \
+>   --local_dir /tmp/ivl_probe config.json
+> python -m json.tool /tmp/ivl_probe/config.json | head -20
+> ```
+>
+> 拿不到就试 `OpenGVLab/InternVL3_5-38B-Instruct-HF`；两个都没有说明这一档
+> 只有 GitHub 格式 → **放弃跨族、留在 Qwen3-VL-32B**（重写脚本的代价
+> 超过独立性收益）。
+>
+> **换族模型下完必须先跑 2 条冒烟**，两个检查点：① fp16 下中文是否正常
+> （InternVL3.5 是 bf16 训练，38B 比 32B 更易溢出；真乱码就 `--dtype fp32`，
+> 152GB 八卡放得下、速度减半）；② 输出能否解析出 `action` 字段——
+> **rubric 是照 Qwen 的行为写的**，换族模型可能不守格式，那就要调 prompt
+> 而不是硬跑 500 条。
+
 #### 步骤 0：预检（1 分钟）
 
 **不需要新建环境——直接用 §0 的 `audit_env`，零新增依赖。** 32B 与 8B 主力
