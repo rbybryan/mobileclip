@@ -5,7 +5,13 @@ import os.path as osp
 from os.path import join
 
 import torch
-import deepspeed
+try:
+    import deepspeed
+except Exception as _e:  # not installed, or version conflicts (e.g. old
+    # deepspeed + pydantic>=2 raises PydanticUserError at import time)
+    deepspeed = None
+    print(f"deepspeed unavailable ({type(_e).__name__}: {_e}) -- "
+          "only configs with deepspeed.enable=False can run")
 from torch.utils.data import ConcatDataset, DataLoader
 
 from utils.optimizer import create_optimizer
@@ -126,6 +132,12 @@ def setup_model(
 
     # load pretrained model
     if hasattr(config, "deepspeed") and config.deepspeed.enable:
+        assert deepspeed is not None, (
+            "config.deepspeed.enable=True but deepspeed failed to import "
+            "(see message at startup). Either fix the env (e.g. "
+            "pip install 'pydantic<2', or upgrade deepspeed) or run with "
+            "the CLI override: `deepspeed.enable False`."
+        )
         logger.info('Use deepspeed to initialize model!!!')
         model = model_without_ddp
         model, optimizer, _, _ = deepspeed.initialize(

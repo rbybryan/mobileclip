@@ -152,6 +152,32 @@ python experiments/collect_results.py --baseline r0_baseline --out experiments/R
   (届时新增 `r2_dr.py` / `r3_elastic.py` 配置,复用同一套 run/collect 脚本);
 - 评测按 rank 分片(H5)在扩展到 ActivityNet/DiDeMo 大规模评测前加入。
 
+## 故障排查
+
+### 启动即崩:`PydanticUserError: @root_validator ... skip_on_failure=True`(import deepspeed 处)
+
+老版 DeepSpeed 与 **pydantic ≥ 2** 不兼容(2026-07-21 在 101vector 的
+`mobileviclip` conda 环境实测踩中)。`shared_utils.py` 的 import 已改为可选,
+现在有三条路,任选其一:
+
+```bash
+# 方案 A(最快,推荐):pydantic 降回 1.x —— 老 deepspeed 是按 v1 写的
+pip install "pydantic<2"
+
+# 方案 B:升级 deepspeed 到支持 pydantic 2 的版本(编译关掉省事)
+DS_BUILD_OPS=0 pip install -U "deepspeed>=0.14"
+
+# 方案 C(不修环境,直接绕开):试点/短训用 DDP+AMP 跑,不用 DeepSpeed
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 deepspeed.enable False
+```
+
+注意:**正式 R0–R3 复现必须回到 DeepSpeed 路径**(原配方是 DeepSpeed
+stage-1 + fp16),方案 C 只用于试点和链路调通;A/B 双方用同一路径即可公平。
+
+其余日志噪音无害:pydantic 的 `Valid config keys have changed`、torch 的
+`custom_fwd deprecated`、`FusedMLP/DropoutAddRMSNorm of flash_attn is not
+installed`(P1 里那些被忽略的旗标)都可以无视。
+
 ## 目录结构
 
 ```
