@@ -11,6 +11,10 @@
 | S3 校准分桶 | `aggregate_report.py` | 全量外推 | CPU |
 | S4 落地 v0.2 | `apply_buckets.py` | 全量 | CPU |
 
+> **跑到哪了 / 发现了什么问题** → **[`DATA_ISSUES.md`](DATA_ISSUES.md)**（活账本：
+> 流水线状态 + 问题登记 + 待决策）。统计细节见
+> [`notes/audit-10k-findings.md`](../../notes/audit-10k-findings.md)。
+
 ## 按机器选手册（两台服务器分工不同）
 
 | 机器 | 手册 | 数据范围 | S2 路径 | 耗时 |
