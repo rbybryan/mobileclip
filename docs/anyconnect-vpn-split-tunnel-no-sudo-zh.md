@@ -21,6 +21,8 @@
   - [2.3.1 如果 VPN 用 SSO 单点登录(浏览器网页认证)](#231-如果-vpn-用-sso-单点登录浏览器网页认证)
   - [2.4 日常使用:哪些命令走 VPN,怎么走](#24-日常使用哪些命令走-vpn怎么走)
   - [2.5 隔离性/安全性:为什么它不会干扰原有网络与 SSH](#25-隔离性安全性为什么它不会干扰原有网络与-ssh)
+  - [2.6 防止 idle timeout 被踢(保活)](#26-防止-idle-timeout-被踢保活)
+  - [2.7 SSH 本地端口转发:访问内网计算节点上的 Jupyter/Web](#27-ssh-本地端口转发访问内网计算节点上的-jupyterweb)
 - [第 3 步(备选):官方客户端 + 公网 VPS 反向隧道](#第-3-步备选官方客户端--公网-vps-反向隧道)
 - [常见问题排查](#常见问题排查)
 - [方案对比总结](#方案对比总结)
@@ -427,6 +429,60 @@ ss -tlnp | grep 11080                     # 应是 127.0.0.1:11080,未对外暴�
 - openconnect 是你 SSH 会话的子进程——**你 SSH 一断它就被杀、VPN 断开**(服务器网络完好)。
   想让 VPN 在断开后存活,用 `tmux`(见 [2.3](#23-连接-vpn) 的后台方式)。
 
+### 2.6 防止 idle timeout 被踢(保活)
+
+服务器端常有**空闲超时**策略:隧道里一段时间(常见 ~30 分钟)没有**真实数据流量**,
+就会断开,报 `接收到服务器断开:... "Idle Timeout"` / `Server request`。你改不了这个策略,
+只能定期制造流量把计时器重置。注意:openconnect 自带的 DPD/keepalive 是**控制通道**心跳,
+很多 ASA 的 idle-timeout **只看数据流量**,所以往往不够,需要额外保活。
+
+**方法 1:SSH 会话保活**(适合你会保持一个 ssh 连着的场景)。在 `~/.ssh/config` 加:
+
+```
+Host curta
+    HostName curta.zedat.fu-berlin.de
+    User 你的账号名
+    ProxyCommand proxychains4 -f ~/.proxychains.conf nc %h %p
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
+    TCPKeepAlive yes
+```
+
+`ServerAliveInterval 60` 让 ssh 每 60 秒发保活包,走隧道 = 隧道一直有流量。缺点:ssh 一断就失效。
+
+**方法 2:通用后台保活**(不依赖 ssh 会话)。每 2 分钟经隧道摸一次内网某端口:
+
+```bash
+# 放 tmux 里跑,或末尾 & 后 disown
+while true; do
+  curl -s --max-time 8 --socks5-hostname 127.0.0.1:11080 \
+    telnet://curta.zedat.fu-berlin.de:22 >/dev/null 2>&1
+  sleep 120
+done &
+```
+
+**推荐组合**:`tmux` 挂 openconnect(VPN 长期在线)+ 方法 2 后台保活(不被空闲踢)+
+日常用 curta 时方法 1 的 `ServerAliveInterval` 再加一层。
+
+### 2.7 SSH 本地端口转发:访问内网计算节点上的 Jupyter/Web
+
+想访问只在**内网计算节点**(如 Slurm 分配的 `c061`)上监听的服务(Jupyter、TensorBoard 等),
+需要两跳:本机 →(经 VPN 代理)→ 登录节点 curta →(集群内网)→ 计算节点 c061。用 ssh 的
+`-L` 本地端口转发,并把整条 ssh 用 proxychains 包住走 VPN 代理:
+
+```bash
+# 假设 Jupyter 在 c061 的 48655 端口。本机 48655 <- curta -> c061:48655
+proxychains4 -f ~/.proxychains.conf \
+  ssh -N -f -L 48655:c061的完整主机名:48655 你的账号名@curta.zedat.fu-berlin.de
+```
+
+- `-L 本地端口:c061:远程端口` 中的 `c061` 由 **curta 端解析**(计算节点只有登录节点能到),
+  所以这一跳不经代理、天然可达;proxychains 只负责把本机到 curta 的 ssh 连接送进 VPN。
+- `-N`(不执行远程命令)`-f`(认证后转入后台)。之后浏览器打开 `http://localhost:48655/`
+  (带上 Jupyter 的 token)即可。
+- 查看/停止转发:`ss -tlnp | grep 48655`;`pkill -f 'ssh -N -f -L 48655'`。
+- ⚠️ 端口转发空闲同样会触发 [2.6](#26-防止-idle-timeout-被踢保活) 的 idle timeout,配合保活使用。
+
 ---
 
 ## 第 3 步(备选):官方客户端 + 公网 VPS 反向隧道
@@ -461,6 +517,7 @@ ssh -J vps_user@your-vps.com -p 2222 user@localhost
 | 认证成功后报 `VPNFD is not set` / `TUNSETIFF 不允许的操作` / `必须以 root 权限运行` | 漏了 `--script-tun` 开关,openconnect 去建真 tun 网卡了。正确写法:`--script-tun --script "ocproxy -D 11080"`(两个都要) |
 | 报 `命令行有太多参数 / too many arguments` | 把 ocproxy 命令塞给了 `--script-tun`(它是不带参数的开关)。命令要放 `--script` 里:`--script-tun --script "ocproxy -D 11080"` |
 | 连上后出现 `Failed to open /dev/vhost-net: 权限不够` | **无害**。ocproxy 想用 vhost-net 加速但无权限,自动回退用户态转发,功能正常,忽略即可 |
+| 一段时间后断开 `接收到服务器断开 ... "Idle Timeout"` / 之后代理连接 `Connection refused` | 隧道空闲被服务器踢了。按 [2.6](#26-防止-idle-timeout-被踢保活) 做保活(SSH `ServerAliveInterval` 或后台定时打端口),并用 tmux 挂 openconnect |
 | `Set up UDP failed; using SSL instead` / `DTLS disabled` | **无害**。通过 HTTP 代理时用不了 DTLS/UDP,自动改用 SSL(TCP),正常 |
 | `ssh` 走代理报 `ncat: command not found` | 装 ncat:`conda install -c conda-forge nmap`;或用支持 `-X` 的 nc:`nc -X 5 -x 127.0.0.1:11080 %h %p` |
 | 连接成功但代理不通 | 确认 ocproxy 进程在(`pgrep ocproxy`);确认命令确实指定了 `127.0.0.1:11080`;换个端口试试(把 11080 全部替换) |
