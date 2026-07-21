@@ -892,3 +892,77 @@ bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 \
 
 Useful for the record when diagnosing: `nvcc --version`, `g++ --version`,
 `echo $CUDA_HOME`.
+
+---
+
+## Training dies on the first forward: `Input type (torch.cuda.FloatTensor) and weight type (torch.cuda.HalfTensor) should be the same`
+
+**Symptom.** DeepSpeed initialises fine, the dataloader is built
+(`MetaLoader has 1 dataloaders, 17 batches in total`), and then every rank dies
+in the very first `model(image, text_input, idx=idx)`:
+
+```
+File "models/backbones/internvideo2/mobileclip/modules/common/mobileone.py", line 222, in forward
+    scale_out = self.rbr_scale(x)
+  ...
+RuntimeError: Input type (torch.cuda.FloatTensor) and weight type (torch.cuda.HalfTensor) should be the same
+```
+
+Just above it, one rank prints the tell-tale warning:
+
+```
+[WARNING] [torch_autocast.py:122:autocast_if_enabled] torch.autocast is enabled
+outside DeepSpeed but disabled within the DeepSpeed engine.
+```
+
+**Cause.** Two halves of the mixed-precision setup stopped meeting.
+`tasks_clip/shared_utils.py` casts the **whole model** to fp16/bf16
+(`model.half()`), and the batch stays fp32 — the `torch.cuda.amp.autocast(...)`
+around the forward in `tasks_clip/pretrain.py` was what reconciled them.
+
+Recent DeepSpeed **explicitly disables any outer autocast inside
+`engine.forward`**: `deepspeed/runtime/torch_autocast.py:autocast_if_enabled`
+wraps the module call in `torch.autocast(..., enabled=False)` unless a
+`torch_autocast` section is present in the DeepSpeed config. So the autocast in
+our train loop is a no-op on the DeepSpeed path, leaving fp32 activations
+meeting fp16 weights at the first conv. This is a DeepSpeed-version regression,
+not a config error on the machine — nothing about Volta/`sm_70` is involved.
+
+**Fix (already in the repo — just pull).** `tasks_clip/pretrain.py` now casts
+the batch to the model's own parameter dtype before the forward:
+
+```python
+param_dtype = next(model_without_ddp.parameters()).dtype   # once, before the loop
+...
+image = image.to(device, dtype=param_dtype, non_blocking=True)
+```
+
+Deliberately **`param_dtype`, not `data_type`**: the precision switch is read in
+three places under two different key names with two different defaults, so
+`data_type` is not reliably the dtype the weights actually have —
+
+| file | key | default | decides |
+|------|-----|---------|---------|
+| `tasks_clip/shared_utils.py:57` | **`bf16`** | `True` | model → bf16 or fp16 |
+| `tasks_clip/pretrain.py` | `use_bf16` | `True` | `data_type` for autocast |
+| `utils/config_utils.py:130` | `use_bf16` | `False` | `bf16` vs `fp16` section in `deepspeed_config.json` |
+
+They only agree when a config sets **both** `bf16` and `use_bf16` explicitly
+(the pilot configs do). Asking the model for its dtype sidesteps all three; when
+`use_half_precision` is false it is `float32` and the cast is a no-op.
+
+**Why not `fp16: {auto_cast: true}` instead?** That DeepSpeed option ("*auto_cast
+automatically casts inputs to fp16*") would also fix it, but only for fp16 — the
+`bf16` section has no equivalent, so an H100 bf16 run would hit the same wall.
+The cast in the train loop covers both and does not depend on the DeepSpeed
+version.
+
+**Eval is not affected.** Epoch-end retrieval runs
+`evaluation_wrapper(model_without_ddp, ...)` — the bare module, not the DeepSpeed
+engine — so its surrounding autocast is still live and casts the inputs.
+
+**What is normal after this fix.** With the outer autocast neutralised the
+forward is pure fp16, and DeepSpeed's dynamic loss scaling (`initial_scale_power:
+16`) does the compensating. A handful of `OVERFLOW! ... Skipping step` lines
+while the scale settles is expected. What is *not* normal: a loss that is `nan`
+from step 0, or the loss scale collapsing to `min_loss_scale` and staying there.
