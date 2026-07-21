@@ -175,15 +175,20 @@ export LD_LIBRARY_PATH="$HOME/.local/lib:$LD_LIBRARY_PATH"
 # 把 vpn.company.com 换成你平时在 AnyConnect 里填的服务器地址,
 # 用户名换成你的 VPN 账号
 openconnect \
-  --script-tun "ocproxy -D 11080" \
+  --script-tun --script "ocproxy -D 11080" \
   --user=你的用户名 \
   vpn.company.com
 ```
 
-> ⚠️ **必须是 `--script-tun`,不是 `--script`。** 这是最容易踩的坑:
-> - `--script-tun "ocproxy ..."` = 把隧道数据经 socketpair 交给 ocproxy(用户态,**不建 tun 网卡、无需 root**),ocproxy 靠它拿到 `VPNFD`。
-> - `--script "ocproxy ..."` = openconnect 仍会去建**真正的 tun 网卡**(需要 root),于是报
->   `VPNFD is not set` + `TUNSETIFF 不允许的操作` + `必须以 root 权限运行`,连接失败。
+> ⚠️ **`--script-tun` 和 `--script` 两个都要,而且写法有讲究**——这是最容易踩的两个坑:
+> - **`--script-tun` 是不带参数的开关**(意思是"把流量交给 script 程序、别建 tun"),
+>   要跑的 ocproxy 命令写在 **`--script "ocproxy -D 11080"`** 里。
+>   若误写成 `--script-tun "ocproxy -D 11080"`(把命令塞给 `--script-tun`),会报
+>   **`命令行有太多参数`**。
+> - 只用 `--script "ocproxy ..."`(漏了 `--script-tun`)则 openconnect 仍会去建**真正的
+>   tun 网卡**(需要 root),报 `VPNFD is not set` + `TUNSETIFF 不允许的操作` +
+>   `必须以 root 权限运行`,连接失败。
+> - 正确写法就是上面这条:`--script-tun --script "ocproxy -D 11080"`。
 
 按提示输入密码(和二次验证,如果有)。看到类似
 `Connected as 10.x.x.x` / `Session established` 即成功。
@@ -193,11 +198,11 @@ openconnect \
   ```bash
   # 方式一:tmux(推荐,断线可恢复交互输密码)
   tmux new -s vpn
-  openconnect --script-tun "ocproxy -D 11080" --user=你的用户名 vpn.company.com
+  openconnect --script-tun --script "ocproxy -D 11080" --user=你的用户名 vpn.company.com
   # 按 Ctrl+B 再按 D 挂起;tmux attach -t vpn 找回
 
   # 方式二:密码从 stdin 传入并后台运行
-  echo '你的密码' | openconnect --script-tun "ocproxy -D 11080" \
+  echo '你的密码' | openconnect --script-tun --script "ocproxy -D 11080" \
     --user=你的用户名 --passwd-on-stdin -b vpn.company.com
   ```
 
@@ -216,7 +221,7 @@ openconnect 9.x 支持外部浏览器 SSO,用 `--external-browser`。**能一次
 ```bash
 openconnect --useragent='AnyConnect Windows 4.10.06079' \
   --external-browser="$(which xdg-open)" \
-  --script-tun "ocproxy -D 11080" \
+  --script-tun --script "ocproxy -D 11080" \
   vpn.company.com
 ```
 
@@ -237,7 +242,7 @@ openconnect --useragent='AnyConnect Windows 4.10.06079' \
    ```bash
    openconnect --useragent='AnyConnect Windows 4.10.06079' \
      --external-browser=xdg-open \
-     --script-tun "ocproxy -D 11080" \
+     --script-tun --script "ocproxy -D 11080" \
      vpn.company.com
    ```
    判断是否踩中此坑:用 `--dump-http-traffic` 看初始 `POST /` 是不是返回 `404 Not Found`
@@ -254,7 +259,7 @@ openconnect --useragent='AnyConnect Windows 4.10.06079' \
    # 用 $(which xdg-open),或直接指向真正的浏览器二进制:
    openconnect --useragent='AnyConnect Windows 4.10.06079' \
      --external-browser="$(which xdg-open)" \
-     --script-tun "ocproxy -D 11080" vpn.company.com
+     --script-tun --script "ocproxy -D 11080" vpn.company.com
    # xdg-open 仍不行就直接用浏览器,如 --external-browser=/usr/bin/firefox
    ```
 3. **确认 openconnect 编进了 SSO 支持**:
@@ -282,7 +287,7 @@ openconnect --useragent='AnyConnect Windows 4.10.06079' \
    - 拿到分组名 `XXX`(DefaultGroup / UserGroup,或 GroupURL 末段)后接到地址后面:
      ```bash
      openconnect --useragent='AnyConnect Windows 4.10.06079' \
-       --external-browser=xdg-open --script-tun "ocproxy -D 11080" \
+       --external-browser=xdg-open --script-tun --script "ocproxy -D 11080" \
        vpn.company.com/XXX
      # 或等价地:--authgroup=XXX
      ```
@@ -345,7 +350,7 @@ proxychains4 -q psql -h 10.0.0.20 -U dev mydb
 
 ### 2.5 隔离性/安全性:为什么它不会干扰原有网络与 SSH
 
-用 `--script-tun "ocproxy ..."` 这种用户态模式,openconnect **从设计上就不可能**动到
+用 `--script-tun --script "ocproxy ..."` 这种用户态模式,openconnect **从设计上就不可能**动到
 这台机器原有的网络和 SSH——尤其你**没有 root**,更改不了内核网络:
 
 - **不创建 tun 网卡**(不会出现 `tun0`);
@@ -409,7 +414,8 @@ ssh -J vps_user@your-vps.com -p 2222 user@localhost
 | ocproxy 运行报 `libevent-2.1.so.7: cannot open shared object file` | 编译时漏了 `-Wl,-rpath,...`;临时用 `LD_LIBRARY_PATH=$CONDA_PREFIX/lib ocproxy ...`,或按 2.2 重新 configure |
 | 证书校验失败(certificate verify failed) | 先用 `--servercert` 固定服务器证书指纹(openconnect 报错信息里会给出 pin 值,确认无误后加上),比 `--no-cert-check` 安全 |
 | 提示需要 CSD/HostScan | 尝试加 `--csd-wrapper` 脚本(openconnect 源码 `trojans/` 目录里有 `csd-post.sh`/`hostscan-bypass`);仍失败则此路不通,考虑第 3 步 |
-| 认证成功后报 `VPNFD is not set` / `TUNSETIFF 不允许的操作` / `必须以 root 权限运行` | **用错了参数**:ocproxy 必须配 `--script-tun`,不是 `--script`。改成 `--script-tun "ocproxy -D 11080"` 即可(用户态、无需 root) |
+| 认证成功后报 `VPNFD is not set` / `TUNSETIFF 不允许的操作` / `必须以 root 权限运行` | 漏了 `--script-tun` 开关,openconnect 去建真 tun 网卡了。正确写法:`--script-tun --script "ocproxy -D 11080"`(两个都要) |
+| 报 `命令行有太多参数 / too many arguments` | 把 ocproxy 命令塞给了 `--script-tun`(它是不带参数的开关)。命令要放 `--script` 里:`--script-tun --script "ocproxy -D 11080"` |
 | 连接成功但代理不通 | 确认 ocproxy 进程在(`pgrep ocproxy`);确认命令确实指定了 `127.0.0.1:11080`;换个端口试试(把 11080 全部替换) |
 | `ssh` 报 `nc: invalid option -- X` | 该系统的 netcat 不支持 SOCKS,改用 ncat(见 2.4)或 `connect-proxy` |
 | DNS 解析不到内网域名 | 用 `--socks5-hostname`(curl)/ ProxyCommand 里的 `%h`(ssh)让**代理端**解析域名,不要本地先解析;ocproxy 会用 VPN 下发的 DNS |
