@@ -118,6 +118,8 @@ def main():
                     help="quantile defining 'low' for the interpretation matrix")
     ap.add_argument("--copied-xling", type=float, default=0.95,
                     help="xling_cos at/above this is suspected copied English")
+    ap.add_argument("--s3-xling-threshold", type=float, default=0.7,
+                    help="aggregate_report.py's --xling-threshold default; previewed here")
     args = ap.parse_args()
 
     paths = sorted(glob.glob(args.scores))
@@ -183,8 +185,17 @@ def main():
     emit(f"- ρ(sig_zh, sig_en) = **{r_zh_en:.3f}**"
          "　→ 高=两者共享「视频好不好拍/好不好描述」的公共难度分量；"
          "接近 0 说明两个塔的打分几乎无关，外推要谨慎")
-    emit(f"- ρ(sig_zh, xling) = **{spearman(zh, xl):.3f}**")
-    emit(f"- ρ(sig_en, xling) = **{spearman(en, xl):.3f}**")
+    r_zh_xl, r_en_xl = spearman(zh, xl), spearman(en, xl)
+    emit(f"- ρ(sig_zh, xling) = **{r_zh_xl:.3f}**")
+    emit(f"- ρ(sig_en, xling) = **{r_en_xl:.3f}**")
+    if abs(r_zh_xl) < 0.15:
+        emit(f"- ⚠️ **xling 是弱工具**：|ρ(sig_zh, xling)| = {abs(r_zh_xl):.3f} < 0.15，"
+             "LaBSE 的文本忠实度与画面对齐几乎无关。可能机制：InternVid caption "
+             "又短又套路（「a man is talking」类），LaBSE 在短文本上动态范围小"
+             f"（本批 xling 的 p25–p75 只有 {np.percentile(xl, 25):.3f}–"
+             f"{np.percentile(xl, 75):.3f}，压在一条窄带里）。"
+             "→ **分桶时别让 xling 单独决定 RETRANSLATE**，只用它的极低尾，"
+             "主判据交给 S0 旗标与 S2 判定。")
     emit()
 
     # ---------------- D. the confounded gap ----------------
@@ -234,9 +245,17 @@ def main():
             emit(f"- S0 判为「中文栏其实是英文」的记录："
                  f"**{pct(int(is_copied_flag.sum()), len(j))}**")
             both = int((copied & is_copied_flag).sum())
+            n_flag = int(is_copied_flag.sum())
             emit(f"  - 其中 xling ≥ {args.copied_xling} 的：**{both}**"
                  f"（占高 xling 组 {both / max(int(copied.sum()), 1):.1%}）"
-                 "　→ 比例高即证实「高 xling = 没翻译」这条陷阱在本批数据里成立")
+                 "　→ 比例高即证实「高 xling = 没翻译」这条陷阱确实存在")
+            miss = n_flag - both
+            emit(f"  - **反向漏检**：S0 判为照抄、但 xling < {args.copied_xling} 的有 "
+                 f"**{miss}**（占 S0 照抄组 {miss / max(n_flag, 1):.1%}）")
+            if miss > both:
+                emit("    → 漏检远多于命中：这批多是**部分未翻/中英混杂**（非逐字照抄），"
+                     "LaBSE 给的是中间分，xling 抓不到。"
+                     "**语言污染要以 S0 旗标为准，不能靠 xling**。")
             clean = ~is_copied_flag
             if clean.sum() > 10:
                 emit(f"  - **剔除照抄后**的 xling 中位数 = "
@@ -272,6 +291,22 @@ def main():
          f"{(~covered).sum() / len(j):.1%} |")
     emit("\n> 这张表**不是结论**，只是 S2 该往哪抽样的预算表："
          "四个角的样本都要有，S3 才能把分位映射成问题概率。\n")
+
+    # S3 会用一个*绝对*阈值扫 xling，而 xling 的绝对尺度并未校准 —— 预览命中量
+    s3t = args.s3_xling_threshold
+    hit = float((xl < s3t).mean())
+    emit(f"**S3 默认阈值预演**：`aggregate_report.py --xling-threshold {s3t}` "
+         f"会把 **{hit:.1%}** 的记录仅凭 xling 判进 RETRANSLATE"
+         f"（即该阈值恰落在本批 xling 的第 {hit * 100:.0f} 百分位）。")
+    if hit > 0.10:
+        emit(f"> ⚠️ 命中 {hit:.1%} 偏高。S3 的分桶规则里**低 xling 单独就能触发 "
+             "RETRANSLATE**（`fl & RETRANSLATE_FLAGS` **或** `xling < 阈值`），"
+             "而阈值是个**绝对**数、xling 的绝对尺度却没校准——阈值一旦落进分布"
+             "稠密区，就会把大批正常样本扫进重翻队列。\n"
+             "> **等 S2 判定回来后再定**：看 VLM 的 `trans_score≤2` 差率随 xling "
+             "十分位的变化。若曲线基本平坦（与上面 ρ≈0 一致），就把阈值压到极低尾"
+             f"（如 p5≈{np.percentile(xl, 5):.3f}）或干脆让 xling 退出分桶规则、"
+             "只保留 S0 旗标作判据。\n")
 
     # ---------------- G. next ----------------
     emit("## G. 下一步")

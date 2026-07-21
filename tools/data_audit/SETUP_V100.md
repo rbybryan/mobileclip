@@ -349,8 +349,16 @@ bash tools/data_audit/run_v100.sh s1-report      # -> outputs/audit_10k/s1_analy
 > 没有 `s0_flags.jsonl` 也能跑，只是跳过第 3 项交叉核对。
 
 报告最后一节「解读矩阵预览」按分位给出四角计数（RETRANSLATE / RECAPTION /
-翻译可疑 / KEEP 候选）。**这不是结论，是 S2 的抽样预算表**：四个角都要有样本，
-S3 才能把分位映射成问题概率。真正的问题率只有 §5 的 `report.md` 说了算。
+翻译可疑 / KEEP 候选），并预演 **S3 的 `--xling-threshold` 默认值会命中多少**。
+**这不是结论，是 S2 的抽样预算表**：四个角都要有样本，S3 才能把分位映射成
+问题概率。真正的问题率只有 §5 的 `report.md` 说了算。
+
+> **本机 10k 的实测结论已归档到
+> [`notes/audit-10k-findings.md`](../../notes/audit-10k-findings.md)**
+> （`outputs/` 被 gitignore，报告本身不入库）。要点：`xling_cos` 在本批是
+> **弱工具**（ρ(sig_zh,xling)=0.04、动态范围窄），语言污染要看 S0 旗标而非
+> xling；且 S3 默认 `--xling-threshold=0.7` 正落在本批 p25 附近，**跑 s3 前
+> 先读那份笔记**。
 
 ## 4. S2 VLM 审核（**推荐 10k 全覆盖**，8 卡 ~2–3 小时）〖4.2 主力 / 4.3 裁判 / 4.4 人工抽检可并行：裁判走云端 API 不占本机 GPU〗
 
