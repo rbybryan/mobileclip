@@ -43,6 +43,7 @@ V100 机 (101vector)                     H100 机
 |---|---|---|---|
 | **A（首选）** | Qwen3-VL-235B-A22B-Instruct-**FP8**，H100 机自托管 | 8×H100-80G + 两机内网互通 | **完全一致**（同一份权重）；见下文 §1–§5 |
 | B | InternVL3.5-241B-A28B（同为开源） | 同上 | 同档；作为 A 的第二意见（plan §2 的交叉验证档） |
+| **A′（有就先用）** | 网内**已经起好**的 vLLM 端点（如 B100 集群的 `Qwen3.6-27B`） | 零部署、零下载、不占本机 GPU；但需通过下方两个探针 | 视模型而定（27B ≈ 主力 8B 的 3 倍）；**能用就优于 C**（C 要下 64GB 且占满本机卡） |
 | C | Qwen3-VL-32B-Instruct，V100 本地 | 仅 8×V100-32G | 有损但可用（≈主力 8B 的 4 倍） |
 | **D（H100 完全用不上时）** | 不用大裁判：换族 8B 交叉验证 + **分歧定向**人工抽检 | 零额外资源，仅 V100 本机 | 决策门改挂人工；见下方 D1–D4 完整协议 |
 
@@ -51,7 +52,90 @@ V100 机 (101vector)                     H100 机
 Volta **没有 FP8 支持**，FP8 版权重跑不了；BF16 原版 ~470GB，
 8×32GB=256GB 也放不下。所以 V100 本地裁判的天花板就是 ~32B 档。
 
-### 路线 C：V100 本地 32B 裁判（A/B 都不可用时）
+### 路线 A′：复用网内**已经起好**的 vLLM 端点（零部署，优先于 C）
+
+若网内已有别人起好的 OpenAI 兼容端点，就省掉了下载权重和起服务的全部工作，
+也不占本机 8 张卡——**可用的话应排在路线 C 前面**。
+已知候选（B100 集群，模型均为 `Qwen3.6-27B`，`max_model_len` 262144）：
+
+| 端点 | 起法 |
+|---|---|
+| `http://172.30.85.198:8000/v1` | 8 卡 |
+| `http://172.30.62.177:8000/v1` | 8 卡 |
+| `http://172.30.86.57:5000/v1` | 4 卡 |
+
+**但必须先过两个探针，否则会白跑一轮。**
+
+**探针一：那个模型是不是多模态？**
+`vlm_audit.py` 发的是 `image_url` 内容块（8 帧 base64 JPEG，见其 `audit_one`）——
+**端点必须支持视觉输入**。模型名里没有 `VL`/`Vision` 字样时**不能想当然**。
+在**能连到该端点的机器**上跑：
+
+```bash
+python - <<'PY'
+import base64, io, requests
+from PIL import Image
+EP    = "http://172.30.86.57:5000/v1"                            # 改成要测的端点
+MODEL = "/workspace/mount/b100_zaip_data/model_zoo/Qwen3.6-27B"  # 见 /v1/models
+buf = io.BytesIO(); Image.new("RGB", (64, 64), (220, 30, 30)).save(buf, format="PNG")
+b64 = base64.b64encode(buf.getvalue()).decode()
+body = {"model": MODEL, "max_tokens": 16, "temperature": 0,
+        "messages": [{"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64," + b64}},
+            {"type": "text", "text": "这张图是什么颜色？只回答颜色。"}]}]}
+r = requests.post(EP + "/chat/completions", json=body, timeout=60)
+print("HTTP", r.status_code); print(r.text[:500])
+PY
+```
+
+> 用 64×64 而不是 1×1：部分视觉塔会因图小于 patch size 直接报错，
+> 那会把**多模态模型误判成纯文本**。
+
+- 正常回答颜色（红/red）→ **多模态**，接着走下面的接入命令；
+- HTTP 400 且报错含 `multimodal`/`image`/`content` 不支持 → **纯文本**，见文末。
+
+**探针二：101vector 连得上那个网段吗？**
+判定数据（`s2_verdicts.*.jsonl`）和视频都在 101vector，裁判是**从那台机器**
+发请求的；`172.30.x.x` 与 `10.235.31.101` 是不同网段，必须实测：
+
+```bash
+# 在 101vector 上跑
+for ep in 172.30.85.198:8000 172.30.62.177:8000 172.30.86.57:5000; do
+  echo -n "$ep: "
+  timeout 5 curl -s -o /dev/null -w "%{http_code}\n" "http://$ep/v1/models" || echo unreachable
+done
+```
+
+连不上就只剩：把 S2 产物 + 视频拷到能连的机器上再跑，或退回路线 C / D。
+
+**两个探针都过 → 接进 `s2-judge`：**
+
+```bash
+# 在 101vector 上
+export JUDGE_API_BASE=http://172.30.85.198:8000/v1     # 优先 8 卡端点（并发余量大）
+export JUDGE_MODEL=/workspace/mount/b100_zaip_data/model_zoo/Qwen3.6-27B
+export JUDGE_API_KEY=EMPTY        # vLLM 默认不校验，但脚本要求非空
+JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge
+```
+
+⚠️ 起服务时没设 `--served-model-name` 的话，vLLM 对外的模型 ID **就是那串
+权重路径**，必须原样传给 `JUDGE_MODEL`——先 `curl $JUDGE_API_BASE/models` 确认。
+
+**若探针一判定为纯文本**：`en_score`/`zh_score`/`action` 都要看画面，纯文本
+模型给不了，**T4 的 action 一致率决策门无法用它复现**（那就走路线 D 的 D1–D4）。
+但 rubric 里 `trans_score` 是**明确定义为纯文本**的（"仅比较中英两条文本：
+翻译忠实+流畅度"，见 `vlm_audit.py` 的 `PROMPT`），纯文本模型可以独立复核它——
+而这恰好是 [`DATA_ISSUES.md`](DATA_ISSUES.md) §4 **决策 1（xling 阈值）**唯一依赖的分
+（`calibrate_xling.py` 的全部差率都来自 8B 的 `trans_score`）。
+所以纯文本端点仍能解掉决策 1 的可信度问题，只是解不掉决策 2。
+需要给 `vlm_audit.py` 加一个"不发帧"的文本模式（**尚未实现**，要用再提）。
+
+> ⚠️ **同族偏差同样适用**：27B 裁 8B 只有约 3 倍参数差距，且同厂同族——
+> 方案 §2 原本要的是 235B **+ 换一家**（InternVL）互为第二意见，正是为了避开
+> 共同盲区。同族模型的一致率会被抬高，**一致不等于正确**。若决策门靠它通过，
+> 须按路线 D 的 D2/D3 提高人工抽检权重作为唯一独立信号。
+
+### 路线 C：V100 本地 32B 裁判（A/B/A′ 都不可用时）
 
 32B fp16 约 64GB，单卡放不下 → 必须**模型并行**（`--device-map auto`），
 放弃 8 卡数据并行。裁判只跑 500–2000 条，慢一点可以接受：
