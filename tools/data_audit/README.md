@@ -11,6 +11,10 @@
 | S3 校准分桶 | `aggregate_report.py` | 全量外推 | CPU |
 | S4 落地 v0.2 | `apply_buckets.py` | 全量 | CPU |
 
+> **跑到哪了 / 发现了什么问题** → **[`DATA_ISSUES.md`](DATA_ISSUES.md)**（活账本：
+> 流水线状态 + 问题登记 + 待决策）。统计细节见
+> [`notes/audit-10k-findings.md`](../../notes/audit-10k-findings.md)。
+
 ## 按机器选手册（两台服务器分工不同）
 
 | 机器 | 手册 | 数据范围 | S2 路径 | 耗时 |
@@ -53,6 +57,7 @@ bash tools/data_audit/run_v100.sh smoke      # 冒烟：字段探测/解码/模�
 bash tools/data_audit/run_v100.sh s0         # 规则画像（10k 秒级）
 bash tools/data_audit/run_v100.sh s1         # 嵌入打分（10k 8 卡 ~10–30 分钟）
 bash tools/data_audit/run_v100.sh status     # 等 S1 到 10000/10000
+bash tools/data_audit/run_v100.sh s1-report  # S1 联合分析 s1_analysis.md（秒级，进 S2 前必做）
 bash tools/data_audit/run_v100.sh s2-sample  # 默认参数在 10k 上即全覆盖
 bash tools/data_audit/run_v100.sh s2         # 8 卡 VLM 审核全部 10k（HF 后端，~2–3 小时）
 export JUDGE_API_KEY=sk-...                  # 可选：云端 235B 裁判

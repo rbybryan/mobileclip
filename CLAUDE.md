@@ -44,14 +44,21 @@ plan the maintainer will act on**, do this before ending the turn:
 
 If the chat recommends a command but it never lands in a tracked `.md`, the job is not done.
 
-### "Merge" / where the server pulls from
+### Branches / where the server pulls from
 
-Development happens on a feature branch (currently `claude/claude-md-auto-update-merge-b4muwd`;
-in general whatever branch is checked out). Push there. For the server to pull instructions from
-`main`, the branch has to be **merged** — do that via a PR **only when the maintainer asks**, or
-tell them the branch is ready to merge. Never push directly to `main` without explicit permission.
-The maintainer can also just `git pull origin <feature-branch>` on the server to read new
-instructions before any merge.
+Two kinds of branch, so no rotating name has to be remembered:
+
+- **`handoff`** — the standing, long-lived branch for the live server⇄Claude loop
+  (`notes/live/from-*.md`). Both sides always pull and push *this* branch.
+  See [`notes/git-handoff-workflow.md`](notes/git-handoff-workflow.md).
+- **`claude/<topic>`** — short-lived feature branches for substantive work (code changes,
+  new docs, experiments). One per topic, merged into `main` by PR, then deleted.
+
+Push to whichever branch is checked out. For the server to pull instructions from `main`, the
+branch has to be **merged** — do that via a PR **only when the maintainer asks**, or tell them
+the branch is ready to merge. Never push directly to `main` without explicit permission.
+The maintainer can also just `git pull origin <branch>` on the server to read new instructions
+before any merge.
 
 ---
 

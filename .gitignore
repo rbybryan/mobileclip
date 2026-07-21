@@ -37,3 +37,6 @@ outputs/
 # Experiment outputs
 experiments/runs/
 experiments/evals/
+
+# Claude Code worktrees (other sessions; never commit)
+.claude/worktrees/

@@ -38,9 +38,12 @@ copy-pasteable ```bash fences.
 
 ## Which branch
 
-Use the current feature branch (or a dedicated `handoff` branch). Both sides pull/push
-the **same** branch. To also reach the server via `main`, merge the branch by PR (ask
-the maintainer first — see CLAUDE.md).
+The loop runs on the standing **`handoff`** branch — long-lived, so neither side has to
+track a rotating feature-branch name. Both sides pull/push the **same** branch. To also
+reach the server via `main`, merge it by PR (ask the maintainer first — see
+[CLAUDE.md](../CLAUDE.md) §0).
+
+> 中文：固定用 `handoff` 分支，双方都 pull/push 这一个分支，不用记会变的分支名。
 
 ---
 
@@ -52,15 +55,17 @@ the maintainer first — see CLAUDE.md).
 # edit notes/live/from-server.md (paste output, errors, questions), then:
 git add notes/live/from-server.md
 git commit -m "handoff: server update $(date +%F_%H%M)"
-git push origin <branch>          # e.g. claude/claude-md-auto-update-merge-b4muwd
+git push origin handoff
 ```
+
+First time on the server: `git fetch origin && git checkout handoff`.
 
 Then ping Claude in chat: “拉一下 from-server.md”.
 
 **2) Read Claude's reply and act:**
 
 ```bash
-git pull origin <branch>
+git pull origin handoff
 cat notes/live/from-claude.md      # newest block is at the top
 ```
 
@@ -69,12 +74,12 @@ cat notes/live/from-claude.md      # newest block is at the top
 ## Claude side — what Claude does each turn
 
 ```bash
-git fetch origin <branch> && git pull origin <branch>
+git fetch origin handoff && git pull origin handoff
 # read notes/live/from-server.md, do the work / diagnose,
 # write the reply as a new top block in notes/live/from-claude.md, then:
 git add notes/live/from-claude.md
 git commit -m "handoff: claude reply <topic>"
-git push origin <branch>
+git push origin handoff
 ```
 
 If the reply is a reusable command/fix/plan, ALSO log it into the proper doc

@@ -527,3 +527,85 @@ Note: the pinned-original env (`mobileviclip.yml`, torch 1.13.1) does not hit
 either axis — this only bites self-built torch 2.x envs. Official R0–R3
 replication runs must use the DeepSpeed path (original recipe is DeepSpeed
 stage-1 + fp16); the bypass is for pilots and plumbing checks only.
+
+## `CUDA error: no kernel image is available for execution on the device` on V100
+
+### Symptom
+
+Every rank dies at the **first CUDA call** — `torch.distributed.barrier()` inside
+`utils/distributed.py:119`, long before any model or data is touched:
+
+```
+torch.AcceleratorError: CUDA error: no kernel image is available for execution on the device
+Search for `cudaErrorNoKernelImageForDevice' ...
+```
+
+Preceded, once per GPU, by the real clue:
+
+```
+UserWarning: Found GPU0 Tesla V100-SXM2-32GB which is of compute capability (CC) 7.0.
+The following list shows the CCs this version of PyTorch was built for ...
+- 7.5 ... - 8.0 ... - 8.6 ... - 9.0 ... - 10.0 ... - 12.0
+```
+
+Hit on 101vector (2026-07-21) in the `mobileviclip` conda env, running
+`experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8`.
+
+### Cause
+
+**The installed PyTorch has no Volta (`sm_70`) kernels.** The env had grown to
+`torch 2.11.0` built against **CUDA 13** (`cuda-toolkit 13.0.2`,
+`nvidia-cudnn-cu13`, `nvidia-nccl-cu13` in the dependency list). CUDA 13 dropped
+offline compilation for Maxwell/Pascal/**Volta**, so those wheels ship
+`sm_75/80/86/90/100/120` only — note **7.0 is absent from the list above**.
+A V100 is CC 7.0, so *every* GPU kernel fails, NCCL's barrier being merely the
+first one attempted.
+
+This is **not** a DeepSpeed problem, and `deepspeed.enable False` cannot help:
+the crash is upstream of any framework choice, in `init_distributed_mode`.
+This is exactly the hazard `tools/data_audit/SETUP_V100.md` §0 warns about for
+the audit env — the *training* env just never got the same treatment.
+
+### Fix
+
+Reinstall PyTorch from the **cu118** index (the cu118/cu121 builds still carry
+`sm_70`), matching the versions already validated on this machine for the audit
+env. `--index-url` replaces the aliyun mirror for this one command:
+
+```bash
+conda activate mobileviclip
+
+# 1) drop the CUDA-13 build (leaves the stray nvidia-*-cu13 wheels harmless)
+pip uninstall -y torch torchvision torchaudio
+
+# 2) reinstall a Volta-capable build (torch >= 2.5 keeps deepspeed 0.19 happy)
+pip install "torch==2.5.1" "torchvision==0.20.1" "torchaudio==2.5.1" \
+    --index-url https://download.pytorch.org/whl/cu118
+
+# 3) decord 0.6 wheels break under numpy 2 (_ARRAY_API not found) — the dataset
+#    loader is decord-based, so pin numpy back down
+pip install "numpy<2"
+
+# 4) verify: arch list MUST contain sm_70, and the .cuda() must not raise
+python -c "import torch, decord; print(torch.__version__, torch.cuda.get_arch_list()); \
+  print(torch.zeros(1).cuda(), torch.cuda.get_device_name(0))"
+python -c "import deepspeed; print('deepspeed', deepspeed.__version__)"
+```
+
+Only after `sm_70` appears in `get_arch_list()` is it worth relaunching:
+
+```bash
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 debug True
+```
+
+> **Never `pip install -U torch/torchvision/torchaudio` (or bare
+> `pip install torchvision`) in this env again** — the default PyPI wheels are
+> CUDA 12.8/13 builds and will silently un-Volta the machine. Any torch upgrade
+> on 101vector must go through the cu118 index. The same rule, and why, is in
+> `tools/data_audit/SETUP_V100.md` §0.
+
+The other Volta consequence is already handled in the configs: no bf16 tensor
+cores, so `use_bf16=False` / `bf16=False` / fp16 AMP
+(`scripts/pretraining/clip/mobileviclip_small/config.py`). `flash_attn` is also
+unavailable on `sm_70`; the `FusedMLP of flash_attn is not installed!!!` lines
+are harmless fallback notices, not errors (see README_zh Q9).
