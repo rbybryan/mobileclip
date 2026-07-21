@@ -145,37 +145,53 @@ done
 > 「重叠不足 30 条」。**必须把 101vector 生成的 `s2_judge_sample.jsonl` 原样
 > 搬过去**（它就是 `s2_sample.jsonl` 的前 `JUDGE_N` 行）。
 
-#### 优先选 H100 机（很可能连视频都不用拷）
+#### 指定中转机：`root@10.55.87.68 -p 31179`（7×V100）
 
-两条线索指向它是最省事的中转机：
+**101vector 和 H100 都连不上端点**（2026-07 实测）。目前唯一可行的落点是
+这台 7 卡 V100——**已确认它能访问 `/workspace/mount/b100_zaip_data` 存储**，
+而端点的模型权重（`.../model_zoo/Qwen3.6-27B`）和全量语料都在该挂载下，
+所以它多半也在 B100 网内。
 
-1. **大概率同网段**——H100 的 `DATA` 在
-   `/workspace/mount/b100_zaip_data/zyc/...`，而端点的模型路径是
-   `/workspace/mount/b100_zaip_data/model_zoo/Qwen3.6-27B`，**同一个挂载根**，
-   多半就在同一个集群里。
-2. **可能不用拷视频**——`resolve_video_path` 的第三候选是记录里的 `abs_path`
-   原值，而 10k 样本保留了该字段。若它指向 B100 侧的原始位置，H100 直接就能
-   打开这些视频，**只需搬一个 500 行的 jsonl**。
+这带来一个额外好处：**很可能连视频都不用拷**。`resolve_video_path` 的第三
+候选是记录里的 `abs_path` 原值，而 10k 样本保留了该字段；若它指向 B100 侧的
+原始位置，这台机器直接就能打开，**只需搬一个 500 行的 jsonl**。
 
-步骤（全程不占 GPU——推理在端点那边）：
+**环境很轻**——`vlm_audit.py` 只用 `requests / numpy / pillow / decord`，
+**不需要 torch，也不占 GPU**（推理在端点那边）。不必照搬 101vector 那套
+cu118 audit_env：
 
 ```bash
-# ① 在 H100 上先测端点连通性
+# 在 10.55.87.68 上
+python -m venv ~/judge_env && source ~/judge_env/bin/activate
+pip install "numpy<2" pillow decord requests      # numpy<2：decord 0.6 的硬约束
+git clone <本仓库> ~/mobileclip && cd ~/mobileclip   # 或直接拷 tools/data_audit/
+```
+
+**三个仍需实测的前提**（按顺序，任一失败就换方案）：
+
+```bash
+# ① 端点连通性 —— 最关键，不通则这台也用不了
 for ep in 172.30.85.198:8000 172.30.62.177:8000 172.30.86.57:5000; do
   echo -n "$ep: "
   timeout 5 curl -s -o /dev/null -w "%{http_code}\n" "http://$ep/v1/models" || echo unreachable
 done
 
-# ② 从 101vector 把裁判样本搬过去（只有几百 KB）
-#    （在 101vector 上执行；没有 s2_judge_sample.jsonl 就先生成）
-head -n "${JUDGE_N:-500}" outputs/audit_10k/s2_sample.jsonl \
-  > outputs/audit_10k/s2_judge_sample.jsonl
-scp outputs/audit_10k/s2_judge_sample.jsonl <H100>:~/mobileclip/outputs/audit_10k/
+# ② 101vector → 本机的文件通道（要能把 500 行的样本送进来）
+#    直连不通就走跳板：101vector -> 你的本地机器 -> 10.55.87.68
 ```
 
 ```bash
-# ③ 【关键预检】在 H100 上确认这 500 条视频能解析到——决定要不要拷视频
-source ~/audit_env/bin/activate && cd ~/mobileclip
+# ③ 在 101vector 上生成并送出裁判样本（只有几百 KB）
+head -n "${JUDGE_N:-500}" outputs/audit_10k/s2_sample.jsonl \
+  > outputs/audit_10k/s2_judge_sample.jsonl
+scp -P 31179 outputs/audit_10k/s2_judge_sample.jsonl \
+  root@10.55.87.68:~/mobileclip/outputs/audit_10k/
+```
+
+```bash
+# ④ 【关键预检】在中转机上确认这 500 条视频能解析到——决定要不要拷视频
+source ~/judge_env/bin/activate && cd ~/mobileclip
+mkdir -p outputs/audit_10k
 python - outputs/audit_10k/s2_judge_sample.jsonl "${CLIPS:-/nonexistent}" <<'PY'
 import json, os, sys, collections
 sys.path.insert(0, "tools/data_audit")
@@ -195,38 +211,50 @@ for v, p in miss: print("MISSING", v, "->", p)
 PY
 ```
 
-- `ok` ≈ 全部 → **不用拷视频**，直接跳到 ④（`--video-root` 传什么都行，
+- `ok` ≈ 全部 → **不用拷视频**，直接跳到 ⑤（`--video-root` 传什么都行，
   实际走的是 `abs_path` 那条候选；有真实根目录就填真实的）。
-- `missing` 很多 → 看打印出的候选路径差在哪；仍解析不了就退回下面的
-  「通用中转机」流程，把这 500 条视频拷过去。
+- `missing` 很多 → 看打印出的候选路径差在哪。这台机器挂着 B100 存储，
+  优先试把 `--video-root` 指向该挂载下的语料视频根目录；仍解析不了才退回
+  下面的「拷视频」流程。
 
 ```bash
-# ④ 在 H100 上跑裁判（不占 GPU）
+# ⑤ 在中转机上跑裁判（不占 GPU，推理在端点那边）
 python tools/data_audit/vlm_audit.py \
   --input outputs/audit_10k/s2_judge_sample.jsonl \
-  --video-root "$CLIPS" \
+  --video-root "${CLIPS:-/nonexistent}" \
+  --api-base http://172.30.85.198:8000/v1 --api-key EMPTY \
+  --model /workspace/mount/b100_zaip_data/model_zoo/Qwen3.6-27B \
+  --frames 8 --concurrency 8 --limit 5 \
+  --output outputs/audit_10k/s2_verdicts_judge_smoke.jsonl
+cat outputs/audit_10k/s2_verdicts_judge_smoke.jsonl      # 应是完整判定 JSON
+# 冒烟里若出现 "no valid verdict JSON in response"，八成是 thinking 没关掉
+# ——本仓库已默认发送 enable_thinking=False，确认拉的是最新代码。
+# 冒烟 OK 后去掉 --limit 跑全量 500 条：
+python tools/data_audit/vlm_audit.py \
+  --input outputs/audit_10k/s2_judge_sample.jsonl \
+  --video-root "${CLIPS:-/nonexistent}" \
   --api-base http://172.30.85.198:8000/v1 --api-key EMPTY \
   --model /workspace/mount/b100_zaip_data/model_zoo/Qwen3.6-27B \
   --frames 8 --concurrency 8 \
   --output outputs/audit_10k/s2_verdicts_judge.jsonl
-# 正式跑前先加 --limit 5 冒烟一遍，确认抽帧→base64→API→JSON 解析整条链路通
 ```
 
 ```bash
-# ⑤ 拷回 101vector 算分（不必重跑裁判）
-scp <H100>:~/mobileclip/outputs/audit_10k/s2_verdicts_judge.jsonl outputs/audit_10k/
+# ⑥ 拷回 101vector 算分（不必重跑裁判）
+scp -P 31179 root@10.55.87.68:~/mobileclip/outputs/audit_10k/s2_verdicts_judge.jsonl \
+  outputs/audit_10k/
 bash tools/data_audit/run_v100.sh judge-agree
 ```
 
-> 💡 **如果 H100 本来就可用，先想一下要不要干脆走路线 A**：本地 235B-FP8 是
-> 方案的首选裁判，与 8B 的能力差距远大于 27B，且没有同族偏差问题（见本节末尾
-> 的警告）。代价是 ~235GB 下载。**赶时间就用端点，要证据强度就上 235B。**
+> 💡 **H100 虽然连不上端点，但它仍可以走路线 A**：在本机自托管 235B-FP8，
+> 与 8B 的能力差距远大于 27B，且没有同族偏差问题（见本节末尾的警告）。
+> 代价是 ~235GB 下载。**赶时间用这台中转机 + 27B 端点，要证据强度就在 H100 上
+> 起 235B。**两条路互不冲突，可以先跑 27B 拿到初步一致率，再用 235B 复核。
 
-#### 通用中转机（H100 不可用，或上面的预检没通过）
+#### 若预检 ④ 没通过：把那 500 条视频也拷过去
 
-任何既能连 `172.30.x.x` 又能收文件的机器都行（例如 7 卡 V100
-`10.55.87.68 -p 31179`）。这时要连视频一起拷，但**仍然不用拷全部 1 万条**
-——裁判只看 `JUDGE_N` 条。先在 101vector 上挑出那批视频的清单：
+中转机解析不到视频时才需要这一步——**仍然不用拷全部 1 万条**，
+裁判只看 `JUDGE_N` 条。先在 101vector 上挑出那批视频的清单：
 
 ```bash
 source ~/audit_env/bin/activate && cd ~/mobileclip
