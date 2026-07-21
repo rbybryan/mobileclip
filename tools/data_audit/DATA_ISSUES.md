@@ -77,7 +77,7 @@ python -m json.tool outputs/audit_10k/s0_summary.json | head -60
 | T1 | 「**翻译可疑**」格：en 高 + zh 高 + xling 低 | **1522 条（15.2%）** | 中英两侧画面对齐都正常，只有 LaBSE 说不忠实。按问题 5，**这格很可能主要是 xling 噪声**。看 VLM `trans_score≤2` 的真实差率——若很低，说明该格是假警报 |
 | T2 | RECAPTION 候选（en 低 + zh 低） | 1195 条（11.9%） | `en_score≤2` 的比例，确认是源头错而非评分尺度问题 |
 | T3 | RETRANSLATE 候选（en 高 + zh 低 + xling 低） | 387 条（3.9%） | `trans_score` 是否显著低于 T1 那格——这是 xling 有无判别力的直接对照 |
-| T4 | 8B 判定本身可不可信 | 500 条 | 8B vs 云端 235B 裁判的 `action` 一致率 **≥75%**（§4 决策门）。不达标先改 rubric 重跑 S2，**不要拿不可信判定去校准阈值** |
+| T4 | 8B 判定本身可不可信 | 500 条 | 8B vs 235B 裁判的 `action` 一致率 **≥75%**（§4 决策门）。不达标先改 rubric 重跑 S2，**不要拿不可信判定去校准阈值**。<br>**裁判用不上时**（H100 不可用 / 235GB 下不动）走 `SETUP_JUDGE_API.md` §0 路线 D：换族 8B 找分歧 → 分歧定向人工抽检 → 决策门改挂**人工二值一致率 ≥80%**（`{keep,fix_text}` vs 其余），阈值只用随机对照子集算 |
 
 ---
 
