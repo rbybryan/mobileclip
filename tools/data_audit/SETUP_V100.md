@@ -490,12 +490,15 @@ done
   > 从全量 10M 另抽一批与本机 10k 交集可能为空，`judge-agree` 会直接报
   > 「重叠不足」。搬 `s2_judge_sample.jsonl`，不要重抽。
 
-**接入前请对照** `SETUP_JUDGE_API.md` §0 路线 A′ 的六项参数核对表
-（鉴权头 / 模型 ID / **并发** / 超时 / 图像尺寸 / `max_tokens`），
-house convention 以内网既有调用代码
-`.../Qwen3_5_vllm_dev/request_multilabel_v3_resume.py` 为准。
-**并发尤其要核**：`s2-judge` 目前写死 `--concurrency 8`，而端点是**共享资源**，
-别把别人在用的服务打满。
+**参数已按内网既有调用代码对齐完毕**（2026-07，逐项比对表见
+`SETUP_JUDGE_API.md` §0 路线 A′）。三个结论：
+
+- 🔴 **`vlm_audit.py` 现在默认发送 `chat_template_kwargs.enable_thinking=False`**。
+  Qwen3.x 的 thinking 默认开启，不关的话模型会把 `max_tokens` 全花在 `<think>` 里、
+  没轮到输出 JSON 就被截断，**每一条裁判都会失败**。这项不是优化，是必需。
+- 超时默认 180→**600 秒**（house 值），重试补上了**指数退避**（原本是立刻重打）。
+- 并发：house 脚本用 `MAX_WORKERS=32`，我们的 `--concurrency 8` **远低于它，安全**
+  （此前担心"打满别人服务"的顾虑可以取消）。
 
 > ⚠️ **证据强度打折**：27B 裁 8B 只有约 3 倍参数差距，且同厂同族——
 > 方案 §2 原本要的是 235B **加换一家**（InternVL）互为第二意见，正是为了避开
