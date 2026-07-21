@@ -869,6 +869,209 @@ S3 阈值**。二值口径的理由见 `SETUP_JUDGE_API.md`「路线 D」的 D3
 | 比预估慢很多（>2 分钟/条） | 多半是 offload（见上）或视频解码慢（`--frames 6` 降一档）；流水线并行本身单卡串行，属预期 |
 | `KeyError: 'qwen3_vl'` | `transformers < 4.57` → `pip install -U "transformers>=4.57"` |
 
+---
+
+### 4.3-跨族 备选裁判：InternVL3.5-38B-HF 本机部署（B0–B8 完整流程）
+
+与上面 32B 那条并列的**另一个兜底**，差别只在裁判是**跨族**的：主力
+`Qwen3-VL-8B` 与 A′ 的 `Qwen3.6-27B`、C 的 `Qwen3-VL-32B` 都是 Qwen 系，
+共有盲区会一起犯错；换成 InternVL 后误差独立，一致率才真正有信息量。
+代价是集成风险更高（下面 B1/B5/B6 三处验收点就是为它设的）。
+
+**本节自包含**，照 B0→B8 顺序执行即可，不用回看 32B 那节。
+
+#### B0. 先确认该不该走这条
+
+- 路线 A′（H100 中转，零下载）**还没排除**就别开始——见 §1「下一步做什么」。
+- 磁盘要再腾 **~76GB**。已下的 32B 若不再需要，可 `rm -rf ckpts/Qwen3-VL-32B-Instruct` 换空间。
+- **只做审查、不动环境**：本模型要求 `transformers>=4.52.1`，§0 装的 ≥4.57 已满足，
+  **不需要 pip 安装任何东西**（`audit_env` 审核期间冻结，见步骤 0 的红线）。
+
+#### B1. 探针：确认 `-HF` 仓库存在（10 秒，**下之前必做**）
+
+**必须是 `-HF` 后缀。** 无后缀的 GitHub 格式要 `trust_remote_code`、调用方式是
+自定义 `model.chat()` + 自建 `pixel_values`，与 `vlm_audit_hf.py` 用的
+`AutoModelForImageTextToText`/`AutoProcessor` **完全不兼容**（等于重写脚本）；
+`-HF` 是原生 transformers 实现，支持 `eager`/`sdpa`——Volta 没有 flash-attn，
+这一条是硬性前提。
+
+```bash
+source ~/audit_env/bin/activate && cd ~/mobileclip
+modelscope download --model OpenGVLab/InternVL3_5-38B-HF \
+  --local_dir /tmp/ivl_probe config.json
+python -m json.tool /tmp/ivl_probe/config.json | head -20
+```
+
+**验收点**：能取到 `config.json`，且 `architectures` 里是
+`InternVLForConditionalGeneration` 一类的原生类名（**不是**指向
+`modeling_internvl_chat.py` 的 `auto_map`）。
+
+取不到就试 `OpenGVLab/InternVL3_5-38B-Instruct-HF`；**两个都没有 →
+放弃跨族，回到上面的 Qwen3-VL-32B**（重写审核脚本的代价超过独立性收益）。
+
+#### B2. 预检（1 分钟）
+
+```bash
+df -h .        # 验收点：剩余 ≥90GB（权重 76GB + 余量）
+nvidia-smi --query-gpu=index,memory.total,memory.used --format=csv
+               # 验收点：8×32GB，且 4.2 主力已结束（本地裁判要占卡，不能与主力抢）
+python -c "import transformers, accelerate, torch; print(transformers.__version__, \
+  accelerate.__version__, torch.__version__)"   # 验收点：transformers ≥4.52.1
+```
+
+#### B3. 下载（~76GB，后台）
+
+hf-mirror 通道在本机**已实测不可用**（新版 `huggingface_hub` 改走 Xet →
+`Local entry not found`，详见 `TROUBLESHOOTING.md`），直接用 ModelScope：
+
+```bash
+mkdir -p ckpts
+nohup bash -c 'until modelscope download --model OpenGVLab/InternVL3_5-38B-HF \
+  --local_dir ckpts/InternVL3_5-38B-HF --max-workers 4; do sleep 10; done' \
+  > download_ivl38b.log 2>&1 &
+```
+
+测速（<2 MB/s 就换通道，方案 A/D 见上面步骤 1 的表）：
+
+```bash
+D=ckpts/InternVL3_5-38B-HF
+a=$(du -sm $D 2>/dev/null|cut -f1); a=${a:-0}; sleep 60; b=$(du -sm $D|cut -f1)
+echo "$(( b - a )) MB/s ；已下 ${b}/77824 MB"
+```
+
+#### B4. 完整性校验（必做）
+
+```bash
+du -sh ckpts/InternVL3_5-38B-HF        # 验收点：≈76G
+python - ckpts/InternVL3_5-38B-HF <<'PY'
+import json, os, sys
+d = sys.argv[1]
+cfg = json.load(open(os.path.join(d, "config.json")))
+print("architectures:", cfg.get("architectures"), "| auto_map:", bool(cfg.get("auto_map")))
+idx = json.load(open(os.path.join(d, "model.safetensors.index.json")))
+need = sorted(set(idx["weight_map"].values()))
+have = [f for f in need if os.path.exists(os.path.join(d, f))]
+print(f"分片: {len(have)}/{len(need)} {'齐全' if len(have)==len(need) else '不完整!'}")
+tot = idx["metadata"]["total_size"]
+size = sum(os.path.getsize(os.path.join(d, f)) for f in have)
+print(f"字节: {size:,} / {tot:,} {'OK' if size >= tot else '下载不完整!'}")
+PY
+```
+
+`auto_map: True` 说明拿到的仍是 GitHub 格式（走远程代码）——**回到 B1 重选**。
+
+#### B5. 加载冒烟 2 条（~15 分钟，含首次加载）
+
+76GB fp16 单卡放不下，必须 `--device-map auto` 跨卡切分 + `--num-shards 1`：
+
+```bash
+OUT=outputs/audit_10k
+head -n 2 $OUT/s2_sample.jsonl > $OUT/ivl_smoke.jsonl
+python tools/data_audit/vlm_audit_hf.py --input $OUT/ivl_smoke.jsonl \
+  --video-root /home/vca1/datasets/internvid_zh_10k/videos \
+  --model ckpts/InternVL3_5-38B-HF --dtype fp16 \
+  --device-map auto --num-shards 1 --shard-id 0 \
+  --output "$OUT/ivl_smoke_verdict.jsonl"
+python -m json.tool <<< "$(head -1 $OUT/ivl_smoke_verdict.jsonl)"
+```
+
+**三个验收点，缺一不可**：
+
+1. **没有 CPU offload**——加载日志不出现 `meta device`/offload 提示。
+   不确定就单独查：`hf_device_map` 的值应全是 `0..7`，出现 `cpu`/`disk`
+   说明有残留进程占卡（`nvidia-smi` → `pkill -f vlm_audit_hf`），
+   带着 offload 跑会慢 10 倍以上。
+2. **中文正常**（不是乱码/空串）。InternVL3.5 是 bf16 训练的，V100 只能 fp16，
+   38B 比 32B 更容易溢出 → 真乱码就改 `--dtype fp32`（152GB，8 卡放得下，速度减半）。
+3. **JSON 能解析出 `action`**——见 B6。
+
+#### B6. 换族特有：rubric 兼容性判读 ⚠️
+
+`vlm_audit.py` 的 rubric 与输出格式是**照 Qwen 的行为调出来的**，
+换族模型未必守同样的格式。**这一步不过就别跑 500 条**，否则可能整批空判定。
+
+```bash
+python - <<'PY'
+import json
+rows = [json.loads(l) for l in open("outputs/audit_10k/ivl_smoke_verdict.jsonl")]
+ok = [r for r in rows if isinstance(r.get("verdict"), dict) and "action" in r["verdict"]]
+print(f"可解析 {len(ok)}/{len(rows)}")
+for r in rows:
+    v = r.get("verdict", {})
+    print(" ", r["video"], "|", {k: v.get(k) for k in ("action", "en_score", "zh_score", "trans_score")},
+          "| error:", v.get("error", "-"))
+PY
+```
+
+- **2/2 可解析** → 进 B7。
+- **解析失败**：先看原始输出是不是被 markdown 包了（```json ... ```）或带前言。
+  `extract_json` 会剥 `<think>` 并扫首个合法 JSON 对象，多数情况能兜住；
+  兜不住时**改 `vlm_audit.py` 的 `PROMPT` 末尾加一句「只输出 JSON，不要用
+  代码块包裹」再重跑冒烟**——不要改解析器去迁就单个模型。
+- **字段在但分数明显异常**（例如全 0 或全 5）：说明 rubric 表述对该模型歧义，
+  记进 `DATA_ISSUES.md` 并考虑放弃跨族——**一个不守 rubric 的裁判比没有裁判更糟**。
+
+#### B7. 正式跑 500 条
+
+`device_map auto` 是流水线并行（同一时刻只有一张卡在算）。76GB 权重最少要 3 张卡，
+给 4 张余量合适，**两进程各占 4 卡做数据并行，墙钟减半**：
+
+```bash
+OUT=outputs/audit_10k
+head -n 500 $OUT/s2_sample.jsonl > $OUT/s2_judge_sample.jsonl
+
+for i in 0 1; do
+  gpus=$([ $i -eq 0 ] && echo 0,1,2,3 || echo 4,5,6,7)
+  CUDA_VISIBLE_DEVICES=$gpus nohup python tools/data_audit/vlm_audit_hf.py \
+    --input $OUT/s2_judge_sample.jsonl \
+    --video-root /home/vca1/datasets/internvid_zh_10k/videos \
+    --model ckpts/InternVL3_5-38B-HF --dtype fp16 \
+    --device-map auto --num-shards 2 --shard-id $i \
+    --output "$OUT/s2_verdicts_judge_ivl.{shard}.jsonl" \
+    > $OUT/judge_ivl_shard$i.log 2>&1 &
+done
+
+wc -l $OUT/s2_verdicts_judge_ivl.*.jsonl; pgrep -fc vlm_audit_hf   # 每片应到 250
+```
+
+**不要切成 4 进程 × 2 卡**：76GB 权重超过 2×32GB，必 OOM。中断重跑同一命令
+即可断点续跑（按 `video` 去重）。
+
+> 💡 **InternVL 比 Qwen 更吃显存/更慢的原因**：它用**动态分块**（一张图按
+> 分辨率切成多个 tile 再送进视觉塔），8 帧可能膨胀成几十个图块 → token 数
+> 远超 Qwen 的同帧数。若 OOM 或慢得离谱，**先降 `--frames 8 → 4`，
+> 再降 `--max-side 448 → 336`**（`--max-side` 在送进 processor 前缩图，
+> 图小 → 切出的 tile 少）。改了要在 `DATA_ISSUES.md` 记一笔：
+> 裁判与主力的输入帧数不同，一致率的可比性会打折扣。
+
+#### B8. 算一致率（决策门）
+
+`judge-agree` 读单个 `s2_verdicts_judge.jsonl`，先把两片合并：
+
+```bash
+OUT=outputs/audit_10k
+cat $OUT/s2_verdicts_judge_ivl.*.jsonl > $OUT/s2_verdicts_judge.jsonl
+wc -l $OUT/s2_verdicts_judge.jsonl            # 应 ≈500
+bash tools/data_audit/run_v100.sh judge-agree # -> outputs/audit_10k/judge_agreement.md
+```
+
+输出含**五类一致率 + 二值一致率 + 两个 Cohen's κ + 混淆矩阵**。判读口径：
+**二值一致率（`{keep,fix_text}` vs 其余）才是 S3 分桶真正依赖的那个**，
+五类精确匹配偏苛刻，只作参考；κ<0.6 的维度按计划 §4 回炉改 rubric。
+把裁判是谁（InternVL3.5-38B-HF，跨族）写进 `DATA_ISSUES.md`——
+**跨族裁判通过的决策门，证据强度高于同族**，这一点值得记下来。
+
+#### B9. 常见问题（InternVL 特有）
+
+| 现象 | 原因与处理 |
+|---|---|
+| `auto_map` 存在 / 报 `trust_remote_code` | 下成了 GitHub 格式 → 回 B1 换 `-HF` 仓库 |
+| `flash_attn` 相关 ImportError | Volta 编不出 flash-attn。`-HF` 变体默认走 sdpa，脚本已显式指定；若仍触发说明拿的不是 `-HF` 格式 |
+| OOM | 每进程给的卡 <4 张；或动态分块把 token 撑爆 → 降 `--frames`/`--max-side`（见 B7 提示） |
+| 输出乱码 / NaN | fp16 溢出（38B 更易触发）→ `--dtype fp32`（152GB，8 卡单进程，速度减半） |
+| 判定能出但 `action` 字段缺失 | rubric 格式不兼容 → 见 B6，改 PROMPT 而不是改解析器 |
+| 比 32B 慢很多 | 属预期（动态分块 token 更多）；先确认不是 CPU offload（B5 验收点 1） |
+
 ## 5. S3 校准 + 分桶 + 10k 诊断报告（CPU 秒级）〖不可并行：需 S0+S1+S2 全部产物，最后跑〗
 
 ```bash
