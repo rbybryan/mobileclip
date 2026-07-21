@@ -1,8 +1,13 @@
 # 中转机裁判执行手册 —— `10.55.87.68`（7×V100），逐条命令
 
-> **这台机器的角色**：只做 **S2 的 4.3 裁判档**。它既连得到内网
-> `Qwen3.6-27B` 端点（待实测），又挂载了 `/workspace/mount/b100_zaip_data`——
-> 而 101vector 和 H100 **都连不上端点**（2026-07 实测），所以裁判只能落在这里。
+> **这台机器的角色**：只做 **S2 的 4.3 裁判档**。101vector 和 H100
+> **都连不上端点**（2026-07 实测），而这台**连得上**——所以裁判只能落在这里。
+>
+> **§1 三项前提已全部实测通过（2026-07-21）**：
+> `172.30.85.198:8000` 和 `172.30.62.177:8000` 返回 **200**
+> （4 卡的 `172.30.86.57:5000` 返回 `000`，不可用，别再试）；
+> 模型 ID 确认为 `/workspace/mount/b100_zaip_data/model_zoo/Qwen3.6-27B`
+> （`max_model_len` 262144）；共享存储可见。**从第 2 步接着做即可。**
 >
 > **不做什么**：不跑 S0/S1/S2 主力、不训练、不改数据。主力判定仍在 101vector。
 >
@@ -35,6 +40,10 @@ done
 退回 [`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0 的路线 C（本地 32B）或
 路线 D（无大裁判协议）。
 
+> ✅ **实测（2026-07-21）**：`172.30.85.198:8000` → `200`、
+> `172.30.62.177:8000` → `200`、`172.30.86.57:5000` → `000`（不通）。
+> **用前两个 8 卡端点**；4 卡那个已确认不可用。
+
 ### 1.2 `[中转]` 确认对外模型 ID
 
 ```bash
@@ -57,24 +66,61 @@ ls -d /workspace/mount/b100_zaip_data && echo "存储 OK"
 
 ---
 
-## 2. `[中转]` 环境（~3 分钟，无 GPU、无 torch）
+## 2. `[中转]` 环境（~2 分钟，无 GPU、无 torch）
 
-`vlm_audit.py` 只用 `requests / numpy / pillow / decord`，是自包含脚本。
+> ⚠️ **别建空 venv。** 实测这台机器 **pip 出不去**（`mirrors.aliyun.com` 报
+> `SSL: UNEXPECTED_EOF_WHILE_READING`，TLS 被中间设备掐断），空 venv 里什么都
+> 装不上。但它本来就带 conda `base`（`/root/miniforge3`）且在做 grounding-dino
+> 标注工作，**所需的包大概率已经齐了**——直接用 base，不要隔离。
+
+`vlm_audit.py` 需要：`numpy` + `pillow` + `requests` + **任意一个视频后端**
+（`decord` / `opencv-python` / `av`，三选一即可）。先查 base 里有什么：
 
 ```bash
+deactivate 2>/dev/null; rm -rf ~/judge_env      # 清掉上一步可能建的空 venv
 mkdir -p ~/judge && cd ~/judge
-python3 -m venv ~/judge_env && source ~/judge_env/bin/activate
-pip config set global.index-url https://mirrors.aliyun.com/pypi/simple
-pip install "numpy<2" pillow decord requests
+python3 - <<'PY'
+mods = {"numpy": "numpy", "PIL": "pillow", "requests": "requests",
+        "decord": "decord", "cv2": "opencv-python", "av": "av"}
+have, miss = [], []
+for m, pkg in mods.items():
+    try:
+        __import__(m); have.append(m)
+    except ImportError:
+        miss.append(f"{m}({pkg})")
+core_ok = all(m in have for m in ("numpy", "PIL", "requests"))
+backend = [m for m in ("decord", "cv2", "av") if m in have]
+print("已有:", ", ".join(have) or "无")
+print("缺失:", ", ".join(miss) or "无")
+print("核心三件套:", "OK" if core_ok else "缺！")
+print("可用视频后端:", backend or "无 —— 这是唯一的硬缺口")
+PY
 ```
 
-> `numpy<2` 是硬约束：decord 0.6 的预编译 wheel 在 numpy 2.x 下报 `_ARRAY_API` 错误。
+**验收点**：`核心三件套 OK` 且 `可用视频后端` 非空 → **环境就绪，直接进第 3 步**。
+
+**若缺视频后端**（三个都没有），按成功率排序试：
 
 ```bash
-python -c "import numpy, requests, decord, PIL; print('deps OK', numpy.__version__)"
+# ① conda 装（走 conda 通道，不经 PyPI，这台机器最可能通）
+conda install -y -c conda-forge opencv          # 或 av
+# ② 换 pip 源 + 放宽 TLS（TLS 被拦时 http 源有时能过）
+pip install opencv-python-headless \
+  -i http://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com
+# ③ 离线 wheel：在能上网的机器下好再 scp 过来
+#    pip download opencv-python-headless -d /tmp/w   （能上网的机器）
+#    pip install --no-index --find-links=/tmp/w opencv-python-headless
 ```
 
-**验收点**：打印 `deps OK 1.x`。
+> **不必执着于 decord。** `vlm_audit.py` 支持 `--frame-backend
+> {auto,decord,opencv,pyav}`，三种后端用**同一套 TSN 分段中心索引公式**，
+> 已实测在同一文件上取到的帧**逐像素完全一致**。`auto`（默认）按
+> decord → opencv → pyav 顺序挑第一个可用的，并在 stderr 打印
+> `[frames] backend=xxx`。
+>
+> 之所以优先 decord：主力 8B 那边（`vlm_audit_hf.py`）用的就是它，同一个解码器
+> 才能保证判的是同一帧。**换了后端就把它记到 T4 结论旁边**——不同解码器对同一
+> 文件可能报出不同的总帧数，那会让索引落在稍不同的位置，是一致率的一个小混淆项。
 
 ---
 
@@ -112,7 +158,7 @@ scp -P 31179 tools/data_audit/vlm_audit.py \
 若指向共享存储上的原始位置，本机直接就能打开，**一个视频都不用拷**。
 
 ```bash
-cd ~/judge && source ~/judge_env/bin/activate
+cd ~/judge          # 用 conda base，见 §2；不要激活空 venv
 python - s2_judge_sample.jsonl "${CLIPS:-/nonexistent}" <<'PY'
 import json, os, sys, collections
 sys.path.insert(0, ".")
@@ -147,7 +193,7 @@ PY
 ## 5. `[中转]` 冒烟 5 条（~2 分钟，必做）
 
 ```bash
-cd ~/judge && source ~/judge_env/bin/activate
+cd ~/judge          # 用 conda base，见 §2；不要激活空 venv
 python vlm_audit.py \
   --input s2_judge_sample.jsonl \
   --video-root "${CLIPS:-/nonexistent}" \
@@ -177,7 +223,7 @@ head -1 s2_verdicts_judge.jsonl | python -m json.tool
 ## 6. `[中转]` 正式跑 500 条（~20–40 分钟）
 
 ```bash
-cd ~/judge && source ~/judge_env/bin/activate
+cd ~/judge          # 用 conda base，见 §2；不要激活空 venv
 nohup python vlm_audit.py \
   --input s2_judge_sample.jsonl \
   --video-root "${CLIPS:-/nonexistent}" \

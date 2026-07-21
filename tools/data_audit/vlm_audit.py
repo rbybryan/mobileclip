@@ -20,7 +20,7 @@ Then:
         --api-base http://localhost:8000/v1 --model Qwen/Qwen3-VL-8B-Instruct \
         --frames 8 --concurrency 32 --output outputs/audit/s2_verdicts.jsonl
 
-Deps: requests, decord, pillow, numpy.
+Deps: requests, pillow, numpy + one video backend (decord | opencv-python | av).
 """
 
 import argparse
@@ -88,16 +88,93 @@ def resolve_video_path(video_root, rec, video):
     return cands[0] if cands else ""
 
 
-def sample_frames_b64(path, num_frames, max_side, quality=80):
+_FRAME_BACKEND = None  # resolved once, reported so the choice is visible in logs
+
+
+def _seg_centre_idx(n, num_frames):
+    """TSN-style segment centers: InternVid clips are shot-cut, so the first/last
+    frames are often transitions/black frames — never sample the boundaries."""
+    return ((np.arange(num_frames) + 0.5) / num_frames * n).astype(int)
+
+
+def _decode_decord(path, num_frames):
     import decord
     vr = decord.VideoReader(path, num_threads=1)
     n = len(vr)
     if n == 0:
         raise RuntimeError("empty video")
-    # TSN-style segment centers: InternVid clips are shot-cut, so the first/last
-    # frames are often transitions/black frames — never sample the boundaries.
-    idx = ((np.arange(num_frames) + 0.5) / num_frames * n).astype(int)
-    frames = vr.get_batch(idx).asnumpy()
+    return vr.get_batch(_seg_centre_idx(n, num_frames)).asnumpy()
+
+
+def _decode_opencv(path, num_frames):
+    import cv2
+    cap = cv2.VideoCapture(path)
+    try:
+        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if n <= 0:
+            raise RuntimeError("empty video")
+        out = []
+        for i in _seg_centre_idx(n, num_frames):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(i))
+            ok, fr = cap.read()
+            if not ok:
+                raise RuntimeError(f"read failed at frame {i}")
+            out.append(fr[:, :, ::-1])          # BGR -> RGB
+        return np.stack(out)
+    finally:
+        cap.release()
+
+
+def _decode_pyav(path, num_frames):
+    import av
+    with av.open(path) as container:
+        stream = container.streams.video[0]
+        n = stream.frames
+        if n <= 0:                              # some containers don't store a count
+            frames = [f.to_ndarray(format="rgb24") for f in container.decode(stream)]
+            if not frames:
+                raise RuntimeError("empty video")
+            return np.stack([frames[i] for i in _seg_centre_idx(len(frames), num_frames)])
+        wanted = set(int(i) for i in _seg_centre_idx(n, num_frames))
+        got = {}
+        for i, frame in enumerate(container.decode(stream)):
+            if i in wanted:
+                got[i] = frame.to_ndarray(format="rgb24")
+                if len(got) == len(wanted):
+                    break
+        if not got:
+            raise RuntimeError("empty video")
+        order = [i for i in _seg_centre_idx(n, num_frames) if int(i) in got]
+        return np.stack([got[int(i)] for i in order])
+
+
+_BACKENDS = {"decord": _decode_decord, "opencv": _decode_opencv, "pyav": _decode_pyav}
+
+
+def _resolve_backend(preference):
+    """decord is preferred so the judge samples exactly what vlm_audit_hf.py fed
+    the main model. opencv/pyav exist because a relay host may have no route to
+    PyPI to install decord; all three use the same index formula, but a different
+    decoder can report a different frame count for the same file, so the chosen
+    backend is logged and worth recording next to the agreement numbers."""
+    global _FRAME_BACKEND
+    if _FRAME_BACKEND:
+        return _FRAME_BACKEND
+    order = [preference] if preference != "auto" else ["decord", "opencv", "pyav"]
+    for name in order:
+        try:
+            __import__({"decord": "decord", "opencv": "cv2", "pyav": "av"}[name])
+        except ImportError:
+            continue
+        _FRAME_BACKEND = name
+        print(f"[frames] backend={name}", file=sys.stderr)
+        return name
+    raise RuntimeError(
+        "no video backend available — install one of: decord, opencv-python, av")
+
+
+def sample_frames_b64(path, num_frames, max_side, quality=80, backend="auto"):
+    frames = _BACKENDS[_resolve_backend(backend)](path, num_frames)
     urls = []
     for fr in frames:
         img = Image.fromarray(fr)
@@ -135,7 +212,8 @@ def audit_one(rec, args, session):
            "s1": rec.get("s1"), "s0_flags": rec.get("s0_flags")}
     path = resolve_video_path(args.video_root, rec, video)
     try:
-        frames = sample_frames_b64(path, args.frames, args.max_side)
+        frames = sample_frames_b64(path, args.frames, args.max_side,
+                                   backend=args.frame_backend)
     except Exception as ex:  # noqa: BLE001 - decode failure is itself a verdict
         out["verdict"] = {"video_readable": False, "action": "drop",
                           "error": f"decode: {type(ex).__name__}"}
@@ -189,6 +267,10 @@ def main():
     ap.add_argument("--model", required=True)
     ap.add_argument("--frames", type=int, default=8)
     ap.add_argument("--max-side", type=int, default=448)
+    ap.add_argument("--frame-backend", default="auto",
+                    choices=["auto", "decord", "opencv", "pyav"],
+                    help="video decoder; auto prefers decord (what the main "
+                         "model used), then opencv, then pyav")
     ap.add_argument("--max-tokens", type=int, default=1024)
     ap.add_argument("--concurrency", type=int, default=32)
     ap.add_argument("--retries", type=int, default=2)
