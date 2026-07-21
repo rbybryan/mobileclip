@@ -127,11 +127,96 @@ for ep in 172.30.85.198:8000 172.30.62.177:8000 172.30.86.57:5000; do
 done
 ```
 
-**探针二不通时：借一台中转机跑裁判**（例如 7 卡 V100 `10.55.87.68 -p 31179`，
-或任何既能连 `172.30.x.x` 又能收文件的机器）。
+**探针二不通时：借一台中转机跑裁判。**
 
-关键是**不用拷全部 1 万条视频**——裁判只看 `JUDGE_N` 条（默认 500）。
-先在 101vector 上挑出那批视频的清单：
+> ⛔ **先说一个会让整件事白做的坑：不要在中转机上重新抽样。**
+> 裁判的意义是**和主力判过的同一批记录**逐条比对；在 H100 上从全量 10M 里
+> 另抽一批，与 101vector 那 10k 的交集可能是空的，`judge-agree` 会直接告诉你
+> 「重叠不足 30 条」。**必须把 101vector 生成的 `s2_judge_sample.jsonl` 原样
+> 搬过去**（它就是 `s2_sample.jsonl` 的前 `JUDGE_N` 行）。
+
+#### 优先选 H100 机（很可能连视频都不用拷）
+
+两条线索指向它是最省事的中转机：
+
+1. **大概率同网段**——H100 的 `DATA` 在
+   `/workspace/mount/b100_zaip_data/zyc/...`，而端点的模型路径是
+   `/workspace/mount/b100_zaip_data/model_zoo/Qwen3.6-27B`，**同一个挂载根**，
+   多半就在同一个集群里。
+2. **可能不用拷视频**——`resolve_video_path` 的第三候选是记录里的 `abs_path`
+   原值，而 10k 样本保留了该字段。若它指向 B100 侧的原始位置，H100 直接就能
+   打开这些视频，**只需搬一个 500 行的 jsonl**。
+
+步骤（全程不占 GPU——推理在端点那边）：
+
+```bash
+# ① 在 H100 上先测端点连通性
+for ep in 172.30.85.198:8000 172.30.62.177:8000 172.30.86.57:5000; do
+  echo -n "$ep: "
+  timeout 5 curl -s -o /dev/null -w "%{http_code}\n" "http://$ep/v1/models" || echo unreachable
+done
+
+# ② 从 101vector 把裁判样本搬过去（只有几百 KB）
+#    （在 101vector 上执行；没有 s2_judge_sample.jsonl 就先生成）
+head -n "${JUDGE_N:-500}" outputs/audit_10k/s2_sample.jsonl \
+  > outputs/audit_10k/s2_judge_sample.jsonl
+scp outputs/audit_10k/s2_judge_sample.jsonl <H100>:~/mobileclip/outputs/audit_10k/
+```
+
+```bash
+# ③ 【关键预检】在 H100 上确认这 500 条视频能解析到——决定要不要拷视频
+source ~/audit_env/bin/activate && cd ~/mobileclip
+python - outputs/audit_10k/s2_judge_sample.jsonl "${CLIPS:-/nonexistent}" <<'PY'
+import json, os, sys, collections
+sys.path.insert(0, "tools/data_audit")
+from vlm_audit import resolve_video_path          # 与审核器同一套解析逻辑
+sample, root = sys.argv[1], sys.argv[2]
+stats, miss = collections.Counter(), []
+for line in open(sample, encoding="utf-8"):
+    rec = json.loads(line)
+    p = resolve_video_path(root, rec, rec.get("video"))
+    if os.path.exists(p):
+        stats["ok"] += 1
+    else:
+        stats["missing"] += 1
+        if len(miss) < 5: miss.append((rec.get("video"), p))
+print(dict(stats))
+for v, p in miss: print("MISSING", v, "->", p)
+PY
+```
+
+- `ok` ≈ 全部 → **不用拷视频**，直接跳到 ④（`--video-root` 传什么都行，
+  实际走的是 `abs_path` 那条候选；有真实根目录就填真实的）。
+- `missing` 很多 → 看打印出的候选路径差在哪；仍解析不了就退回下面的
+  「通用中转机」流程，把这 500 条视频拷过去。
+
+```bash
+# ④ 在 H100 上跑裁判（不占 GPU）
+python tools/data_audit/vlm_audit.py \
+  --input outputs/audit_10k/s2_judge_sample.jsonl \
+  --video-root "$CLIPS" \
+  --api-base http://172.30.85.198:8000/v1 --api-key EMPTY \
+  --model /workspace/mount/b100_zaip_data/model_zoo/Qwen3.6-27B \
+  --frames 8 --concurrency 8 \
+  --output outputs/audit_10k/s2_verdicts_judge.jsonl
+# 正式跑前先加 --limit 5 冒烟一遍，确认抽帧→base64→API→JSON 解析整条链路通
+```
+
+```bash
+# ⑤ 拷回 101vector 算分（不必重跑裁判）
+scp <H100>:~/mobileclip/outputs/audit_10k/s2_verdicts_judge.jsonl outputs/audit_10k/
+bash tools/data_audit/run_v100.sh judge-agree
+```
+
+> 💡 **如果 H100 本来就可用，先想一下要不要干脆走路线 A**：本地 235B-FP8 是
+> 方案的首选裁判，与 8B 的能力差距远大于 27B，且没有同族偏差问题（见本节末尾
+> 的警告）。代价是 ~235GB 下载。**赶时间就用端点，要证据强度就上 235B。**
+
+#### 通用中转机（H100 不可用，或上面的预检没通过）
+
+任何既能连 `172.30.x.x` 又能收文件的机器都行（例如 7 卡 V100
+`10.55.87.68 -p 31179`）。这时要连视频一起拷，但**仍然不用拷全部 1 万条**
+——裁判只看 `JUDGE_N` 条。先在 101vector 上挑出那批视频的清单：
 
 ```bash
 source ~/audit_env/bin/activate && cd ~/mobileclip
