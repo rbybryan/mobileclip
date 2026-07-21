@@ -435,6 +435,184 @@ shuf -n 300 <(cat outputs/audit_10k/s2_verdicts.*.jsonl) > outputs/audit_10k/hum
 fp16 若出现乱码/NaN 输出（罕见）：`export S2_MODEL=Qwen/Qwen3-VL-4B-Instruct`
 并在 `vlm_audit_hf.py` 加 `--dtype fp32` 重跑。
 
+---
+
+### 4.3-本地 裁判档备选：本机部署 Qwen3-VL-32B（不用 H100、不用云端 API）
+
+H100 机用不上、又不想调商业 API 时走这条：**32B 是 8×V100-32G 能装下的
+最强裁判**（235B 在 Volta 上不可能——无 FP8 硬件支持，BF16 原版 ~470GB
+也放不下 256GB 显存）。32B 仍是主力 8B 的 4 倍档，一致率有意义。
+
+选型与其他备选的权衡见 [`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0；
+**连 32B 都跑不动就走那里的路线 D**（换族 8B + 分歧定向人工抽检）。
+
+> ⏱ **排期提醒**：与云端裁判不同，本地裁判**要占本机 GPU**，不能和 4.2 主力
+> 抢卡。两种排法：① 等 4.2 跑完再跑（简单，推荐）；② 对半分——主力
+> `NGPU=4` 用 GPU0-3，裁判用 GPU4-7（见下方"两进程并行"，把
+> `CUDA_VISIBLE_DEVICES` 改成 `4,5,6,7` 单进程即可）。
+
+#### 步骤 0：预检（1 分钟）
+
+```bash
+source ~/audit_env/bin/activate && cd ~/mobileclip
+df -h .                     # 验收点：剩余 ≥80GB（权重 ~64GB + 余量）
+nvidia-smi --query-gpu=index,memory.total,memory.used --format=csv
+                            # 验收点：8 张 32GB 卡，且 4.2 主力已结束（used 接近 0）
+python -c "import transformers, accelerate; print(transformers.__version__, accelerate.__version__)"
+                            # 验收点：transformers ≥4.57；accelerate 必装（device_map 依赖它）
+pip install accelerate      # 若上一行 ImportError
+```
+
+#### 步骤 1：下载权重（~64GB，放后台，看带宽 0.5–3h）
+
+```bash
+mkdir -p ckpts
+nohup modelscope download --model Qwen/Qwen3-VL-32B-Instruct \
+  --local_dir ckpts/Qwen3-VL-32B-Instruct --max-workers 1 \
+  > download_32b.log 2>&1 &
+tail -f download_32b.log     # 断了重跑同一条命令即断点续传
+```
+
+弱网反复 `IncompleteRead` 时用 until 循环兜住（同 §0 的配方）：
+
+```bash
+nohup bash -c 'until modelscope download --model Qwen/Qwen3-VL-32B-Instruct \
+  --local_dir ckpts/Qwen3-VL-32B-Instruct --max-workers 1; do sleep 30; done' \
+  > download_32b.log 2>&1 &
+```
+
+ModelScope 不通就换 HF 镜像：
+`HF_ENDPOINT=https://hf-mirror.com huggingface-cli download Qwen/Qwen3-VL-32B-Instruct --local-dir ckpts/Qwen3-VL-32B-Instruct`
+
+#### 步骤 2：验完整性（必做——断过的下载会缺分片，加载时才报错很浪费时间）
+
+```bash
+du -sh ckpts/Qwen3-VL-32B-Instruct       # 验收点：≈64G
+python - ckpts/Qwen3-VL-32B-Instruct <<'PY'
+import json, os, sys
+d = sys.argv[1]
+cfg = json.load(open(os.path.join(d, "config.json")))
+print("model_type:", cfg.get("model_type"))          # 应含 qwen3_vl
+idx = json.load(open(os.path.join(d, "model.safetensors.index.json")))
+need = sorted(set(idx["weight_map"].values()))
+have = [f for f in need if os.path.exists(os.path.join(d, f))]
+print(f"分片: {len(have)}/{len(need)} {'齐全' if len(have)==len(need) else '不完整!'}")
+tot = idx["metadata"]["total_size"]
+size = sum(os.path.getsize(os.path.join(d, f)) for f in have)
+print(f"字节: {size:,} / {tot:,} {'OK' if size >= tot else '下载不完整!'}")
+PY
+```
+
+#### 步骤 3：冒烟 5 条（~10 分钟，含首次加载）
+
+32B fp16 权重 64GB > 单卡 32GB，**必须模型并行**：`--device-map auto`
+让 accelerate 把层切到多张卡，同时 `--num-shards 1`（模型已占多卡，
+再起多进程必 OOM）。
+
+```bash
+OUT=outputs/audit_10k
+head -n 5 $OUT/s2_sample.jsonl > $OUT/s2_judge_smoke.jsonl
+python tools/data_audit/vlm_audit_hf.py \
+  --input $OUT/s2_judge_smoke.jsonl \
+  --video-root /home/vca1/datasets/internvid_zh_10k/videos \
+  --model ckpts/Qwen3-VL-32B-Instruct --dtype fp16 \
+  --device-map auto --num-shards 1 --shard-id 0 \
+  --output "$OUT/s2_verdicts_judge_smoke.jsonl"
+python -m json.tool <<< "$(head -1 $OUT/s2_verdicts_judge_smoke.jsonl)"
+```
+
+**验收点**：① 5 行输出，`verdict` 里 `en_score`/`zh_score`/`action` 齐全、
+中文可读（不是乱码）；② 加载时没有 `Some parameters are on the meta device`
+或 CPU/disk offload 提示。确认切分方式：
+
+```bash
+python - <<'PY'
+import torch
+from transformers import AutoModelForImageTextToText
+m = AutoModelForImageTextToText.from_pretrained(
+    "ckpts/Qwen3-VL-32B-Instruct", torch_dtype=torch.float16,
+    attn_implementation="sdpa", device_map="auto")
+devs = set(str(v) for v in m.hf_device_map.values())
+print("使用设备:", sorted(devs))     # 验收点：全是 0..7，出现 'cpu'/'disk' 即降级了
+PY
+```
+
+出现 `cpu`/`disk` 说明显存判定不足（多半有残留进程占卡）：
+`nvidia-smi` 杀掉残留后重试——**CPU offload 会让速度慢 10 倍以上，
+宁可不跑也别带着 offload 跑完 500 条**。
+
+#### 步骤 4：正式跑 500 条
+
+`device_map auto` 是**流水线并行**（同一时刻只有一张卡在算），单进程吞吐
+约 30–60 秒/条 → 500 条约 **4–8 小时**。8 张卡只用了 ~64/256GB 显存，
+所以**推荐两进程各占 4 卡做数据并行，墙钟减半（2–4 小时）**：
+
+```bash
+OUT=outputs/audit_10k
+head -n 500 $OUT/s2_sample.jsonl > $OUT/s2_judge_sample.jsonl
+
+for i in 0 1; do
+  gpus=$([ $i -eq 0 ] && echo 0,1,2,3 || echo 4,5,6,7)
+  CUDA_VISIBLE_DEVICES=$gpus nohup python tools/data_audit/vlm_audit_hf.py \
+    --input $OUT/s2_judge_sample.jsonl \
+    --video-root /home/vca1/datasets/internvid_zh_10k/videos \
+    --model ckpts/Qwen3-VL-32B-Instruct --dtype fp16 \
+    --device-map auto --num-shards 2 --shard-id $i \
+    --output "$OUT/s2_verdicts_judge.{shard}.jsonl" \
+    > $OUT/judge_shard$i.log 2>&1 &
+done
+
+# 进度（每片应到 250）：
+wc -l $OUT/s2_verdicts_judge.*.jsonl; pgrep -fc vlm_audit_hf
+```
+
+子集口径与云端裁判一致（`head -n 500` = 语料原序前 500 条，非分层抽样），
+稀有层可能只占个位数——理由与补测建议见上一节「4.2 与 4.3 分别在做什么」细节 1。
+
+4 卡放 64GB 权重余量充足（128GB 总量）；**不要再切成 4 进程 × 2 卡**——
+64GB 权重正好塞满 2×32GB，没有激活/KV 余量，必 OOM。中断了重跑同一条
+命令即可断点续跑（按 `video` 去重）。
+
+#### 步骤 5：算一致率（决策门）
+
+```bash
+OUT=outputs/audit_10k python - <<'PY'
+import glob, json, os
+out = os.environ["OUT"]
+NEED = {"retranslate", "recaption", "drop"}      # 需干预 vs 文本侧可用
+judge = {}
+for p in glob.glob(f"{out}/s2_verdicts_judge.*.jsonl"):
+    for l in open(p):
+        r = json.loads(l); judge[r["video"]] = r.get("verdict", {})
+tot = a5 = a2 = 0
+for p in glob.glob(f"{out}/s2_verdicts.*.jsonl"):
+    for l in open(p):
+        r = json.loads(l); v = r.get("verdict", {}); j = judge.get(r["video"])
+        if not j or "action" not in v or "action" not in j:
+            continue
+        tot += 1
+        a5 += v["action"] == j["action"]
+        a2 += (v["action"] in NEED) == (j["action"] in NEED)
+print(f"配对 {tot} 条")
+print(f"五类 action 一致率: {a5/max(1,tot):.1%}   <- 决策门 ≥75%")
+print(f"二值一致率(是否需干预): {a2/max(1,tot):.1%}   <- 更贴近 S3 分桶，参考 ≥80%")
+PY
+```
+
+不达标先改 `vlm_audit.py` 的 rubric 再重跑 S2，**不要拿不可信判定去校准
+S3 阈值**。二值口径的理由见 `SETUP_JUDGE_API.md` §0 路线 D3
+（`recaption` vs `retranslate` 的边界连人都会犹豫，五类精确匹配偏苛刻）。
+
+#### 常见问题
+
+| 现象 | 原因与处理 |
+|---|---|
+| `CUDA out of memory` | 每进程给的卡不足 4 张，或有残留进程占卡（`nvidia-smi` 后 `pkill -f vlm_audit_hf`）；确认没同时在跑 4.2 主力 |
+| 加载后 `hf_device_map` 里出现 `cpu`/`disk` | 可用显存不够 → 释放残留进程；跑起来也是 10 倍慢，务必先解决 |
+| 输出乱码 / NaN / 全是空判定 | fp16 溢出（32B 比 8B 更易触发，因为原始权重是 bf16）→ 改 `--dtype fp32`（128GB，8 卡单进程可放下，速度约减半），或退回 `SETUP_JUDGE_API.md` §0 路线 D |
+| 比预估慢很多（>2 分钟/条） | 多半是 offload（见上）或视频解码慢（`--frames 6` 降一档）；流水线并行本身单卡串行，属预期 |
+| `KeyError: 'qwen3_vl'` | `transformers < 4.57` → `pip install -U "transformers>=4.57"` |
+
 ## 5. S3 校准 + 分桶 + 10k 诊断报告（CPU 秒级）〖不可并行：需 S0+S1+S2 全部产物，最后跑〗
 
 ```bash

@@ -25,6 +25,118 @@ V100 机 (101vector)                     H100 机
 
 ---
 
+## 0. 裁判选型：不用商业模型会不会掉质量？
+
+**先澄清两件事：**
+
+1. **S3（`aggregate_report.py`）不含任何模型**——纯 Python 标准库、CPU，
+   只做「按 S1 分位统计 S2 差率 → 选阈值 → 全量分桶 → 出报告」。
+   那里没有任何商业依赖可去掉。
+2. **整条流水线唯一的商业触点是 `s2-judge`，而它调的也不是商业模型**：
+   `run_v100.sh` 默认 `JUDGE_MODEL=qwen3-vl-235b-a22b-instruct`，
+   模型本身是 **Apache-2.0 开源权重**，DashScope 只是它的一个托管端点。
+   所以「不用商业模型」= **换成自托管同一份权重**，判定完全一致、零质量损失。
+
+按优先级选：
+
+| 路线 | 裁判模型 | 需要什么 | 相对 235B 的质量 |
+|---|---|---|---|
+| **A（首选）** | Qwen3-VL-235B-A22B-Instruct-**FP8**，H100 机自托管 | 8×H100-80G + 两机内网互通 | **完全一致**（同一份权重）；见下文 §1–§5 |
+| B | InternVL3.5-241B-A28B（同为开源） | 同上 | 同档；作为 A 的第二意见（plan §2 的交叉验证档） |
+| C | Qwen3-VL-32B-Instruct，V100 本地 | 仅 8×V100-32G | 有损但可用（≈主力 8B 的 4 倍） |
+| **D（H100 完全用不上时）** | 不用大裁判：换族 8B 交叉验证 + **分歧定向**人工抽检 | 零额外资源，仅 V100 本机 | 决策门改挂人工；见下方 D1–D4 完整协议 |
+
+### 为什么 V100 上不了 235B（不是许可问题，是硬件）
+
+Volta **没有 FP8 支持**，FP8 版权重跑不了；BF16 原版 ~470GB，
+8×32GB=256GB 也放不下。所以 V100 本地裁判的天花板就是 ~32B 档。
+
+### 路线 C：V100 本地 32B 裁判（A/B 都不可用时）
+
+32B fp16 约 64GB，单卡放不下 → 必须**模型并行**（`--device-map auto`），
+放弃 8 卡数据并行。裁判只跑 500–2000 条，慢一点可以接受：
+
+```bash
+source ~/audit_env/bin/activate && cd ~/mobileclip
+OUT=outputs/audit_10k
+head -n 500 $OUT/s2_sample.jsonl > $OUT/s2_judge_sample.jsonl
+
+python tools/data_audit/vlm_audit_hf.py \
+  --input $OUT/s2_judge_sample.jsonl --video-root /home/vca1/datasets/internvid_zh_10k/videos \
+  --model Qwen/Qwen3-VL-32B-Instruct --dtype fp16 \
+  --device-map auto --num-shards 1 --shard-id 0 \
+  --output "$OUT/s2_verdicts_judge.jsonl"
+```
+
+输出格式与 `vlm_audit.py` 相同。**注意**：`--device-map auto` 时模型已跨多卡，
+不能再按卡起 8 个进程（必 OOM）——单进程用 `--num-shards 1`。
+
+> 📖 **完整实操**（下载 / 校验 / 冒烟 / 两进程 ×4 卡把墙钟减半 / 一致率脚本 /
+> 常见问题）见 **[`SETUP_V100.md`](SETUP_V100.md) §4.3-本地**。上面这条命令
+> 只是最小可跑版本。
+
+### 路线 D：**完全没有大裁判**时的替代校准协议（H100 用不上时走这条）
+
+先认清裁判到底在干什么：**它不是真理，它只是把人工判定放大到几千条。**
+效度的最终锚点从来是人，大裁判只是省人力。所以没有大裁判 ≠ 不能校准，
+只是要**把校准集缩小、把人放回环上**。四步，全部只用 V100 本机资源：
+
+**D1. 换族同档模型做第二意见**（~1 小时，8 卡数据并行，与主力同一套脚本）
+
+```bash
+source ~/audit_env/bin/activate && cd ~/mobileclip
+OUT=outputs/audit_10k
+head -n 1000 $OUT/s2_sample.jsonl > $OUT/s2_judge_sample.jsonl
+for i in $(seq 0 7); do
+  CUDA_VISIBLE_DEVICES=$i python tools/data_audit/vlm_audit_hf.py \
+    --input $OUT/s2_judge_sample.jsonl \
+    --video-root /home/vca1/datasets/internvid_zh_10k/videos \
+    --model OpenGVLab/InternVL3_5-8B --dtype fp16 \
+    --num-shards 8 --shard-id $i \
+    --output "$OUT/s2_verdicts_x8b.{shard}.jsonl" &
+done; wait
+```
+
+同档模型**证明不了**主力 8B 是对的（两边一样弱），但它能干一件同样有用的事：
+**定位分歧**。两个不同家族的模型看同一条片子给出不同 `action`，说明这条
+要么本身模糊、要么 rubric 没说清——这正是下一步该给人看的样本。
+
+**D2. 分歧定向的人工抽检**（替代随机 300，人力效率高得多）
+
+随机抽 300 条里可能 250 条是双方都判 `keep` 的显然样本，白看。改成：
+**全部分歧样本（预计 10–20%，约 100–200 条）+ 随机对照 100 条**。
+前者暴露判定边界，后者防止「只看难例」导致的乐观偏差。
+在 `SETUP_V100.md` §6 的 Gradio 里过，逐条记 `video` + 人工 `action`
+存成 `human_check.jsonl`，字段与 `s2_verdicts` 的 `verdict.action` 同名即可复用 §4 的统计脚本。
+
+**D3. 重挂决策门**（T4 的 ≥75% 原本挂在 235B 上，现在挂人）
+
+- **对照对象**：8B 主力 vs **人工**（不是 vs 同档模型）。
+- **样本量**：随机对照那 100 条即可给出 ±~9% 的 95% CI；想收紧到 ±5%
+  需要 ~300 条随机样本。**决定阈值时用随机对照子集算，别把分歧样本混进去**
+  （那是过采样的难例，一致率天然偏低）。
+- **指标**：5 类 `action` 精确匹配是很苛刻的口径，`recaption` vs
+  `retranslate` 的边界连人都会犹豫。建议**先二值化再算**：
+  `{keep, fix_text}`（文本侧可用）vs `{retranslate, recaption, drop}`（需干预）
+  ——这才是 S3 分桶真正依赖的判别。二值一致率 ≥80% 即可放行去校准阈值；
+  五类一致率单独记录作参考，不做门。
+
+**D4. 自洽性检查**（零成本，测的是稳定性而非正确性）
+
+同一批 200 条用主力 8B 跑两遍（`--frames 8` vs `--frames 6`，或
+temperature>0 各跑一次），统计每个 rubric 维度的自身翻转率。
+**翻转率高的维度 = 该维度的判定是噪声**，在 S3 里就别拿它当强证据
+（例如 `temporal_order_correct` 若翻转率 >30%，时序结论只能定性用）。
+这一步不需要任何新权重，S2 跑完随手就能做。
+
+> **如果只是 235GB 下载/磁盘的问题、H100 本身可用**：别走 D，走 §0 表格里的
+> 「磁盘/时间紧」一行——`Qwen3-VL-32B-Instruct` BF16 只有 ~64GB，
+> 单张 H100-80G 就能 tp1 服务，仍是主力 8B 的 4 倍档。
+> **如果手上有任何一张 Ampere 及以上的卡**（A100/A6000/4090 等），
+> 优先把 32B 放那张卡上用 vLLM 服务，比 V100 的路线 C 快一个量级。
+
+---
+
 ## 1.（H100 机）环境与权重
 
 已按 `SETUP_H100.md` §0 装好环境的直接跳到 §2。

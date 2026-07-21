@@ -161,6 +161,25 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 vllm serve ckpts/Qwen3-VL-235B-A22B-FP8 --port 8001
   --tensor-parallel-size 4 --limit-mm-per-prompt image=8 --max-model-len 16384 &
 ```
 
+**4.3 用哪个裁判模型**——默认的 235B **本身就是开源权重**（Apache-2.0，
+本地 vLLM 服务，全程不碰任何商业 API），无需替换。按约束选：
+
+| 场景 | 模型 | 显存/下载 | 说明 |
+|---|---|---|---|
+| **默认** | `Qwen3-VL-235B-A22B-Instruct-FP8` | tp8 每卡 ~30GB；~235GB 下载 | 开源 SOTA 档；与主力 8B **同族**，见下方警告 |
+| **跨族第二意见（推荐加做）** | `InternVL3.5-38B` 或 `InternVL3.5-241B-A28B` | 38B BF16 ~76GB（单卡放不下，tp2）；241B 与 235B 同量级 | 不同家族 → 错误不相关，一致率才有信息量 |
+| **磁盘/时间紧** | `Qwen3-VL-32B-Instruct` BF16 | ~64GB，**单张 H100-80G 即可 tp1** | 只下 64GB，剩 7 卡继续跑 4.2 主力；比 235B 弱但仍是主力 8B 的 4 倍 |
+| **不要用** | 任何 ≤8B | — | 与主力同档，κ/一致率失去意义 |
+
+裁判模型必须满足四条（`vlm_audit.py` 的硬性要求）：vLLM 可服务的
+OpenAI 兼容端点、单请求 ≥8 张图（`--limit-mm-per-prompt image=8`）、
+中文强（rubric 和 `better_zh` 都是中文）、结构化 JSON 稳定。
+
+> ⚠️ **同族警告**：主力 Qwen3-VL-8B + 裁判 Qwen3-VL-235B 共享同一套训练数据
+> 与视觉先验，**共有的失败模式会被双方一致地犯错**，把 4.4 的一致率抬高成
+> 假安全感。若只跑一个裁判，优先选 InternVL3.5 系；若跑 235B，建议再拿
+> 500 条过一遍 InternVL3.5-38B 做跨族对照——两者都说 8B 对，才是真的对。
+
 ```bash
 # 4.3 裁判档：235B-A22B FP8 本地 8 卡（2k 条约 1–2 小时）
 #     （加 --host 0.0.0.0 可同时给 V100 机的 s2-judge 当裁判端点用，
