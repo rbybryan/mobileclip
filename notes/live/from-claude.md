@@ -23,6 +23,73 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-22 (19) — 抽检怎么开跑：**别装 gradio**，用离线评审包
+
+**Diagnosis:** 你那个 `readonly database` 报错**与 gradio 无关，是权限**——
+`gradio_video_text_review.py` 把标注库写在**它自己所在的目录**
+（`/home/vca1/...` 下），你是 `rby` 只有读权限。报错落在
+`PRAGMA journal_mode=WAL` 而不是 `connect()` 正是佐证：SQLite 开 WAL 要在
+**库文件所在目录**建 `-wal`/`-shm`，库文件本身可读也没用。
+
+而且**就算装上也不好用**：那个 Gradio 是**浏览数据集**的，没有抽检表的填写字段——
+你得一边看 Gradio 一边在 Excel 里按 video id 对着填。
+
+所以走离线评审包：视频 + 自带填写界面的 HTML 打成一个目录，本地浏览器里评，
+**服务器上什么都不用装**。
+
+**Do this next:**
+
+```bash
+git pull
+
+# ① 打包（纯 stdlib；默认跳过 random 那 300 条视频，太大）
+bash tools/data_audit/run_v100.sh review-bundle
+tar czf ~/review_bundles.tgz -C outputs/audit_10k $(cd outputs/audit_10k && ls -d bundle_*)
+```
+
+```bash
+# ② 本地机器上（不是服务器）
+scp vca1@10.235.31.101:~/review_bundles.tgz . && tar xzf review_bundles.tgz
+open bundle_conflicts/index.html     # 先过这 15 条，几分钟
+open bundle_better_zh/index.html     # 再过 50 条
+```
+
+页面里视频／原字幕／候选字幕／单选按钮**同屏**；进度存浏览器本地，关掉再开不丢；
+按 `n` 跳下一条未填；填完点**「导出 TSV」**。
+
+```bash
+# ③ 把导出的 TSV 传回服务器统计（脚本自己判决策门，不用手算比例）
+scp review_conflicts.tsv vca1@10.235.31.101:~/mobileclip/outputs/audit_10k/
+bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/review_conflicts.tsv
+bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/review_better_zh.tsv
+```
+
+### 三张表填什么、为什么
+
+| 表 | 填的列 | 判什么 | 为什么要紧 |
+|---|---|---|---|
+| `conflicts`（15 条） | `谁对` = `s0`/`vlm`/`unclear` | S0 说该重翻、实测说翻译没问题，谁对 | 了结「语言污染 3.3%」的**待核**标记（问题 12） |
+| `better_zh`（50 条） | `准确性`/`具体性` = `better`/`same`/`worse`；**`幻觉` = `y`/`n`** | 重写的字幕到底有没有变好 | **v0.2 落地前的硬前置**——`apply_buckets.py` 会把未验证的 `better_zh` 直接写进训练数据（问题 13） |
+| `random`（300 条） | `同意打分` = `y`/`n` | 单一质量分准不准 | 顺带能澄清裁判判 `recaption` 63% vs S3 给 25.32% 的分歧 |
+
+**`better_zh` 那张表，「幻觉」那一列最要紧**：准确性/具体性变差顶多是浪费算力，
+幻觉是直接往对比学习的**正样本**里掺假信息。两道门脚本会自动判：
+幻觉率 >10% → 不能直接入库；`worse` 多于 `better` → 重写是净损失。
+
+> **填一半就跑统计完全可以**，未填的行自动跳过。
+
+### 非要用 Gradio 的话
+
+装到**独立 venv**（你已经建了 `~/gradio_env`，对的，别进 `audit_env`），
+然后二选一绕开权限：① `python gradio_video_text_review.py --help` 看有没有
+`--result-dir` 之类的参数，指到自己家目录；② 把脚本拷到 `~/review_gui/` 再跑。
+**别 `chmod` 别人的目录、也别 `sudo`。** 完整条目见 `TROUBLESHOOTING.md` 首条。
+
+**Then report back** in from-server.md：`review-score` 的输出（它会直接打印
+「幻觉率 X% → 能不能入库」「更准确 vs 更差」这类判决），我据此决定 v0.2 能不能落地。
+
+---
+
 ## 2026-07-22 (18) — B0 锁定 ✅ **MSR-VTT t2v R@1 = 42.50,与论文 42.5 分毫不差**
 
 四个基准全部跑完。**唯一有外部数字可对照的 MSR-VTT 打出 42.50,论文 ≈42.5** ——
