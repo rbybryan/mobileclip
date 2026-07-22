@@ -449,3 +449,36 @@ bash tools/data_audit/run_v100.sh s3
 | 大量 `decode:` 错误 | 视频没解析到 | 回到 §4 预检，先把 `ok` 修到 500 |
 | 大量超时 / 429 | 端点被占满或本机并发过高 | 降 `--concurrency` 到 4；脚本已带指数退避，不必手动重试 |
 | `judge-agree` 报「重叠不足 30 条」 | 裁判评的不是主力那批记录 | 十有八九是在中转机上重新抽了样；改用 101vector 的 `s2_judge_sample.jsonl` |
+| **输出行数 > 输入条数**（如 500 条却有 644 行） | **同时跑了两个进程写同一个文件**（`nohup … &` 返回 `[2]` 就是信号：`[1]` 还在） | 见下方「重复写入」 |
+| 看起来卡住不动 | ① 旧版每 200 条才打一次进度；② 旧版用 `pool.map`**按提交顺序**产出，一条慢请求会把它后面所有已完成结果堵住不写盘（`--timeout 600` + 重试 ≈ 堵 20 分钟） | 两者都已修（`--progress-every` 默认 25、改用 `as_completed`）——**重新 `git pull` 并 scp 新版 `vlm_audit.py`**；判断真假卡住看 `wc -l` 一分钟内有没有涨 |
+
+### 重复写入：两个进程写同一个文件
+
+```bash
+# ① 确认并只留一个
+jobs -l; pgrep -af vlm_audit.py
+pkill -f vlm_audit.py            # 全杀掉，稍后单进程续跑更干净
+
+# ② 去重（成功的判定覆盖失败的，按 video 唯一）
+cd ~/judge
+python3 - <<'PY'
+import json
+rows=[json.loads(l) for l in open("s2_verdicts_judge.jsonl")]
+best={}
+for r in rows:
+    v=r.get("video")
+    if v is None: continue
+    ver=r.get("verdict") or {}
+    ok = "action" in ver and "error" not in ver
+    if v not in best or (ok and not best[v][1]):   # 成功的覆盖失败的
+        best[v]=(r, ok)
+with open("s2_verdicts_judge.dedup.jsonl","w",encoding="utf-8") as f:
+    for r,_ in best.values(): f.write(json.dumps(r,ensure_ascii=False)+"\n")
+print(f"原 {len(rows)} 行 -> 去重后 {len(best)} 条唯一 video")
+PY
+mv s2_verdicts_judge.jsonl s2_verdicts_judge.raw.bak
+mv s2_verdicts_judge.dedup.jsonl s2_verdicts_judge.jsonl
+
+# ③ 单进程续跑（已完成的按 video 自动跳过）
+#    ——照 §6 的命令跑一次即可，跑之前先确认 pgrep 是空的
+```
