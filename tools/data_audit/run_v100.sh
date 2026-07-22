@@ -255,13 +255,14 @@ s2-trans)
 trans-check)
   ls "$OUT"/s2_trans.*.jsonl >/dev/null 2>&1 || \
     { echo "未找到 $OUT/s2_trans.*.jsonl（先跑: bash $0 s2-trans）"; exit 1; }
-  MAIN_ARG=""
+  # 用数组传参：`--main $OUT/s2_verdicts.*.jsonl` 不加引号会被 shell 展开成 8 个
+  # 文件名，argparse 只收第一个、其余全变成 unrecognized arguments。
+  TC_ARGS=(--trans "$OUT/s2_trans.*.jsonl")
   ls "$OUT"/s2_verdicts.*.jsonl >/dev/null 2>&1 && \
-    MAIN_ARG="--main $OUT/s2_verdicts.*.jsonl"
-  SAMPLE_ARG=""
-  [ -f "$OUT/s2_sample.jsonl" ] && SAMPLE_ARG="--sample $OUT/s2_sample.jsonl"
-  python3 tools/data_audit/check_trans.py --trans "$OUT/s2_trans.*.jsonl" \
-    $MAIN_ARG $SAMPLE_ARG --out-md "$OUT/trans_health.md" || {
+    TC_ARGS+=(--main "$OUT/s2_verdicts.*.jsonl")
+  [ -f "$OUT/s2_sample.jsonl" ] && TC_ARGS+=(--sample "$OUT/s2_sample.jsonl")
+  python3 tools/data_audit/check_trans.py "${TC_ARGS[@]}" \
+    --out-md "$OUT/trans_health.md" || {
       echo; echo "== 重判体检未通过：先看上方结论，别把它喂给 xling-check =="; exit 1; }
   ;;
 # ------------------------------------------------- ⑤b S2 判定体检（S2 跑完必做）
@@ -269,10 +270,10 @@ s2-check)
   # 纯 stdlib，不需要 numpy/torch——没激活虚拟环境也能跑
   ls "$OUT"/s2_verdicts.*.jsonl >/dev/null 2>&1 || \
     { echo "未找到 $OUT/s2_verdicts.*.jsonl（先跑: bash $0 s2）"; exit 1; }
-  SAMPLE_ARG=""
-  [ -f "$OUT/s2_sample.jsonl" ] && SAMPLE_ARG="--sample $OUT/s2_sample.jsonl"
-  python3 tools/data_audit/check_s2.py --verdicts "$OUT/s2_verdicts.*.jsonl" \
-    $SAMPLE_ARG --out-md "$OUT/s2_health.md" || {
+  SC_ARGS=(--verdicts "$OUT/s2_verdicts.*.jsonl")
+  [ -f "$OUT/s2_sample.jsonl" ] && SC_ARGS+=(--sample "$OUT/s2_sample.jsonl")
+  python3 tools/data_audit/check_s2.py "${SC_ARGS[@]}" \
+    --out-md "$OUT/s2_health.md" || {
       echo
       echo "== 体检未通过（详见上方「结论」与 $OUT/s2_health.md）：先处理再跑 xling-check/s3 =="
       exit 1; }
@@ -342,9 +343,14 @@ xling-check)
   ;;
 # ---------------------------------------------------------------- ⑦ 报告
 s3)
+  # 决策 1 已裁决（2026-07-22）：xling_cos 退出分桶规则。实测 ρ=-0.031、
+  # lift 1.34×，默认 0.7 的精度 4.8%（基准 3.6%）= 95.2% 误伤，且会抢在
+  # sig_zh 的 RECAPTION 判断之前把 21.1% 的语料钉死。详见 DATA_ISSUES.md 决策 1。
+  # 想复现旧行为：XLING_THRESHOLD=0.7 bash run_v100.sh s3
   python tools/data_audit/aggregate_report.py \
     --scores "$OUT/s1_scores.*.jsonl" --flags "$OUT/s0_flags.jsonl" \
     --verdicts "$OUT/s2_verdicts.*.jsonl" --target-precision 0.8 \
+    --xling-threshold "${XLING_THRESHOLD:-0}" \
     --out-buckets "$OUT/buckets.jsonl" --out-report "$OUT/report.md"
   echo "== 诊断报告: $OUT/report.md（含问题率外推表；本轮到此为止，不改数据） =="
   ;;
