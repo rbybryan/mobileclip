@@ -14,6 +14,9 @@
 #   bash tools/data_audit/run_v100.sh s2-check   # ⑤b S2 判定体检 -> s2_health.md（秒级，S2 跑完必做）
 #   bash tools/data_audit/run_v100.sh s2-trans   # ⑤c 文本-only 翻译重判（修 halo；不解码视频，比 s2 快）
 #   bash tools/data_audit/run_v100.sh trans-check # ⑤d 重判体检（可中途跑：早判修复有没有生效）
+#   bash tools/data_audit/run_v100.sh review       # ⑧ 生成三张人工抽检表（TSV，填完用 review-score 统计）
+#   bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/review_better_zh.tsv
+#   bash tools/data_audit/run_v100.sh s2-gran      # ⑨ 粒度计数式重判（验证 dense=0 是不是标签塌缩）
 #   JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge  # ⑥ 云端裁判（可选，需 API key）
 #   bash tools/data_audit/run_v100.sh judge-agree # ⑥b 一致率+Cohen's κ（可对外来裁判文件独立重算）
 #   bash tools/data_audit/run_v100.sh xling-check # ⑥c 裁决 xling 阈值（s3 前必做）
@@ -340,6 +343,56 @@ xling-check)
     --out-md "$OUT/xling_calibration.md"
   echo
   echo "== 把结论记进 tools/data_audit/DATA_ISSUES.md §4 决策 1，再跑 s3 =="
+  ;;
+# ------------------------------------------------- ⑧ 人工抽检表（P0/P1 效度测评）
+review)
+  [ -f "$OUT/s2_sample.jsonl" ] || { echo "缺 $OUT/s2_sample.jsonl"; exit 1; }
+  R=tools/data_audit/make_review_sheet.py
+  # ① better_zh 质量（P0，落地 v0.2 前必做）—— 需要 buckets，先跑过 s3
+  if [ -f "$OUT/buckets.jsonl" ]; then
+    python3 $R --kind better-zh --sample "$OUT/s2_sample.jsonl" \
+      --verdicts "$OUT/s2_verdicts.*.jsonl" --buckets "$OUT/buckets.jsonl" \
+      -n "${REVIEW_N:-50}" --out "$OUT/review_better_zh.tsv"
+  else
+    echo "跳过 better-zh 表：缺 $OUT/buckets.jsonl（先跑 bash $0 s3）"
+  fi
+  # ② S0 旗标 vs 实测翻译分 的冲突记录（P1）
+  if ls "$OUT"/s2_trans.*.jsonl >/dev/null 2>&1; then
+    python3 $R --kind conflicts --sample "$OUT/s2_sample.jsonl" \
+      --trans "$OUT/s2_trans.*.jsonl" -n "${CONFLICT_N:-15}" \
+      --out "$OUT/review_conflicts.tsv"
+  else
+    echo "跳过 conflicts 表：缺 $OUT/s2_trans.*.jsonl（先跑 bash $0 s2-trans）"
+  fi
+  # ③ 随机抽检，验证单一质量分（P1）
+  python3 $R --kind random --sample "$OUT/s2_sample.jsonl" \
+    --verdicts "$OUT/s2_verdicts.*.jsonl" -n "${RANDOM_N:-300}" \
+    --out "$OUT/review_random.tsv"
+  echo
+  echo "== 三张表已生成在 $OUT/ ；在 Excel/VSCode 里填最后几列，配合 §6 的 Gradio 看画面 =="
+  echo "== 填完统计： bash $0 review-score $OUT/review_better_zh.tsv =="
+  ;;
+review-score)
+  [ -n "${2:-}" ] || { echo "用法: bash $0 review-score <填好的.tsv>"; exit 1; }
+  python3 tools/data_audit/make_review_sheet.py --score "$2"
+  ;;
+# ------------------------------- ⑨ 粒度计数式重判（查 dense=0 是不是标签塌缩）
+s2-gran)
+  need_py
+  [ -f "$OUT/s2_sample.jsonl" ] || { echo "先跑 s2-sample"; exit 1; }
+  echo "[model] S2_MODEL=$S2_MODEL （文本模式：只看中文字幕，数信息点，不看画面）"
+  for i in $(seq 0 $((NGPU-1))); do
+    CUDA_VISIBLE_DEVICES=$i nohup python tools/data_audit/vlm_audit_hf.py \
+      --input "$OUT/s2_sample.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
+      --mode gran --num-shards "$NGPU" --shard-id "$i" \
+      --max-new-tokens "${GRAN_MAX_TOKENS:-512}" \
+      --output "$OUT/s2_gran.{shard}.jsonl" \
+      > "$OUT/s2_gran_shard$i.log" 2>&1 &
+    echo "shard $i -> GPU$i (log: $OUT/s2_gran_shard$i.log)"
+  done
+  echo "已后台启动（可续跑）。同样不解码视频，比 s2 快得多。"
+  echo "跑完后统计 n_info 分布："
+  echo "  python3 -c \"import json,glob;from collections import Counter;c=Counter(json.loads(l).get('verdict',{}).get('n_info') for f in glob.glob('$OUT/s2_gran.*.jsonl') for l in open(f));print(sorted(c.items(),key=lambda x:(x[0] is None,x[0])))\""
   ;;
 # ---------------------------------------------------------------- ⑦ 报告
 s3)
