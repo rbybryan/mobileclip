@@ -329,6 +329,20 @@ EOF
 > **P0-1 和 P2-7 的先后关系是硬的**：`apply_buckets.py` 会把未验证的 `better_zh`
 > 直接写进 v0.2 训练数据。**先抽检，再落地。**
 
+**具体操作**（逐条命令与填表说明见
+[`tools/data_audit/SETUP_V100.md`](../tools/data_audit/SETUP_V100.md) §7）：
+
+```bash
+bash tools/data_audit/run_v100.sh review      # 一次生成三张抽检表（P0-1 / P1-3 / P1-4）
+bash tools/data_audit/run_v100.sh s2-check    # §7 一节直接给出时序分布（P0-2）
+bash tools/data_audit/run_v100.sh s2-gran     # 粒度改计数式重判（P2-6）
+# 抽检表填完（Excel/VSCode 填最后几列，配合 Gradio 看画面）：
+bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/review_better_zh.tsv
+```
+
+`review-score` 会**自己判决策门**并打印结论——幻觉率 >10% 判「不能直接入库」，
+`worse` 多于 `better` 判「重写是净损失」。
+
 **全量（10M）开跑前必须先做的**：按 §5.1 拆开 rubric 调用并在 10k 上验证逐条同值率已降下来。
 **带着当前 rubric 上 10M，只会得到 1,000 万条同样读不出信息的判定。**
 

@@ -116,6 +116,47 @@ TRANS_PROMPT = """你是严格的中英翻译质检员。下面给你一条英�
 
 TRANS_KEYS = {"trans_score", "mismatches"}
 
+# ---------------------------------------------------------------------------
+# Text-only granularity rubric (--mode gran).
+#
+# WHY THIS EXISTS. The combined rubric's three-way granularity label came back
+# coarse 93.6% / adequate 6.4% / dense 0. A count of exactly zero for one of
+# three categories is the signature of label-space collapse, not of the data:
+# the same run's trans_score only ever used {0,2,3,5} -- 1 and 4 never appeared.
+# If `dense` was simply unreachable, 93.6% is an overestimate of "coarse".
+#
+# The fix is to ask for a COUNT rather than a band. A count is a continuous
+# quantity, so it cannot collapse onto a label the way a 3-way choice can, and
+# the bands can be re-derived afterwards from whatever cut we want. No frames
+# either: how much information a sentence carries is a property of the sentence.
+GRAN_PROMPT = """你是中文视频字幕的信息量分析员。下面给你一条中文字幕。
+
+**你看不到视频，也不需要看。** 只分析这句话本身**携带了多少可检索的信息点**。
+
+中文字幕：
+{zh}
+
+「信息点」= 一个能用来检索、且能与别的视频区分开的具体要素。分五类清点：
+- 主体（谁/什么东西，含数量、属性：「两个穿红衣的女人」记 1 个主体 + 2 个属性）
+- 动作（在做什么）
+- 场景（在哪里、什么环境）
+- 属性（颜色、材质、大小、表情等修饰）
+- 时序（先…后…、然后、接着 —— 只有明确表达先后关系才算）
+
+**先逐项列出，再计数。** 输出一个 JSON 对象（不要输出任何其他文字）：
+{{
+  "subjects": [...],     // 逐个列出，没有则 []
+  "actions": [...],
+  "scenes": [...],
+  "attributes": [...],
+  "temporal": [...],     // 明确的先后关系表述
+  "n_info": 0            // 上面五个列表的元素总数
+}}
+
+注意：「一个男人在说话」= 主体 1 + 动作 1 = `n_info` 2，属于典型的低信息量字幕。"""
+
+GRAN_KEYS = {"n_info", "subjects", "actions"}
+
 
 def resolve_video_path(video_root, rec, video):
     """First existing of:

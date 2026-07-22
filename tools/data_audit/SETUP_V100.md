@@ -1283,6 +1283,115 @@ S0–S3 的自动化产出为准，这个工具只承担三个定性任务：
 产出物：一份简短的《人工摸底笔记》（问题类型频次 + 典型 video id 清单），
 附到 S3 的 `report.md` 旁边，作为自动化外推数字的定性佐证。
 
+## 7. 审查后的效度测评（P0–P2）〖全部不占 GPU 或只跑文本，可与任何事并行〗
+
+S0–S3 跑完只说明**流水线**完整；下面这些回答的是**结论可不可信**。
+按「会不会改变结论 / 会不会让 v0.2 变差」排序，**不是按顺手程度**。
+背景与完整论证见 [`../../docs/internvid-zh-audit-report.md`](../../docs/internvid-zh-audit-report.md) §6.5。
+
+### 7.0 一次生成三张抽检表（秒级，纯 CPU）
+
+```bash
+bash tools/data_audit/run_v100.sh review
+```
+
+产出三个 TSV，在 Excel / VSCode 里打开，**填最后几列**（每列表头都写了可填的值），
+配合 §6 的 Gradio 对着画面看：
+
+| 文件 | 干什么 | 默认条数 | 优先级 |
+|---|---|---|---|
+| `review_better_zh.tsv` | 重写字幕到底有没有变好 | 50（RECAPTION/KEEP 各半） | **P0** |
+| `review_conflicts.tsv` | S0 旗标 vs 实测翻译分，谁对 | 15 | P1 |
+| `review_random.tsv` | 单一质量分准不准 | 300 | P1 |
+
+条数可调：`REVIEW_N=80 CONFLICT_N=20 RANDOM_N=100 bash tools/data_audit/run_v100.sh review`。
+
+**填完统计**（脚本会直接判决策门，不用自己算比例）：
+
+```bash
+bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/review_better_zh.tsv
+```
+
+> 中途填一半就统计也可以——没填的行自动跳过，只在已填行上算比例。
+
+### 7.1 【P0】`better_zh` 质量抽检 —— **落地 v0.2 之前必须做**
+
+**为什么它排第一**：那 9,951×3 条候选字幕在整条流水线里**只被数过个数、按长度过滤过**，
+`apply_buckets.py:98` 就直接把它们写进 v0.2 的 `captions`。而且：
+
+- 它们出自**判定已塌缩的同一个 8B**（§4.5 问题 8）；
+- RECAPTION 桶精度约 30%，即 2,532 条里约 **1,772 条原字幕本来不差**；
+- `captions` 是对比学习的**正样本**——写错了就是直接往训练信号里掺噪声。
+
+**怎么填**（每行 3 个候选一起看，取整体印象）：
+
+| 列 | 填什么 | 判断依据 |
+|---|---|---|
+| `准确性` | `better` / `same` / `worse` | 对照画面，候选比原 `zh` 更符合还是更不符合 |
+| `具体性` | `better` / `same` / `worse` | 信息量（主体/动作/场景/属性）是多了还是少了 |
+| `幻觉` | `y` / `n` | **候选里出现了画面中没有的东西** —— 这一列最要紧 |
+
+**两道决策门**（`review-score` 会自己判并打印）：
+
+- **幻觉率 > 10%** → `better_zh` **不能直接入库**，落地前必须过滤或换模型重生成；
+- **`worse` 多于 `better`** → 重写是净损失，RECAPTION 方案本身要重新考虑。
+
+### 7.2 【P0】时序维度到底有没有被评估（秒级，纯 CPU）
+
+```bash
+bash tools/data_audit/run_v100.sh s2-check     # §7 一节会直接给出分布
+```
+
+`s2_health.md` 新增的第 7 节会打印 `temporal_order_relevant` × `temporal_order_correct`
+的交叉表。**要看的是 `relevant=true` 的占比**：
+
+- rubric 规定 `relevant=false` 时 `correct` 记 `null`、**不计入时序错误率**；
+- 而 93.6% 的字幕笼统、只描述单一事件 → `relevant` 多半全是 `false`；
+- 那么「时序错误率 0.08%」就**不是「时序没问题」，而是「这一维根本没被评估」**。
+
+若 `relevant=true` 占比 <5%（脚本会自动提示），**把报告里的时序错误率撤下来**，
+改写为「本轮未能测评时序维度」，并把「v0.2 是否要专门生成含时序的字幕」列为待决策。
+
+> **这对本项目格外重要**：MobileViCLIP 是**视频**-文本模型，时序正是它区别于图文模型
+> 的地方。若 v0.1 字幕基本不含时序信息，等于这份数据**没提供时序监督信号**——
+> 这比「字幕不够准」更根本。
+
+### 7.3 【P1】三项效度背书
+
+```bash
+# ① 冲突记录：S0 说该重翻、实测说翻译没问题，谁对（填 review_conflicts.tsv 的「谁对」列）
+bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/review_conflicts.tsv
+
+# ② 随机抽检：单一质量分准不准（填 review_random.tsv 的「同意打分」列）
+bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/review_random.tsv
+
+# ③ 交叉裁判 500 条 —— 见 SETUP_JUDGE_RELAY.md（跑在中转机，不占本机 GPU）
+bash tools/data_audit/run_v100.sh judge-agree
+```
+
+> ⚠️ **裁判档的判据本轮已改**：裁判和主力用的是**同一个合并 prompt**，
+> 27B 很可能复现同样的阶梯 —— 那样算出来的 `action` 一致率会很高，
+> **但那是共同盲区不是效度**。要看的是：① 裁判的三个分数之间是否也逐条同值 >60%；
+> ② 裁判与**文本-only 重判**在翻译维度上的分歧。
+
+### 7.4 【P2】粒度改成计数式重判（验证 `dense=0` 是不是标签塌缩）
+
+```bash
+bash tools/data_audit/run_v100.sh s2-gran      # 8 卡，只看中文字幕，不解码视频
+```
+
+**为什么怀疑**：`coarse 93.6% / adequate 6.4% / dense 0` —— 三档里有一档计数为 **0**，
+这是**标签空间塌缩**的典型特征。同一批判定里已经出现过一次：文本-only 重判的
+`trans_score` 只用了 `{0, 2, 3, 5}`，**1 和 4 一次都没出现**。
+
+**修法同 §4.6**：把三档标签换成**信息点计数**（主体/动作/场景/属性/时序，逐项列出再计数）。
+计数是连续量，**不会塌缩成标签**，事后想切几档都行。
+
+跑完看 `n_info` 分布（命令会在启动时打印出来）。若中位数是 2（「一个男人在说话」= 主体 1 + 动作 1），
+则「粒度粗是主症状」这一结论**得到独立确认**，只是 93.6% 这个具体比例要按新的切分重算。
+
+---
+
 ## 时间线与双机分工
 
 | 步骤 | 本机（10k） | H100 机（全量 10M，见 SETUP_H100.md） |

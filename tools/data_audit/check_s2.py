@@ -133,6 +133,7 @@ def main():
                                       "en_bad": 0, "zh_bad": 0, "tr_bad": 0})
     conflicts = Counter()
     action_n = Counter()
+    temporal = Counter()
 
     for path, rec in iter_jsonl(paths):
         v = rec.get("verdict") or {}
@@ -198,6 +199,7 @@ def main():
                 conflicts["action=recaption 但 en_score≥4（英文源头没问题）"] += 1
             if act == "drop" and v.get("video_readable") is not False and zh >= 3:
                 conflicts["action=drop 但画面可辨且 zh_score≥3"] += 1
+        temporal[(v.get("temporal_order_relevant"), v.get("temporal_order_correct"))] += 1
         if act is not None:
             action_n[act] += 1
 
@@ -359,6 +361,33 @@ def main():
             emit("- 未发现 action 与分数矛盾的记录。")
     else:
         emit("- （没有三项分数齐全的记录，跳过）")
+    emit()
+
+    # ------------------------------------------------------- 7 时序维度
+    emit("## 7. 时序维度到底被评估了吗（F 类）")
+    emit()
+    emit("rubric 规定：`temporal_order_relevant=false` 时 `temporal_order_correct` 记 `null`、"
+         "**不计入时序错误率**。而 caption 若普遍笼统、只描述单一事件，`relevant` 就会全是 false——"
+         "此时「时序错误率很低」并不表示时序没问题，而表示**这一维根本没被评估**。"
+         "对视频-文本模型来说，时序恰恰是它区别于图文模型的地方。")
+    emit()
+    rel_true = sum(n for (r, _), n in temporal.items() if r is True)
+    emit("| `relevant` | `correct` | 条数 | 占比 |")
+    emit("|---|---|---|---|")
+    for (r, c), n in temporal.most_common():
+        emit(f"| {r} | {c} | {n} | {pct(n, usable)} |")
+    emit()
+    emit(f"- **判定为「含多个先后事件」（`relevant=true`）的只有 {rel_true} 条"
+         f"（{pct(rel_true, usable)}）**")
+    emit()
+    if usable and rel_true / usable < 0.05:
+        notes.append(
+            f"**时序维度实际上没有被评估**：`relevant=true` 仅 {pct(rel_true, usable)}，"
+            "「时序错误率」是在这个极小的子集上算的，**不能当作全库时序质量的结论**。"
+            "报告里应改写为「本轮未能测评时序维度」。这与粒度粗占压倒多数是同一件事的两面："
+            "笼统的单事件字幕天然不含时序信息 → **这份数据几乎没有提供时序监督信号**，"
+            "对视频-文本模型是比「字幕不够准」更根本的问题，"
+            "直接决定 v0.2 要不要专门生成含时序的字幕")
     emit()
 
     # ---------------------------------------------------------------- 判定门
