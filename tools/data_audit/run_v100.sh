@@ -429,21 +429,33 @@ print(f"- 落后 origin/main: **{beh or '?'}** 个提交"
 print(f"- 工作区改动: {len(sh('git status --porcelain').splitlines())} 个文件\n")
 
 print("## 各阶段产物")
-print("| 阶段 | 产物 | 行数 | 分片 |")
-print("|---|---|---|---|")
 tot = 0
 try:
     tot = sum(1 for _ in open(DATA, encoding="utf-8", errors="ignore"))
 except OSError:
     pass
-rows = [("S0 旗标", "s0_flags.jsonl"), ("S1 打分", "s1_scores.*.jsonl"),
-        ("S2 抽样", "s2_sample.jsonl"), ("S2 判定", "s2_verdicts.*.jsonl"),
-        ("S2 翻译重判", "s2_trans.*.jsonl"), ("S2 粒度重判", "s2_gran.*.jsonl"),
-        ("裁判档", "s2_verdicts_judge.jsonl"), ("S3 分桶", "buckets.jsonl")]
-for name, pat in rows:
+# whole=每条记录一行（可以算完成度）；subset=按设计只覆盖一部分，算百分比会误导
+rows = [("S0 旗标", "s0_flags.jsonl", "subset:仅命中旗标的记录"),
+        ("S1 打分", "s1_scores.*.jsonl", "whole"),
+        ("S2 抽样", "s2_sample.jsonl", "whole"),
+        ("S2 判定", "s2_verdicts.*.jsonl", "whole"),
+        ("S2 翻译重判", "s2_trans.*.jsonl", "whole"),
+        ("S2 粒度重判", "s2_gran.*.jsonl", "whole"),
+        ("裁判档", "s2_verdicts_judge.jsonl", "subset:按设计只判 JUDGE_N 条"),
+        ("S3 分桶", "buckets.jsonl", "whole")]
+print("| 阶段 | 产物 | 行数 | 进度 | 分片 |")
+print("|---|---|---|---|---|")
+for name, pat, kind in rows:
     n, nf = lines(pat)
-    pctv = f"（{n/tot:.0%}）" if tot and n else ""
-    print(f"| {name} | `{pat}` | {n:,}{pctv} | {nf or '-'} |")
+    if not n:
+        prog = "未生成"
+    elif kind == "whole":
+        prog = f"{n/tot:.0%}" if tot else "-"
+        if tot and n < tot:
+            prog += " ⏳"
+    else:
+        prog = kind.split(":", 1)[1]
+    print(f"| {name} | `{pat}` | {n:,} | {prog} | {nf or '-'} |")
 print(f"\n（源数据 `{os.path.basename(DATA)}` 共 {tot:,} 行）\n")
 
 print("## 存活进程")
@@ -497,6 +509,41 @@ if gn:
                 med = k
         print(f"\n- **中位数 {med}**，均值 {sum(k*v for k,v in c.items())/tt:.2f}"
               "　（「一个男人在说话」= 主体1+动作1 = 2）")
+        coarse = sum(v for k, v in c.items() if k <= 2)
+        adeq = sum(v for k, v in c.items() if k in (3, 4))
+        dense = sum(v for k, v in c.items() if k >= 5)
+        print(f"- 分档：**≤2 粗 {coarse/tt:.1%}｜3–4 中 {adeq/tt:.1%}｜≥5 密 {dense/tt:.1%}**"
+              "　（原三档标签为 coarse 93.6% / adequate 6.4% / dense 0）")
+        z = c.get(0, 0)
+        if z / tt > 0.05:
+            # 零信息点的字幕本不该有这么多——先看它们长什么样，再决定是数据问题还是 rubric 问题
+            zh = {}
+            sp = os.path.join(OUT, "s2_sample.jsonl")
+            if os.path.exists(sp):
+                for line in open(sp, encoding="utf-8", errors="ignore"):
+                    try:
+                        r = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    zh[r.get("video")] = r.get("zh")
+            ex = []
+            for f in glob.glob(os.path.join(OUT, "s2_gran.*.jsonl")):
+                for line in open(f, encoding="utf-8", errors="ignore"):
+                    try:
+                        r = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if (r.get("verdict") or {}).get("n_info") == 0:
+                        t = (zh.get(r.get("video")) or "").strip()
+                        ex.append(t if t else "(原字幕为空)")
+                    if len(ex) >= 6:
+                        break
+                if len(ex) >= 6:
+                    break
+            print(f"\n- ⚠️ **`n_info=0` 占 {z/tt:.1%}** —— 字幕零信息点本不该这么多，"
+                  "要么原字幕真的是空/无意义，要么是模型在这批上没按 rubric 走。样例：")
+            for t in ex:
+                print(f"  - `{t[:60]}`")
     print()
 
 print("## 人工抽检表")
