@@ -192,17 +192,50 @@ def main():
         ("temporal_order_correct=False", lambda v: v.get("temporal_order_correct")
          is False),
     ]
-    emit("| 维度 | 一致率 | κ | 判定 |")
-    emit("|---|---|---|---|")
+    emit("| 维度 | 一致率 | 主力判 True | 裁判判 True | κ | 判定 |")
+    emit("|---|---|---|---|---|---|")
+    degenerate = []
     for name, fn in dims:
         dp = [(fn(main_v[v]), fn(judge_v[v])) for v in shared]
         k = kappa(dp)
-        ok = "—" if k != k else ("✅" if k >= args.kappa_gate else "❌ 回炉")
-        emit(f"| {name} | {rate(dp):.1%} | "
-             f"{'n/a' if k != k else f'{k:.3f}'} | {ok} |")
+        na, nb, n = sum(a for a, _ in dp), sum(b for _, b in dp), len(dp)
+        # κ 无法区分「两边真的不一致」与「有一方根本没有方差」。后者下 pe→po，
+        # κ→0，哪怕一致率 90%+ 也一样——这不是判定不可信，而是 κ 这个统计量
+        # 在该维度上无定义。必须分开报，否则会把「裁判说这类问题不存在」
+        # 误读成「裁判在这维度不可靠」。
+        deg = na in (0, n) or nb in (0, n)
+        if k != k:
+            verdict = "— κ 无定义"
+        elif deg:
+            verdict = "⚠️ **退化，κ 不适用**"
+            degenerate.append((name, na, nb, n, rate(dp)))
+        else:
+            verdict = "✅" if k >= args.kappa_gate else "❌ 回炉"
+        emit(f"| {name} | {rate(dp):.1%} | {na}/{n} | {nb}/{n} | "
+             f"{'n/a' if k != k else f'{k:.3f}'} | {verdict} |")
     emit()
-    emit("> `trans_bad` 这一行**格外重要**：`calibrate_xling.py` 的全部差率都建立在"
-         "它上面，它的 κ 不过关，决策 1（xling 阈值）的裁决就不可信。\n")
+    if degenerate:
+        emit("> ⚠️ **标「退化」的行不要当成「该维度不可信」。** κ 衡量的是"
+             "「扣掉碰巧一致之后还剩多少一致」；当**一方几乎全判同一类**时，"
+             "「碰巧一致」的期望值 `pe` 会逼近实际一致率 `po`，于是 κ→0 —— "
+             "**哪怕原始一致率 90%+ 也一样**。这时 κ=0 表达的是"
+             "「这个统计量在此处无定义」，而不是「两边判得不一致」。")
+        for name, na, nb, n, r in degenerate:
+            # 退化可能出在任一方，且「全 False」与「全 True」含义相反，
+            # 必须分开措辞，否则会把「普遍存在」写成「不存在」。
+            parts = []
+            for who, cnt in (("主力", na), ("裁判", nb)):
+                if cnt == 0:
+                    parts.append(f"**{who}认为这类问题不存在**（0/{n}）")
+                elif cnt == n:
+                    parts.append(f"**{who}认为这类问题普遍存在**（{n}/{n}）")
+            emit(f">   - `{name}`：一致率 {r:.1%}，" + "；".join(parts) +
+                 "。**该维度的结论要据此下**，不是看 κ。")
+        emit()
+    emit("> `trans_bad` 这一行是 `calibrate_xling.py` 全部差率的基础。"
+         "**它若因退化而 κ=0，决策 1 不是「不可信」，而是「问题稀有到 xling "
+         "根本没东西可检测」——那恰恰支持把 xling 移出分桶规则。**"
+         "只有在两边都有足够 True、κ 仍低时，才说明判定不可靠。\n")
 
     # ---- 结论 ----
     emit("## 5. 结论")
