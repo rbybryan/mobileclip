@@ -29,6 +29,19 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 接着跑。`initial_scale_power 5` 全程**零** `OVERFLOW`,anomaly detection 按预期
 被跳过(日志里有那行中文说明)。这是试点第一次真正跑出损失。
 
+**但先别把 1.3846 → 0.9709 读成「在学习」。** 那两个 epoch 的
+`Averaged stats` 差异**几乎肯定是批次差异,不是训练效果**,理由有三条:
+
+1. `debug` 每个 epoch 只跑 **5 步**,lr 还在 warmup(1e-6 → 1e-5)。Adam 的单步
+   位移约等于 lr,5 步累计把权重挪动 ~5e-6 的相对量级 —— 对 35M 参数的模型
+   等于没动。
+2. 日志里每行 loss 是**原始单步值**(`pretrain.py:55` 的 `fmt="{value:.4f}"`,
+   不是滑窗中位数)。epoch 0 单步在 [1.13, 1.66] 之间跳,epoch 1 在 [0.95, 1.18],
+   两个区间是重叠的 —— n=5 的样本判不出趋势。
+3. 每 epoch 只有 17 个 batch、抽 5 个,批次组成本身的方差就够解释这个差。
+
+**真正的损失曲线要等去掉 `debug` 的那次(17 步 × 10 epoch = 170 步)。**
+
 **先纠正我上一轮的预测。** 我说开局 loss 应该在 13–14,实际是 **1.1257**。我错了,
 而且错的原因很重要:我那个数是按**随机初始化**的归一化嵌入算的,但两个塔都从
 `mobileclip_s2.pt` 载入、**开训前就已经对齐**。证据就在你这份日志里 —— 第 0 个
