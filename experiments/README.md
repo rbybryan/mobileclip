@@ -95,6 +95,41 @@ b≠−10,否则 different_lr 没生效);`temporal_pool.proj` 权重非零;
 held-out 自检索 R@1 相对方向仅作参考。评测走 `ret_test`(1k 自检索),
 不依赖 MSR-VTT——MSR-VTT 下载完成后再走 §3 的 B0。
 
+> **已测(2026-07-22,冒烟通过):这个 held-out 评测在开训前就接近饱和,
+> 不能用它判组件优劣。** 第 0 个 epoch(只跑了 5 步、lr≈2e-6,等于没训)
+> `ret_test/` 已经是 t2v R@1 **79.6** / v2t **83.0**(raw 口径 78.1 / 81.9)。
+> 原因是两个塔都从 `mobileclip_s2.pt` 载入、本来就对齐,试点训练只是在一个
+> 已经很强的模型上动了 170 步。
+> 剩余空间只有 ~20 个点,而 1000 条 query 的二项标准误就有 1.3pp
+> (`sqrt(.8×.2/1000)`),两次运行相差 <3.5pp 都在噪声里。
+> **所以试点判据只看:(a) 损失曲线形态,(b) 上面那几条组件存活检查。**
+>
+> 还有一个混淆项:视觉塔没冻结(`freeze_vision=False`)且 MobileOne 主干
+> 全是 BatchNorm(默认 momentum 0.1)。训练期 running stats 会在几十步内
+> 被这批视频数据重估一遍,而**评测用的正是 running stats**。所以 R@1 的变化
+> 可能纯粹来自 BN 统计量适应,而不是梯度学到了东西。两臂同样受影响,A/B 仍然
+> 公平,但「R@1 涨了」≠「这个组件有用」。
+>
+> **开局 loss ≈ 1.13**(不是随机初始化该有的 ~13.9),同样是因为塔已对齐 ——
+> 见 `TROUBLESHOOTING.md`「反向出 NaN」一节的 2026-07-22 更正。
+
+**跑真 A/B 前的三件事(实测于 2026-07-22 冒烟):**
+
+1. **别加 `debug True`。** 它每个 epoch 只跑 5 步就 break,但 epoch 循环照走,
+   于是变成「5 步训练 + 整轮评测」×10 —— 只验证链路,出不了曲线。
+2. **两臂的 `deepspeed.initial_scale_power` 必须相同。** 两个 pilot 配置都从
+   同一个 base config 继承(默认 8),所以**不传 CLI 覆盖**就是对称的。真要改
+   就两臂一起改。溢出会跳步,跳步数不同即破坏等步数前提 —— 跑完
+   `grep -c OVERFLOW` 两个 `train.log`,数字差得多就要记进结论。
+   注意两臂数值特性本就不同:r0 走 `/temp` 路径,r1 是 sigmoid(`temp=1.0`,
+   改用 `logit_scale`/`logit_bias`),没有 `1/temp²` 放大。
+3. **先 `nvidia-smi` 确认卡是空的。** 实测峰值 `max mem 23.2 GiB / res mem 27.2 GiB`
+   (bs=64/卡,评测阶段最高),32 GiB 的 V100 放得下但余量不多,来个同租户就 OOM。
+
+**耗时(实测外推):** 稳态约 **8.7 s/步**(其中数据 3.7–4.6 s,decord 解码是
+瓶颈之一),17 步/epoch ≈ 2.5 min,epoch 末评测 ≈ 1.1 min ⇒ **≈3.6 min/epoch,
+单臂 ≈40 min,一对 ≈80 min**。
+
 > **已测(2026-07-21):这批 10k 上共享字幕 = 1 组 / 2 条 clip(0.0%)。**
 > 直接后果:r1 里的 **`caption_idx` 多正例这一项在试点上是空操作** —— 全库就
 > 一对同字幕的 clip,它俩落进同一个 batch(512)的概率单个 epoch 只有约 5.7%,
@@ -126,6 +161,27 @@ python experiments/collect_results.py --out experiments/BASELINE.md
 `ret_test_emb/` 是原始余弦口径。**此后所有 A/B 结论要求两个口径同向成立。**
 
 ## 4. R0 → R1 — 训练 A/B(等步数、等数据、等超参)
+
+> 🚩 **跑之前先修这两处,否则要白烧几个小时**(2026-07-22 从试点日志溯源发现,
+> 尚未验证修法,请先用下面的 1 分钟预检确认)。§2b 的 pilot 配置**不受影响**
+> —— 它们各自覆盖了 `test_file` / `test_types`,所以试点评测正常出表;而
+> `r0_baseline.py` / `r1*.py` 只改了 `output_dir`,全盘继承 base config:
+>
+> 1. **训练中的评测会被静默跳过。** base config 里
+>    `test_file = dict(act_val=...)` 但 `test_types = ["ret_test"]`。
+>    数据集名取自 `test_file` 的**键**(`dataset/__init__.py:283`),
+>    `"act_val" not in ["ret_test"]` ⇒ `tasks_clip/pretrain.py:315` 直接
+>    `continue`,日志里只留一行 `Skip eval act_val split`。
+>    预检:`bash experiments/run_pretrain.sh experiments/configs/r0_baseline.py 8 debug True`
+>    跑一分钟,`grep "Skip eval" experiments/runs/r0_baseline/train.log` ——
+>    有输出就是中招了。修法是把键名对齐(`test_file = dict(ret_test=...)`)。
+> 2. **`ckpt_best.pth` 不会存在。** base config `stop_key = None`
+>    ⇒ `tasks_clip/pretrain.py:332` 的 best 分支永不进入。实际产物是
+>    **每个 epoch 一个 DeepSpeed 目录** `ckpt_{epoch:02d}.pth/`,权重在
+>    里面的 `mp_rank_00_model_states.pt`(参见 `tasks/pretrain.py:521`)。
+>    所以下面那段 `ckpt_best.pth` 的循环跑不通,得改成最后一个 epoch 的目录,
+>    并确认 `run_eval.sh` 能吃 DeepSpeed 目录(否则先用
+>    `zero_to_fp32.py` 转成单文件)。
 
 ```bash
 # R0 复现基线(与原配方逐项一致)

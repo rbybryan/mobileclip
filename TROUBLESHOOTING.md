@@ -1143,7 +1143,7 @@ when DeepSpeed + fp16 are both active. It still turns on for bf16 / fp32 /
 non-DeepSpeed runs, where it is safe and useful.
 
 **2. Why a NaN appears at all: the learnable temperature caps the usable loss
-scale at ~54.**
+scale at ~54 — but only from a *random* init. See the correction below.**
 
 `sim = (v @ tᵀ) / temp` with `temp = 0.01` gives the temperature gradient a
 `1/temp² = 1e4` amplification. Measured on CPU in fp32 at `B=512` (the global
@@ -1174,14 +1174,39 @@ Loss scaling is pure numerics — gradients are unscaled before the optimizer st
 — so changing it does **not** change the experiment, only how many opening steps
 are wasted on back-off.
 
-### One thing for the maintainer to decide (not changed here)
+### Correction after the run (2026-07-22) — the ≈54 bound is a random-init worst case
 
-That table says the learnable `temp` alone forces the loss scale ~**21000×**
-lower than the rest of the model could use. Everything else then has its
-gradients scaled by ~32 instead of ~1e6, which pushes small gradients toward fp16
-underflow. That is a real cost of fp16-on-Volta with this parameterisation, and
-there are two standard ways out — reparameterise as a **log**-temperature (what
-`logit_scale` in the r1 sigmoid branch already does: gradient amplification drops
-from `1/temp²` to `1/temp`), or **freeze** `temp` for the pilot. Both change what
-r0 *is*, so neither was applied silently. Revisit if the loss scale settles
-below ~16 in the real run.
+The table above assumed **random normalised embeddings**, and on that assumption
+predicted an opening loss around 13.9. The actual pilot run opened at
+**`loss_vtc = 1.1257`**. The prediction was wrong, and the reason matters:
+
+Both towers are initialised from the pretrained `checkpoints/mobileclip_s2.pt`,
+so they are *already aligned* before a single step — the epoch-0 held-out
+retrieval is 79.6 / 83.0 R@1 (see `experiments/README.md` §2b). With an aligned
+model the positive pair already dominates its row, so the softmax is far from
+uniform, the residual `(p − y)` is small, and `|dL/dtemp|` is correspondingly far
+below the random-init figure. The `1/temp² = 1e4` amplification is real; the
+`1.2e3` gradient it was multiplied against is not what this model starts from.
+
+Measured consequence: at `deepspeed.initial_scale_power 5` (= 32) the run
+produced **no `OVERFLOW!` lines at all** and completed the smoke cleanly. Treat
+≈54 as a lower bound on the safe scale, not an estimate of it.
+
+### `temp` is already pinned at its floor — worth knowing before "fixing" it
+
+`config.model.temp` and `config.model.temp_min` are **both** `1/100`, and
+`MobileViCLIP_Small.clip_contrastive_temperature()` runs `temp.clamp_(min=temp_min)`
+before *every* forward. Contrastive training pushes temperature down (sharper),
+so the clamp catches it every step: the run logs `temperature: 0.0100` unchanged
+across all 10 logged steps.
+
+So `temp` is *de facto* frozen already while still being an optimizer parameter
+that contributes the full `1/temp²`-amplified gradient — it pays the fp16 cost
+and buys nothing. That makes the two standard escapes cheaper than they looked:
+reparameterising as a **log**-temperature (what `logit_scale` in the r1 sigmoid
+branch already does — amplification drops from `1/temp²` to `1/temp`), or simply
+**freezing** `temp`, which given the clamp is close to a no-op semantically.
+
+Still a maintainer call, since it does touch what r0 *is* — but the cost/benefit
+is one-sided, not a trade-off. Revisit if the real run reports `OVERFLOW!` lines
+or the loss scale settles below ~16.

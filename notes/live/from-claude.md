@@ -23,6 +23,87 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-22 (10) — 冒烟通过 ✅ 可以跑真 A/B 了(但评测已近饱和,判据要改)
+
+**链路全通了。** 8 卡起来、数据读到、前向反向都过、epoch 末评测出表、下一个 epoch
+接着跑。`initial_scale_power 5` 全程**零** `OVERFLOW`,anomaly detection 按预期
+被跳过(日志里有那行中文说明)。这是试点第一次真正跑出损失。
+
+**先纠正我上一轮的预测。** 我说开局 loss 应该在 13–14,实际是 **1.1257**。我错了,
+而且错的原因很重要:我那个数是按**随机初始化**的归一化嵌入算的,但两个塔都从
+`mobileclip_s2.pt` 载入、**开训前就已经对齐**。证据就在你这份日志里 —— 第 0 个
+epoch(只跑 5 步、lr≈2e-6,等于没训)held-out 检索已经是 **R@1 79.6 / 83.0**。
+所以 `|dL/dtemp|` 远小于我估的 1.2e3,`scale=54 上限`是随机初始化的最坏情况,
+不是这个模型的工作点。已在 `TROUBLESHOOTING.md` 和 base config 注释里更正。
+
+**顺带查清了 `temperature: 0.0100` 为什么一步不动:** `temp` 和 `temp_min` 都是
+1/100,而 `clip_contrastive_temperature()` 每次 forward 前都 `clamp_(min=temp_min)`。
+对比学习想让温度更低(更锐),每步都被夹回去 —— 所以 `temp` **事实上已经是冻结的**,
+却还在贡献完整的 `1/temp²` 放大梯度。付了 fp16 的代价,什么也没买到。这让上一轮
+留给你的那个决定从「权衡」变成了「一边倒」:冻结 `temp` 在语义上几乎是空操作。
+仍然归你拍板,但不着急 —— 真跑没有 OVERFLOW 就先不用动。
+
+### ⚠️ 一个会影响结论的发现:这个 held-out 评测判不了组件优劣
+
+开训前就 79.6 / 83.0,天花板 100,只剩 ~20 个点;而 1000 条 query 的二项标准误
+就有 1.3pp,两次运行差 <3.5pp 全在噪声里。**再加一个混淆项**:视觉塔没冻结,
+MobileOne 主干全是 BatchNorm,训练期 running stats 会被这批视频重估一遍,而评测
+用的正是 running stats —— R@1 变化可能纯粹来自 BN 统计量适应,不是学到了东西。
+两臂同样受影响,A/B 仍然公平,但**「R@1 涨了」不等于「这个组件有用」**。
+
+所以试点判据收窄成两条(已写进 `experiments/README.md` §2b):
+**(a) 损失曲线形态;(b) 组件存活检查**(`logit_scale`/`logit_bias` 离开
+exp(t')=10、b=−10;`temporal_pool.proj` 权重非零)。R@1 只当参考。
+
+**Do this next:**
+
+```bash
+cd ~/mobileclip && git pull origin main
+nvidia-smi          # 先确认 8 张卡是空的:峰值 res mem 27.2 GiB,余量不多
+
+export MVC_DATA_DIR=/home/vca1/datasets
+
+# 真 A/B 一对(等步数 ~170 步)。不要加 debug,不要传 initial_scale_power ——
+# 两个配置继承同一个 base(默认 8),不覆盖才是对称的。单臂 ≈40 min。
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8
+```
+
+**Then report back** in from-server.md:
+
+```bash
+# 1) 两条损失曲线(每个 epoch 的 Averaged stats 就够)
+grep "Averaged stats" experiments/runs/pilot_10k_r0/train.log
+grep "Averaged stats" experiments/runs/pilot_10k_r1/train.log
+
+# 2) 跳步对称性 —— 两个数字差得多就说明不是等步数对照
+grep -c OVERFLOW experiments/runs/pilot_10k_r0/train.log
+grep -c OVERFLOW experiments/runs/pilot_10k_r1/train.log
+
+# 3) r1 的组件存活检查(这才是试点真正要回答的)
+#    注意:pilot 配置 stop_key=None ⇒ **不会**生成 ckpt_best.pth;
+#    DeepSpeed 存的是**目录** experiments/runs/pilot_10k_r1/ckpt_09.pth/,
+#    真正的权重在里面的 mp_rank_00_model_states.pt(和 tasks/pretrain.py:521 同款)。
+python - <<'PY'
+import glob, torch
+d = sorted(glob.glob("experiments/runs/pilot_10k_r1/ckpt_*.pth"))[-1]
+print("读取:", d)
+sd = torch.load(f"{d}/mp_rank_00_model_states.pt", map_location="cpu")["module"]
+for k in ("logit_scale", "logit_bias"):
+    if k in sd:
+        print(k, "=", sd[k].float().item())
+print("  ^ 初值 logit_scale=ln10≈2.3026, logit_bias=-10;没动=different_lr 没生效")
+pk = [k for k in sd if "temporal_pool" in k]
+print("temporal_pool 参数数:", len(pk), "(0 = 注意力池化没建起来)")
+for k in pk[:4]:
+    print("  ", k, "absmax =", sd[k].float().abs().max().item())
+PY
+```
+
+以及最后一个 epoch 的评测表(两臂各一份)。
+
+---
+
 ## 2026-07-22 (9) — 崩溃是 `debug True` 自己造成的;顺带查出 temp 把 loss scale 压死
 
 **卡空出来了,bs=64 装得下,前向也跑完了** —— 这次死在**反向**。报错位置很具体:
