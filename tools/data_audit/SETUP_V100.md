@@ -1322,6 +1322,36 @@ bash tools/data_audit/run_v100.sh review
 
 条数可调：`REVIEW_N=80 CONFLICT_N=20 RANDOM_N=100 bash tools/data_audit/run_v100.sh review`。
 
+**每张表都同时产出 `.tsv` 和同名 `.jsonl`**：
+
+- **`.tsv`** —— 拿来**填**（Excel / VSCode / LibreOffice 都能开，最后几列留空待填）。
+  第二列 `video_path` 是可直接播放的绝对路径。
+- **`.jsonl`** —— 拿来**看画面**。Gradio 按 jsonl 加载子集（与 §6 里
+  `quality_issue_candidates.jsonl` 同一用法），把它指过去就只翻这一批。
+
+### 7.0b 实际怎么过一遍
+
+```bash
+# ① 表在服务器上，拉到本地用 Excel 填最顺手
+scp vca1@10.235.31.101:~/mobileclip/outputs/audit_10k/review_*.tsv .
+
+# ② 看画面：起 Gradio 并做端口转发（§6）
+ssh -L 7860:localhost:7860 vca1@10.235.31.101
+cd /home/vca1/datasets/internvid_zh_10k && python gradio_video_text_review.py
+#    浏览器开 http://localhost:7860，加载 outputs/audit_10k/review_better_zh.jsonl
+
+# ③ 不想开 Gradio 也行——TSV 里 video_path 就是绝对路径，直接播：
+#    本地： scp vca1@10.235.31.101:<video_path> . && open <文件>
+#    或在服务器上： ffplay <video_path>   /   vlc <video_path>
+
+# ④ 填完传回去统计
+scp review_better_zh.tsv vca1@10.235.31.101:~/mobileclip/outputs/audit_10k/
+bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/review_better_zh.tsv
+```
+
+> **填一半就统计完全可以**——未填的行自动跳过，只在已填行上算比例。
+> 建议先把 15 条的 `review_conflicts.tsv` 过掉（几分钟，直接了结「语言污染 3.3%」的待核标记）。
+
 **填完统计**（脚本会直接判决策门，不用自己算比例）：
 
 ```bash

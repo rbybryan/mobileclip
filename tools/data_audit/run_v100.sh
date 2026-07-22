@@ -354,22 +354,22 @@ review)
   if [ -f "$OUT/buckets.jsonl" ]; then
     python3 $R --kind better-zh --sample "$OUT/s2_sample.jsonl" \
       --verdicts "$OUT/s2_verdicts.*.jsonl" --buckets "$OUT/buckets.jsonl" \
-      -n "${REVIEW_N:-50}" --out "$OUT/review_better_zh.tsv"
+      --video-root "$CLIPS" -n "${REVIEW_N:-50}" --out "$OUT/review_better_zh.tsv"
   else
     echo "跳过 better-zh 表：缺 $OUT/buckets.jsonl（先跑 bash $0 s3）"
   fi
   # ② S0 旗标 vs 实测翻译分 的冲突记录（P1）
   if ls "$OUT"/s2_trans.*.jsonl >/dev/null 2>&1; then
     python3 $R --kind conflicts --sample "$OUT/s2_sample.jsonl" \
-      --trans "$OUT/s2_trans.*.jsonl" -n "${CONFLICT_N:-15}" \
-      --out "$OUT/review_conflicts.tsv"
+      --trans "$OUT/s2_trans.*.jsonl" --video-root "$CLIPS" \
+      -n "${CONFLICT_N:-15}" --out "$OUT/review_conflicts.tsv"
   else
     echo "跳过 conflicts 表：缺 $OUT/s2_trans.*.jsonl（先跑 bash $0 s2-trans）"
   fi
   # ③ 随机抽检，验证单一质量分（P1）
   python3 $R --kind random --sample "$OUT/s2_sample.jsonl" \
-    --verdicts "$OUT/s2_verdicts.*.jsonl" -n "${RANDOM_N:-300}" \
-    --out "$OUT/review_random.tsv"
+    --verdicts "$OUT/s2_verdicts.*.jsonl" --video-root "$CLIPS" \
+    -n "${RANDOM_N:-300}" --out "$OUT/review_random.tsv"
   echo
   echo "== 三张表已生成在 $OUT/ ；在 Excel/VSCode 里填最后几列，配合 §6 的 Gradio 看画面 =="
   echo "== 填完统计： bash $0 review-score $OUT/review_better_zh.tsv =="
