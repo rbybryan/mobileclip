@@ -1105,3 +1105,83 @@ not what caused this.
 > a bs=64 run are not comparable. Use a small batch **only** for the smoke test.
 > The r0/r1 pair must use the **same** batch size as each other; prefer the
 > documented 64 per GPU (global 512) on free cards.
+
+---
+
+## `RuntimeError: Function 'DivBackward0' returned nan values in its 1th output.`
+
+**Symptom.** GPUs are free, `batch_size=64` fits, the forward completes — and the
+*backward* dies on every rank:
+
+```
+File "models/criterions.py", line 52, in get_sim
+    sim_v2t = vision_proj @ text_proj.T / temp
+RuntimeError: Function 'DivBackward0' returned nan values in its 1th output.
+```
+
+**Read "1th output" carefully.** `DivBackward0` has two outputs: index 0 is the
+gradient w.r.t. the numerator, index **1** is the gradient w.r.t. the
+**denominator** — here `self.temp`, a learnable `nn.Parameter` initialised to
+0.01. So the NaN is specifically in the temperature gradient.
+
+### Two separate things are going on
+
+**1. Why it *crashes* (the immediate blocker): `debug True` turns an expected
+event into a fatal one.**
+
+`tasks_clip/pretrain.py` enabled `torch.autograd.set_detect_anomaly(True)`
+whenever `debug` was set. That is fundamentally incompatible with fp16 **dynamic
+loss scaling**, whose whole method is to start from a deliberately over-large
+scale, let the first backward passes overflow, detect the inf/NaN, *skip* the
+step and halve the scale — the `OVERFLOW! ... Skipping step` lines. Anomaly
+detection raises the instant a NaN appears in any backward output, i.e. *before*
+DeepSpeed inspects the gradients, converting a self-correcting event into a hard
+crash.
+
+Fixed in the repo: anomaly detection is now skipped (with a log line saying so)
+when DeepSpeed + fp16 are both active. It still turns on for bf16 / fp32 /
+non-DeepSpeed runs, where it is safe and useful.
+
+**2. Why a NaN appears at all: the learnable temperature caps the usable loss
+scale at ~54.**
+
+`sim = (v @ tᵀ) / temp` with `temp = 0.01` gives the temperature gradient a
+`1/temp² = 1e4` amplification. Measured on CPU in fp32 at `B=512` (the global
+batch — `vtc_loss` all-gathers), with random normalised embeddings:
+
+| | |
+|---|---|
+| `\|dL/dtemp\|` | **1.2e3** |
+| fp16 max | 65504 |
+| **max loss scale before `temp` overflows** | **≈ 54** |
+| max loss scale the tower embeddings could take (`\|dL/dvision_proj\|` max = 5.7e-2) | ≈ 1.15e6 |
+
+DeepSpeed's default `initial_scale_power: 16` (= 65536) therefore needs **11
+consecutive halvings** before a single step can land — and `debug` mode stops
+after **5** steps (`global_step % (2*log_freq + 3) == 0`), so the smoke run would
+spend its entire life backing off and show nothing even without the crash.
+
+`initial_scale_power` is now read from the config
+(`deepspeed.initial_scale_power`, default lowered to **8** = 256) and can be
+overridden per-run:
+
+```bash
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 \
+    deepspeed.initial_scale_power 5 debug True
+```
+
+Loss scaling is pure numerics — gradients are unscaled before the optimizer step
+— so changing it does **not** change the experiment, only how many opening steps
+are wasted on back-off.
+
+### One thing for the maintainer to decide (not changed here)
+
+That table says the learnable `temp` alone forces the loss scale ~**21000×**
+lower than the rest of the model could use. Everything else then has its
+gradients scaled by ~32 instead of ~1e6, which pushes small gradients toward fp16
+underflow. That is a real cost of fp16-on-Volta with this parameterisation, and
+there are two standard ways out — reparameterise as a **log**-temperature (what
+`logit_scale` in the r1 sigmoid branch already does: gradient amplification drops
+from `1/temp²` to `1/temp`), or **freeze** `temp` for the pilot. Both change what
+r0 *is*, so neither was applied silently. Revisit if the loss scale settles
+below ~16 in the real run.

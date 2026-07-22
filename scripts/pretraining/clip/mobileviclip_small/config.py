@@ -122,6 +122,16 @@ pretrained_path = ""  # path to pretrained model weights, for resume only?
 deepspeed = dict(
     enable=True,
     stage=1,
+    # fp16 动态 loss scaling 的**初始**缩放系数(2 的幂)。只影响数值,不影响
+    # 数学——梯度在更新前会被反缩放回去,所以调它不改变实验语义,只决定开头
+    # 要浪费几步在退避上。
+    # DeepSpeed 默认 16(=65536)在这个模型上过高:可学习的 `temp` 初值 0.01,
+    # 其梯度带 1/temp² = 1e4 的放大,实测 |dL/dtemp| ≈ 1.2e3(B=512),
+    # fp16 上限 65504 ⇒ 不溢出所允许的最大 scale 只有约 54,从 65536 起要连续
+    # 减半 11 次。而冒烟只跑 5 步,全耗在退避上就什么都看不到。
+    # 8(=256)离可用区只差 ~3 次减半,留一点余量以防实测量级有偏差。
+    # 详见 TROUBLESHOOTING.md「反向出 NaN」一节。
+    initial_scale_power=8,
 )
 
 # ========== optimization-component switches (defaults = original baseline) ==========

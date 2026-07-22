@@ -380,7 +380,26 @@ if __name__ == "__main__":
     cfg = setup_main()
     # anomaly detection adds a full-graph check to every backward pass
     # (2-5x slower training) -> only enable it in debug mode
+    #
+    # ……但它**不能**和 fp16 动态 loss scaling 同时用。动态缩放的工作方式就是
+    # 先用一个偏大的初始系数,**故意**让前几步溢出,DeepSpeed 检出 inf/nan 后
+    # 跳过该步并把系数减半(日志里的 `OVERFLOW! ... Skipping step`)。
+    # 而 anomaly detection 一见到反向里出现 nan 就立刻抛 RuntimeError——赶在
+    # DeepSpeed 检查梯度之前,于是把一个**预期内、会自愈**的事件变成硬崩溃。
+    # 症状是 `Function 'DivBackward0' returned nan values`。见 TROUBLESHOOTING.md。
+    fp16_loss_scaling = (
+        cfg.get("deepspeed", {}).get("enable", False)
+        and cfg.get("use_half_precision", False)
+        and not cfg.get("use_bf16", False)
+    )
     if cfg.get("debug", False):
-        torch.autograd.set_detect_anomaly(True)
+        if fp16_loss_scaling:
+            logger.info(
+                "debug mode: 跳过 autograd anomaly detection —— 它与 fp16 动态 "
+                "loss scaling 不兼容(会把预期内的溢出退避变成崩溃)。要用它请先切到 "
+                "bf16 或关掉 deepspeed。"
+            )
+        else:
+            torch.autograd.set_detect_anomaly(True)
     local_broadcast_process_authkey()
     main(cfg)

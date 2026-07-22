@@ -23,6 +23,80 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-22 (9) — 崩溃是 `debug True` 自己造成的;顺带查出 temp 把 loss scale 压死
+
+**卡空出来了,bs=64 装得下,前向也跑完了** —— 这次死在**反向**。报错位置很具体:
+
+```
+File "models/criterions.py", line 52, in get_sim
+    sim_v2t = vision_proj @ text_proj.T / temp
+RuntimeError: Function 'DivBackward0' returned nan values in its 1th output.
+```
+
+**「1th output」要读准**:`DivBackward0` 有两个输出,0 是对分子的梯度,**1 是对
+分母的梯度** —— 也就是 `self.temp`(可学习参数,初值 0.01)。NaN 恰恰在温度的梯度上。
+
+**这里其实是两件事,得分开说。**
+
+**① 为什么会「崩」—— 是 `debug True` 把预期内的事件变成了致命错误。**
+
+`pretrain.py` 原本只要 `debug` 为真就开 `torch.autograd.set_detect_anomaly(True)`。
+它和 fp16 **动态 loss scaling** 根本不兼容:动态缩放的做法就是先给一个偏大的初始
+系数,**故意**让前几步溢出,DeepSpeed 检出 inf/nan 后跳过该步、系数减半(就是日志里
+那句 `OVERFLOW! ... Skipping step`)。而 anomaly detection 一见反向出现 nan 就立刻
+抛异常 —— 赶在 DeepSpeed 检查梯度**之前**,于是自愈机制没机会生效。
+
+**已修**:现在 deepspeed+fp16 时自动跳过 anomaly(并打日志说明);bf16 / fp32 /
+不用 deepspeed 时照常开启,那些场景下它是安全且有用的。
+
+**② 为什么会有 NaN —— 可学习的 temp 把可用 loss scale 压到了 54。**
+
+`sim = (v @ tᵀ) / temp`,temp=0.01 让温度的梯度带 `1/temp² = 1e4` 的放大。
+我在本机用 fp32 实测(B=512,即 all_gather 后的全局批,随机归一化嵌入):
+
+| | |
+|---|---|
+| `\|dL/dtemp\|` | **1.2e3** |
+| fp16 上限 | 65504 |
+| **temp 不溢出所允许的最大 loss scale** | **≈ 54** |
+| 塔内嵌入允许的最大 scale(`\|dL/dvision_proj\|` 最大 5.7e-2) | ≈ 1.15e6 |
+
+DeepSpeed 默认 `initial_scale_power: 16`(=65536)因此要**连续减半 11 次**才可能有
+一步落地;而 `debug` 模式**只跑 5 步**就 break。就算不崩,冒烟也全耗在退避上、
+什么都看不到。
+
+**已修**:`initial_scale_power` 改为从配置读取(默认降到 **8**=256),也能命令行覆盖。
+loss scaling 纯粹是数值手段(更新前会反缩放回去),**不改变实验语义**,只决定开头
+浪费几步。
+
+**Do this next:**
+
+```bash
+cd ~/mobileclip && git pull origin main
+
+export MVC_DATA_DIR=/home/vca1/datasets
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 \
+    deepspeed.initial_scale_power 5 debug True
+```
+
+(`5`=32,刚好在实测可用区 54 以内,开头基本不浪费步数。想更稳可以不带这一项,
+用默认的 8,代价是多两三步退避 —— 但只有 5 步预算,所以我建议先用 5。)
+
+**Then report back:** `Train Epoch: [0]` 之后带 `loss_vtc` / `lr` / `temperature`
+的那几行。判据:
+- loss_vtc 是个**有限数**(初值应在 13–14 附近,和我本机算的 13.93 同量级)就算通了;
+- 开头有一两条 `OVERFLOW! Skipping step` 仍属正常;
+- 若 5 步全是 OVERFLOW,把日志里的 loss scale 数值贴回来。
+
+**还有一件要你拍板的事(我没动)。** 上面那张表说明:**光是可学习的 `temp` 就把
+可用 loss scale 压低了约 2 万倍**(54 vs 1.15e6)。其它所有参数的梯度因此只能按
+~32 缩放而不是 ~1e6,小梯度会更靠近 fp16 下溢。这是 Volta+fp16 在这种参数化下的
+真实代价。两条标准出路:把温度改成 **log 参数化**(r1 的 `logit_scale` 已经是这么做的,
+放大从 `1/temp²` 降到 `1/temp`),或者**冻结 `temp`**。两者都会改变 r0 的定义,
+所以我不擅自动手 —— 等正式跑起来后看 loss scale 稳定在多少,低于 ~16 就该处理。
+
+---
+
 ## 2026-07-22 (8) — dtype 那条线**全通了**;这次 OOM 是因为卡上还跑着 S2 审核
 
 **先说结论:训练代码这边已经没问题了。** 三个 dtype 修复全部生效,前向真正跑进了
