@@ -1470,3 +1470,32 @@ find ~ /home/vca1 -name 'hmdb51*.zip' -size +1G -printf '%10s  %p\n' 2>/dev/null
 HMDB51 实例:split-1 测试集 51 类 × 30 = **1530**,盘上 anno 是 **1511**,
 少 19 条 —— 那 19 条是当时磁盘上就缺的。**1511 这个数字本身就是"视频曾在盘上"
 的证据**,遇到"是不是根本没下过"的疑问时可以用它反推。
+
+### 已确证的实例(2026-07-22,101vector)
+
+按上面的手法搜完,结论是**四个基准的视频全都在,一个都没丢**,全部位于
+`~/mobileclip/data/`(即 `/home/vca1/rby/mobileclip/data/`):
+
+| 基准 | 盘上目录 | 数量 | 与 `configs/data.py` |
+|---|---|---|---|
+| `hmdb51` | `data/hmdb51/videos_test` | 6754 | ✅ 一致 |
+| `ucf101` | `data/ucf101/videos` | 13320 | ✅ 一致 |
+| `k400` | `data/kinetics_400_val_10s_320p` | 10119 | ✅ 一致 |
+| `msrvtt` | `data/MSRVTT/videos/all` | 10004 | ⚠️ 需软链成 `data/MSRVTT_Videos` |
+
+`data/hmdb51_hf/hmdb51.zip` 也在,字节数 **2117581749**,与
+`tools/download_hmdb51.sh` 的 `EXPECTED_SIZE` 完全一致。
+
+**唯一的真实问题是 `MVC_DATA_DIR` 指错了根**,加上 MSR-VTT 的目录名和 config
+不一致(`MSRVTT/videos/all` vs `MSRVTT_Videos`)。修法就是 `unset MVC_DATA_DIR`
+加一条软链,零下载。
+
+> ⚠️ **`find ~ /home/vca1 ...` 会重复计数。** 该机 `~` = `/home/vca1/rby`,
+> 正是 `/home/vca1` 的**子目录**,所以同一棵树被遍历两遍:命中行成对重复、
+> 目录计数**翻倍**。上表已折半。写这类搜索时,要么只给互不包含的根,
+> 要么最后 `| sort -u`。
+
+> 另注:`/home/vca1/datasets`(10k 试点数据)**没有**出现在按目录聚合的结果里,
+> 尽管预检确认那 1 万条视频存在。最可能的原因是它是个**软链**,而 `find`
+> 默认不跟随软链(要跟随得用 `find -L`)。排查数据位置时记住这一条,
+> 否则会误判成"那批数据也没了"。
