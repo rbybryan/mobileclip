@@ -168,30 +168,14 @@ python tools/data_audit/show_flags.py --flags outputs/audit_10k/s0_flags.jsonl \
 **③ S1 + s2-sample 不用等 8B**——SigLIP2/LaBSE 一到就先把 S1 全量
 （10–30 分钟）和 `s2-sample`（全覆盖）跑完；8B 落地后直接开 `s2`。
 
-**④ 裁判链路冒烟（不依赖任何本地权重）**——用 5 条验证 `vlm_audit.py` 完整链路
-（路径解析→抽帧→base64→API→JSON 解析），顺便提前看裁判的判定质量。
-**默认走内网 `Qwen3.6-27B` 端点，不需要任何 API key**（前提是本机连得到
-`172.30.x.x`，见 §4.3-端点）：
+**④ 裁判链路冒烟 —— ⚠️ 本机做不了，已作废。**
+~~从 101vector 直接打内网端点~~：**实测 101vector 连不上 `172.30.x.x`**
+（2026-07，见 §4.3-端点），所以这一步在本机无法进行。
+裁判链路的冒烟改在中转机上做，见
+[`SETUP_JUDGE_RELAY.md`](SETUP_JUDGE_RELAY.md) §5（那边 `--limit 5`，同样 5 条）。
 
-```bash
-python - <<'PY'
-import json
-recs=[json.loads(l) for _,l in zip(range(5), open("/home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl"))]
-with open("outputs/audit_10k/api_smoke.jsonl","w") as f:
-    for r in recs:
-        f.write(json.dumps({"video":r["video"],"abs_path":r.get("abs_path"),
-          "zh":r["raw_caption_zh_translated"],"en":r["caption"]},ensure_ascii=False)+"\n")
-PY
-python tools/data_audit/vlm_audit.py --input outputs/audit_10k/api_smoke.jsonl \
-  --video-root /home/vca1/datasets/internvid_zh_10k/videos \
-  --api-base http://172.30.85.198:8000/v1 --api-key EMPTY \
-  --model /workspace/mount/b100_zaip_data/model_zoo/Qwen3.6-27B \
-  --frames 8 --concurrency 2 \
-  --output outputs/audit_10k/api_smoke_verdicts.jsonl
-cat outputs/audit_10k/api_smoke_verdicts.jsonl
-# 用云端 key 时改回：--api-base https://dashscope.aliyuncs.com/compatible-mode/v1
-#   --api-key $JUDGE_API_KEY --model qwen3-vl-235b-a22b-instruct
-```
+> 仍想在本机验证 `vlm_audit.py` 的**非网络**部分（路径解析→抽帧→base64）时，
+> 指一个本机能连的端点即可；纯粹验证抽帧的话直接看 §4.5 `s2-check` 更省事。
 
 **⑤ Gradio 人工摸底（零权重、零 GPU）**——按 §6 优先翻
 `quality_issue_candidates.jsonl`，频次表与 ② 的观察互相印证。
@@ -378,15 +362,14 @@ wc -l outputs/audit_10k/s2_sample.jsonl        # 应 ≈10000
 bash tools/data_audit/run_v100.sh s2
 bash tools/data_audit/run_v100.sh status
 
-# 4.3 裁判档 —— 当前默认走【内网已有的 Qwen3.6-27B 端点】（无需 API key、
-#     无需下权重、不占本机 GPU，可与 4.2 主力同时跑，只依赖 4.1 抽样完成）
-#     ⚠️ 前提：本机能连到 172.30.x.x（不同网段，必须先实测，见下方 4.3-端点）
-export JUDGE_API_BASE=http://172.30.85.198:8000/v1    # 优先 8 卡端点
-export JUDGE_MODEL=/workspace/mount/b100_zaip_data/model_zoo/Qwen3.6-27B
-export JUDGE_API_KEY=EMPTY                            # vLLM 不校验，但脚本要求非空
-JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge   # 跑完自动算一致率+κ
-# 裁判在别的机器上跑完、只把 s2_verdicts_judge.jsonl 拷回来时，单独重算：
-#   bash tools/data_audit/run_v100.sh judge-agree
+# 4.3 裁判档 —— ⚠️【本机跑不了，别在这台执行 s2-judge】
+#     实测 101vector 连不上内网端点 172.30.x.x（H100 也连不上），
+#     而本机既无云端 key、也装不下 235B。裁判改在 7 卡 V100 中转机
+#     root@10.55.87.68 -p 31179 上跑，逐条命令见 SETUP_JUDGE_RELAY.md。
+#
+#     本机只做最后一步：把中转机产出的 s2_verdicts_judge.jsonl 拷回来后算分
+scp -P 31179 root@10.55.87.68:~/judge/s2_verdicts_judge.jsonl outputs/audit_10k/
+bash tools/data_audit/run_v100.sh judge-agree      # 一致率 + Cohen's κ
 # （其他裁判路线——H100 本地 235B-FP8 / 本机 32B / 无大裁判协议——
 #   全部选型与命令见 SETUP_JUDGE_API.md §0 的路线表）
 
@@ -572,31 +555,32 @@ B100 集群上已经有别人起好的 vLLM OpenAI 兼容服务，**模型已确
 （起服务时没设 `--served-model-name`，**对外 ID 就是这串权重路径，原样传**；
 不确定时先 `curl $JUDGE_API_BASE/models` 看一眼）。
 
-**第一步永远是连通性实测**——`172.30.x.x` 与本机 `10.235.31.101` 不同网段：
+### ⚠️ 连通性已经定案，**不要再在本机试**
 
-```bash
-for ep in 172.30.85.198:8000 172.30.62.177:8000 172.30.86.57:5000; do
-  echo -n "$ep: "
-  timeout 5 curl -s -o /dev/null -w "%{http_code}\n" "http://$ep/v1/models" || echo unreachable
-done
-```
+`172.30.x.x` 与本机 `10.235.31.101` 不同网段。**2026-07 实测：101vector 连不上，
+H100 也连不上**；只有 7 卡 V100 `root@10.55.87.68 -p 31179` 连得上
+（那边 `172.30.85.198:8000` 和 `172.30.62.177:8000` 返回 200，
+4 卡的 `172.30.86.57:5000` 不通）。上面那张端点表**是给中转机看的，不是给本机**。
 
-- **连得上** → 用 §4 命令块里 4.3 的三个 `export` 直接跑 `s2-judge`；
-  正式跑之前先用 §0.5 ④ 的 5 条冒烟验证整条链路。
-- **连不上** → **实测结果就是连不上**（101vector 和 H100 都不行，2026-07）。
-  **裁判改到 7 卡 V100 `root@10.55.87.68 -p 31179` 上跑** —— 该机已确认能访问
-  `/workspace/mount/b100_zaip_data`（端点的模型权重和全量语料都在该挂载下），
-  多半在 B100 网内。10k 记录保留了 `abs_path`（`resolve_video_path` 第三候选），
-  **很可能连视频都不用拷，只需搬一个 500 行的 `s2_judge_sample.jsonl`**；
-  真要拷也**只拷 `JUDGE_N` 条，不是全部 1 万条**。
-  **逐条命令见 [`SETUP_JUDGE_RELAY.md`](SETUP_JUDGE_RELAY.md)**
-  （三项前提实测 → 轻量环境 → 送脚本和样本 → 视频解析预检 → 冒烟 →
-  正式跑 500 → 回传算分 → 常见问题表）；选型理由见
-  [`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0 路线 A′。
+所以在 101vector 上：**不要跑 `s2-judge`，只跑 `judge-agree`**（见 §4 命令块 4.3）。
 
-  > ⛔ **别在中转机上重新抽样**：裁判必须评的是主力判过的**同一批记录**，
-  > 从全量 10M 另抽一批与本机 10k 交集可能为空，`judge-agree` 会直接报
-  > 「重叠不足」。搬 `s2_judge_sample.jsonl`，不要重抽。
+**裁判的全部步骤在 [`SETUP_JUDGE_RELAY.md`](SETUP_JUDGE_RELAY.md)**
+（前提实测 → 轻量环境 → 送脚本和样本 → 视频解析预检 → 冒烟 → 跑 500 → 回传算分）。
+选型理由见 [`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0 路线 A′。
+
+两条实测得来的要点（都和当初的猜测不同，别按旧假设行事）：
+
+- **视频路径**：中转机上 `CLIPS` 要指向 **`b100_zaip_data` 下的 10k 子集**
+  （`.../20_outputs/internvid_zh_10k`）。全量语料在
+  `b100_zaip_data_**luan**/InternVid-10M-FLT`，但**那个挂载中转机不可达**。
+  当初以为「靠记录里的 `abs_path` 就能直接打开、不用拷视频」——
+  **实测预检 500/500 全 missing**，真正解决问题的是给 `resolve_video_path`
+  新加的候选（`video` 字段里从 `InternVId` 起的后缀）+ 正确的 `CLIPS`。
+- **解码后端**：中转机 pip 出不去、装不上 `decord`，用 `--frame-backend opencv`。
+
+> ⛔ **别在中转机上重新抽样**：裁判必须评的是主力判过的**同一批记录**，
+> 从全量 10M 另抽一批与本机 10k 交集可能为空，`judge-agree` 会直接报
+> 「重叠不足」。搬 `s2_judge_sample.jsonl`，不要重抽。
 
 **参数已按内网既有调用代码对齐完毕**（2026-07，逐项比对表见
 `SETUP_JUDGE_API.md` §0 路线 A′）。三个结论：
