@@ -209,7 +209,21 @@ PY
 
 # 4.5 人工抽检 500 条（只依赖 4.2 主力产出，可与 4.3 裁判并行进行）
 shuf -n 500 $OUT/s2_verdicts.jsonl > $OUT/human_check_500.jsonl
+
+# 4.6 【S2 跑完必做】判定体检——写出的行数 ≠ 可用判定数
+#     （H100 是单文件不分片，路径原样写；别用 s2_verdicts*.jsonl —— 那会把
+#       裁判档 s2_verdicts_judge.jsonl 一起吃进来，体检数字全错）
+python tools/data_audit/check_s2.py --verdicts "$OUT/s2_verdicts.jsonl" \
+  --sample $OUT/s2_sample.jsonl --out-md $OUT/s2_health.md
 ```
+> **4.6 为什么不能跳**：判定失败（视频解码失败 / 模型没吐出合法 JSON / OOM）
+> 也会照写一行 `{"verdict": {"error": ...}}`，而 `aggregate_report.py:72` 与
+> `calibrate_xling.py:136` 会**静默丢弃**它们——失败样本不是随机子集
+> （解码失败集中在坏视频、解析失败集中在长/怪 caption，都与「质量差」正相关），
+> 丢掉它们会**系统性低估**问题率。全量跑的失败率必然高于 V100 那 1 万条预抽样
+> （见 `DATA_ISSUES.md` §2 问题 6：本机 0/10000 不可外推），
+> 所以这一步在全量上比在 10k 上更重要。五项检查与判定门见
+> [`SETUP_V100.md`](SETUP_V100.md) §4.5。
 人工查看用 V100 机（10.235.31.101）上的 Gradio 浏览工具（1 万条预抽样
 已就位），定位与操作流程见 `SETUP_V100.md` §6——看数据做定性校验，
 不是把样本标完。

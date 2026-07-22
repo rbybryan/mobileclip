@@ -392,6 +392,9 @@ JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge   # 跑完自动算一致
 
 # 4.4 人工抽检 300 条（在 §6 的 Gradio 里过）
 shuf -n 300 <(cat outputs/audit_10k/s2_verdicts.*.jsonl) > outputs/audit_10k/human_check_300.jsonl
+
+# 4.5 【S2 跑完必做】判定体检——8 个分片都说 "1250 verdicts" 不等于 1250 条判定可用
+bash tools/data_audit/run_v100.sh s2-check     # 秒级，纯 CPU，产出 s2_health.md
 ```
 
 ### 4.2 与 4.3 分别在做什么（一句话：**4.2 给数据打分，4.3 给 4.2 打分**）
@@ -447,6 +450,47 @@ shuf -n 300 <(cat outputs/audit_10k/s2_verdicts.*.jsonl) > outputs/audit_10k/hum
 作为 H100 全量跑的先验；且全部 10k 都拿到 `better_zh` 候选修复字幕。
 fp16 若出现乱码/NaN 输出（罕见）：`export S2_MODEL=Qwen/Qwen3-VL-4B-Instruct`
 并在 `vlm_audit_hf.py` 加 `--dtype fp32` 重跑。
+
+### 4.5 S2 完成后体检（秒级，**进 xling-check / S3 之前必做**）
+
+```bash
+bash tools/data_audit/run_v100.sh s2-check      # -> outputs/audit_10k/s2_health.md
+```
+
+**为什么必须单独做这一步**：分片日志的 `[done] shard i: 1250 verdicts` 是**写出的行数**，
+不是**可用判定数**。`vlm_audit_hf.py:160-167` 把每一个异常都兜住并照样写一行，
+写成 `{"verdict": {"error": ...}}`；而下游两个消费者都会**静默丢弃**这些行：
+
+| 位置 | 代码 | 行为 |
+|---|---|---|
+| `aggregate_report.py:72` | `if "error" in v and "action" not in v: continue` | 不计入任何比率 |
+| `calibrate_xling.py:136` | 同一判断，计入 `n_noverdict` | 只在报告脚注里出现一行 |
+
+于是一个在 40% 的片子上失败的分片，在 `status` 里看起来是 100% 完成，
+只是让 `report.md` 变得更安静一点。**`report.md` 里每一个百分比都是在幸存记录上算的，
+而幸存记录不是随机子集**——解码失败集中在坏视频上，JSON 解析失败集中在长/怪 caption 上，
+两者都与「质量差」正相关，丢掉它们会**系统性低估**问题率。
+
+`s2-check` 按「能否让下一步失效」的顺序查五项：
+
+1. **覆盖率** —— 判定行数 vs `s2_sample` 行数、重复 video、漏判 video。
+   （断点续跑重复写入会让同一条被计两次，直接污染分桶比例。）
+2. **失败率与失败原因** —— 拆成 `video_decode` / `json_parse` / `oom` / `other`，
+   因为三者的处置完全不同：解码失败重跑无用（H 类工程问题），
+   JSON 解析失败重跑或缩 prompt 有救，OOM 减 `--frames` 有救。默认门 **失败率 ≤5%**。
+3. **字段完整性** —— 判定能解析、却仍缺 `trans_score` 的情况很常见；
+   下游是 `.get()` 读的，**缺值会被当成「不坏」从而稀释差率**。
+   `trans_score` 覆盖率 <90% 直接判不通过——§4 决策 1 的全部差率都建立在它上面。
+4. **分布塌缩** —— 这是唯一能穿过前三项的失败：能解析、字段齐全、但 95% 都判 `keep`
+   或所有分数都是 3。**S3 的分位校准靠的是判定与嵌入分之间的对比度**，
+   判定没有方差，校准出来的阈值就是噪声。
+5. **各层可用量** —— 抽样是分层的，稀有层（S0 命中、低 xling 尾）本来就小，
+   被失败吃掉之后就报不出该层结论了——而那几层正是 T1/T3 要回答的问题所在。
+
+脚本**不通过时返回非零**（`run_v100.sh` 会拦住并提示），产出
+`outputs/audit_10k/s2_health.md`。**体检结论要抄进
+[`DATA_ISSUES.md`](DATA_ISSUES.md) §1 状态表**（`outputs/` 是 gitignore 的，
+不落库就随会话丢失）。
 
 ---
 
