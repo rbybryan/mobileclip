@@ -83,6 +83,12 @@ bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8
 bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8
 ```
 
+> ⚠️ **batch size 不是自由旋钮,r0 与 r1 必须一致。** 它决定批内负例数量,
+> 直接改变对比学习任务本身 —— bs=16 的运行和 bs=64 的运行不可比。冒烟测试可以
+> 随便调小(只验证链路),但 A/B 那一对必须同批大小,优先用配置里记录的
+> 64/卡(全局 512)。另注意本机是共享的:若别的任务(如 S2 审核,每卡约 17 GiB)
+> 正占着卡,会 OOM —— 先 `nvidia-smi` 看清楚,别急着改配置,详见 `TROUBLESHOOTING.md`。
+
 试点通过标准(全是动力学检查,不看绝对精度):两条损失曲线正常下降;
 r1 训完从 ckpt 读 `logit_scale`/`logit_bias` 已离开初始值(exp(t')≠10、
 b≠−10,否则 different_lr 没生效);`temporal_pool.proj` 权重非零;

@@ -23,6 +23,73 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-22 (8) — dtype 那条线**全通了**;这次 OOM 是因为卡上还跑着 S2 审核
+
+**先说结论:训练代码这边已经没问题了。** 三个 dtype 修复全部生效,前向真正跑进了
+视觉塔的 stage-2/3 做实际计算,报错性质完全变了:`torch.OutOfMemoryError`。
+
+**Diagnosis:别改配置,先看报错的第二、三行。**
+
+```
+GPU 4 has a total capacity of 31.73 GiB of which 404.50 MiB is free.
+Process 2621830 has 16.93 GiB memory in use.          <- 这不是我们的进程
+Including non-PyTorch memory, this process has 14.39 GiB memory in use.
+```
+
+把账算一下:
+
+| | |
+|---|---|
+| 单卡总量 | 31.73 GiB |
+| **别人的进程** | **约 16.9–17.0 GiB** |
+| 我们的训练进程 | 14.36–14.52 GiB(PyTorch 已分配 12.46 GiB) |
+| 死时剩余 | 268–436 MiB(它要 480 MiB) |
+
+17.0 + 14.5 ≈ 31.5 —— **卡是被两个任务塞满的**。空卡上 bs=64 只要约 14.5 GiB,
+还剩 17 GiB 富余。**训练配置本身一点问题都没有。**
+
+**占卡的是谁:** PID **2621826–2621833,连续 8 个,一卡一个** —— 这正是
+`run_v100.sh s2` 的形状(每张卡起一个 `vlm_audit_hf.py`,`CUDA_VISIBLE_DEVICES=$i`),
+而 Qwen3-VL-8B 的 fp16 权重就是约 16 GB,`DATA_ISSUES.md` 里 S2 也标着「运行中」。
+**是 S2 审核在跑。** 另外 GPU 0 和 GPU 6 上还挂着约 11 个 ~404 MiB 的残留进程,
+值得顺手清掉,但不是这次 OOM 的原因。
+
+**Do this next —— 两条路,建议选第一条:**
+
+**① 让 S2 先跑完(推荐)。** 它是整条审核流水线的阻塞项(后面每一步都吃它的产物),
+还剩不到 2–3 h。跑完再用空卡按记录的 bs=64 跑试点。先看进度:
+
+```bash
+nvidia-smi
+bash tools/data_audit/run_v100.sh status
+```
+
+**② 想现在就把训练循环验通**,用小 batch 挤进 S2 剩下的约 14.7 GiB:
+
+```bash
+cd ~/mobileclip && git pull origin main
+
+export MVC_DATA_DIR=/home/vca1/datasets
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True   # 有 654 MiB 是已保留未分配的碎片
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 \
+    batch_size 16 debug True
+```
+
+命令行覆盖 `batch_size` **确实会传到 dataloader**:`utils/config.py:get_config`
+里 `merge_list(cfg, args.opts)` 在 `eval_dict_leaf(cfg)` **之前**执行,所以
+`inputs.batch_size.{image,video}` 那个 `"${batch_size}"` 插值是按覆盖后的值解析的
+(我查过源码顺序,不是猜的)。
+
+> ⚠️ **但 batch size 不是自由旋钮。** 它决定批内负例数量,直接改变对比任务本身 ——
+> bs=16 和 bs=64 的结果不可比。**小 batch 只能用于冒烟**;真正的 r0/r1 那一对
+> 必须同批大小,优先用 64/卡(全局 512)。这条已写进 `experiments/README.md` §2b。
+
+**Then report back:** 若走②,给我 `Train Epoch: [0]` 之后带 `loss_vtc` / `lr` /
+`temperature` 的头十几行 —— 那就说明全链路通了,只等空卡跑正式 A/B。判据同前:
+开头几条 `OVERFLOW! ... Skipping step` 正常,`nan` 或 loss scale 掉到底才是问题。
+
+---
+
 ## 2026-07-22 (7) — 视觉塔通了,死在文本塔的 LayerNorm;同族的雷已一次扫干净
 
 **又往前走了一层。** 上次死在视觉塔第一个卷积,这次那里过了,死在**文本塔的
