@@ -1286,9 +1286,11 @@ RuntimeError: Error reading /home/vca1/datasets/MSRVTT_Videos/video7020.mp4...
 > 本机只有预抽取的 1 万条样本(`/home/vca1/datasets/internvid_zh_10k`),
 > 没有全量 10M 数据
 
-`MVC_DATA_DIR=/home/vca1/datasets` 下只有 `internvid_zh_10k/`。MSR-VTT、K400、
-DiDeMo、ANet、SSv2 的视频一个都不在;三个数据集连 anno 也没有(它们在受限的
-作者 Google Drive 里,见本文件「Missing `anno_downstream/*.json`」一节)。
+`MVC_DATA_DIR=/home/vca1/datasets` 下只有 `internvid_zh_10k/`。**7 个评测基准的视频
+一个都不在**,11 个 InternVid 训练分片的视频也一个都不在;其中 DiDeMo / ANet /
+SSv2 连 anno 都没有(在受限的作者 Google Drive 里,见本文件
+「Missing `anno_downstream/*.json`」一节),另外 4 个(msrvtt / k400 / ucf101 /
+hmdb51)anno 是齐的 —— 这 4 个只差视频,是 B0 的可行范围。
 
 B 类之所以显得像"配置对了",是因为 `data_root` 只在**真正读视频那一刻**才被触碰
 —— 在此之前 anno、权重、文本塔全都能正常跑通,很容易误判成偶发的解码错误。
@@ -1308,25 +1310,54 @@ python experiments/check_readiness.py
 
 补数据的路径:
 
-- **MSR-VTT** — anno 已在,只差视频,且是公开 wget(约 6.7 GB):
-  见 `experiments/README.md` §3.2 与 `README_zh.md` §6.1。这是 B0 唯一
-  近在咫尺的基准,**把 B0 收窄成 MSR-VTT 单基准**即可继续。
-- **K400** — anno 已在,视频体量大且源不稳;可选,不作为阻塞项。
+**四个基准的 anno 已经在盘上,只差视频**(2026-07-22 预检实测),其中三个的视频
+是公开源、无需授权:
+
+- **HMDB51** — anno 1511 条;视频 ~2.1 GB,`bash tools/download_hmdb51.sh`
+  一条命令搞定(脚本已内置 hf-mirror 那个坑的解法,幂等)。**最便宜,先做它。**
+- **MSR-VTT** — anno 1000 条;视频 ~6.7 GB 公开 wget。**主指标**,也是唯一
+  有外部数字可对照的(t2v R@1≈42.5)。见 `README_zh.md` §6.1。
+- **UCF101** — anno 3783 条;视频 ~6.5 GB,CRCV 官网整包,见 `README_zh.md` §6.2。
+- **K400** — anno 10117 条;视频体量大且源不稳。可选,不作为阻塞项。
+
+⇒ **B0 = `msrvtt` + `hmdb51` + `ucf101`**(合计约 15 GB),检索 + 分类两类任务都有。
+剩下三个近期不做:
+
 - **DiDeMo / ActivityNet** — anno + 视频都缺,重建方法见本文件
   「Running the next retrieval dataset (DiDeMo, ActivityNet)」。
 - **SSv2-MC** — anno + 视频都缺,视频需在 20BN/Qualcomm 注册后下载。
 
-### 连带影响:§4 全量预训练在这台机器上同样跑不了
+### 连带影响:§4 的 InternVid 训练视频**一个都不在**,而且不是"换台机器"能解决的
 
 `configs/data.py` 里 `internvid_v1..v11` 的 `data_root` 是
-`$MVC_DATA_DIR/video_sample/InternVId-FLT_{i}` —— 同一份"本机没有全量数据"的
-结论对它一样成立。所以在 101vector 上,**§2b 之后还能做的只有**:
+`$MVC_DATA_DIR/video_sample/InternVId-FLT_{i}`,2026-07-22 的 `check_readiness.py`
+显示 11 个分片**全部** `data_root 缺失`。
+
+> **更正(2026-07-22,本节初稿写错过一次)。** 初稿写的是"§4 需要先解决 InternVid
+> **全量数据**的落盘位置(H100 机或换机)",这个说法有两处不准:
+>
+> 1. **盘上那 11 个 anno 不是全量**,而是本仓库自己生成的子集 —— 每片恰好 5000 条、
+>    合计 55000 条。生成脚本就在 `docs/internvid-download-zh.md`:
+>    `LIMIT = 5000  # 先做子集;要全量把这行设为 None` 与
+>    `PER_SHARD = 5000  # 每片条数;设 None = 把全部行平均切到 11 片`。
+>    所以"全量 10M"从来没有在这份 anno 里出现过。
+> 2. **视频不存在"别处有一份、搬过来就行"**。InternVid 只发布 URL 列表,视频要
+>    **逐条从 YouTube 抓**(`tools/download_internvid.py`,文档同上:
+>    "❌ 需要你自己抓 —— 就是本文要做的事"),且**必然有永久损耗** ——
+>    `Private video` / `Video unavailable` 的条目是真没了,抓不回来
+>    (config 里 `jump_filter=True` 且加载失败会重采样,所以缺样本不影响训练启动)。
+>
+> 正确的说法是:**§4 是一个数据获取任务,不是机器搬迁任务**。换到 H100 也一样要
+> 从头抓视频;换机只在带宽/并发/磁盘上有优势。
+
+所以在 101vector 上,**§2b 之后立刻能做的只有**:
 
 1. `pilot_10k_r1a` / `pilot_10k_r1b` 归因拆包(用的就是那 1 万条,数据已在);
-2. 补完 MSR-VTT 视频后的 B0 单基准。
+2. 补完视频后的 B0(`msrvtt` + `hmdb51` + `ucf101`,约 15 GB,全部公开源)。
 
-§4 的 R0→R1 全量 A/B 需要先解决 InternVid 全量数据的落盘位置(H100 机或换机)。
-跑一次 `check_readiness.py` 就能确认,别等长训崩了才发现。
+§4 要开跑,得先决定:抓多少条(现有 anno 定义了 55k;要更多得重跑转换脚本)、
+在哪台机器上抓、能接受多大的 YouTube 损耗率。这是独立的一步,别混进 §4 的
+训练排期里。
 
 ### 顺带:`BASELINE.md` 在评测全崩时依然会被写出来,而且内容是试点数字
 
