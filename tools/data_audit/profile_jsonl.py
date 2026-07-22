@@ -130,19 +130,65 @@ def normalize_for_dup(text):
     return re.sub(r"[\s，。,.！!？?、：:；;\"'“”]+", "", text).lower()
 
 
+LATIN_RUN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\-]*")
+
+
+def strip_shared_latin(zh, en):
+    """Drop Latin/digit runs that appear verbatim in the English source.
+
+    Keeping a brand or model number in Latin script is *correct* translation
+    behaviour -- "asus p8z77-v bm motherboard" -> "华硕 P8Z77-V BM 主板" even
+    translates the brand (ASUS -> 华硕) -- but such a caption has a mechanically
+    low CJK ratio, so the ratio flags below fire on it. Measuring the ratio on
+    the remainder separates "kept a proper noun" from "left it untranslated".
+
+    Evidence: the 15-record conflict sheet (DATA_ISSUES.md problem 12) was
+    15/15 correct translations, every one flagged only because the caption was
+    proper-noun dominated (YouTube / CNBC / Windows 10 / TEDx / P8Z77-V ...).
+    This function clears 14 of those 15. The holdout is "CNBC 采访 Chamath
+    Palathia" whose English source misspells the name as "chamat", so the match
+    is not verbatim. Matching is kept exact on purpose: a Latin run absent from
+    the source really is a zh/en discrepancy worth surfacing, even when -- as
+    here -- the zh side is the correct one.
+
+    KNOWN LIMIT: this cannot tell a retained proper noun from a retained common
+    word, since both appear in `en`. A caption that leaves "man is talking"
+    untranslated is no longer flagged by the ratio rules. `zh_no_chinese` and
+    `zh_equals_en` are deliberately still measured on the raw string, so wholly
+    untranslated records are still caught; only partial mixing can slip. The
+    acceptance check for this function is therefore two-sided -- see
+    DATA_ISSUES.md problem 12.
+    """
+    if not en:
+        return zh
+    en_low = en.lower()
+    out, pos = [], 0
+    for m in LATIN_RUN.finditer(zh):
+        if m.group(0).lower() in en_low:
+            out.append(zh[pos:m.start()])
+            pos = m.end()
+    out.append(zh[pos:])
+    return "".join(out)
+
+
 def check_record(zh, en, flags):
     zh_s, en_s = zh.strip(), (en or "").strip()
     if not zh_s:
         flags.append("zh_empty")
         return
     n_cjk = cjk_count(zh_s)
-    n_alpha = ascii_alpha_count(zh_s)
-    total = max(1, len(zh_s.replace(" ", "")))
     if n_cjk == 0:
         flags.append("zh_no_chinese")          # untranslated or garbage
-    elif n_cjk / total < 0.4:
+    # The two ratio flags are measured on the remainder after removing Latin
+    # runs the English source also contains, so that correctly-retained proper
+    # nouns do not read as contamination (strip_shared_latin).
+    core = strip_shared_latin(zh_s, en_s)
+    n_cjk_core = cjk_count(core)
+    n_alpha_core = ascii_alpha_count(core)
+    total_core = max(1, len(core.replace(" ", "")))
+    if n_cjk and n_cjk_core / total_core < 0.4:
         flags.append("zh_low_cjk_ratio")       # heavy language mixing
-    if n_alpha > 0 and n_alpha / total > 0.5:
+    if n_alpha_core > 0 and n_alpha_core / total_core > 0.5:
         flags.append("zh_mostly_english")
     if en_s and normalize_for_dup(zh_s) == normalize_for_dup(en_s):
         flags.append("zh_equals_en")
