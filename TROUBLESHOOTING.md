@@ -1,5 +1,68 @@
 # Troubleshooting
 
+## `sqlite3.OperationalError: attempt to write a readonly database`（Gradio 审阅工具）
+
+### Symptom
+
+以非 `vca1` 账号（如 `rby`）启动 `/home/vca1/datasets/internvid_zh_10k/gradio_video_text_review.py`：
+
+```
+File ".../gradio_video_text_review.py", line 95, in _initialize
+    conn.execute("PRAGMA journal_mode=WAL")
+sqlite3.OperationalError: attempt to write a readonly database
+```
+
+### Cause
+
+**与 gradio 无关，是文件权限。** 该工具把标注库和导出文件写在**它自己所在的目录**下：
+
+```python
+db_path     = result_dir / "review_annotations.sqlite3"
+export_path = result_dir / "review_results.jsonl"
+```
+
+`result_dir` 位于 `/home/vca1/...`，其他账号只有读权限；SQLite 打开 WAL 需要在库文件
+**所在目录**里创建 `-wal` / `-shm`，因此即便库文件本身可读也会失败。
+（这也解释了为什么报错发生在 `PRAGMA journal_mode=WAL` 这一行而不是 `connect()`。）
+
+### Fix
+
+按代价从低到高，三选一：
+
+**① 用离线评审包（推荐，且本来就是为抽检设计的）** —— 不需要 gradio、不写 `vca1` 目录、
+不需要服务器 GUI，而且页面**自带抽检表的填写字段**（Gradio 那个是浏览数据集用的，没有）：
+
+```bash
+bash tools/data_audit/run_v100.sh review-bundle
+```
+
+详见 [`tools/data_audit/SETUP_V100.md`](tools/data_audit/SETUP_V100.md) §7.0b。
+
+**② 把结果目录指到自己家目录**（若脚本支持该参数）：
+
+```bash
+python gradio_video_text_review.py --help     # 先看有没有 --result-dir / --out-dir 之类
+python gradio_video_text_review.py --result-dir ~/review_out
+```
+
+**③ 脚本拷到自己目录再跑**（`result_dir` 多半是相对脚本/工作目录推导的）：
+
+```bash
+mkdir -p ~/review_gui && cp /home/vca1/datasets/internvid_zh_10k/gradio_video_text_review.py ~/review_gui/
+cd ~/review_gui
+python gradio_video_text_review.py \
+  --data /home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl \
+  --video-root /home/vca1/datasets/internvid_zh_10k/videos
+```
+
+### Notes
+
+- **别为这个去 `chmod` 别人的目录**，也别用 `sudo` 跑——标注库写进他人家目录后续更难维护。
+- 装 gradio 时**务必用独立 venv**（`~/gradio_env`），不要装进 `audit_env`：
+  它会拉进 fastapi/pandas/pydantic 一堆依赖，有污染这套已验证冻结环境的风险。
+
+---
+
 ## `libtorchaudio.so` / `libtorch_cuda_cpp.so: cannot open shared object file`
 
 ### Symptom
