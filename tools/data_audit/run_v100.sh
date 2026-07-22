@@ -11,6 +11,7 @@
 #   bash tools/data_audit/run_v100.sh status     # 随时看 S1/S2 进度
 #   bash tools/data_audit/run_v100.sh s2-sample  # ④ 抽样（默认参数在 10k 上=全覆盖）
 #   bash tools/data_audit/run_v100.sh s2         # ⑤ 8 卡 VLM 审核全部 10k（HF 后端，~2–3h）
+#   bash tools/data_audit/run_v100.sh s2-check   # ⑤b S2 判定体检 -> s2_health.md（秒级，S2 跑完必做）
 #   JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge  # ⑥ 云端裁判（可选，需 API key）
 #   bash tools/data_audit/run_v100.sh judge-agree # ⑥b 一致率+Cohen's κ（可对外来裁判文件独立重算）
 #   bash tools/data_audit/run_v100.sh xling-check # ⑥c 裁决 xling 阈值（s3 前必做）
@@ -221,6 +222,22 @@ s2)
     echo "shard $i -> GPU$i (log: $OUT/s2_shard$i.log)"
   done
   echo "已后台启动（可续跑）。进度: bash $0 status"
+  echo "跑完后先做体检再进下一步: bash $0 s2-check"
+  ;;
+# ------------------------------------------------- ⑤b S2 判定体检（S2 跑完必做）
+s2-check)
+  # 纯 stdlib，不需要 numpy/torch——没激活虚拟环境也能跑
+  ls "$OUT"/s2_verdicts.*.jsonl >/dev/null 2>&1 || \
+    { echo "未找到 $OUT/s2_verdicts.*.jsonl（先跑: bash $0 s2）"; exit 1; }
+  SAMPLE_ARG=""
+  [ -f "$OUT/s2_sample.jsonl" ] && SAMPLE_ARG="--sample $OUT/s2_sample.jsonl"
+  python3 tools/data_audit/check_s2.py --verdicts "$OUT/s2_verdicts.*.jsonl" \
+    $SAMPLE_ARG --out-md "$OUT/s2_health.md" || {
+      echo
+      echo "== 体检未通过（详见上方「结论」与 $OUT/s2_health.md）：先处理再跑 xling-check/s3 =="
+      exit 1; }
+  echo
+  echo "== 体检通过。下一步: bash $0 xling-check（裁决决策 1，阻塞 s3） =="
   ;;
 # ---------------------------------------------------------------- ⑥ 云端裁判（可选）
 s2-judge)
