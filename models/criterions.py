@@ -118,7 +118,19 @@ class VTC_VTM_Loss(nn.Module):
             if idx is not None:
                 idx = allgather_wgrad(idx, gather_args)
 
-        sim_v2t, sim_t2v = get_sim(vision_proj, text_proj, temp, agg_method=agg_method) 
+        sim_v2t, sim_t2v = get_sim(vision_proj, text_proj, temp, agg_method=agg_method)
+
+        # 相似度矩阵转 fp32 再进 log_softmax,**为的是把语义恢复成原样**,不是
+        # 为了救数值:autocast 的 fp32 名单本就包含 log_softmax / sum,所以下面
+        # 两行历来是在 fp32 里算的,而 DeepSpeed 的 engine 关掉外层 autocast 后
+        # 会悄悄退化成 fp16(连带 get_mask 的软标签——它按 sim.dtype 建 mask)。
+        # 实测差多少:B=512、temp=0.01 下损失 fp16 13.929688 vs fp32 13.929939,
+        # 只差 2.5e-4 —— log_softmax 内核本来就用 fp32 累加,所以**不会**出现
+        # 「阶梯状损失」。留这两行只是让 r0 基线与仓库原本的意图逐位一致,
+        # 顺便在 loss scale 出问题时少一个嫌疑人。矩阵乘法仍留在 fp16
+        # (autocast 也是这么处理的)。见 TROUBLESHOOTING.md。
+        sim_v2t = sim_v2t.float()
+        sim_t2v = sim_t2v.float()
 
         with torch.no_grad():
             sim_v2t_targets = self.get_mask(sim_v2t, idx=idx, normalize=True)

@@ -23,52 +23,65 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
-## 2026-07-21 (7) — InternVL 探针:仓库在、格式对,但「跨族」只对了一半
+## 2026-07-22 (7) — 视觉塔通了,死在文本塔的 LayerNorm;同族的雷已一次扫干净
 
-**探针结论:通过,可以下。** `OpenGVLab/InternVL3_5-38B-HF` 仓库存在,
-`config.json` 拿到了,而且是**原生 transformers 实现** ——
-`"architectures": ["InternVLForConditionalGeneration"]`、`"model_type": "internvl"`、
-**没有 `auto_map`**。所以 `SETUP_V100.md` §4.3 里最担心的两件事可以划掉了:
+**又往前走了一层。** 上次死在视觉塔第一个卷积,这次那里过了,死在**文本塔的
+第一个 LayerNorm** —— 同一个病根(DeepSpeed 关掉外层 autocast),换了个受害者。
 
-- **不需要 `trust_remote_code`**;
-- **不用另建 `judge_env`** —— `audit_env` 现有的 transformers ≥4.57 已满足它要的
-  ≥4.52.1,冻结环境不用动。
+**Diagnosis:**
 
-**但同一份 config 也翻出了一张底牌,方向相反:**
-
-```json
-"vision_config": { "model_type": "internvl_vision", "hidden_size": 3200, "num_hidden_layers": 45 },
-"text_config":   { "model_type": "qwen3", "_name_or_path": ".../Qwen3-32B", "num_hidden_layers": 64 }
+```
+File "models/backbones/internvideo2/mobileclip/transformer.py", line 46, in forward
+    return super().forward(x.to(torch.float32)).to(inp_dtype)
+RuntimeError: expected scalar type Float but found Half
 ```
 
-**InternVL3.5-38B ＝ InternViT(~6B) ＋ Qwen3-32B。** 视觉塔确实换了族,
-**但语言塔还是 Qwen3** —— 跟主力 `Qwen3-VL-8B`、A′ 裁判 `Qwen3.6-27B` 同族。
-我之前在 `DATA_ISSUES.md` 里写的「跨族 → 买得到独立误差」**说过头了**,已改。
+`LayerNormFP32` 只把**输入**转 fp32,`self.weight` / `self.bias` 被 `model.half()`
+变成了 fp16,而 `F.layer_norm` 要求输入与参数同 dtype。**这个类从来就不自洽**,
+只是以前有外层 autocast 替它兜底 —— `layer_norm` 在 autocast 的 fp32 名单里,
+而该名单会把**所有**输入(含 weight/bias)一起转 fp32。engine 关掉 autocast,
+它就得自己做完整。
 
-**为什么这条要紧,而不只是个冷知识:** 裁判要打的分里,
-**`trans_score`(翻译忠实度)几乎是纯语言任务**,走的正是那个共享的 Qwen3 语言塔;
-而 `DATA_ISSUES.md` §3 的 T4 白纸黑字写着**「决策 1 的全部差率都建立在
-`trans_bad` 那一行上」**。也就是说 —— **最需要独立第二意见的那一维,恰好是这个
-模型最不独立的一维。** 反过来 `en_score`/`zh_score` 这类吃视觉塔的对齐判断,
-换族收益是实打实的。
+**Fix(已合进 main,pull 即可):** 两个副本(`mobileclip/transformer.py` 和
+`mobileclip/modules/common/transformer.py`,近似重复文件)都改成参数一并转 fp32。
+本地验证:旧写法对 `.half()` 模块复现同类报错,新写法与全 fp32 LayerNorm 再转回
+fp16 **逐位相等**,`elementwise_affine=False`(参数为 None)分支也正常。
 
-**所以怎么办(没有改计划,只是把话说准):**
+**这次顺手把同族的雷一次扫完了** —— 起了个子代理把 r0 整条前向路径(视觉塔、
+文本塔、VTC 损失、all-gather)全读了一遍,专找「靠 autocast 兜底」的写法:
 
-- 它仍然比 `Qwen3-VL-32B` 独立(后者两塔全同族),真触发 C 时**还是选它**;
-- 但 **`trans_score` 上一致率高,不要读成「判定可信」** —— 那更可能是同族语言塔
-  的共有盲区。这一维要么挂人工抽检(T4 的路线 D),要么写进报告的方法学局限;
-- 语言塔也想跨族的话有 `Gemma-3-27B-IT`(Gemma + SigLIP,真跨族),但中文和
-  rubric 遵循度在本项目都没验证过,且视觉侧与 S1 用的 SigLIP2 同源。
-  **别为此加跑一档。**
-- 另外确认一条:`torch_dtype` 是 **`bfloat16`**,V100 没有 bf16 —— 真要跑必须
-  fp16 载入,并先过 §4.3 那两条冒烟(中文会不会乱码 / `action` 字段解不解得出来)。
+- **不会再有 dtype 崩溃**。文本塔注意力里的 `softmax(attn.float())` 是**对的**
+  (转回后才做矩阵乘,且 softmax 无参数),不用动。
+- **但有一处静默的精度回退**:VTC 损失里的 `log_softmax` / `sum` 本来在 autocast
+  的 fp32 名单里,现在退化成 fp16。已在 `models/criterions.py` 把相似度矩阵转回
+  fp32 再进 `log_softmax`。
 
-**Do this next:不用做任何事。** 这条纯属把探针结果记账。**别开那个 76GB 的下载**
-—— 路线 C 是兜底,A′(中转机 `10.55.87.68`)还没排除,`DATA_ISSUES.md` §1
-的顺序表没变:① `run_v100.sh status` 看 S2 到没到 10000 → ② 照
-`SETUP_JUDGE_RELAY.md` 测中转机 → ③ S2 一满就 `xling-check`。
+  **说清楚它到底值多少**:实测 B=512、temp=0.01 下,损失 fp16 `13.929688`
+  vs fp32 `13.929939`,只差 **2.5e-4**。`log_softmax` 内核本来就用 fp32 累加,
+  所以**不会**出现我上一条里担心的「阶梯状损失」。留这两行只是把 r0 基线恢复成
+  仓库原本的意图,顺便在 loss scale 出问题时少一个嫌疑人 —— 不要指望它改变什么。
+- **有一处我改了又撤回**:视觉塔的注意力 softmax 也没有 fp32 提升,看着像同一个
+  雷,实测却与直接 fp16 softmax **逐元素差 0.0**(那个内核同样 fp32 累加)。
+  纯空操作,撤了,不留在 diff 里当噪音。
 
-**训练那边的待办也没变** —— 见下面 (6),`git pull origin main` 之后重跑冒烟。
+**Do this next:**
+
+```bash
+cd ~/mobileclip && git pull origin main
+
+export MVC_DATA_DIR=/home/vca1/datasets
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 debug True
+```
+
+`make_pilot_anno.py` **不用再跑**(你刚跑过,9000 + 1000 已经在位;那次输出里的
+「共享字幕 0.0%」和下面的抽样率提示是新加的说明文字,不是异常)。
+
+**这次仍然盯损失。** 判据同上一条:开头刷几条 `OVERFLOW! ... Skipping step`
+正常;loss 从第 0 步就 `nan`、或 loss scale 一路掉到 `min_loss_scale` 不动才是
+真问题。
+
+**Then report back:** `Train Epoch: [0]` 之后带 `loss_vtc` / `lr` / `temperature`
+的头十几行,以及 17 个 batch 跑完有没有干净退出。若又崩,traceback 最后 30 行。
 
 ---
 

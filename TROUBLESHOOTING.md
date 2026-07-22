@@ -966,3 +966,73 @@ forward is pure fp16, and DeepSpeed's dynamic loss scaling (`initial_scale_power
 16`) does the compensating. A handful of `OVERFLOW! ... Skipping step` lines
 while the scale settles is expected. What is *not* normal: a loss that is `nan`
 from step 0, or the loss scale collapsing to `min_loss_scale` and staying there.
+
+---
+
+## Same run, one layer deeper: `RuntimeError: expected scalar type Float but found Half` in `LayerNormFP32`
+
+**Symptom.** With the batch-dtype fix above in place, the vision tower now runs, and
+all ranks die slightly later — in the **text** tower's first LayerNorm:
+
+```
+File "models/backbones/internvideo2/mobileclip/transformer.py", line 46, in forward
+    return super().forward(x.to(torch.float32)).to(inp_dtype)
+  ...
+RuntimeError: expected scalar type Float but found Half
+```
+
+**Cause.** Same root cause (DeepSpeed disables the outer autocast), different
+victim. `LayerNormFP32` casts only its **input** to fp32; `self.weight` and
+`self.bias` were made fp16 by `model.half()`, and `F.layer_norm` requires input
+and parameters to share a dtype.
+
+This used to work by accident: `layer_norm` is on autocast's **fp32 cast-policy
+list**, and that policy casts *every* input — activations *and* `weight`/`bias` —
+to fp32. The class was never self-consistent; autocast was silently completing it.
+With autocast disabled inside the engine, the class has to do its own job.
+
+**Fix (already in the repo — just pull).** Both copies of the class —
+`mobileclip/transformer.py` and `mobileclip/modules/common/transformer.py`
+(near-duplicate files; **keep them in sync**) — now cast the parameters too:
+
+```python
+out = F.layer_norm(
+    x.to(torch.float32),
+    self.normalized_shape,
+    self.weight.to(torch.float32) if self.weight is not None else None,
+    self.bias.to(torch.float32) if self.bias is not None else None,
+    self.eps,
+)
+return out.to(inp_dtype)
+```
+
+Verified on CPU: the old form raises the same error class against a `.half()`
+module, the new form is **bit-identical** to an all-fp32 LayerNorm cast back to
+fp16, and the `elementwise_affine=False` branch (params are `None`) still works.
+
+### The general shape of this bug
+
+Anything that was quietly leaning on autocast is now exposed. Two directions:
+
+1. **Crashes** — an explicit `.float()` on an activation that then meets an fp16
+   *parameter*. That is exactly the two bugs above. A sweep of the whole r0
+   forward path (vision tower, text tower, VTC loss, all-gather) found **no
+   remaining instances**; the text tower's attention softmax
+   (`transformer.py:295`) is already correct because it casts back before the
+   next matmul, and softmax has no parameters.
+2. **Silent precision changes** — ops on autocast's fp32 list that now run in
+   fp16. The one that matters is the VTC loss: `log_softmax` and `sum` were
+   fp32 under autocast and had become fp16. `models/criterions.py` now casts the
+   similarity matrices back to fp32 before `log_softmax`.
+
+   **How much did that actually change?** Measured at `B=512`, `temp=0.01`:
+   loss `13.929688` (fp16) vs `13.929939` (fp32) — a difference of **2.5e-4**.
+   PyTorch's `log_softmax` already accumulates in fp32 internally, so there is no
+   "stepwise" loss. The cast is there to restore the repo's original semantics
+   exactly, not to rescue the numbers.
+
+   The same measurement argued *against* a change: casting the vision tower's
+   attention softmax to fp32 (mirroring the text tower) turned out to be
+   **bit-identical** to the plain fp16 softmax — max elementwise difference
+   `0.0`, identical row sums — because that kernel also accumulates in fp32.
+   It was reverted rather than left in as diff noise.

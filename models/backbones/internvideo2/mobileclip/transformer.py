@@ -42,8 +42,23 @@ class LayerNormFP32(nn.LayerNorm):
     def forward(self, x: Tensor) -> Tensor:
         # Convert input from dtype X to FP32 and perform normalization operation.
         # This may help with underflow/overflow issues that we typically see with normalization layers
+        #
+        # weight/bias 必须**和输入一起**转 FP32:模型被 shared_utils 整体 .half()
+        # 之后它们是 fp16,而 F.layer_norm 要求输入与参数同 dtype,只转输入会报
+        # "expected scalar type Float but found Half"。以前不显式转也能跑,是因为
+        # 外层 torch.cuda.amp.autocast 顺手把它们提升了(layer_norm 在 autocast 的
+        # fp32 名单里,该名单会把**所有**输入含 weight/bias 一起转 fp32);而
+        # DeepSpeed 的 engine.forward 会关掉那层 autocast,这个类就得自己自洽。
+        # 见 TROUBLESHOOTING.md。数值上与 autocast 生效时完全一致。
         inp_dtype = x.dtype
-        return super().forward(x.to(torch.float32)).to(inp_dtype) # float32 bfloat16
+        out = F.layer_norm(
+            x.to(torch.float32),
+            self.normalized_shape,
+            self.weight.to(torch.float32) if self.weight is not None else None,
+            self.bias.to(torch.float32) if self.bias is not None else None,
+            self.eps,
+        )
+        return out.to(inp_dtype) # float32 bfloat16
 
 
 def get_normalization_layer(norm_type, num_features):
