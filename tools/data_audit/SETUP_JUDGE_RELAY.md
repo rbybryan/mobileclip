@@ -202,11 +202,56 @@ PY
 
 - `ok` = 500 → **不用拷视频**，直接进第 5 步（`--video-root` 传什么都行，
   实际命中的是 `abs_path` 那条候选）。
-- `ok` 是 0 或很少 → 看打印的 `MISSING` 路径差在哪，按序尝试：
-  1. 共享存储里若有语料视频根目录，`export CLIPS=<该目录>` 后重跑本预检；
-  2. 仍不行 → 按
-     [`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0「若预检没通过：把那 500 条视频也拷过去」
-     生成清单并 rsync（**只拷 500 条，不是全部 1 万条**）。
+- `ok` 是 0 或很少 → 按下面的 §4.1 定位，别急着拷视频。
+
+> 📌 **读懂这里的输出**：`resolve_video_path` 全部落空时返回的是**候选 1**
+> （`video_root/<video>`），所以打印出来的那条路径**不代表**它试过的全部。
+> 候选 2/3 只在记录里**有 `abs_path` 字段**时才存在。所以第一件事是确认该字段
+> 在不在——这决定了是「路径根不对」还是「压根没有备用候选」。
+
+### 4.1 `[中转]` 全 missing 时的定位（~3 分钟）
+
+```bash
+# ① 记录里到底有哪些路径字段？
+cd ~/judge
+python3 - <<'PY'
+import json
+rec = json.loads(open("s2_judge_sample.jsonl").readline())
+print("字段:", sorted(rec.keys()))
+print("video    =", rec.get("video"))
+print("abs_path =", rec.get("abs_path", "<<< 没有这个字段 >>>"))
+PY
+```
+
+- **有 `abs_path`** → 它指向的多半是 101vector 上的本地路径，本机自然没有；
+  但候选 2（`CLIPS` + `abs_path` 里从 `InternVId` 起的后缀）只要 `CLIPS` 设对就能命中。
+- **没有 `abs_path`** → 只剩候选 1，**必须把 `CLIPS` 设成正确的根**才行。
+
+```bash
+# ② 用样本里第一条的文件名，在共享存储里定位真正的视频根（限定深度，别全盘 find）
+FN=$(python3 -c "import json;print(json.loads(open('s2_judge_sample.jsonl').readline())['video'].split('/')[-1])")
+echo "找: $FN"
+find /workspace/mount/b100_zaip_data -maxdepth 6 -name "$FN" 2>/dev/null | head -3
+# 没找到就放宽深度（慢，放后台）：
+#   nohup find /workspace/mount/b100_zaip_data -name "$FN" > /tmp/findclip.log 2>&1 &
+# 也先看看根下有什么、有没有 InternVId 目录：
+ls /workspace/mount/b100_zaip_data/
+find /workspace/mount/b100_zaip_data -maxdepth 4 -type d -name "InternVId*" 2>/dev/null | head
+```
+
+```bash
+# ③ 找到实际路径后，反推 CLIPS 并重跑 §4 预检
+#    把 ② 打印的完整路径与记录里的 video 字段比对，去掉公共后缀就是根。
+#    例：实际 /workspace/.../clips/videos/InternVId-FLT_10/shard_00044/xxx.mp4
+#        video 字段        videos/InternVId-FLT_10/shard_00044/xxx.mp4
+#        => export CLIPS=/workspace/.../clips
+export CLIPS=<上一步反推出的根>
+# 然后重跑 §4 的预检脚本，看 ok 是否变成 500
+```
+
+- **共享存储里根本没有这批视频** → 才走拷贝路线：按
+  [`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0「若预检没通过：把那 500 条视频也拷过去」
+  生成清单并 rsync（**只拷 500 条，不是全部 1 万条**，几百 MB 量级）。
 
 ---
 
