@@ -53,8 +53,25 @@ def iter_jsonl(paths):
                         continue
 
 
-def calibrate(verdict_path, target_precision):
+def load_trans_scores(trans_path):
+    """video -> trans_score from the text-only re-judgement pass (--mode trans).
+
+    The combined S2 rubric does not actually measure translation quality (one
+    quality score gets copied into all three fields; DATA_ISSUES.md problem 8),
+    so `trans_bad` taken from s2_verdicts is really "overall quality bad" and
+    reads ~19.6% instead of the true 3.6%. When s2_trans.*.jsonl exists, use it.
+    """
+    out = {}
+    for rec in iter_jsonl(sorted(glob.glob(trans_path))):
+        v = rec.get("verdict") or {}
+        if v.get("trans_score") is not None:
+            out[rec.get("video")] = v["trans_score"]
+    return out
+
+
+def calibrate(verdict_path, target_precision, trans_scores=None):
     """Per-sig-decile VLM bad rates + threshold selection."""
+    trans_scores = trans_scores or {}
     rows = []
     action_counter, issue_counter = Counter(), Counter()
     gran_counter = Counter()
@@ -69,13 +86,14 @@ def calibrate(verdict_path, target_precision):
         if "error" in v and "action" not in v:
             continue
         s1 = rec.get("s1") or {}
+        ts = trans_scores.get(rec.get("video"), v.get("trans_score"))
         rows.append({
             "sig_zh": s1.get("sig_zh_mean"),
             "sig_en": s1.get("sig_en_mean"),
             "xling": s1.get("xling_cos"),
             "zh_bad": (v.get("zh_score") is not None and v["zh_score"] <= 2),
             "en_bad": (v.get("en_score") is not None and v["en_score"] <= 2),
-            "trans_bad": (v.get("trans_score") is not None and v["trans_score"] <= 2),
+            "trans_bad": (ts is not None and ts <= 2),
             "coarse": v.get("granularity") == "coarse",
             "temporal_wrong": v.get("temporal_order_correct") is False,
         })
@@ -89,6 +107,7 @@ def calibrate(verdict_path, target_precision):
 
     scored = sorted((r for r in rows if r["sig_zh"] is not None),
                     key=lambda r: r["sig_zh"])
+    n_bad = sum(r["zh_bad"] for r in scored)
     deciles = []
     n = len(scored)
     for d in range(10):
@@ -105,13 +124,37 @@ def calibrate(verdict_path, target_precision):
             "coarse_rate": round(sum(r["coarse"] for r in chunk) / len(chunk), 3),
         })
     # pick largest threshold t such that precision(zh_bad | sig_zh < t) >= target
+    # Sweep sig_zh ascending. `threshold` is the target-meeting pick; the sweep
+    # also records what IS achievable, because "no threshold met the target" is
+    # usually a statement about arithmetic rather than about sig_zh:
+    #
+    #     precision(selected) <= base_rate * lift(selected)
+    #
+    # With a zh_bad base rate of ~20% and a worst-decile lift of ~1.7x, no cut
+    # can reach 0.8 -- the target is unreachable no matter how it is tuned, and
+    # silently returning None makes RECAPTION structurally empty while the
+    # report still prints an authoritative-looking "96% KEEP". So report the
+    # ceiling and a coverage/precision curve, and let the caller pick a target
+    # that exists. (Same trap as decision 1 / xling; see DATA_ISSUES.md.)
     threshold = None
+    best_precision, best_at = 0.0, None
+    curve, checkpoints = [], [0.05, 0.10, 0.20, 0.30, 0.50]
+    ci = 0
     bad_below, total_below = 0, 0
     for r in scored:
         total_below += 1
         bad_below += r["zh_bad"]
-        if total_below >= 50 and bad_below / total_below >= target_precision:
-            threshold = r["sig_zh"]
+        prec = bad_below / total_below
+        if total_below >= 50:
+            if prec >= target_precision:
+                threshold = r["sig_zh"]
+            if prec > best_precision:
+                best_precision, best_at = prec, r["sig_zh"]
+        while ci < len(checkpoints) and total_below >= checkpoints[ci] * n:
+            curve.append({"coverage": checkpoints[ci], "n": total_below,
+                          "threshold": r["sig_zh"], "precision": round(prec, 3),
+                          "recall": round(bad_below / max(1, n_bad), 3)})
+            ci += 1
     return {
         "n_verdicts": len(rows),
         "action_dist": dict(action_counter.most_common()),
@@ -121,6 +164,11 @@ def calibrate(verdict_path, target_precision):
             sum(r["temporal_wrong"] for r in rows) / len(rows), 4),
         "sig_zh_deciles": deciles,
         "suggested_sig_zh_threshold": threshold,
+        "zh_bad_base_rate": round(n_bad / n, 4) if n else None,
+        "best_achievable_precision": round(best_precision, 3),
+        "best_precision_threshold": best_at,
+        "precision_curve": curve,
+        "target_precision": target_precision,
     }
 
 
@@ -131,6 +179,11 @@ def main():
     ap.add_argument("--flags", default=None, help="stage-0 flags jsonl")
     ap.add_argument("--verdicts", default=None,
                     help="stage-2 verdicts jsonl (glob ok, e.g. 's2_verdicts.*.jsonl')")
+    ap.add_argument("--trans-verdicts", default=None,
+                    help="s2_trans.*.jsonl from the text-only re-judgement "
+                         "(--mode trans); when given, the 翻译差率 column comes "
+                         "from it instead of the combined rubric, which does not "
+                         "actually measure translation (DATA_ISSUES.md problem 8)")
     ap.add_argument("--target-precision", type=float, default=0.8)
     ap.add_argument("--sig-zh-threshold", type=float, default=None,
                     help="override calibrated misalignment threshold")
@@ -145,11 +198,19 @@ def main():
     if not score_files:
         sys.exit(f"no stage-1 score files match {args.scores} — run S1 first")
 
-    calib = calibrate(args.verdicts, args.target_precision) if args.verdicts else None
+    trans_scores = load_trans_scores(args.trans_verdicts) if args.trans_verdicts else {}
+    if args.trans_verdicts:
+        print(f"[info] 翻译差率 sourced from {len(trans_scores):,} text-only "
+              f"re-judgements ({args.trans_verdicts})", file=sys.stderr)
+    calib = calibrate(args.verdicts, args.target_precision,
+                      trans_scores) if args.verdicts else None
     t_zh = args.sig_zh_threshold or (calib or {}).get("suggested_sig_zh_threshold")
     if t_zh is None:
-        print("[warn] no calibrated threshold; bucketing on flags only "
-              "(pass --sig-zh-threshold to enable score buckets)", file=sys.stderr)
+        print("[warn] 没有校准出阈值 → RECAPTION 桶将为空、几乎所有记录落进 KEEP。"
+              "\n        这几乎总是「目标精度算术上不可达」而非数据没问题——"
+              "\n        看 report.md 的「⚠️ 阈值没校准出来」一节，那里给了可达上限"
+              "\n        与覆盖率/精度曲线；据此设 --target-precision 或直接给"
+              "\n        --sig-zh-threshold。", file=sys.stderr)
     t_en = args.sig_en_threshold or t_zh
 
     flags_by_video = defaultdict(list)
@@ -201,11 +262,40 @@ def main():
     lines.append(f"- 打分记录数: **{n:,}**")
     lines.append(f"- 阈值: sig_zh<{t_zh} / sig_en<{t_en} → RECAPTION; "
                  f"xling_cos<{args.xling_threshold} → RETRANSLATE\n")
+    if t_zh is None and calib:
+        base = calib.get("zh_bad_base_rate") or 0
+        best = calib.get("best_achievable_precision") or 0
+        lines.append("## ⚠️ 阈值没校准出来 —— 下面的分桶表不能当结论\n")
+        lines.append(f"没有任何 `sig_zh` 阈值达到 `--target-precision "
+                     f"{calib.get('target_precision')}`，于是 **RECAPTION 桶为空**、"
+                     "几乎所有记录落进 KEEP。**「96% KEEP」是阈值缺失的产物，不是数据结论。**\n")
+        lines.append(f"- `zh_bad` 基准率 = **{base:.1%}**；"
+                     f"实际可达的最高精度 = **{best:.1%}**"
+                     f"（在 sig_zh < {calib.get('best_precision_threshold')}）\n")
+        lines.append("**精度 ≤ 基准率 × lift**。基准率 "
+                     f"{base:.1%} 时要 {calib.get('target_precision'):.0%} 精度，"
+                     f"需要全程维持 ≈{(calib.get('target_precision') or 0) / max(base, 1e-9):.1f}× lift；"
+                     "而 sig_zh 十分位表上最差/最好之比通常只有 2–3×。"
+                     "**这是算术不可达，不是调阈值能救的**——与 `xling` 决策 1 同一个陷阱。\n")
+        if calib.get("precision_curve"):
+            lines.append("按覆盖率取阈值时实际能拿到什么（据此挑一个存在的目标）：\n")
+            lines.append("| 覆盖率 | n | sig_zh 阈值 | 精度 | 召回 |")
+            lines.append("|---|---|---|---|---|")
+            for c in calib["precision_curve"]:
+                lines.append(f"| {c['coverage']:.0%} | {c['n']:,} | {c['threshold']:.4f} "
+                             f"| {c['precision']:.1%} | {c['recall']:.1%} |")
+            lines.append("")
+        lines.append("> **RECAPTION 的误判代价是不对称的**：把一条尚可的 caption 送去重写，"
+                     "损失只是算力，拿回来的往往还更好；漏掉一条坏 caption 才是真损失。"
+                     "所以这里**不该追求高精度**——按覆盖率（例如最差 20–30%）取阈值，"
+                     "或直接 `--target-precision 0.4` 之类可达的值，比空桶有用得多。\n")
     lines.append("## 全量分桶（修复动作）\n")
     lines.append("| bucket | count | rate |")
     lines.append("|---|---|---|")
     for b, c in bucket_counter.most_common():
         lines.append(f"| {b} | {c:,} | {c / max(1, n):.2%} |")
+    if t_zh is None:
+        lines.append("\n> ⚠️ 见上节：`RECAPTION` 缺席是阈值没校准出来所致，**不代表源 caption 没问题**。")
     if calib:
         lines.append("\n## VLM 审核样本（Stage-2）校准\n")
         lines.append(f"- 有效判定数: {calib['n_verdicts']:,}")
@@ -215,6 +305,19 @@ def main():
         lines.append(f"- VLM 建议动作分布: `{json.dumps(calib['action_dist'], ensure_ascii=False)}`")
         lines.append(f"- 粒度分布: `{json.dumps(calib['granularity_dist'], ensure_ascii=False)}`")
         lines.append(f"- 高频问题: `{json.dumps(calib['top_issues'], ensure_ascii=False)}`\n")
+        lines.append(
+            "> ⚠️ **上面两行（动作分布、高频问题）来自合并 rubric，读法受限**："
+            "10k 实测显示模型只产生一个整体质量分、复制进三个字段，`action` 是该分数上的"
+            "固定阶梯（`5→keep, 4→fix_text, 3→retranslate, ≤2→recaption/drop`）。"
+            "所以 **`retranslate` 的占比不是翻译问题率**，`trans_issues:*` 的计数同理。"
+            "详见 `tools/data_audit/DATA_ISSUES.md` 问题 8。\n")
+        if trans_scores:
+            lines.append(f"> ✅ 下表「翻译差率」一列已改用**文本-only 重判**"
+                         f"（{len(trans_scores):,} 条，不看画面、先证据后打分），"
+                         "是独立测量，可以直接引用。\n")
+        else:
+            lines.append("> ⚠️ 下表「翻译差率」一列仍来自合并 rubric，**实为整体质量分的复制品**。"
+                         "跑 `run_v100.sh s2-trans` 后重跑本步即可换成独立测量。\n")
         lines.append("| sig_zh 分位 | 区间 | n | zh差率 | en差率 | 翻译差率 | 粒度粗率 |")
         lines.append("|---|---|---|---|---|---|---|")
         for d in calib["sig_zh_deciles"]:

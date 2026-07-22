@@ -28,7 +28,7 @@
 | S2 裁判 | 🟡 改在中转机跑 | `s2_verdicts_judge.jsonl` | 走内网 `Qwen3.6-27B`（**✅ 已确认多模态**）。**101vector 和 H100 都连不上端点**，改到 7 卡 V100 `10.55.87.68` 上跑。端点连通/环境/`CLIPS` 均已落定，**待跑视频预检→冒烟→500 条**，见 §4 决策 2b。主力/裁判分工见 [`SETUP_V100.md`](SETUP_V100.md) §4.2–4.3 |
 | S2 人工抽检 300 | ⬜ 未开始 | `human_check_300.jsonl` | 在 §6 Gradio 里过 |
 | **xling 阈值裁决** | ✅ **已裁决（2026-07-22）** | `xling_calibration.md` | **`xling_cos` 退出分桶规则**（ρ=−0.031、lift 1.34×、0.7 阈值精度 4.8% vs 基准 3.6%）。`run_v100.sh s3` 已默认 `--xling-threshold 0`。见 §4 决策 1 |
-| S3 校准 + 分桶 | ⬜ **未开始（决策 1 已清，仅剩裁判档）** | `report.md` / `buckets.jsonl` | `run_v100.sh s3`。决策 1 已裁；决策 2b（裁判）不阻塞 S3 本身，只影响判定可信度的背书 |
+| S3 校准 + 分桶 | ⚠️ **跑过一次但结果退化，需重跑** | `report.md` / `buckets.jsonl` | 首跑 `--target-precision 0.8` **算术上不可达** → 没校准出阈值 → **RECAPTION 桶为空、KEEP 96.21%**。这是阈值缺失的产物**不是数据结论**。见 §2 问题 10 |
 
 刷新状态：
 
@@ -44,7 +44,8 @@ bash tools/data_audit/run_v100.sh status        # S1/S2 行数 + 存活进程 + 
 |---|---|---|
 | 1 | `git pull` 后 `bash tools/data_audit/run_v100.sh trans-check` | 补跑留档。差率 19.6%→3.6% 已是「锚定解除」的强证据，这一步给出逐条同值率的直接数字，并核对模型守不守自己的评分规则（`mismatches` 空 → 必须给 5） |
 | 2 | **裁判走 7 卡 V100 中转机 `10.55.87.68`**：照 [`SETUP_JUDGE_RELAY.md`](SETUP_JUDGE_RELAY.md) 逐条走（视频解析预检 → 冒烟 → 500 条） | 只有这台连得上 b100 网（§4 决策 2b）；**零下载、零占卡**。与第 1 步并行 |
-| 3 | **`bash tools/data_audit/run_v100.sh s3`** —— **现在就能跑** | S0+S1+S2 产物都齐了，决策 1 已裁。决策 2b 不阻塞 S3 本身，只影响判定可信度的背书；裁判回来后重跑 S3 也是分钟级 |
+| 3 | **`git pull` 后重跑 S3**：`TARGET_PRECISION=0.3 bash tools/data_audit/run_v100.sh s3`（或 `SIG_ZH_THRESHOLD=<值>`） | 首跑用 0.8 → **算术不可达 → RECAPTION 空桶、KEEP 96.21%**（问题 10）。新版报告会给**可达上限 + 覆盖率/精度曲线**，据此挑一个存在的目标。**RECAPTION 误判代价不对称**（送错一条只费算力，漏一条才是真损失），不该追高精度 |
+| 3b | 重跑后确认 `report.md` 里「翻译差率」一列已标 ✅（来自 `s2_trans`） | `s3` 现在自动带 `--trans-verdicts`；旧版那一列是整体质量分的复制品，会把 3.6% 报成 ~20% |
 | 4 | 读 `report.md` 时**记住问题 8** | `action` 分布那一栏是「整体质量分的阶梯」，**不是四类问题的真实占比**；翻译差率一律以 3.6%（`s2_trans`）为准 |
 | 5 | Gradio 人工抽检 300（[`SETUP_V100.md`](SETUP_V100.md) §6） | 不占 GPU、随时可插空。作用是**验证单一质量分 s 准不准**（s≈3 的片子到底什么样），并给 `s2-trans` 当独立锚点 |
 | 6 | 把 `s2_health.md` / `trans_health.md` / `xling_calibration.md` / `report.md` 的结论抄进本文件和 [`notes/audit-10k-findings.md`](../../notes/audit-10k-findings.md) | `outputs/` 是 gitignore 的，**不落库就随会话丢失**（CLAUDE.md §0） |
@@ -73,6 +74,7 @@ bash tools/data_audit/run_v100.sh status        # S1/S2 行数 + 存活进程 + 
 | 6b | H | 画面本身不可用（黑屏/花屏/纯色） | **49 条（0.49%）** `video_readable=false`（与 `better_zh` 为空的 49 条完全重合）；模型只对其中 46 条判了 `drop` | S2 | 已确认 |
 | **7** | — | **VLM `action` 与自身分数矛盾**（rubric 问题，非数据问题） | **4098 条 = 99.5% 的 `retranslate` 自身 `trans_score≥3`**（该行 `trans≤2` 仅 0.5%）。`recaption` 反而几乎自洽（矛盾 2 条） | S2 体检 §6 | **已确认** |
 | **8** | — | 🔴 **三个分数根本不是三个测量：模型只给了一个数、复制三份**，`action` 是该数上的固定阶梯 | 逐条同值率：`en=zh` **93.4%**、`en=trans` **92.5%**、`zh=trans` **98.9%**、**三者全同 92.5%**；平均绝对差 0.08／0.09／**0.01** | S2 体检 §6 | **已坐实** → 见「问题 8 详解」 |
+| **10** | — | **`--target-precision 0.8` 对 `sig_zh` 也不可达 → S3 首跑 RECAPTION 桶为空** | `zh_bad` 基准 19.6%、十分位 lift 仅 2.77×（34.1%→12.3%）；要 80% 精度需 ≈4× lift | S3 首跑 | **已确认**（工具已改：报告现在给可达上限与覆盖率曲线） |
 | **9** | E | **粒度粗是压倒性主症状** | `granularity`：**coarse 9362（93.6%）/ adequate 638 / dense 0** | S2 | **已确认**（规模最大的一类） |
 
 ### 问题 8 详解：`action` 是单一质量分上的固定阶梯（2026-07-22 坐实）

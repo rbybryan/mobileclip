@@ -347,10 +347,16 @@ s3)
   # lift 1.34×，默认 0.7 的精度 4.8%（基准 3.6%）= 95.2% 误伤，且会抢在
   # sig_zh 的 RECAPTION 判断之前把 21.1% 的语料钉死。详见 DATA_ISSUES.md 决策 1。
   # 想复现旧行为：XLING_THRESHOLD=0.7 bash run_v100.sh s3
-  python tools/data_audit/aggregate_report.py \
-    --scores "$OUT/s1_scores.*.jsonl" --flags "$OUT/s0_flags.jsonl" \
-    --verdicts "$OUT/s2_verdicts.*.jsonl" --target-precision 0.8 \
-    --xling-threshold "${XLING_THRESHOLD:-0}" \
+  S3_ARGS=(--scores "$OUT/s1_scores.*.jsonl" --flags "$OUT/s0_flags.jsonl"
+           --verdicts "$OUT/s2_verdicts.*.jsonl"
+           --target-precision "${TARGET_PRECISION:-0.8}"
+           --xling-threshold "${XLING_THRESHOLD:-0}")
+  # 有文本-only 重判就用它算「翻译差率」——合并 rubric 那一列实为整体质量分的
+  # 复制品（DATA_ISSUES.md 问题 8），会把 3.6% 的真实差率报成 19.6%。
+  ls "$OUT"/s2_trans.*.jsonl >/dev/null 2>&1 && \
+    S3_ARGS+=(--trans-verdicts "$OUT/s2_trans.*.jsonl")
+  [ -n "${SIG_ZH_THRESHOLD:-}" ] && S3_ARGS+=(--sig-zh-threshold "$SIG_ZH_THRESHOLD")
+  python tools/data_audit/aggregate_report.py "${S3_ARGS[@]}" \
     --out-buckets "$OUT/buckets.jsonl" --out-report "$OUT/report.md"
   echo "== 诊断报告: $OUT/report.md（含问题率外推表；本轮到此为止，不改数据） =="
   ;;
