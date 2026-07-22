@@ -69,6 +69,53 @@ PROMPT = """你是严格的视频-文本数据质检员。给你一个视频的 
 
 VERDICT_KEYS = {"video_readable", "en_score", "zh_score", "trans_score", "action"}
 
+# ---------------------------------------------------------------------------
+# Text-only translation rubric (--mode trans).
+#
+# WHY THIS EXISTS. The combined PROMPT above asks for en_score / zh_score /
+# trans_score in one JSON, and the 10k run showed the model does not actually
+# factorise them: en==trans on 92.5% of records, zh==trans on 98.9%, and
+# `action` turned out to be a fixed ladder on that single number
+# (5->keep, 4->fix_text, 3->retranslate, <=2->recaption/drop). "Did the
+# translation break" was therefore never measured -- see DATA_ISSUES.md
+# problem 8 and notes/audit-10k-findings.md conclusion 8.
+#
+# Two deliberate design choices here, both aimed at that failure:
+#   1. NO FRAMES. Translation fidelity is a text-vs-text property; the rubric
+#      always said so ("仅比较中英两条文本"). Withholding the video makes the
+#      anchor physically unavailable rather than merely discouraged -- and it
+#      makes the pass much cheaper, since video decode was the S2 bottleneck.
+#   2. EVIDENCE BEFORE SCORE. The model must enumerate concrete mismatches
+#      first and is then bound to a scoring rule keyed to that list, so a score
+#      cannot be emitted as a free-floating impression of overall quality.
+TRANS_PROMPT = """你是严格的中英翻译质检员。下面给你一条英文 caption 和它的中文译文。
+
+**你看不到视频，也不需要看。** 本次只判断一件事：中文是否忠实、通顺地翻译了这段英文。
+⚠️ 英文本身写得对不对、符不符合视频画面，**完全不在本次评估范围内**——
+哪怕英文描述是错的，只要中文忠实地翻出了它，翻译质量就是好的。
+
+英文原文：
+{en}
+
+中文译文：
+{zh}
+
+**先列证据，再打分。** 输出一个 JSON 对象（不要输出任何其他文字）：
+{{
+  "mismatches": [...],      // 逐条列出不忠实之处，每条形如 "英文的 A 被译成了 B"；完全忠实则给 []
+  "untranslated": true/false,  // 中文里是否残留成片的未翻译英文
+  "trans_issues": [...],    // 从 ["mistranslation","untranslated_fragment","artifact_text","awkward_chinese","omission","addition"] 中选，可为空
+  "trans_score": 0-5        // 见下方评分规则
+}}
+
+评分规则（**只依据 mismatches 列表，不得凭整体印象**）：
+- mismatches 为空且中文通顺 → **必须给 5**
+- 只有生硬/翻译腔，意思无损 → 4
+- 有 1 处轻微偏差或漏译细节 → 3
+- 有明确误译、漏译主要信息、或成片未翻译 → 0-2（越严重越低）"""
+
+TRANS_KEYS = {"trans_score", "mismatches"}
+
 
 def resolve_video_path(video_root, rec, video):
     """First existing of:
@@ -199,7 +246,11 @@ def sample_frames_b64(path, num_frames, max_side, quality=80, backend="auto"):
     return urls
 
 
-def extract_json(text):
+def extract_json(text, required=None):
+    """First JSON object in `text` containing all of `required` (default: a full
+    verdict). Parameterised so the text-only translation pass can demand its own
+    key set instead of the combined-rubric one."""
+    required = VERDICT_KEYS if required is None else required
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
     depth, start = 0, None
     for i, ch in enumerate(text):
@@ -212,7 +263,7 @@ def extract_json(text):
             if depth == 0:
                 try:
                     obj = json.loads(text[start:i + 1])
-                    if VERDICT_KEYS <= set(obj.keys()):
+                    if required <= set(obj.keys()):
                         return obj
                 except json.JSONDecodeError:
                     pass

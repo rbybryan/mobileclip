@@ -34,8 +34,8 @@ import torch
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from vlm_audit import (PROMPT, extract_json,  # noqa: E402 - shared rubric/parser
-                       resolve_video_path)
+from vlm_audit import (PROMPT, TRANS_KEYS, TRANS_PROMPT,  # noqa: E402
+                       VERDICT_KEYS, extract_json, resolve_video_path)
 
 
 def sample_frames_pil(path, num_frames, max_side):
@@ -59,6 +59,8 @@ def sample_frames_pil(path, num_frames, max_side):
 
 @torch.no_grad()
 def generate(model, processor, frames, prompt, max_new_tokens, temperature=0.0):
+    # frames may be empty (--mode trans): the message is then pure text, which
+    # the same chat template handles -- no vision tower call at all.
     content = [{"type": "image", "image": im} for im in frames]
     content.append({"type": "text", "text": prompt})
     messages = [{"role": "user", "content": content}]
@@ -92,6 +94,12 @@ def main():
     ap.add_argument("--num-shards", type=int, default=1)
     ap.add_argument("--shard-id", type=int, default=0)
     ap.add_argument("--limit", type=int, default=0, help="max records for this shard")
+    ap.add_argument("--mode", default="full", choices=["full", "trans"],
+                    help="'full' = combined video rubric (default). 'trans' = "
+                         "text-only translation re-judgement: no video is read "
+                         "and no frames are shown, so trans_score cannot anchor "
+                         "on the video-alignment judgement (see vlm_audit.py "
+                         "TRANS_PROMPT and DATA_ISSUES.md problem 8)")
     args = ap.parse_args()
 
     if args.dtype == "auto":
@@ -140,23 +148,33 @@ def main():
         for rec in todo:
             out = {"video": rec["video"], "stratum": rec.get("stratum"),
                    "s1": rec.get("s1"), "s0_flags": rec.get("s0_flags")}
-            path = resolve_video_path(args.video_root, rec, rec["video"])
             try:
-                frames = sample_frames_pil(path, args.frames, args.max_side)
-                prompt = PROMPT.format(n_frames=args.frames,
-                                       en=(rec.get("en") or "(无)"),
-                                       zh=(rec.get("zh") or "(空)"))
+                if args.mode == "trans":
+                    # No video is opened at all: translation fidelity is a
+                    # text-vs-text property, and withholding the frames is the
+                    # whole point of this mode.
+                    frames = []
+                    keys = TRANS_KEYS
+                    prompt = TRANS_PROMPT.format(en=(rec.get("en") or "(无)"),
+                                                 zh=(rec.get("zh") or "(空)"))
+                else:
+                    keys = VERDICT_KEYS
+                    path = resolve_video_path(args.video_root, rec, rec["video"])
+                    frames = sample_frames_pil(path, args.frames, args.max_side)
+                    prompt = PROMPT.format(n_frames=args.frames,
+                                           en=(rec.get("en") or "(无)"),
+                                           zh=(rec.get("zh") or "(空)"))
                 try:
                     text = generate(model, processor, frames, prompt,
                                     args.max_new_tokens)
-                    out["verdict"] = extract_json(text)
+                    out["verdict"] = extract_json(text, keys)
                 except (ValueError, torch.cuda.OutOfMemoryError) as ex:
                     if isinstance(ex, torch.cuda.OutOfMemoryError):
                         torch.cuda.empty_cache()
                     # one retry with mild sampling shakes off malformed JSON
                     text = generate(model, processor, frames, prompt,
                                     args.max_new_tokens, temperature=0.3)
-                    out["verdict"] = extract_json(text)
+                    out["verdict"] = extract_json(text, keys)
             except Exception as ex:  # noqa: BLE001 - keep the shard running
                 msg = f"{type(ex).__name__}: {str(ex)[:120]}"
                 if "decode" in msg.lower() or "Video" in type(ex).__name__ \
