@@ -209,6 +209,32 @@ PY
 > 候选 2/3 只在记录里**有 `abs_path` 字段**时才存在。所以第一件事是确认该字段
 > 在不在——这决定了是「路径根不对」还是「压根没有备用候选」。
 
+> 📍 **视频已定位（2026-07-22）：在 `b100_zaip_data_**luan**` 挂载下**，
+> 不是我们一直在试的 `b100_zaip_data`：
+>
+> ```
+> /workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT/
+>   ├── InternVId-FLT_1 … InternVId-FLT_11
+>   ├── InternVid-10M-FLT-INFO.jsonl
+>   ├── aligned_annotations/
+>   └── filelist.tsv
+> ```
+>
+> 样本的 `video` 字段形如
+> `videos/InternVId-FLT_10/shard_00044/InternVId-FLT_10/xxx.mp4`——
+> 那个 `videos/` 前缀是 101vector 本地的，这台没有。`resolve_video_path`
+> 现在会**额外尝试 `video` 字段里从 `InternVId` 起的后缀**（2026-07-22 新增，
+> 已用真实路径形状测过），所以只要 `CLIPS` 指到 `InternVid-10M-FLT` 这一层即可：
+>
+> ```bash
+> export CLIPS=/workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT
+> ```
+>
+> **两件事必须先确认**（下面 §4.1 的 ①②）：
+> ① 上面那个 `ls` 是在 `...cka-...` 那台跑的，而裁判跑在 `...kxp-...` 上——
+> **同一个挂载在裁判机上未必可见**；
+> ② `InternVId-FLT_10` 下面的真实层级是否就是 `shard_00044/InternVId-FLT_10/`。
+
 ### 4.1 `[中转]` 全 missing 时的定位（~3 分钟）
 
 ```bash
@@ -228,25 +254,34 @@ PY
 - **没有 `abs_path`** → 只剩候选 1，**必须把 `CLIPS` 设成正确的根**才行。
 
 ```bash
-# ② 用样本里第一条的文件名，在共享存储里定位真正的视频根（限定深度，别全盘 find）
+# ② 确认裁判机看得到 luan 挂载，并核对 FLT_10 下的真实层级
+ls -d /workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT && echo "挂载可见"
+ls /workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT/InternVId-FLT_10/ | head
+ls /workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT/InternVId-FLT_10/shard_00044/ 2>/dev/null | head -3
+
+# 直接找样本第一条那个 clip（限定在 FLT_10 下，很快）
 FN=$(python3 -c "import json;print(json.loads(open('s2_judge_sample.jsonl').readline())['video'].split('/')[-1])")
 echo "找: $FN"
-find /workspace/mount/b100_zaip_data -maxdepth 6 -name "$FN" 2>/dev/null | head -3
-# 没找到就放宽深度（慢，放后台）：
-#   nohup find /workspace/mount/b100_zaip_data -name "$FN" > /tmp/findclip.log 2>&1 &
-# 也先看看根下有什么、有没有 InternVId 目录：
-ls /workspace/mount/b100_zaip_data/
-find /workspace/mount/b100_zaip_data -maxdepth 4 -type d -name "InternVId*" 2>/dev/null | head
+find /workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT/InternVId-FLT_10 \
+  -name "$FN" 2>/dev/null | head -3
 ```
 
+> 挂载**看不到**（裁判机与做上面那次 `ls` 的机器不是同一台）→ 就只能走
+> 「拷 500 条视频」那条路，见本节末尾。
+
 ```bash
-# ③ 找到实际路径后，反推 CLIPS 并重跑 §4 预检
-#    把 ② 打印的完整路径与记录里的 video 字段比对，去掉公共后缀就是根。
-#    例：实际 /workspace/.../clips/videos/InternVId-FLT_10/shard_00044/xxx.mp4
-#        video 字段        videos/InternVId-FLT_10/shard_00044/xxx.mp4
-#        => export CLIPS=/workspace/.../clips
-export CLIPS=<上一步反推出的根>
-# 然后重跑 §4 的预检脚本，看 ok 是否变成 500
+# ③ 设 CLIPS 并重跑 §4 预检，看 ok 是否变成 500
+export CLIPS=/workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT
+# ……重跑 §4 那段预检脚本……
+```
+
+反推规则：把 ② 找到的**完整路径**与记录的 `video` 字段右对齐，
+**公共后缀之前的那一截就是 `CLIPS`**。例如
+
+```
+实际      /workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT/InternVId-FLT_10/shard_00044/InternVId-FLT_10/xxx.mp4
+video 字段                                                      InternVId-FLT_10/shard_00044/InternVId-FLT_10/xxx.mp4   ← 去掉 videos/ 前缀后
+=> CLIPS = /workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT
 ```
 
 - **共享存储里根本没有这批视频** → 才走拷贝路线：按
