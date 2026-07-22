@@ -1036,3 +1036,72 @@ Anything that was quietly leaning on autocast is now exposed. Two directions:
    **bit-identical** to the plain fp16 softmax — max elementwise difference
    `0.0`, identical row sums — because that kernel also accumulates in fp32.
    It was reverted rather than left in as diff noise.
+
+---
+
+## Pilot dies with `torch.OutOfMemoryError` — but the card is shared, not too small
+
+**Symptom.** All dtype problems are gone; the run reaches the training loop and does
+real work in the vision tower before every rank dies:
+
+```
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 480.00 MiB.
+GPU 4 has a total capacity of 31.73 GiB of which 404.50 MiB is free.
+Process 2621830 has 16.93 GiB memory in use.
+Including non-PyTorch memory, this process has 14.39 GiB memory in use.
+```
+
+**Read the second and third lines before touching any config.** That "Process
+…" line is *someone else's* job. Do the arithmetic:
+
+| | |
+|---|---|
+| card total | 31.73 GiB |
+| **co-tenant process** | **~16.9–17.0 GiB** |
+| our training process | 14.36–14.52 GiB (12.46 GiB allocated by PyTorch) |
+| free when it died | 268–436 MiB (needed 480 MiB) |
+
+17.0 + 14.5 ≈ 31.5 — the card is saturated by **two** jobs. On an empty card the
+pilot needs ~14.5 GiB at `batch_size=64`, i.e. it fits with ~17 GiB to spare.
+**Nothing about the training config is wrong.**
+
+**Identifying the co-tenant.** The PIDs were `2621826`–`2621833` — eight
+consecutive PIDs, one per GPU. That is the shape of an 8-card data-parallel job,
+and on this machine it is the **S2 VLM audit**: `run_v100.sh s2` launches one
+`vlm_audit_hf.py` per card (`CUDA_VISIBLE_DEVICES=$i`), and Qwen3-VL-8B in fp16
+is ~16 GB of weights. `DATA_ISSUES.md` lists S2 as running. Check with:
+
+```bash
+nvidia-smi                                   # who holds the memory
+bash tools/data_audit/run_v100.sh status     # S2 progress + live processes
+```
+
+GPU 0 and GPU 6 additionally showed ~11 stale ~404 MiB processes. Those are
+leftovers worth reaping (`nvidia-smi`, then kill your own dead PIDs) but they are
+not what caused this.
+
+**What to do.**
+
+- **Preferred: let S2 finish first.** It is the blocking step for the whole audit
+  pipeline (everything downstream eats its output) and it is ~2–3 h. Then run the
+  pilot on free cards at the documented `batch_size=64`.
+- **To prove the training loop right now**, run the smoke with a small batch — it
+  fits in the ~14.7 GiB S2 leaves behind:
+
+  ```bash
+  export MVC_DATA_DIR=/home/vca1/datasets
+  export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True   # 654 MiB was reserved-but-unallocated
+  bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 \
+      batch_size 16 debug True
+  ```
+
+  Overriding `batch_size` on the command line **does** reach the dataloader:
+  `utils/config.py:get_config` applies `merge_list(cfg, args.opts)` *before*
+  `eval_dict_leaf(cfg)`, so the `"${batch_size}"` interpolation in
+  `inputs.batch_size.{image,video}` is resolved from the overridden value.
+
+> ⚠️ **Batch size is not a free knob for the A/B.** It sets the number of
+> in-batch negatives, which changes the contrastive task itself — a bs=16 run and
+> a bs=64 run are not comparable. Use a small batch **only** for the smoke test.
+> The r0/r1 pair must use the **same** batch size as each other; prefer the
+> documented 64 per GPU (global 512) on free cards.
