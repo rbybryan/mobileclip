@@ -111,11 +111,14 @@ def main():
     total_expected = None
     if args.sample:
         total_expected = sum(1 for _ in open(args.sample, encoding="utf-8"))
-    emit(f"- 已完成 **{n_new}** 条" +
-         (f" / 共 {total_expected}（**{pct(n_new, total_expected)}**）"
+    # 失败的记录也已经"跑过"了，只是没产出可用分数——拿 n_new 单独跟抽样数比，
+    # 会把"跑完了但有 1 条失败"误报成"还没跑完"。
+    processed = n_new + failed
+    emit(f"- 已完成 **{processed}** 条" +
+         (f" / 共 {total_expected}（**{pct(processed, total_expected)}**）"
           if total_expected else "") +
-         f"；判定失败 {failed}")
-    if total_expected and n_new < total_expected:
+         f"；其中可用 {n_new}、判定失败 {failed}")
+    if total_expected and processed < total_expected:
         emit("- ⏳ **这一趟还没跑完**——下面的比率是部分样本上的，"
              "趋势可信（分片按 `行号 % 8` 均匀取样，不是前 N 条），但最终数字以跑完为准。")
     emit()
@@ -219,8 +222,8 @@ def main():
         emit("⚠️ **修复没生效，别把结果喂给 xling-check**：")
         for p in problems:
             emit(f"- {p}")
-    elif total_expected and n_new < total_expected:
-        emit(f"✅ 目前为止一切正常（{pct(n_new, total_expected)}）。跑完后：")
+    elif total_expected and processed < total_expected:
+        emit(f"✅ 目前为止一切正常（{pct(processed, total_expected)}）。跑完后：")
         emit("1. 重跑本脚本确认最终数字")
         emit("2. `bash tools/data_audit/run_v100.sh xling-check`")
     else:
