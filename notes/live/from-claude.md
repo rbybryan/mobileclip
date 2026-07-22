@@ -23,6 +23,72 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-22 (18) — B0 锁定 ✅ **MSR-VTT t2v R@1 = 42.50,与论文 42.5 分毫不差**
+
+四个基准全部跑完。**唯一有外部数字可对照的 MSR-VTT 打出 42.50,论文 ≈42.5** ——
+整条评测链路(权重、解码、划分、prompt)验证通过,另外三个基准的数字现在可信了。
+
+| 基准 | 指标 | DSL | raw | 对照 |
+|---|---|---|---|---|
+| `msrvtt` | **t2v R@1** | **42.50** | 40.80 | 论文 ≈42.5 ✅ |
+| `msrvtt` | v2t R@1 | 43.30 | 42.50 | — |
+| `ucf101` | **Top-1** | **80.97** | 80.94 | Tiny 75.44 |
+| `hmdb51` | **Top-1** | **53.47** | 53.87 | Tiny 48.76 |
+| `k400` | **Top-1** | **63.13** | 63.49 | Tiny 56.25 |
+
+### ⚠️ 但你那份 BASELINE.md 有个**读数陷阱**,会把分类数字读高 20 个点
+
+**分类任务的 Top-1 是 `txt_r1`,不是 `img_r1`。** `README_zh.md` §6.2–6.4 有四处写成
+"`img_r1` = Top-1",**是错的,我已更正**。
+
+- `txt_r*` = Images→Text:逐**视频**给类别文本排序,分母 = 视频数 ⇒ **这才是零样本 Top-1**
+- `img_r*` = Text→Images:逐**类别**给视频排序,分母 = **类别数** ⇒ 问的是"这个类至少有一个
+  视频排第一吗",**不是准确率**
+
+证据(都在代码里,不是猜):`itm_eval()` 两个方向分母不同(`retrieval_utils.py:463`);
+`ret_dataset.py:295-296` 里 `img2txt` 把视频映到类标签、`txt2img` 长度 = 类别数;
+`retrieval_utils.py:125` 把 29 个 prompt 集成掉,所以打分矩阵是 视频 × 类别。
+
+**最直观的自检**:6 个 `img_r1` 全部恰好是 1/类别数 的整数倍 ——
+`90.10=91/101`、`60.78=31/51`、`83.00=332/400`,连 README_zh 里 Tiny 的
+`83.17=84/101`、`62.75=32/51`、`80.75=323/400` 也一样。视频数根本除不出这些值。
+
+**后果有多大**:K400 按 `img_r1` 读是 **83.00**,真实零样本 Top-1 是 **63.13**,差 20 个点 ——
+而且 83% 的零样本 K400 会离谱地超过 SOTA,这本身就该起疑。另一个反证:按 `img_r1` 读,
+HMDB51 的 Small(60.78)会**低于** Tiny(62.75);按 `txt_r1` 读则 53.47 > 48.76,方向才对。
+
+**顺带两条**:① 日志里 `number of classes: 11600` 打印的其实是 类别数×prompt 数(400×29),
+不是类别数;② 我在块 (12) 里把试点的 t2v/v2t 标签写反了(应为 r0 **83.8 / 83.3**、
+r1 **77.2 / 71.9**),已更正 —— 结论不受影响,差距仍是 6.5 个 r_mean 点。
+
+**Do this next:**
+
+```bash
+cd ~/mobileclip && git pull origin main
+sed -n '/### 3.4 B0 基线/,/^### /p' experiments/README.md    # 锁定的基线表 + 读数说明
+```
+
+B0 到此完成。**下一步只剩一件事能在这台机器上做:§2b 的 r1a/r1b 归因拆包**
+(用那 1 万条,数据已在),把 r1 落后的 6.5 点拆到 sigmoid / 注意力池化 头上:
+
+```bash
+export MVC_DATA_DIR=/home/vca1/datasets      # 注意:试点语料要 export,和 B0 相反
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8 \
+    model.vision_encoder.temporal_pooling mean \
+    output_dir experiments/runs/pilot_10k_r1a
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8 \
+    model.use_sigmoid_loss False \
+    output_dir experiments/runs/pilot_10k_r1b
+```
+
+各约 40 min。跑完把两份 `train.log` 的末轮 `ret_test/` 贴回来。
+
+**§4 全量预训练仍然卡在数据**(InternVid 视频要逐条抓 YouTube,见块 (14)),那是独立的一步。
+
+**Then report back**:上面 r1a/r1b 的结果;或者你决定先解决 §4 的数据获取。
+
+---
+
 ## 2026-07-22 (17) — 四基准全绿 ✅ **B0 现在就能跑,零操作**;附 §4 的一条线索
 
 预检确认:`unset MVC_DATA_DIR` 后 msrvtt / k400 / ucf101 / hmdb51 **全部 `[OK ]`**,
@@ -366,7 +432,7 @@ python experiments/collect_results.py --dirs experiments/evals \
 
 ### r1 的检索明显低:93.37 vs 86.83(r_mean)。**先别下结论。**
 
-末轮 t2v/v2t R@1:r0 **83.3 / 83.8**,r1 **71.9 / 77.2**,两个口径同向。差距 6.5 点
+末轮 t2v/v2t R@1:r0 **83.8 / 83.3**,r1 **77.2 / 71.9**,两个口径同向。差距 6.5 点
 远超 ~3.5pp 噪声带 —— 但**这正是上一轮就写明「这个评测判不了组件优劣」的场景**,
 理由没变(开训前已近饱和 + BN running stats 混淆),而且:
 r1 是**四个改动的捆绑包**,试点无法归因;r1 从 ep2 起还在**单调回升**

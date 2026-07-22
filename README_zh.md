@@ -385,13 +385,26 @@ sed -i 's/CUDA_VISIBLE_DEVICES=4/CUDA_VISIBLE_DEVICES=0/' \
 bash scripts/evaluation/clip/zero_shot/mobileviclip_tiny/eval_ucf101.sh
 ```
 
-**⑤ 参考结果（Tiny）**：`act_val/` 行的 **`img_r1` 即 Top-1 分类准确率**（视频→类别），
-`img_r5` 即 Top-5：
+**⑤ 参考结果（Tiny）**：`act_val/` 行的 **`txt_r1` 才是 Top-1 分类准确率**（给一个视频，
+把类别文本排序，正确类是否排第一），`txt_r5` 即 Top-5。**不要看 `img_r1`** —— 见下方 ⚠️：
 
 ```
               txt_r1  txt_r5  txt_r10   img_r1  img_r5  img_r10
 act_val/       75.44   95.35    98.60    83.17   96.04    99.01
 ```
+
+> ⚠️ **`img_r1` 不是准确率,别拿它当 Top-1(2026-07-22 查代码更正)。** 两列的分母不同:
+> `tasks_clip/retrieval_utils.py` 的 `itm_eval()` 里,`txt_r*` 是 **Images→Text**——
+> 逐**视频**给类别文本排序,分母是视频数,这才是零样本 Top-1;`img_r*` 是 **Text→Images**——
+> 逐**类别**给视频排序,分母是**类别数**,问的是"这个类至少有一个视频排第一吗",不是准确率。
+> (`dataset/ret_dataset.py:295-296`:`img2txt` 把视频映到类标签,`txt2img` 长度 = 类别数;
+> 且 `retrieval_utils.py:125` 会把 29 个 prompt 集成掉,所以打分矩阵是 视频 × 类别。)
+>
+> 一眼自检:上表 `img_r1 = 83.17 = 84/101`、HMDB51 的 `62.75 = 32/51`、K400 的 `80.75 = 323/400`
+> —— **全都恰好是 1/类别数 的整数倍**,视频数根本除不出这些值。
+>
+> 另注:日志里 `Action recognition, number of classes: 2929` 打印的其实是
+> **类别数 × prompt 数**(101×29),不是类别数,别被它误导。
 
 ### 6.3 HMDB51（分类）
 
@@ -517,7 +530,7 @@ sed -i 's/CUDA_VISIBLE_DEVICES=6/CUDA_VISIBLE_DEVICES=0/' \
 bash scripts/evaluation/clip/zero_shot/mobileviclip_tiny/eval_hmdb51.sh
 ```
 
-**⑤ 参考结果（Tiny，split-1 测试集）**（`img_r1` = Top-1）：
+**⑤ 参考结果（Tiny，split-1 测试集）**（**`txt_r1`** = Top-1，见 6.2 ⑤ 的 ⚠️）：
 
 ```
               txt_r1  txt_r5  txt_r10   img_r1  img_r5  img_r10
@@ -608,14 +621,14 @@ sed -i 's/CUDA_VISIBLE_DEVICES=2/CUDA_VISIBLE_DEVICES=0/' \
 bash scripts/evaluation/clip/zero_shot/mobileviclip_tiny/eval_k400.sh
 ```
 
-**⑤ 参考结果（Tiny，完整验证集）**（`img_r1` = Top-1）：
+**⑤ 参考结果（Tiny，完整验证集）**（**`txt_r1`** = Top-1，见 6.2 ⑤ 的 ⚠️）：
 
 ```
               txt_r1  txt_r5  txt_r10   img_r1  img_r5  img_r10
 act_val/       56.25   81.89    88.75    80.75   95.00    98.00
 ```
 
-> 💡 **三者小结**：分类任务看 `act_val/` 行的 **`img_r1`（Top-1）/ `img_r5`（Top-5）**。数值接近上表
+> 💡 **三者小结**：分类任务看 `act_val/` 行的 **`txt_r1`（Top-1）/ `txt_r5`（Top-5）**。数值接近上表
 > 即说明数据组织正确、复现成功；换 Small 模型把脚本路径里的 `mobileviclip_tiny` 换成 `mobileviclip_small` 即可。
 > 若某数据集视频抓不全，Top-1 会相应偏低，属数据缺失而非流程错误。
 
