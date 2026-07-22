@@ -21,6 +21,7 @@
 #   bash tools/data_audit/run_v100.sh judge-agree # ⑥b 一致率+Cohen's κ（可对外来裁判文件独立重算）
 #   bash tools/data_audit/run_v100.sh xling-check # ⑥c 裁决 xling 阈值（s3 前必做）
 #   bash tools/data_audit/run_v100.sh s3         # ⑦ 校准+分桶+诊断报告 report.md
+#   bash tools/data_audit/run_v100.sh snapshot   # ⑩ 一条命令打印全部状态（贴给 Claude 用）
 # 跑其他数据（如全量挂载后）：export DATA/CLIPS/OUT 覆盖默认值即可。
 #
 # V100 三个硬件差异已在脚本/工具内处理：
@@ -393,6 +394,163 @@ s2-gran)
   echo "已后台启动（可续跑）。同样不解码视频，比 s2 快得多。"
   echo "跑完后统计 n_info 分布："
   echo "  python3 -c \"import json,glob;from collections import Counter;c=Counter(json.loads(l).get('verdict',{}).get('n_info') for f in glob.glob('$OUT/s2_gran.*.jsonl') for l in open(f));print(sorted(c.items(),key=lambda x:(x[0] is None,x[0])))\""
+  ;;
+# ------------------------------------------------ ⑩ 快照：一条命令打印全部状态
+snapshot)
+  # 纯 stdlib，不需要 venv；任何文件缺失都不报错，只标 "-"
+  python3 - "$OUT" "$DATA" <<'PYSNAP'
+import glob, json, os, subprocess, sys
+from collections import Counter
+OUT, DATA = sys.argv[1], sys.argv[2]
+
+def sh(c):
+    try:
+        return subprocess.run(c, shell=True, capture_output=True, text=True,
+                              timeout=20).stdout.strip()
+    except Exception:
+        return ""
+
+def lines(pat):
+    n, files = 0, sorted(glob.glob(os.path.join(OUT, pat)))
+    for f in files:
+        try:
+            with open(f, encoding="utf-8", errors="ignore") as fh:
+                n += sum(1 for _ in fh)
+        except OSError:
+            pass
+    return n, len(files)
+
+print("# 审查流水线快照\n")
+print("## git")
+print(f"- HEAD: `{sh('git log --oneline -1')}`")
+beh = sh("git rev-list --count HEAD..origin/main 2>/dev/null")
+print(f"- 落后 origin/main: **{beh or '?'}** 个提交"
+      + ("  ← **先 git pull**" if beh not in ("0", "") else ""))
+print(f"- 工作区改动: {len(sh('git status --porcelain').splitlines())} 个文件\n")
+
+print("## 各阶段产物")
+print("| 阶段 | 产物 | 行数 | 分片 |")
+print("|---|---|---|---|")
+tot = 0
+try:
+    tot = sum(1 for _ in open(DATA, encoding="utf-8", errors="ignore"))
+except OSError:
+    pass
+rows = [("S0 旗标", "s0_flags.jsonl"), ("S1 打分", "s1_scores.*.jsonl"),
+        ("S2 抽样", "s2_sample.jsonl"), ("S2 判定", "s2_verdicts.*.jsonl"),
+        ("S2 翻译重判", "s2_trans.*.jsonl"), ("S2 粒度重判", "s2_gran.*.jsonl"),
+        ("裁判档", "s2_verdicts_judge.jsonl"), ("S3 分桶", "buckets.jsonl")]
+for name, pat in rows:
+    n, nf = lines(pat)
+    pctv = f"（{n/tot:.0%}）" if tot and n else ""
+    print(f"| {name} | `{pat}` | {n:,}{pctv} | {nf or '-'} |")
+print(f"\n（源数据 `{os.path.basename(DATA)}` 共 {tot:,} 行）\n")
+
+print("## 存活进程")
+# 不用 pgrep：-f 会连带匹配到承载本命令的 shell（其命令行里含有模式字面量），
+# 括号技巧也挡不住嵌套调用。改为显式读 ps 并把"看起来像本快照自己"的行剔掉。
+_ps = [l.strip() for l in sh("ps -eo args=").splitlines() if l.strip()]
+_self = ("pgrep", "run_v100.sh", "snapshot", "ps -eo")
+cmds = [l for l in _ps if not any(t in l for t in _self)]
+def alive(sub):
+    return sum(1 for l in cmds if sub in l)
+n_all = alive("vlm_audit_hf.py")
+procs = [("S1 打分", alive("score_alignment.py")),
+         ("S2/重判（全部）", n_all),
+         ("　└ 翻译重判", alive("--mode trans")),
+         ("　└ 粒度重判", alive("--mode gran")),
+         ("裁判档", sum(1 for l in cmds if "vlm_audit.py" in l))]
+hit = False
+for label, c in procs:
+    if c:
+        print(f"- {label}: **{c}** 个")
+        hit = True
+if not hit:
+    print("- （无后台任务在跑）")
+print()
+
+# 粒度重判结果
+gn, _ = lines("s2_gran.*.jsonl")
+if gn:
+    c, err = Counter(), 0
+    for f in glob.glob(os.path.join(OUT, "s2_gran.*.jsonl")):
+        for line in open(f, encoding="utf-8", errors="ignore"):
+            try:
+                v = (json.loads(line).get("verdict") or {})
+            except json.JSONDecodeError:
+                continue
+            if v.get("n_info") is None:
+                err += 1
+            else:
+                c[v["n_info"]] += 1
+    print(f"## 粒度重判 n_info 分布（{sum(c.values()):,} 条可用，失败 {err}）\n")
+    if c:
+        tt = sum(c.values())
+        ks = sorted(c)
+        print("| n_info | " + " | ".join(str(k) for k in ks) + " |")
+        print("|---" * (len(ks) + 1) + "|")
+        print("| 条数 | " + " | ".join(f"{c[k]:,}" for k in ks) + " |")
+        acc, med = 0, None
+        for k in ks:
+            acc += c[k]
+            if med is None and acc >= tt / 2:
+                med = k
+        print(f"\n- **中位数 {med}**，均值 {sum(k*v for k,v in c.items())/tt:.2f}"
+              "　（「一个男人在说话」= 主体1+动作1 = 2）")
+    print()
+
+print("## 人工抽检表")
+print("| 表 | 总行 | 已填 | 状态 |")
+print("|---|---|---|---|")
+import csv
+for f in ("review_better_zh.tsv", "review_conflicts.tsv", "review_random.tsv"):
+    p = os.path.join(OUT, f)
+    if not os.path.exists(p):
+        print(f"| `{f}` | - | - | 未生成 |")
+        continue
+    try:
+        rr = list(csv.DictReader(open(p, encoding="utf-8-sig"), delimiter="\t"))
+    except Exception:
+        print(f"| `{f}` | ? | ? | 读取失败 |")
+        continue
+    cols = [c for c in (rr[0] if rr else {}) if c and "[" in c]
+    filled = sum(1 for r in rr if any((r.get(c) or "").strip() for c in cols))
+    st = "✅ 可统计" if filled else "⬜ 待填"
+    print(f"| `{f}` | {len(rr)} | **{filled}** | {st} |")
+print()
+
+print("## 关键结论回显（来自不入库的 outputs/）")
+for f, pats in [("s2_health.md", ["逐条完全同值", "视频含多个先后事件", "字幕根本没描述顺序"]),
+                ("trans_health.md", ["差率（≤2）", "锚定已解除"]),
+                ("xling_calibration.md", ["基准差率", "lift ="]),
+                ("report.md", ["| KEEP |", "| RECAPTION |", "| RETRANSLATE |"])]:
+    p = os.path.join(OUT, f)
+    if not os.path.exists(p):
+        print(f"- `{f}`：未生成")
+        continue
+    hits = []
+    for line in open(p, encoding="utf-8", errors="ignore"):
+        if any(x in line for x in pats):
+            hits.append(line.strip()[:110])
+    print(f"- **`{f}`**")
+    for h in hits[:6]:
+        print(f"  - {h}")
+print()
+
+print("## 未完成任务的日志尾行")
+any_log = False
+for pat in ("s2_gran_shard*.log", "s2_trans_shard*.log", "s2_shard*.log"):
+    fs = sorted(glob.glob(os.path.join(OUT, pat)))
+    if not fs:
+        continue
+    tails = {sh(f"tail -n1 {f}") for f in fs}
+    print(f"- `{pat}`（{len(fs)} 个）：")
+    for t in list(tails)[:4]:
+        print(f"  - {t[:120]}")
+    any_log = True
+if not any_log:
+    print("- （无）")
+PYSNAP
   ;;
 # ---------------------------------------------------------------- ⑦ 报告
 s3)
