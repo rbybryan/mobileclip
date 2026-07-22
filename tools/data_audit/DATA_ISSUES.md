@@ -45,7 +45,8 @@ bash tools/data_audit/run_v100.sh status        # S1/S2 行数 + 存活进程 + 
 | 1 | `git pull` 后 `bash tools/data_audit/run_v100.sh trans-check` | 补跑留档。差率 19.6%→3.6% 已是「锚定解除」的强证据，这一步给出逐条同值率的直接数字，并核对模型守不守自己的评分规则（`mismatches` 空 → 必须给 5） |
 | 2 | **裁判走 7 卡 V100 中转机 `10.55.87.68`**：照 [`SETUP_JUDGE_RELAY.md`](SETUP_JUDGE_RELAY.md) 逐条走（视频解析预检 → 冒烟 → 500 条） | 只有这台连得上 b100 网（§4 决策 2b）；**零下载、零占卡**。与第 1 步并行 |
 | 3 | ~~S3 校准 + 分桶~~ ✅ **已完成**（`TARGET_PRECISION=0.3`） | KEEP 71.9% / **RECAPTION 24.6%** / RETRANSLATE 3.3% / DROP 0.15%，与结论 10 的预测一致 |
-| 3b | **`git pull` 后重跑一次 S3**（同样的 `TARGET_PRECISION=0.3`） | `RETRANSLATE` 现在改用 `s2_trans` **真标签**分桶，不再用召回 7% 的 S0 旗标代理（问题 11）。`buckets.jsonl` 的 `reasons` 会变成 `trans_score=N(text-only)`；桶大小接近但**成员几乎完全不同** |
+| 3b | **`git pull` 后再重跑一次 S3**（同样的 `TARGET_PRECISION=0.3`） | 上一版真标签只用了一半——没阻止 S0 旗标把**已测得翻译没问题**的记录拉进 RETRANSLATE，桶被抬到 628（312 真标签 + 316 代理）。已修：有标签的记录不再走代理，桶应回到 ~312 |
+| 3c | 看新报告里「**实测说翻译没问题、却命中 S0 旗标**」那一行的条数 | 这批就是问题 12（`untranslated` 0.3% vs S0 3.3% 的 10× 缺口）的人群，**人工抽十几条就能定性谁对** |
 | 4 | 读 `report.md` 时**记住问题 8** | `action` 分布那一栏是「整体质量分的阶梯」，**不是四类问题的真实占比**；翻译差率一律以 3.6%（`s2_trans`）为准 |
 | 5 | Gradio 人工抽检 300（[`SETUP_V100.md`](SETUP_V100.md) §6） | 不占 GPU、随时可插空。作用是**验证单一质量分 s 准不准**（s≈3 的片子到底什么样），并给 `s2-trans` 当独立锚点 |
 | 6 | 把 `s2_health.md` / `trans_health.md` / `xling_calibration.md` / `report.md` 的结论抄进本文件和 [`notes/audit-10k-findings.md`](../../notes/audit-10k-findings.md) | `outputs/` 是 gitignore 的，**不落库就随会话丢失**（CLAUDE.md §0） |
@@ -75,6 +76,7 @@ bash tools/data_audit/run_v100.sh status        # S1/S2 行数 + 存活进程 + 
 | **7** | — | **VLM `action` 与自身分数矛盾**（rubric 问题，非数据问题） | **4098 条 = 99.5% 的 `retranslate` 自身 `trans_score≥3`**（该行 `trans≤2` 仅 0.5%）。`recaption` 反而几乎自洽（矛盾 2 条） | S2 体检 §6 | **已确认** |
 | **8** | — | 🔴 **三个分数根本不是三个测量：模型只给了一个数、复制三份**，`action` 是该数上的固定阶梯 | 逐条同值率：`en=zh` **93.4%**、`en=trans` **92.5%**、`zh=trans` **98.9%**、**三者全同 92.5%**；平均绝对差 0.08／0.09／**0.01** | S2 体检 §6 | **已坐实** → 见「问题 8 详解」 |
 | **10** | — | **`--target-precision 0.8` 对 `sig_zh` 也不可达 → S3 首跑 RECAPTION 桶为空** | `zh_bad` 基准 19.6%、十分位 lift 仅 2.77×（34.1%→12.3%）；要 80% 精度需 ≈4× lift | S3 首跑 | **已处置**：报告现在给可达上限+覆盖率曲线；`TARGET_PRECISION=0.3` 重跑正常 |
+| **12** | D | **`untranslated` 实测 0.3% vs S0 语言污染旗标 3.3%——差 10 倍，尚无结论** | 文本-only 重判 `untranslated=true` 仅 **33 条**；S0 旗标 **327 条**。S3 里另有约 **300+ 条**「实测翻译没问题却命中 S0 RETRANSLATE 旗标」 | S2 重判 + S3 | ⬜ **待人工定性**（抽十几条即可） |
 | **11** | C | **`RETRANSLATE` 桶若用 S0 旗标/xling 代理构建，与它命名的问题近乎无关** | 该代理精度 **6.6%**、召回 **7.0%**（`xling_calibration.md` §F）→ 333 条的桶里真正翻译坏的约 **22 条**，且漏掉约 **333 条** | `xling-check` + S3 | **已处置（10k）**：`aggregate_report.py` 现在优先用 `s2_trans` 真标签分桶；**全量仍是代理**，见下 |
 | **9** | E | **粒度粗是压倒性主症状** | `granularity`：**coarse 9362（93.6%）/ adequate 638 / dense 0** | S2 | **已确认**（规模最大的一类） |
 
