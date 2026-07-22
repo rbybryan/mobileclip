@@ -23,6 +23,85 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-22 (12) — §2b 完成 ✅ 试点跑通了;r1 落后 6.5 点但**不能**据此否定组件
+
+**两臂都跑完,全程零 `OVERFLOW`**(r0 38:10 / r1 37:46,和我估的 ≈40 min 对上)。
+判据两条都过:
+
+- **损失曲线**:r0 `1.014 → 0.272`、r1 `7.093 → 4.165`,都单调下降后走平,不发散。
+  ⚠️ **两臂 loss 不可互比** —— r0 是 softmax InfoNCE,r1 是 sigmoid,量纲不同。
+- **组件存活**:不用开 ckpt,`train.log` 里就能读到 ——
+  `diff_names: ['logit_scale','logit_bias'], diff_lr: 0.001` 加
+  `optimizer -- lr=0.001 wd=0.2 len(p)=2`(different_lr 生效);
+  `vision_encoder.temporal_pool.{q,k,v,proj}` 在优化器参数表里(注意力池化已建起);
+  `train_file` 带 `caption_idx: True`。
+
+### r1 的检索明显低:93.37 vs 86.83(r_mean)。**先别下结论。**
+
+末轮 t2v/v2t R@1:r0 **83.3 / 83.8**,r1 **71.9 / 77.2**,两个口径同向。差距 6.5 点
+远超 ~3.5pp 噪声带 —— 但**这正是上一轮就写明「这个评测判不了组件优劣」的场景**,
+理由没变(开训前已近饱和 + BN running stats 混淆),而且:
+r1 是**四个改动的捆绑包**,试点无法归因;r1 从 ep2 起还在**单调回升**
+(85.07 → 86.83)、末轮仍在涨,**根本没收敛**,而 r0 早在 93.3 走平。
+
+**我先前猜「注意力池化是随机初始化所以拖后腿」—— 查了源码,这个猜测是错的。**
+`TemporalAttentionPool` 的 `proj` 是**零初始化**(`models/mobileviclip_small.py:1351`),
+`forward` 返回 `mean + proj(out)`,初始时刻**精确等于 mean 池化**。
+更像是 **sigmoid 的 SigLIP 默认初值对「已经对齐好的模型」失配**:
+`t=10, b=−10`,正样本 sim≈0.5 ⇒ `t·sim+b≈−5` ⇒ `sigmoid≈0.007`,
+等于开局宣布「所有正样本都判错」(首步 loss 7.4531 正好对上),
+于是对预训练好的嵌入空间来了一记大推力,然后再慢慢标定回来。**这是假说,没验证。**
+
+### 另外两处更正 / 新发现
+
+1. **我上一轮说「`temp` 被 clamp 钉死」是错的。** 真跑里 r0 的 temp **往上走**:
+   `0.0100 → 0.0101 → 0.0102 → 0.0103`,然后随 lr 衰减走平。clamp 是下界,梯度
+   根本没往下顶。所以「冻结 temp 近似空操作」**收回** —— 冻结会改变 r0。
+   (r1 全程 0.0100 是另一回事:sigmoid 分支传的是 `temp=1.0`,`self.temp`
+   **完全没有梯度**,是个没接线的参数。)
+2. **`no_weight_decay()` 是死代码。** `utils/optimizer.py:99-107` 把
+   `no_decay = model.no_weight_decay()` **注释掉了**、只留 `pass`;而
+   `temp`/`logit_scale`/`logit_bias` 是 **0 维**标量(`torch.Size([])`,长度 0),
+   也躲过了 `len(shape)==1` 的 bias/BN 兜底。结果三者都吃到 **wd 0.2**。
+   量级:`logit_scale`/`logit_bias` 在 lr=1e-3 下 170 步被拉向 0 约 **3.3%**。
+   二阶效应,但「声明了 no-decay 却被静默忽略」正是会悄悄污染消融的那类缺陷。
+   上游代码,**我没改**。
+
+### Do this next
+
+试点到此为止,别再在 10k 上追组件结论。下一步是 §3 的 B0(需要 MSR-VTT 到位):
+
+```bash
+cd ~/mobileclip && git pull origin main
+ls -la anno_downstream/msrvtt_1k_test.json checkpoints/mobileviclip_small.pt   # 到位了吗
+```
+
+**两个都在** → 走 §3;**缺** → 先补下载(见 `CHECKPOINTS.md`)。
+
+真要在试点上再挖一手,唯一值得跑的是**拆包归因**(各 ≈40 min),验证上面那个假说:
+
+```bash
+export MVC_DATA_DIR=/home/vca1/datasets
+# 关掉注意力池化(只剩 sigmoid + different_lr)
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8 \
+    model.vision_encoder.temporal_pooling mean \
+    output_dir experiments/runs/pilot_10k_r1a
+# 关掉 sigmoid(只剩注意力池化 + different_lr)
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8 \
+    model.use_sigmoid_loss False \
+    output_dir experiments/runs/pilot_10k_r1b
+```
+
+> 这两条是拿 r1 配置**关掉**其中一项,`different_lr` 仍开着,不是严格单因子;
+> 严格拆分要用 §4 的 `r1a_sigmoid.py` / `r1b_attnpool.py`。
+> `merge_list` 只认**已存在**的键 —— `output_dir` 存在,可以这样覆盖。
+> 若假说成立:r1a(仍带 sigmoid)应该复现这次的掉点,r1b(无 sigmoid)不该掉。
+
+**⚠️ 跑 §4 之前务必先做 `experiments/README.md` §4 顶部标的两项预检**
+(训练中评测被静默 Skip、`ckpt_best.pth` 不存在),否则几小时白烧。
+
+---
+
 ## 2026-07-22 (11) — 冒烟通过 ✅ 可以跑真 A/B 了(但评测已近饱和,判据要改)
 
 **链路全通了。** 8 卡起来、数据读到、前向反向都过、epoch 末评测出表、下一个 epoch

@@ -1192,21 +1192,63 @@ Measured consequence: at `deepspeed.initial_scale_power 5` (= 32) the run
 produced **no `OVERFLOW!` lines at all** and completed the smoke cleanly. Treat
 ≈54 as a lower bound on the safe scale, not an estimate of it.
 
-### `temp` is already pinned at its floor — worth knowing before "fixing" it
+### ~~`temp` is already pinned at its floor~~ — WRONG, corrected 2026-07-22 (full run)
 
-`config.model.temp` and `config.model.temp_min` are **both** `1/100`, and
-`MobileViCLIP_Small.clip_contrastive_temperature()` runs `temp.clamp_(min=temp_min)`
-before *every* forward. Contrastive training pushes temperature down (sharper),
-so the clamp catches it every step: the run logs `temperature: 0.0100` unchanged
-across all 10 logged steps.
+I previously wrote that `clip_contrastive_temperature()`'s `temp.clamp_(min=temp_min)`
+pins `temp` at the 0.01 floor, inferring from a 50-step `debug` run that logged
+`temperature: 0.0100` throughout. **That inference was wrong.** In the full 170-step
+r0 run `temp` moves **up**: `0.0100 → 0.0101` (step ~11) `→ 0.0102 → 0.0103`, then
+plateaus as the cosine schedule decays the lr. The clamp is a floor, and the
+gradient never pushes into it — this model wants a *softer* temperature, not a
+sharper one. `temp` is a live parameter, so **freezing it would change what r0 is**;
+the "close to a no-op" claim is withdrawn.
 
-So `temp` is *de facto* frozen already while still being an optimizer parameter
-that contributes the full `1/temp²`-amplified gradient — it pays the fp16 cost
-and buys nothing. That makes the two standard escapes cheaper than they looked:
-reparameterising as a **log**-temperature (what `logit_scale` in the r1 sigmoid
-branch already does — amplification drops from `1/temp²` to `1/temp`), or simply
-**freezing** `temp`, which given the clamp is close to a no-op semantically.
+Why the smoke run looked frozen: 50 steps at lr ≤ 1e-5 move `temp` by ~5e-5, which
+rounds away at the logged 4 decimals.
 
-Still a maintainer call, since it does touch what r0 *is* — but the cost/benefit
-is one-sided, not a trade-off. Revisit if the real run reports `OVERFLOW!` lines
-or the loss scale settles below ~16.
+**Separately, in r1 `temp` really is inert** — but for a different reason: the
+sigmoid branch calls `vtc_loss_sigmoid(..., temp=1.0, t=logit_scale.exp(), b=logit_bias)`
+and never passes `self.temp`, so it receives **no gradient at all**. The r1 log
+correspondingly reads `temperature: 0.0100` for all 170 steps. An unused parameter
+still sitting in the optimizer — harmless, but don't read it as "temperature is
+stable", it simply isn't connected.
+
+## `no_weight_decay()` is dead code — wd 0.2 hits `temp` / `logit_scale` / `logit_bias`
+
+**Symptom.** `MobileViCLIP_Small.no_weight_decay()` declares
+`{"temp", "logit_scale", "logit_bias"}`, yet the run log shows all three in the
+decayed group:
+
+```
+param temp: wd: 0.2, lr: 1e-05
+param logit_scale: wd: 0.2, lr: 0.001
+param logit_bias: wd: 0.2, lr: 0.001
+```
+
+**Cause — two independent misses.** In `utils/optimizer.py:99-107` the calls are
+**commented out**, leaving a bare `pass`, so `no_decay = {}` always:
+
+```python
+    no_decay = {}
+    if hasattr(model, 'no_weight_decay'):
+        pass
+        # no_decay = model.no_weight_decay()
+```
+
+And the usual fallback doesn't catch them either: `add_weight_decay()` zeroes wd
+when `len(param.shape) == 1 or name.endswith(".bias")`, but these three are
+**0-dim** scalars (`torch.ones([])` → `torch.Size([])`, length **0**), so they miss
+the bias/BN filter as well.
+
+**Size of the effect.** AdamW's decoupled decay multiplies by `(1 - lr·wd)` per
+step. Over the 170-step pilot:
+
+| param | lr | `(1 - lr·wd)^170` | drift |
+|---|---|---|---|
+| `logit_scale`, `logit_bias` | 1e-3 | 0.967 | **−3.3 % toward 0** |
+| `temp` | 1e-5 | 0.99966 | negligible |
+
+So it is a real but second-order pull on exactly the two parameters r1 is trying
+to learn fast. Not diagnosed as the cause of anything yet — logged because
+"declared no-decay is silently ignored" is the kind of defect that quietly biases
+an ablation. Upstream code; **not changed here.**
