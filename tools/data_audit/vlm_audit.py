@@ -32,7 +32,7 @@ import re
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import requests
@@ -337,6 +337,9 @@ def main():
                          "model used), then opencv, then pyav")
     ap.add_argument("--max-tokens", type=int, default=1024)
     ap.add_argument("--concurrency", type=int, default=32)
+    ap.add_argument("--progress-every", type=int, default=25,
+                    help="print [progress] every N verdicts (was hardcoded 200, "
+                         "which looks like a stall on a 500-record run)")
     ap.add_argument("--retries", type=int, default=2)
     ap.add_argument("--timeout", type=float, default=600.0,
                     help="per-request timeout; 600 matches the in-house client for "
@@ -374,13 +377,19 @@ def main():
     with open(args.output, "a", encoding="utf-8") as fout, \
          requests.Session() as session, \
          ThreadPoolExecutor(max_workers=args.concurrency) as pool:
-        for out in pool.map(lambda r: audit_one(r, args, session), todo):
+        # as_completed, NOT pool.map: map yields strictly in submission order, so a
+        # single slow clip blocks every finished result behind it from being written
+        # -- with --timeout 600 and retries that is a ~30 min stall during which
+        # both the output file and the progress line look frozen.
+        futures = [pool.submit(audit_one, r, args, session) for r in todo]
+        for fut in as_completed(futures):
+            out = fut.result()
             with lock:
                 fout.write(json.dumps(out, ensure_ascii=False) + "\n")
                 fout.flush()
                 n_done += 1
-                if n_done % 200 == 0:
-                    print(f"[progress] {n_done}/{len(todo)}", file=sys.stderr)
+                if n_done % args.progress_every == 0:
+                    print(f"[progress] {n_done}/{len(todo)}", file=sys.stderr, flush=True)
     print(f"[done] wrote {n_done} verdicts to {args.output}")
 
 
