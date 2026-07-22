@@ -89,7 +89,9 @@ bash tools/data_audit/run_v100.sh status        # S1/S2 行数 + 存活进程 + 
 | 3 | ~~S3 校准 + 分桶~~ ✅ **已完成**（`TARGET_PRECISION=0.3`） | KEEP 71.9% / **RECAPTION 24.6%** / RETRANSLATE 3.3% / DROP 0.15%，与结论 10 的预测一致 |
 | 3b | ~~重跑 S3 修真标签~~ ✅ **已完成（终稿）** | RETRANSLATE 回到 **312 条全部真标签**；另 **351 条**冲突已单列 → 问题 12 |
 | 4 | 读 `report.md` 时**记住问题 8** | `action` 分布那一栏是「整体质量分的阶梯」，**不是四类问题的真实占比**；翻译差率一律以 3.6%（`s2_trans`）为准 |
-| 5 | Gradio 人工抽检（[`SETUP_V100.md`](SETUP_V100.md) §6），**两批**：① 300 条随机；② **问题 12 的那 351 条里抽十几条** | ①验证单一质量分 s 准不准（s≈3 的片子到底什么样）；②**定性问题 12**——S0 说该重翻、实测说翻译没问题，看谁对。②只要十几条、几分钟，**优先做** |
+| 5 | **`bash tools/data_audit/run_v100.sh review`** —— 一条命令产三张 TSV 抽检表，填完 `review-score <表>` 出比率（[`SETUP_V100.md`](SETUP_V100.md) §7.1） | 三张表对应三个「只有 8B 自己说了算」的缺口：`review_better_zh.tsv`（问题 13，**落地 v0.2 前必须做**）／`review_conflicts.tsv`（**问题 12**，就是那 351 条）／`review_random.tsv`（验证单一质量分 s 准不准） |
+| 5a | 其中 **`review_conflicts.tsv` 优先**——十几条、几分钟 | 定性问题 12：S0 说该重翻、实测说翻译没问题，看谁对。**纯比对 zh/en 两个字符串，不用看视频、不用起 Gradio**；填 `谁对` 一列（`s0`/`vlm`/`unclear`） |
+| 5b | `review_random.tsv` 那 300 条要配 Gradio（[`SETUP_V100.md`](SETUP_V100.md) §6） | 这批要看画面才判得了（s≈3 的片子到底什么样） |
 | 6 | 把 `s2_health.md` / `trans_health.md` / `xling_calibration.md` / `report.md` 的结论抄进本文件和 [`notes/audit-10k-findings.md`](../../notes/audit-10k-findings.md) | `outputs/` 是 gitignore 的，**不落库就随会话丢失**（CLAUDE.md §0） |
 
 > ⚠️ **本地 32B 下载（路线 C）是兜底，不是主线**——中转机（A′）没排除之前别耗在它上面：
@@ -117,7 +119,7 @@ bash tools/data_audit/run_v100.sh status        # S1/S2 行数 + 存活进程 + 
 | **7** | — | **VLM `action` 与自身分数矛盾**（rubric 问题，非数据问题） | **4098 条 = 99.5% 的 `retranslate` 自身 `trans_score≥3`**（该行 `trans≤2` 仅 0.5%）。`recaption` 反而几乎自洽（矛盾 2 条） | S2 体检 §6 | **已确认** |
 | **8** | — | 🔴 **三个分数根本不是三个测量：模型只给了一个数、复制三份**，`action` 是该数上的固定阶梯 | 逐条同值率：`en=zh` **93.4%**、`en=trans` **92.5%**、`zh=trans` **98.9%**、**三者全同 92.5%**；平均绝对差 0.08／0.09／**0.01** | S2 体检 §6 | **已坐实** → 见「问题 8 详解」 |
 | **10** | — | **`--target-precision 0.8` 对 `sig_zh` 也不可达 → S3 首跑 RECAPTION 桶为空** | `zh_bad` 基准 19.6%、十分位 lift 仅 2.77×（34.1%→12.3%）；要 80% 精度需 ≈4× lift | S3 首跑 | **已处置**：报告现在给可达上限+覆盖率曲线；`TARGET_PRECISION=0.3` 重跑正常 |
-| **12** | D | **`untranslated` 实测 0.3% vs S0 语言污染旗标 3.3%——差 10 倍，尚无结论** | 文本-only 重判 `untranslated=true` 仅 **33 条**；S0 旗标 **327 条**。S3 终稿里有 **351 条**「实测翻译没问题却命中 S0 RETRANSLATE 旗标」——这就是待查人群 | S2 重判 + S3 | ⬜ **待人工定性**（抽十几条即可） |
+| **12** | D | **`untranslated` 实测 0.3% vs S0 语言污染旗标 3.3%——差 10 倍，尚无结论** | 文本-only 重判 `untranslated=true` 仅 **33 条**；S0 旗标 **327 条**。S3 终稿里有 **351 条**「实测翻译没问题却命中 S0 RETRANSLATE 旗标」——这就是待查人群 | S2 重判 + S3 | ⬜ **待人工定性**（抽十几条即可）：`bash tools/data_audit/run_v100.sh review` → 填 `review_conflicts.tsv` 的 `谁对` 列 → `review-score`。**该表的选取判据就是这批人的定义**（`make_review_sheet.py:135`：`trans_score>2` 且命中 S0 `RETRANSLATE_FLAGS`），与 `aggregate_report.py:235` 的计数口径一致 |
 | **11** | C | **`RETRANSLATE` 桶若用 S0 旗标/xling 代理构建，与它命名的问题近乎无关** | 该代理精度 **6.6%**、召回 **7.0%**（`xling_calibration.md` §F）→ 333 条的桶里真正翻译坏的约 **22 条**，且漏掉约 **333 条** | `xling-check` + S3 | **已处置（10k）**：`aggregate_report.py` 现在优先用 `s2_trans` 真标签分桶；**全量仍是代理**，见下 |
 | **13** | E | 🔴 **「粒度粗 93.6%」不成立——主力在过度判 coarse，三方不收敛** | **同一批 500 条**上：主力 coarse **92.6%** vs 裁判 **42.4%**（排除了抽样差异）。第三方客观锚定：rubric 的 coarse 范例「一个人在说话」=6 字，而实测中文 caption **中位 13 字（2.2×）、p25 已 10 字**，只有 **~5%** 短到与范例相当 | `judge-agree` + `s0_summary` 长度分位 + 交叉表 | ✅ **已查明**：93.6% 不可引用；§0 头条已改挂 `zh_bad` 19.6%。**机制**：`granularity` 被质量分单向闸住（136×，V=0.375），73% 的 coarse 是自动产生的 → **该维作废，全量前须拆 rubric** |
 | **13** | — | 🔴 **`better_zh`（9951×3 条候选字幕）质量从未被评估，却已排进 v0.2 训练数据** | 全流水线只数个数 + 按长度过滤（`apply_buckets.py:98`）；出自判定已塌缩的同一个 8B；RECAPTION 桶精度仅 ~30%，即约 1772 条原字幕并不差 | 代码审查 | ⬜ **待抽检 50 条**：`run_v100.sh review` 生成表 → 填 → `review-score` 判门（[`SETUP_V100.md`](SETUP_V100.md) §7.1）——**落地 v0.2 前必须做** |
