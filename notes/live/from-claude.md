@@ -23,6 +23,84 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-22 (15) — HMDB51 **多半没丢**:是预检看错了根(这坑是我埋的)
+
+`tools/download_hmdb51.sh` 写死的是**仓库相对路径**:
+
+```
+RAW_DIR="data/hmdb51_hf"            ->  ~/mobileclip/data/hmdb51_hf
+DEST_DIR="data/hmdb51/videos_test"  ->  ~/mobileclip/data/hmdb51/videos_test
+```
+
+而你跑预检时按我 §3.0 写的 `export MVC_DATA_DIR=/home/vca1/datasets`,它就去
+`/home/vca1/datasets/hmdb51/videos_test` 找了 —— **那儿从来没放过评测数据**。
+**这台机器上两批数据不在一个根下**:评测集在仓库 `data/`,试点语料在
+`/home/vca1/datasets`。我上一轮 §3.0 只给了 export 那一种跑法,是我的错,已修成跑两遍。
+
+**旁证(挺硬的):`hmdb51_act_test.json` 有 1511 条,而 split-1 测试集应是
+51×30 = 1530 条。** 少的 19 条正是 `build_act_rec_anno.py` 的 `--videos`
+磁盘过滤丢掉的("Keep only entries whose video exists in videos_dir")。
+**能过滤出 1511 条,说明生成 anno 的那一刻视频就在盘上。**
+
+**Do this next(按顺序,大概率第 1 步就完事):**
+
+```bash
+cd ~/mobileclip && git pull origin main
+
+# 1) 换个根再看一眼 —— 评测集不要 export MVC_DATA_DIR
+unset MVC_DATA_DIR
+ls -ld data/hmdb51/videos_test data/hmdb51_hf 2>/dev/null
+find data/hmdb51/videos_test -maxdepth 1 -name '*.avi' 2>/dev/null | wc -l   # 期望 ~6766
+python experiments/check_readiness.py            # hmdb51 应该就亮 [OK ] 了
+```
+
+如果目录在、但文件数是 0 或校验仍报缺失,是**第 2 种情况:软链悬空**
+(`videos_test/` 里全是指向 `data/hmdb51_hf/` 的软链;若为回收 2.1 GB 把
+`hmdb51_hf/` 删了就全断):
+
+```bash
+# 2) 悬空检查 + 就地修复(不用重下,只要 hmdb51_hf 里的 .avi 还在)
+find data/hmdb51/videos_test -maxdepth 1 -xtype l | wc -l        # >0 = 悬空
+find data/hmdb51/videos_test -maxdepth 1 -xtype l -delete
+find "$(cd data/hmdb51_hf && pwd)" -name '*.avi' -exec ln -sf {} data/hmdb51/videos_test/ \;
+```
+
+两步都没找到,再全盘搜(拿 anno 里的**真实文件名**做外科式搜索,比翻目录快):
+
+```bash
+# 3) 先取几个真实文件名
+python - <<'PY2'
+import json
+d = json.load(open("anno_downstream/hmdb51_act_test.json"))
+print("anno 条数:", len(d))
+for e in d[:3]: print("  ", e["video"])
+PY2
+find ~ /home/vca1 -name '<粘贴其中一个文件名>' 2>/dev/null
+
+# 4) 或者按目录聚合看视频都堆在哪
+for d in ~ /home/vca1 /data /mnt; do
+  [ -d "$d" ] && find "$d" \( -name '*.avi' -o -name '*.mp4' \) -printf '%h\n' 2>/dev/null
+done | sort | uniq -c | sort -rn | head -20
+
+# 5) 原始 zip 还在的话不用重下(脚本会校验字节数后跳过下载)
+find ~ /home/vca1 -name 'hmdb51*.zip' -size +1G -printf '%10s  %p\n' 2>/dev/null
+# 期望 2117581749 字节;放回 data/hmdb51_hf/hmdb51.zip 再跑 bash tools/download_hmdb51.sh
+```
+
+**Then report back**:第 1 步那三条命令的输出(`ls -ld` + `.avi` 计数 +
+不带 MVC_DATA_DIR 的 `check_readiness.py`)。若已亮 [OK ],直接跑 hmdb51 的 B0:
+
+```bash
+CKPT=./checkpoints/mobileviclip_small.pt
+CUDA_VISIBLE_DEVICES=0 \
+  bash experiments/run_eval.sh small hmdb51 $CKPT experiments/evals/baseline_official/hmdb51
+```
+
+> 同理,MSR-VTT / UCF101 下载前也先用**不带 `MVC_DATA_DIR`** 的预检确认一遍 ——
+> 说不定也早就下过了,别白下 13 GB。
+
+---
+
 ## 2026-07-22 (14) — 预检坐实了诊断,但多出两条:**B0 能做三个基准**;**§4 我上轮说错了**
 
 预检输出确认了 (13) 的判断,同时给出两条新信息 —— 一条把 B0 做大,一条推翻我自己。

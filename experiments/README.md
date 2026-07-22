@@ -209,15 +209,31 @@ held-out 自检索 R@1 相对方向仅作参考。评测走 `ret_test`(1k 自检
 
 ### 3.0 先跑预检(10 秒,别跳)
 
+> ⚠️ **这台机器上两批数据不在同一个根下,预检必须跑两遍**,只跑一遍必然误报
+> (2026-07-22 就这么把一份**已经下好**的 HMDB51 报成了缺失):
+>
+> | 数据 | 落在哪 | 怎么让预检看到 |
+> |---|---|---|
+> | **评测数据集**(msrvtt / hmdb51 / ucf101 …) | 仓库的 `data/` —— 各下载脚本写死的相对路径,如 `tools/download_hmdb51.sh` 的 `DEST_DIR="data/hmdb51/videos_test"` | **`unset MVC_DATA_DIR`** |
+> | **10k 试点语料** | `/home/vca1/datasets/internvid_zh_10k` | `export MVC_DATA_DIR=/home/vca1/datasets` |
+
 ```bash
 cd ~/mobileclip
-export MVC_DATA_DIR=/home/vca1/datasets
+
+# ① 评测数据集(B0 用的)—— 不要 export
+unset MVC_DATA_DIR
 python experiments/check_readiness.py
+
+# ② 试点语料(§2b 用的)—— 要 export
+MVC_DATA_DIR=/home/vca1/datasets python experiments/check_readiness.py
 ```
 
 它逐个数据集报「anno 在不在、data_root 在不在、抽查的视频在不在」,末尾直接列出
 **当前已解锁的 runbook 步骤**。B0 和 §4 的长跑之前都先跑它 —— 这次就是省掉的
 10 秒预检换来了 5 次崩溃。
+
+> 若某个数据集**你记得下过、预检却报 `data_root 缺失`**,先别重下 ——
+> 见 `TROUBLESHOOTING.md`「下过的数据集被预检报成缺失」,那里有定位命令。
 
 ### 3.1 B0 的现实范围(按 2026-07-22 的机器状态)
 
@@ -225,11 +241,19 @@ python experiments/check_readiness.py
 
 | 基准 | 任务 | anno | 视频 | 下载量 | 结论 |
 |---|---|---|---|---|---|
-| `hmdb51` | 分类 | ✅ 1511 条 | ❌ 缺 | **~2.1 GB** | **最先做**:`bash tools/download_hmdb51.sh` 一条命令,幂等 |
+| `hmdb51` | 分类 | ✅ 1511 条 | ⚠️ 存疑 | ~2.1 GB | **多半已经下过了**,见下方注;真缺则 `bash tools/download_hmdb51.sh` 一条命令 |
 | `msrvtt` | 检索 | ✅ 1000 条 | ❌ 缺 | ~6.7 GB | 主指标,公开 wget |
 | `ucf101` | 分类 | ✅ 3783 条 | ❌ 缺 | ~6.5 GB | 公开 wget(CRCV 官网) |
 | `k400` | 分类 | ✅ 10117 条 | ❌ 缺 | 很大 | 可选;源不稳,不作为阻塞项 |
 | `didemo` / `anet` / `ssv2_mc` | — | ❌ 缺 | ❌ 缺 | — | 近期不做(anno 在受限 Drive,视频另需大量下载) |
+
+> 📌 **HMDB51 那行的「缺」很可能是误报。** 上面这份输出是在
+> `export MVC_DATA_DIR=/home/vca1/datasets` 下跑的,而 `tools/download_hmdb51.sh`
+> 写死落在仓库的 `data/hmdb51/videos_test` —— 预检压根没往那儿看(见 §3.0)。
+> 旁证:`hmdb51_act_test.json` 有 **1511** 条,而 split-1 测试集应是 51×30=**1530** 条;
+> 少掉的 19 条正是 `build_act_rec_anno.py` 的 `--videos` **磁盘过滤**丢掉的
+> ——**能过滤出 1511 条,说明生成 anno 时视频确实在盘上**。
+> 定位命令见 `TROUBLESHOOTING.md`「下过的数据集被预检报成缺失」。
 
 anno 的补法见 `TROUBLESHOOTING.md`「Missing `anno_downstream/*.json`」与
 「Running the next retrieval dataset (DiDeMo, ActivityNet)」两节,这里不重复。
