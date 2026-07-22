@@ -8,7 +8,8 @@
 > 都是不入库的产物。结论必须落到这里才不会随会话丢失（CLAUDE.md §0）。
 >
 > 本文件是**统计细节与推理过程**；流水线状态、问题登记表和待决策看
-> **[`tools/data_audit/DATA_ISSUES.md`](../tools/data_audit/DATA_ISSUES.md)**。
+> **[`tools/data_audit/DATA_ISSUES.md`](../tools/data_audit/DATA_ISSUES.md)**；
+> 可汇报的成稿报告看 **[`docs/internvid-zh-audit-report.md`](../docs/internvid-zh-audit-report.md)**。
 
 ## S1 嵌入打分（2026-07，已完成）
 
