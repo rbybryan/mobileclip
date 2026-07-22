@@ -37,6 +37,7 @@ import argparse
 import csv
 import glob
 import json
+import os
 import random
 import sys
 from collections import Counter
@@ -87,6 +88,15 @@ def load(pattern):
 
 def build(args):
     sample = {r["video"]: r for r in load(args.sample)}
+
+    def vpath(vid):
+        """能被播放器/Gradio 直接打开的路径。优先数据自带的 abs_path（跨机可能失效），
+        否则用 --video-root 拼。表里没有这一列的话，评审者拿着 id 根本调不出画面。"""
+        rec = sample.get(vid) or {}
+        ap = rec.get("abs_path")
+        if ap:
+            return str(ap)
+        return os.path.join(args.video_root, str(vid)) if args.video_root else str(vid)
     if not sample:
         sys.exit("--sample is required to build a sheet (it carries zh/en)")
     verdicts = {r["video"]: (r.get("verdict") or {}) for r in load(args.verdicts)} \
@@ -117,12 +127,12 @@ def build(args):
             if len(take) < half:
                 print(f"[warn] {b} 只有 {len(take)} 条可选（想要 {half}）", file=sys.stderr)
         rng.shuffle(picked)          # 混排，避免评审者按桶产生预期
-        cols = ["video", "bucket", "sig_zh", "原zh", "候选1", "候选2", "候选3"]
+        cols = ["video", "video_path", "bucket", "sig_zh", "原zh", "候选1", "候选2", "候选3"]
         for vid, b in picked:
             s = sample.get(vid, {})
             cands = [c for c in (verdicts[vid].get("better_zh") or []) if isinstance(c, str)]
             cands += [""] * (3 - len(cands))
-            rows.append([vid, b,
+            rows.append([vid, vpath(vid), b,
                          f'{(s.get("s1") or {}).get("sig_zh_mean", "")}',
                          s.get("zh") or "", *cands[:3]])
 
@@ -136,10 +146,10 @@ def build(args):
                 pool.append(vid)
         print(f"[info] 冲突记录总数 {len(pool)}", file=sys.stderr)
         rng.shuffle(pool)
-        cols = ["video", "S0旗标", "trans_score", "原zh", "英文en"]
+        cols = ["video", "video_path", "S0旗标", "trans_score", "原zh", "英文en"]
         for vid in pool[:args.n]:
             s = sample[vid]
-            rows.append([vid,
+            rows.append([vid, vpath(vid),
                          ",".join(sorted(set(s.get("s0_flags") or []) & RETRANSLATE_FLAGS)),
                          trans[vid].get("trans_score"),
                          s.get("zh") or "", s.get("en") or ""])
@@ -149,10 +159,10 @@ def build(args):
             sys.exit("--verdicts required for --kind random")
         pool = [v for v in sample if v in verdicts]
         rng.shuffle(pool)
-        cols = ["video", "zh分", "action", "粒度", "原zh", "英文en"]
+        cols = ["video", "video_path", "zh分", "action", "粒度", "原zh", "英文en"]
         for vid in pool[:args.n]:
             s, v = sample[vid], verdicts[vid]
-            rows.append([vid, v.get("zh_score"), v.get("action"),
+            rows.append([vid, vpath(vid), v.get("zh_score"), v.get("action"),
                          v.get("granularity"), s.get("zh") or "", s.get("en") or ""])
 
     blanks = BLANKS[args.kind]
@@ -162,7 +172,17 @@ def build(args):
         w.writerow(header)
         for r in rows:
             w.writerow(list(r) + [""] * len(blanks))
+    # 配套 jsonl：Gradio 按 jsonl 加载子集（§6 的 quality_issue_candidates.jsonl 即此用法）。
+    # 只有 TSV 的话，评审者能看到文字却调不出画面，而这三张表全都要对着画面判。
+    jl = os.path.splitext(args.out)[0] + ".jsonl"
+    with open(jl, "w", encoding="utf-8") as f:
+        for r in rows:
+            rec = dict(zip(cols, r))
+            src = sample.get(rec["video"]) or {}
+            f.write(json.dumps({**{k: v for k, v in src.items() if k != "s1"}, **rec},
+                               ensure_ascii=False) + "\n")
     print(f"[written] {args.out} —— {len(rows)} 行待评")
+    print(f"[written] {jl} —— 同一批，供 Gradio 加载看画面")
     print(f"  评审列：{'  '.join(c + ('(' + h + ')' if h else '') for c, h in blanks)}")
     print(f"  填完后： python {sys.argv[0]} --score {args.out}")
 
@@ -232,7 +252,8 @@ def main():
     ap.add_argument("--buckets", default=None, help="buckets.jsonl（提供分桶，用于分层）")
     ap.add_argument("-n", type=int, default=50, help="抽多少条（better-zh 会平分到两个桶）")
     ap.add_argument("--seed", type=int, default=0, help="固定随机种子，保证可复现")
-    ap.add_argument("--out", default=None, help="输出 TSV")
+    ap.add_argument("--out", default=None, help="输出 TSV（同时写同名 .jsonl 供 Gradio）")
+    ap.add_argument("--video-root", default="", help="视频根目录，用于拼 video_path")
     ap.add_argument("--score", default=None, help="改为读取已填好的 TSV 并统计")
     args = ap.parse_args()
 
