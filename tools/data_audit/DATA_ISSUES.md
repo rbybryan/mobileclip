@@ -77,7 +77,8 @@ bash tools/data_audit/run_v100.sh status        # S1/S2 行数 + 存活进程 + 
 | # | 动作 | 为什么是这个顺序 |
 |---|---|---|
 | 1 | `git pull` 后 `bash tools/data_audit/run_v100.sh trans-check` | 补跑留档。差率 19.6%→3.6% 已是「锚定解除」的强证据，这一步给出逐条同值率的直接数字，并核对模型守不守自己的评分规则（`mismatches` 空 → 必须给 5） |
-| 2 | **裁判走 7 卡 V100 中转机 `10.55.87.68`**：照 [`SETUP_JUDGE_RELAY.md`](SETUP_JUDGE_RELAY.md) 逐条走（视频解析预检 → 冒烟 → 500 条） | 只有这台连得上 b100 网（§4 决策 2b）；**零下载、零占卡**。与第 1 步并行 |
+| 2 | ~~裁判走中转机 `10.55.87.68`~~ ✅ **已完成**（500 条 / 0 失败 / `judge-agree` 已出） | 二值门 **87.2% κ=0.720 通过** → S3 分桶站得住；五类门 49.2% ❌ 但那是主力 `action` 不可信。见 §4 决策 2b |
+| **2b** | 🔴 **查 `granularity` 的真分歧**（几秒，纯 CPU）——一条命令：<br>`python3 -c "import json,collections;v=[json.loads(l)['verdict'] for l in open('outputs/audit_10k/s2_verdicts_judge.jsonl')];print(collections.Counter(x.get('granularity') for x in v))"` | T4 逐维里 `granularity` 一致率仅 **48.2%**，是**真分歧**（不是退化）。而「粒度粗 93.6%」是 §0 一页结论的**头条**、也是「重心是 RECAPTION」的主要依据。**若裁判说 coarse 只有 ~45%，那个头条要加限定** —— 它可能和 `action` 一样，只是同一个整体质量分的另一个投影。见问题 13 |
 | 3 | ~~S3 校准 + 分桶~~ ✅ **已完成**（`TARGET_PRECISION=0.3`） | KEEP 71.9% / **RECAPTION 24.6%** / RETRANSLATE 3.3% / DROP 0.15%，与结论 10 的预测一致 |
 | 3b | ~~重跑 S3 修真标签~~ ✅ **已完成（终稿）** | RETRANSLATE 回到 **312 条全部真标签**；另 **351 条**冲突已单列 → 问题 12 |
 | 4 | 读 `report.md` 时**记住问题 8** | `action` 分布那一栏是「整体质量分的阶梯」，**不是四类问题的真实占比**；翻译差率一律以 3.6%（`s2_trans`）为准 |
@@ -111,6 +112,7 @@ bash tools/data_audit/run_v100.sh status        # S1/S2 行数 + 存活进程 + 
 | **10** | — | **`--target-precision 0.8` 对 `sig_zh` 也不可达 → S3 首跑 RECAPTION 桶为空** | `zh_bad` 基准 19.6%、十分位 lift 仅 2.77×（34.1%→12.3%）；要 80% 精度需 ≈4× lift | S3 首跑 | **已处置**：报告现在给可达上限+覆盖率曲线；`TARGET_PRECISION=0.3` 重跑正常 |
 | **12** | D | **`untranslated` 实测 0.3% vs S0 语言污染旗标 3.3%——差 10 倍，尚无结论** | 文本-only 重判 `untranslated=true` 仅 **33 条**；S0 旗标 **327 条**。S3 终稿里有 **351 条**「实测翻译没问题却命中 S0 RETRANSLATE 旗标」——这就是待查人群 | S2 重判 + S3 | ⬜ **待人工定性**（抽十几条即可） |
 | **11** | C | **`RETRANSLATE` 桶若用 S0 旗标/xling 代理构建，与它命名的问题近乎无关** | 该代理精度 **6.6%**、召回 **7.0%**（`xling_calibration.md` §F）→ 333 条的桶里真正翻译坏的约 **22 条**，且漏掉约 **333 条** | `xling-check` + S3 | **已处置（10k）**：`aggregate_report.py` 现在优先用 `s2_trans` 真标签分桶；**全量仍是代理**，见下 |
+| **13** | E | ⬜ **「粒度粗 93.6%」未被裁判证实——可能又是同一个质量分的投影** | T4 逐维：`granularity` 一致率仅 **48.2%**、κ=0.083，**且非退化**（两边都有足够方差）→ 真分歧。主力判 coarse **93.6%**，裁判明显低得多 | `judge-agree` | ⬜ **待查**（跑 §1 第 2b 步，几秒） |
 | **9** | E | **粒度粗是压倒性主症状** | `granularity`：**coarse 9362（93.6%）/ adequate 638 / dense 0** | S2 | **已确认**（规模最大的一类） |
 
 ### 问题 8 详解：`action` 是单一质量分上的固定阶梯（2026-07-22 坐实）
