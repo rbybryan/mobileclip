@@ -220,6 +220,7 @@ def main():
 
     bucket_counter = Counter()
     n = 0
+    n_trans_labeled = n_trans_proxy = 0
     with open(args.out_buckets, "w", encoding="utf-8") as fout:
         for rec in iter_jsonl(score_files):
             v = rec.get("video")
@@ -237,9 +238,25 @@ def main():
                     and rec["sig_en_mean"] < t_en:
                 bucket = "RECAPTION"
                 reasons = [f"sig_en_mean={rec['sig_en_mean']}<{t_en}"]
+            elif trans_scores.get(v) is not None and trans_scores[v] <= 2:
+                # Ground truth beats proxy: for records the text-only pass
+                # judged, route on the measured translation score instead of
+                # the S0 flags. Those flags were measured at 6.6% precision /
+                # 7.0% recall against exactly this label (xling-check), i.e.
+                # the flag-built bucket is ~93% false positives AND misses ~93%
+                # of real translation errors -- it is close to uncorrelated
+                # with the thing it names.
+                bucket = "RETRANSLATE"
+                reasons = [f"trans_score={trans_scores[v]}(text-only)"]
+                n_trans_labeled += 1
             elif (fl & RETRANSLATE_FLAGS) or \
                     (rec.get("xling_cos") is not None
                      and rec["xling_cos"] < args.xling_threshold):
+                # No measured label for this record (full-corpus run): fall back
+                # to the weak proxy, but count it so the report can say how much
+                # of the bucket rests on a 6.6%-precision detector.
+                if trans_scores:
+                    n_trans_proxy += 1
                 bucket = "RETRANSLATE"
                 reasons = sorted(fl & RETRANSLATE_FLAGS)
                 if rec.get("xling_cos") is not None \
@@ -296,6 +313,18 @@ def main():
         lines.append(f"| {b} | {c:,} | {c / max(1, n):.2%} |")
     if t_zh is None:
         lines.append("\n> ⚠️ 见上节：`RECAPTION` 缺席是阈值没校准出来所致，**不代表源 caption 没问题**。")
+    if bucket_counter.get("RETRANSLATE"):
+        nr = bucket_counter["RETRANSLATE"]
+        if n_trans_labeled:
+            lines.append(f"\n> ✅ `RETRANSLATE` 里有 **{n_trans_labeled:,}** 条是按"
+                         "**文本-only 实测 `trans_score≤2`** 判进来的（真标签）。")
+        if n_trans_proxy or not n_trans_labeled:
+            lines.append(f"\n> ⚠️ `RETRANSLATE` 里有 **{n_trans_proxy or nr:,}** 条只有 "
+                         "**S0 旗标/xling 代理**、没有实测标签。该代理实测**精度 6.6%、"
+                         "召回 7.0%**（`xling_calibration.md` §F）——**约 93% 是误伤，"
+                         "且漏掉约 93% 的真实翻译错误**。这部分**不能当作翻译问题率**，"
+                         "全量跑想要真标签就得把 `--mode trans` 跑到全量"
+                         "（不解码视频，比主力档便宜得多）。")
     if calib:
         lines.append("\n## VLM 审核样本（Stage-2）校准\n")
         lines.append(f"- 有效判定数: {calib['n_verdicts']:,}")
@@ -326,6 +355,14 @@ def main():
                          f" | {d['en_bad_rate']:.1%} | {d['trans_bad_rate']:.1%}"
                          f" | {d['coarse_rate']:.1%} |")
         lines.append("\n> 按各分位人群占比（全量各 10%）加权，即得全量问题率外推。")
+        same = sum(1 for d in calib["sig_zh_deciles"]
+                   if abs(d["zh_bad_rate"] - d["en_bad_rate"]) <= 0.02)
+        if same >= 8:
+            lines.append(
+                "\n> ⚠️ **`zh差率` 与 `en差率` 两列几乎逐格相同——它们其实是同一列。**"
+                "合并 rubric 下 `en_score` 与 `zh_score` 逐条同值 93.4%（问题 8），"
+                "所以「中文与画面不符」和「英文与画面不符」在本轮**没有被区分开**。"
+                "两列一致**不是**交叉验证，别当成两条独立证据。")
     with open(args.out_report, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     print("\n".join(lines))
