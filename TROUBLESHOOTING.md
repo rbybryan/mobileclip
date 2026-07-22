@@ -1252,3 +1252,98 @@ So it is a real but second-order pull on exactly the two parameters r1 is trying
 to learn fast. Not diagnosed as the cause of anything yet — logged because
 "declared no-decay is silently ignored" is the kind of defect that quietly biases
 an ablation. Upstream code; **not changed here.**
+
+## §3 B0 五个评测全部失败 —— 本机没有下游评测数据
+
+### Symptom
+
+`experiments/README.md` §3 的循环跑完,5 个基准**一个数字都没出**,但报错分两种。
+
+**A 类:anno 文件缺失**(`didemo` / `anet` / `ssv2_mc`)—— 秒崩在建 dataset 时:
+
+```
+File "dataset/utils.py", line 106, in load_anno
+    cur_ann = json.load(open(fp, "r"))
+FileNotFoundError: [Errno 2] No such file or directory: 'anno_downstream/didemo_ret_test.json'
+```
+
+**B 类:anno 有、视频没有**(`msrvtt` / `k400`)—— 走得更远:配置打印正常、
+标注读入正常(`Loading anno_downstream/msrvtt_1k_test.json: 1000/1000`)、
+模型载入正常、连文本特征都算完了(`Finished computing text features`),
+才在第一批视频上崩:
+
+```
+[...] /github/workspace/src/video/video_reader.cc:83: ERROR opening:
+      /home/vca1/datasets/MSRVTT_Videos/video7020.mp4, No such file or directory
+...
+RuntimeError: Error reading /home/vca1/datasets/MSRVTT_Videos/video7020.mp4...
+```
+
+### Cause
+
+**这台机器上根本没有下游评测数据。** `tools/data_audit/SETUP_V100.md` 第一段就写着:
+
+> 本机只有预抽取的 1 万条样本(`/home/vca1/datasets/internvid_zh_10k`),
+> 没有全量 10M 数据
+
+`MVC_DATA_DIR=/home/vca1/datasets` 下只有 `internvid_zh_10k/`。MSR-VTT、K400、
+DiDeMo、ANet、SSv2 的视频一个都不在;三个数据集连 anno 也没有(它们在受限的
+作者 Google Drive 里,见本文件「Missing `anno_downstream/*.json`」一节)。
+
+B 类之所以显得像"配置对了",是因为 `data_root` 只在**真正读视频那一刻**才被触碰
+—— 在此之前 anno、权重、文本塔全都能正常跑通,很容易误判成偶发的解码错误。
+
+### Fix
+
+**先跑预检,不要靠崩溃来发现缺数据**(仓库里早就有这个脚本,10 秒):
+
+```bash
+cd ~/mobileclip
+export MVC_DATA_DIR=/home/vca1/datasets
+python experiments/check_readiness.py
+```
+
+它对每个数据集分别报 anno / data_root / 抽查视频三项,正好把 A 类和 B 类分开,
+末尾还列出"已解锁的 runbook 步骤"。
+
+补数据的路径:
+
+- **MSR-VTT** — anno 已在,只差视频,且是公开 wget(约 6.7 GB):
+  见 `experiments/README.md` §3.2 与 `README_zh.md` §6.1。这是 B0 唯一
+  近在咫尺的基准,**把 B0 收窄成 MSR-VTT 单基准**即可继续。
+- **K400** — anno 已在,视频体量大且源不稳;可选,不作为阻塞项。
+- **DiDeMo / ActivityNet** — anno + 视频都缺,重建方法见本文件
+  「Running the next retrieval dataset (DiDeMo, ActivityNet)」。
+- **SSv2-MC** — anno + 视频都缺,视频需在 20BN/Qualcomm 注册后下载。
+
+### 连带影响:§4 全量预训练在这台机器上同样跑不了
+
+`configs/data.py` 里 `internvid_v1..v11` 的 `data_root` 是
+`$MVC_DATA_DIR/video_sample/InternVId-FLT_{i}` —— 同一份"本机没有全量数据"的
+结论对它一样成立。所以在 101vector 上,**§2b 之后还能做的只有**:
+
+1. `pilot_10k_r1a` / `pilot_10k_r1b` 归因拆包(用的就是那 1 万条,数据已在);
+2. 补完 MSR-VTT 视频后的 B0 单基准。
+
+§4 的 R0→R1 全量 A/B 需要先解决 InternVid 全量数据的落盘位置(H100 机或换机)。
+跑一次 `check_readiness.py` 就能确认,别等长训崩了才发现。
+
+### 顺带:`BASELINE.md` 在评测全崩时依然会被写出来,而且内容是试点数字
+
+`collect_results.py` 默认扫 `experiments/runs` **和** `experiments/evals`。
+那次 5 个评测全崩、`experiments/evals/baseline_official/` 下一个
+`eval_res.json` 都没有,它照样从 `experiments/runs/` 捞到了 10k 试点的
+`pilot_10k_r0` / `pilot_10k_r1`,写出一个名叫 **BASELINE.md**、里面却是
+**试点自检索** r_mean 93.37 / 86.83 的文件,退出码 0、零警告。
+
+那些数字和 MSR-VTT 基线(t2v R@1≈42.5)不是一回事,放在这个文件名下极易被后来
+的人当成基线引用。两条防线:
+
+```bash
+# 1) 只扫 evals/
+python experiments/collect_results.py --dirs experiments/evals \
+       --baseline baseline_official --out experiments/BASELINE.md
+```
+
+2) 脚本现在会在生成文件顶部写明**扫了哪些目录、含哪些 run**,并在
+   `--baseline` 指定的 run 找不到时打印显式警告。读 BASELINE.md 前先看头两行。

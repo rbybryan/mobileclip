@@ -23,6 +23,80 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-22 (13) — §3 B0 全崩 ❌ 不是配置问题:**本机没有下游评测数据**
+
+5 个评测一个数字都没出。**别再重跑一遍** —— 重跑还是全崩。报错分两类:
+
+- **A 类 anno 就缺**(`didemo` / `anet` / `ssv2_mc`):秒崩在
+  `FileNotFoundError: anno_downstream/didemo_ret_test.json`。
+- **B 类 anno 有、视频没有**(`msrvtt` / `k400`):走得很远 —— 配置打印、标注读入
+  (`1000/1000`)、权重载入、**文本特征都算完了**,才崩在第一批视频:
+  `ERROR opening: /home/vca1/datasets/MSRVTT_Videos/video7020.mp4`。
+  B 类特别容易误判成偶发解码错误,因为 `data_root` 只在真正读视频那一刻才被触碰。
+
+**根因**:`tools/data_audit/SETUP_V100.md` 开篇就写了 —— 这台机器
+**只有 `/home/vca1/datasets/internvid_zh_10k` 那 1 万条抽样,没有全量数据**。
+MSR-VTT / K400 / DiDeMo / ANet / SSv2 的视频一个都不在。
+
+**连带影响(更要紧):§4 的 R0→R1 全量 A/B 在这台机器上同样跑不了。**
+`internvid_v1..v11` 的 `data_root` 是 `$MVC_DATA_DIR/video_sample/InternVId-FLT_{i}`,
+同一个"没有全量数据"的结论对它一样成立。所以 101vector 上 §2b 之后**还能做的只有两件**:
+① r1a/r1b 归因拆包(数据已在);② 补完 MSR-VTT 视频后的 B0 单基准。
+
+**Do this next:**
+
+```bash
+cd ~/mobileclip && git pull origin main
+
+# 1) 先跑预检(10 秒)。仓库里一直有这个脚本,这次就是省掉它换来 5 次崩溃
+export MVC_DATA_DIR=/home/vca1/datasets
+python experiments/check_readiness.py
+```
+
+把这份输出贴回来 —— 它会一次性说清哪些 anno/视频在、哪些步骤已解锁,
+我据此定 §4 到底在哪台机器上跑。
+
+```bash
+# 2) 想继续 B0 的话:MSR-VTT 是唯一近在咫尺的(anno 已在,只差视频,公开 wget ~6.7GB)
+#    注意:跑 MSR-VTT 时不要 export MVC_DATA_DIR,让它落回仓库默认的 data/
+cd ~/mobileclip && unset MVC_DATA_DIR
+df -h .                     # 先确认 >8 GB 余量
+mkdir -p data && cd data
+wget https://www.robots.ox.ac.uk/~maxbain/frozen-in-time/data/MSRVTT.zip
+unzip -q MSRVTT.zip && ln -s "$(pwd)/MSRVTT/videos/all" "$(pwd)/MSRVTT_Videos"
+cd .. && ls data/MSRVTT_Videos/ | wc -l        # 期望 10000
+python experiments/check_readiness.py --sample 50 --decode   # 期望 [OK ] msrvtt
+
+CKPT=./checkpoints/mobileviclip_small.pt
+CUDA_VISIBLE_DEVICES=0 \
+  bash experiments/run_eval.sh small msrvtt $CKPT experiments/evals/baseline_official/msrvtt
+python experiments/collect_results.py --dirs experiments/evals \
+       --baseline baseline_official --out experiments/BASELINE.md
+```
+
+`didemo` / `anet` / `ssv2_mc` **近期不做**(anno 在受限 Drive + 视频要大量下载),
+`k400` 可选。B0 收窄成 MSR-VTT 单基准,足够支撑 §6 的判据(主指标本来就是它)。
+
+**两个新发现,已写进文档:**
+
+1. **`BASELINE.md` 会骗人。** 那次 5 个评测全崩、`evals/` 下一个结果都没有,
+   `collect_results.py` 照样从 `runs/` 捞到试点数字,写出一个名叫 **BASELINE.md**、
+   内容是 **10k 试点自检索** r_mean 93.37 / 86.83 的文件,退出码 0、零警告。
+   那**不是** MSR-VTT 基线(基线 t2v R@1≈42.5)。已加两条防线:`--dirs experiments/evals`,
+   以及脚本现在会把「扫了哪些目录、含哪些 run」写进产物顶部、基线缺失时显式报警。
+   **你现在盘上那份 BASELINE.md 是误导性的,建议直接删掉重生成。**
+2. **官方 `mobileviclip_small.pt` 不含文本塔主体**(从加载日志读出):`missing_keys`
+   恰好是整个 `text_encoder.{embedding_layer, positional_embedding, transformer.*,
+   final_layer_norm}`,而 `text_encoder.projection_layer` **在**权重里,视觉塔和
+   `temp` 也都在。文本塔是建模时从 `mobileclip_s2.pt` 载入的(上游 `freeze_text=True`
+   只训投影,自洽)。**含义:B0 的数字由这两个权重共同决定**,复现时
+   `mobileclip_s2.pt` 也必须是对的那一份。
+
+**Then report back**:`check_readiness.py` 的完整输出;以及若下了 MSR-VTT,
+`experiments/evals/baseline_official/msrvtt/eval_res.json` 的内容。
+
+---
+
 ## 2026-07-22 (12) — §2b 完成 ✅ 试点跑通了;r1 落后 6.5 点但**不能**据此否定组件
 
 **两臂都跑完,全程零 `OVERFLOW`**(r0 38:10 / r1 37:46,和我估的 ≈40 min 对上)。

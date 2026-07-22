@@ -200,16 +200,104 @@ held-out 自检索 R@1 相对方向仅作参考。评测走 `ret_test`(1k 自检
 
 ## 3. B0 — 锁定基线数字(官方权重,双口径)
 
+> 🚩 **2026-07-22 实测:这一步在 101vector 上跑不了 —— 5 个评测全崩,一个数字都没出。**
+> 不是配置问题,是**本机没有下游评测数据**。`tools/data_audit/SETUP_V100.md` 开篇
+> 就写明该机只有 `/home/vca1/datasets/internvid_zh_10k` 这 1 万条预抽样,
+> **没有全量数据**。崩溃日志与两类失败的区分见
+> [`TROUBLESHOOTING.md`](../TROUBLESHOOTING.md) 的
+> 「§3 B0 五个评测全部失败 —— 本机没有下游评测数据」。
+
+### 3.0 先跑预检(10 秒,别跳)
+
 ```bash
-CKPT=./checkpoints/mobileviclip_small.pt
-for b in msrvtt didemo anet k400 ssv2_mc; do
-  bash experiments/run_eval.sh small $b $CKPT experiments/evals/baseline_official/$b
-done
-python experiments/collect_results.py --out experiments/BASELINE.md
+cd ~/mobileclip
+export MVC_DATA_DIR=/home/vca1/datasets
+python experiments/check_readiness.py
 ```
+
+它逐个数据集报「anno 在不在、data_root 在不在、抽查的视频在不在」,末尾直接列出
+**当前已解锁的 runbook 步骤**。B0 和 §4 的长跑之前都先跑它 —— 这次就是省掉的
+10 秒预检换来了 5 次崩溃。
+
+### 3.1 B0 的现实范围(按 2026-07-22 的机器状态)
+
+| 基准 | anno | 视频 | 结论 |
+|---|---|---|---|
+| `msrvtt` | ✅ 在(1000 条读入正常) | ❌ 缺 | **唯一近在咫尺的**:一条公开 wget |
+| `k400` | ✅ 在(10117 条读入正常) | ❌ 缺 | 可选;体量大、源不稳,不作为阻塞项 |
+| `didemo` / `anet` / `ssv2_mc` | ❌ 缺 | ❌ 缺 | 近期不做(anno 在受限 Drive,视频另需大量下载) |
+
+anno 的补法见 `TROUBLESHOOTING.md`「Missing `anno_downstream/*.json`」与
+「Running the next retrieval dataset (DiDeMo, ActivityNet)」两节,这里不重复。
+
+⇒ **把 B0 收窄为「MSR-VTT 单基准」**,其余四个不再当作当前的阻塞条件。单基准
+足够支撑 §5/§6 的 A/B 判据(判据本来就以 MSR-VTT 为主指标)。
+
+### 3.2 补齐 MSR-VTT 视频(公开源,不需要授权)
+
+Frozen-in-Time 的公开镜像含全部 10000 个视频(约 6.7 GB,见 `README_zh.md` §6.1)。
+放在**仓库默认的 `data/` 下最省事** —— MSR-VTT 评测只引用 `msrvtt_1k_test`
+这一个 corpus,所以跑它的时候**不要** export `MVC_DATA_DIR`,让它落回默认的
+`data/`,与 10k 试点用的 `/home/vca1/datasets` 互不干扰:
+
+```bash
+cd ~/mobileclip
+df -h .                     # 先确认有 >8 GB 余量(解压时 zip 与解压产物并存)
+mkdir -p data && cd data
+wget https://www.robots.ox.ac.uk/~maxbain/frozen-in-time/data/MSRVTT.zip
+unzip -q MSRVTT.zip
+ln -s "$(pwd)/MSRVTT/videos/all" "$(pwd)/MSRVTT_Videos"
+cd ..
+ls data/MSRVTT_Videos/ | wc -l          # 期望 10000
+```
+
+落盘后再验一次(这一步就是上面预检脚本干的事,只是缩到单数据集):
+
+```bash
+unset MVC_DATA_DIR
+python experiments/check_readiness.py --sample 50 --decode
+# 期望看到:[OK ] msrvtt   anno 1000 条;抽查 50 条,缺失 0;试解码 OK(... 帧)
+```
+
+> 若 `data/` 所在分区放不下,也可以把视频放到别处再
+> `export MVC_DATA_DIR=<那个目录的父目录>`,只要最终路径是
+> `$MVC_DATA_DIR/MSRVTT_Videos/videoXXXX.mp4` 即可。
+
+### 3.3 跑 B0 并汇总
+
+```bash
+cd ~/mobileclip && unset MVC_DATA_DIR
+CKPT=./checkpoints/mobileviclip_small.pt
+CUDA_VISIBLE_DEVICES=0 \
+  bash experiments/run_eval.sh small msrvtt $CKPT experiments/evals/baseline_official/msrvtt
+
+# 只扫 evals/,别把 runs/ 里的试点数字混进 BASELINE.md(见下面的坑)
+python experiments/collect_results.py \
+    --dirs experiments/evals --baseline baseline_official \
+    --out experiments/BASELINE.md
+```
+
+> **`CUDA_VISIBLE_DEVICES` 要自己挑。** `run_eval.sh` 默认 `0`,而这台卡是共享的
+> (§2b 的 OOM 就是这么来的)。先 `nvidia-smi` 看哪张空着。
 
 核对 `ret_test/`(DSL 口径)是否对上论文/README 数字(MSR-VTT t2v R@1≈42.5);
 `ret_test_emb/` 是原始余弦口径。**此后所有 A/B 结论要求两个口径同向成立。**
+
+> ⚠️ **BASELINE.md 会骗人。** `collect_results.py` 默认同时扫 `experiments/runs`
+> 和 `experiments/evals`。2026-07-22 那次 5 个评测全崩、`evals/` 下一个
+> `eval_res.json` 都没有,它照样写出了一个名叫 `BASELINE.md`、内容却是
+> **10k 试点 A/B 数字**(`pilot_10k_r0` / `pilot_10k_r1`,r_mean 93.37 / 86.83)
+> 的文件,全程零报错。那些是自检索数字,**不是** MSR-VTT 基线。
+> 现在生成的文件顶部会写明扫了哪些目录、含哪些 run —— 读之前先看那两行。
+
+> **官方权重不含文本塔主体(2026-07-22 从加载日志读出)。**
+> 载入 `checkpoints/mobileviclip_small.pt` 时 `missing_keys` 恰好是整个
+> `text_encoder.{embedding_layer, positional_embedding, transformer.*,
+> final_layer_norm}`,而 `text_encoder.projection_layer` **在**权重里、
+> 视觉塔与 `temp` 也都在。文本塔主体是建模时从
+> `checkpoints/mobileclip_s2.pt` 载入的(上游 `freeze_text=True`、只训投影,
+> 自洽)。**含义:B0 的数字由这两个权重文件共同决定**,复现基线时
+> `mobileclip_s2.pt` 也必须是对的那一份。
 
 ## 4. R0 → R1 — 训练 A/B(等步数、等数据、等超参)
 
