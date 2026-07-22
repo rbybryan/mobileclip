@@ -221,55 +221,82 @@ python experiments/check_readiness.py
 
 ### 3.1 B0 的现实范围(按 2026-07-22 的机器状态)
 
-| 基准 | anno | 视频 | 结论 |
-|---|---|---|---|
-| `msrvtt` | ✅ 在(1000 条读入正常) | ❌ 缺 | **唯一近在咫尺的**:一条公开 wget |
-| `k400` | ✅ 在(10117 条读入正常) | ❌ 缺 | 可选;体量大、源不稳,不作为阻塞项 |
-| `didemo` / `anet` / `ssv2_mc` | ❌ 缺 | ❌ 缺 | 近期不做(anno 在受限 Drive,视频另需大量下载) |
+下表按 2026-07-22 `check_readiness.py` 的**实测**输出填写(不是推测):
+
+| 基准 | 任务 | anno | 视频 | 下载量 | 结论 |
+|---|---|---|---|---|---|
+| `hmdb51` | 分类 | ✅ 1511 条 | ❌ 缺 | **~2.1 GB** | **最先做**:`bash tools/download_hmdb51.sh` 一条命令,幂等 |
+| `msrvtt` | 检索 | ✅ 1000 条 | ❌ 缺 | ~6.7 GB | 主指标,公开 wget |
+| `ucf101` | 分类 | ✅ 3783 条 | ❌ 缺 | ~6.5 GB | 公开 wget(CRCV 官网) |
+| `k400` | 分类 | ✅ 10117 条 | ❌ 缺 | 很大 | 可选;源不稳,不作为阻塞项 |
+| `didemo` / `anet` / `ssv2_mc` | — | ❌ 缺 | ❌ 缺 | — | 近期不做(anno 在受限 Drive,视频另需大量下载) |
 
 anno 的补法见 `TROUBLESHOOTING.md`「Missing `anno_downstream/*.json`」与
 「Running the next retrieval dataset (DiDeMo, ActivityNet)」两节,这里不重复。
 
-⇒ **把 B0 收窄为「MSR-VTT 单基准」**,其余四个不再当作当前的阻塞条件。单基准
-足够支撑 §5/§6 的 A/B 判据(判据本来就以 MSR-VTT 为主指标)。
+⇒ **B0 = `msrvtt` + `hmdb51` + `ucf101` 三个基准**(合计约 15 GB,全部公开源、
+无需任何授权),覆盖检索 + 零样本分类两类任务。`k400` 可选,其余三个不做。
 
-### 3.2 补齐 MSR-VTT 视频(公开源,不需要授权)
+> ⚠️ **只有 MSR-VTT 有可对照的外部数字**(t2v R@1≈42.5)。HMDB51 / UCF101 在本仓库
+> 里没有公开的 small 变体参考值,所以它们是「锁我们自己的基线」——
+> 能支撑 A/B,但**接线错误不会被外部数字兜住**。先把 MSR-VTT 对上,再信另外两个。
 
-Frozen-in-Time 的公开镜像含全部 10000 个视频(约 6.7 GB,见 `README_zh.md` §6.1)。
-放在**仓库默认的 `data/` 下最省事** —— MSR-VTT 评测只引用 `msrvtt_1k_test`
-这一个 corpus,所以跑它的时候**不要** export `MVC_DATA_DIR`,让它落回默认的
-`data/`,与 10k 试点用的 `/home/vca1/datasets` 互不干扰:
+### 3.2 补齐三个基准的视频(全部公开源,不需要任何授权)
+
+**统一规则:B0 全程 `unset MVC_DATA_DIR`。** 三个基准的下载文档都把视频放进仓库
+默认的 `data/`,而 `/home/vca1/datasets` 是 10k 试点的地盘 —— 分开放,互不干扰。
+(`configs/data.py` 只是按 `MVC_DATA_DIR` 拼路径,不导出就落回 `data/`。)
 
 ```bash
-cd ~/mobileclip
-df -h .                     # 先确认有 >8 GB 余量(解压时 zip 与解压产物并存)
+cd ~/mobileclip && unset MVC_DATA_DIR
+df -h .          # 三个合计约 15 GB;解压时 zip 与产物并存,留 >25 GB 余量更稳
+```
+
+**① HMDB51(~2.1 GB,一条命令,先做这个)** —— 脚本已内置 hf-mirror 的坑的解法
+(见 `TROUBLESHOOTING.md`「HMDB51 download」),幂等,可重复跑:
+
+```bash
+bash tools/download_hmdb51.sh
+```
+
+**② MSR-VTT(~6.7 GB,主指标)** —— Frozen-in-Time 公开镜像,含全部 10000 个视频:
+
+```bash
 mkdir -p data && cd data
 wget https://www.robots.ox.ac.uk/~maxbain/frozen-in-time/data/MSRVTT.zip
 unzip -q MSRVTT.zip
 ln -s "$(pwd)/MSRVTT/videos/all" "$(pwd)/MSRVTT_Videos"
-cd ..
-ls data/MSRVTT_Videos/ | wc -l          # 期望 10000
+cd .. && ls data/MSRVTT_Videos/ | wc -l         # 期望 10000
 ```
 
-落盘后再验一次(这一步就是上面预检脚本干的事,只是缩到单数据集):
+**③ UCF101(~6.5 GB)** —— CRCV 官网整包,解包后需平铺到 `data/ucf101/videos/`,
+详细步骤见 `README_zh.md` §6.2(含 `.rar` 解包与平铺命令)。
+
+**下载完统一验一次**(就是预检脚本,只是这次该亮绿灯了):
 
 ```bash
 unset MVC_DATA_DIR
 python experiments/check_readiness.py --sample 50 --decode
-# 期望看到:[OK ] msrvtt   anno 1000 条;抽查 50 条,缺失 0;试解码 OK(... 帧)
+# 期望:msrvtt / hmdb51 / ucf101 三行都是 [OK ],且「试解码 OK(... 帧)」
 ```
 
-> 若 `data/` 所在分区放不下,也可以把视频放到别处再
-> `export MVC_DATA_DIR=<那个目录的父目录>`,只要最终路径是
-> `$MVC_DATA_DIR/MSRVTT_Videos/videoXXXX.mp4` 即可。
+> 若 `data/` 所在分区放不下,可把视频放别处再
+> `export MVC_DATA_DIR=<那个目录的父目录>`,只要最终路径能拼成
+> `$MVC_DATA_DIR/MSRVTT_Videos/videoXXXX.mp4` 等即可 —— 但那样 10k 试点的
+> corpus 路径也会跟着变,**别在同一个 shell 里混用**。
 
 ### 3.3 跑 B0 并汇总
+
+`run_eval.sh` 的 benchmark 名和 `check_readiness.py` 的完全对齐,直接循环即可
+(哪个数据集没下就把它从列表里删掉,别让它崩在中间):
 
 ```bash
 cd ~/mobileclip && unset MVC_DATA_DIR
 CKPT=./checkpoints/mobileviclip_small.pt
-CUDA_VISIBLE_DEVICES=0 \
-  bash experiments/run_eval.sh small msrvtt $CKPT experiments/evals/baseline_official/msrvtt
+for b in msrvtt hmdb51 ucf101; do
+  CUDA_VISIBLE_DEVICES=0 \
+    bash experiments/run_eval.sh small $b $CKPT experiments/evals/baseline_official/$b
+done
 
 # 只扫 evals/,别把 runs/ 里的试点数字混进 BASELINE.md(见下面的坑)
 python experiments/collect_results.py \

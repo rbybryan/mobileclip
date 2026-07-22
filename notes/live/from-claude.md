@@ -23,6 +23,71 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-22 (14) — 预检坐实了诊断,但多出两条:**B0 能做三个基准**;**§4 我上轮说错了**
+
+预检输出确认了 (13) 的判断,同时给出两条新信息 —— 一条把 B0 做大,一条推翻我自己。
+
+### ① B0 不止 MSR-VTT:**四个基准的 anno 都在盘上**,三个视频是公开源
+
+我上轮只按 §3 那个 5 基准循环去看,漏了 `ucf101` / `hmdb51` —— 预检显示它们
+anno 齐(3783 / 1511 条),而且下载量比 K400 小得多:
+
+| 基准 | 任务 | anno | 下载量 | 怎么拿 |
+|---|---|---|---|---|
+| `hmdb51` | 分类 | ✅ 1511 | **~2.1 GB** | `bash tools/download_hmdb51.sh` 一条命令,幂等 |
+| `msrvtt` | 检索 | ✅ 1000 | ~6.7 GB | 公开 wget(主指标) |
+| `ucf101` | 分类 | ✅ 3783 | ~6.5 GB | CRCV 官网整包 |
+| `k400` | 分类 | ✅ 10117 | 很大 | 可选,源不稳,不做 |
+
+⇒ **B0 = msrvtt + hmdb51 + ucf101**(约 15 GB,全公开源,零授权),检索+分类都覆盖。
+**先跑 HMDB51** —— 2.1 GB 一条命令,是验证整条评测链路最便宜的一次。
+
+⚠️ 但只有 **MSR-VTT 有外部数字可对照**(t2v R@1≈42.5)。HMDB51/UCF101 是锁我们
+自己的基线,接线错了不会被外部数字兜住 —— 所以先让 MSR-VTT 对上,再信另外两个。
+
+### ② 更正:§4 不是"换台机器"能解决的,我上轮写错了
+
+我在 (13) 里写"§4 需要先解决 InternVid **全量数据**的落盘位置(H100 机或换机)"。
+**两处都不准**,查了 `docs/internvid-download-zh.md` 才发现:
+
+1. **盘上那 11 个 anno 不是全量**,是本仓库自己生成的子集 —— 每片恰好 5000 条、
+   合计 55000 条。生成脚本里明写着 `LIMIT = 5000  # 先做子集;要全量把这行设为 None`
+   和 `PER_SHARD = 5000`。"全量 10M"从来没进过这份 anno。
+2. **不存在"别处有一份视频、搬过来就行"**。InternVid 只发 URL 列表,视频要
+   **逐条从 YouTube 抓**(`tools/download_internvid.py`),而且**必然有永久损耗**
+   —— `Private video` / `Video unavailable` 的条目是真没了。
+
+正确说法:**§4 是一个数据获取任务,不是机器搬迁任务。** 换 H100 也一样要从头抓,
+只在带宽/并发/磁盘上占优。开跑前要先定三件事:抓多少条(现有 anno 是 55k,要更多
+得重跑转换脚本)、在哪抓、能接受多大损耗率。**建议单独排期,别混进 §4 的训练排期。**
+
+**Do this next:**
+
+```bash
+cd ~/mobileclip && git pull origin main
+unset MVC_DATA_DIR          # B0 全程不要 export,让视频落回仓库默认的 data/
+df -h .                     # 三个合计 ~15 GB,解压时并存,留 >25 GB 更稳
+
+# 最便宜的一步:HMDB51 2.1 GB,一条命令,先把评测链路跑通
+bash tools/download_hmdb51.sh
+python experiments/check_readiness.py --sample 50 --decode   # 期望 hmdb51 [OK ]
+
+CKPT=./checkpoints/mobileviclip_small.pt
+CUDA_VISIBLE_DEVICES=0 \
+  bash experiments/run_eval.sh small hmdb51 $CKPT experiments/evals/baseline_official/hmdb51
+```
+
+这一步跑通了,再下 MSR-VTT(~6.7 GB)和 UCF101(~6.5 GB),三个一起汇总 ——
+完整命令见 `experiments/README.md` §3.2 / §3.3。
+
+**另外:把盘上那份 `experiments/BASELINE.md` 删掉。** 它是 (13) 说的那个陷阱产物,
+内容是 10k 试点自检索数字、文件名却叫 BASELINE。重新生成时脚本会在顶部写明出处。
+
+**Then report back**:`bash tools/download_hmdb51.sh` 之后的
+`check_readiness.py` 输出,以及 hmdb51 的 `eval_res.json`。
+
+---
+
 ## 2026-07-22 (13) — §3 B0 全崩 ❌ 不是配置问题:**本机没有下游评测数据**
 
 5 个评测一个数字都没出。**别再重跑一遍** —— 重跑还是全崩。报错分两类:
