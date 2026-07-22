@@ -504,6 +504,34 @@ bash tools/data_audit/run_v100.sh s2-check      # -> outputs/audit_10k/s2_health
 [`DATA_ISSUES.md`](DATA_ISSUES.md) §1 状态表**（`outputs/` 是 gitignore 的，
 不落库就随会话丢失）。
 
+### 4.6 文本-only 翻译重判 `s2-trans`（10k 实测触发，**决策 1 的前置**）
+
+```bash
+bash tools/data_audit/run_v100.sh s2-trans      # 8 卡；不解码视频，比 s2 快得多
+bash tools/data_audit/run_v100.sh xling-check   # 自动优先用 s2_trans.*.jsonl
+```
+
+**为什么需要它**：2026-07-22 的 10k 全覆盖跑，机械体检 10000/10000 全过，
+但 §6 查出 `en_score`/`zh_score`/`trans_score` **逐条同值率 92.5%／98.9%**——
+模型只产生了**一个**整体质量分、复制进三个字段，`action` 再按固定阶梯
+（`5→keep, 4→fix_text, 3→retranslate, ≤2→recaption/drop`）由它决定。
+「翻译坏没坏」从未被测量过，而决策 1 的全部差率都建立在 `trans_score` 上。
+完整证据与作废清单见 [`DATA_ISSUES.md`](DATA_ISSUES.md) 问题 8 详解。
+
+**修法为什么是拆调用而不是改措辞**：翻译忠实度本就不需要看视频
+（rubric 原话"仅比较中英两条文本"）。`vlm_audit.py:TRANS_PROMPT` 两处设计：
+
+1. **不给帧** —— `--mode trans` 完全不打开视频文件，锚点从"不鼓励"变成"物理不可得"。
+   附带好处：S2 的真正瓶颈是视频解码，这一趟没有解码，**快得多**。
+2. **先证据后打分** —— 必须先逐条列出 `mismatches`，评分规则再锁死在该列表上
+   （"mismatches 为空则必须给 5"），分数无法作为整体印象浮空输出。
+
+产物 `s2_trans.*.jsonl` 与 `calibrate_xling.py` 直接兼容（同样的 `s1` 透传 +
+`trans_score`），`xling-check` 会自动优先用它；找不到时退回主力档并打印警告。
+
+> 同一个方法可推广：日后若要让 `en_score` / `zh_score` 真正分离，
+> 也应拆成两次只给一侧文本的调用，而不是在同一个 prompt 里多写几句"请独立打分"。
+
 ---
 
 ### 4.3-端点 裁判档首选：内网已有的 Qwen3.6-27B 端点（零部署，**先试这条**）

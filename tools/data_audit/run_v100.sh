@@ -12,6 +12,7 @@
 #   bash tools/data_audit/run_v100.sh s2-sample  # ④ 抽样（默认参数在 10k 上=全覆盖）
 #   bash tools/data_audit/run_v100.sh s2         # ⑤ 8 卡 VLM 审核全部 10k（HF 后端，~2–3h）
 #   bash tools/data_audit/run_v100.sh s2-check   # ⑤b S2 判定体检 -> s2_health.md（秒级，S2 跑完必做）
+#   bash tools/data_audit/run_v100.sh s2-trans   # ⑤c 文本-only 翻译重判（修 halo；不解码视频，比 s2 快）
 #   JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge  # ⑥ 云端裁判（可选，需 API key）
 #   bash tools/data_audit/run_v100.sh judge-agree # ⑥b 一致率+Cohen's κ（可对外来裁判文件独立重算）
 #   bash tools/data_audit/run_v100.sh xling-check # ⑥c 裁决 xling 阈值（s3 前必做）
@@ -224,6 +225,24 @@ s2)
   echo "已后台启动（可续跑）。进度: bash $0 status"
   echo "跑完后先做体检再进下一步: bash $0 s2-check"
   ;;
+# --------------------------------- ⑤c 文本-only 翻译重判（修 halo，见 DATA_ISSUES 问题 8）
+s2-trans)
+  need_py
+  [ -f "$OUT/s2_sample.jsonl" ] || { echo "先跑 s2-sample"; exit 1; }
+  echo "[model] S2_MODEL=$S2_MODEL （文本模式：不读视频、不解码、不看帧）"
+  for i in $(seq 0 $((NGPU-1))); do
+    CUDA_VISIBLE_DEVICES=$i nohup python tools/data_audit/vlm_audit_hf.py \
+      --input "$OUT/s2_sample.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
+      --mode trans --num-shards "$NGPU" --shard-id "$i" \
+      --max-new-tokens "${TRANS_MAX_TOKENS:-512}" \
+      --output "$OUT/s2_trans.{shard}.jsonl" \
+      > "$OUT/s2_trans_shard$i.log" 2>&1 &
+    echo "shard $i -> GPU$i (log: $OUT/s2_trans_shard$i.log)"
+  done
+  echo "已后台启动（可续跑）。比 s2 快得多：S2 的瓶颈是视频解码，这一趟完全不解码。"
+  echo "进度: for f in $OUT/s2_trans.*.jsonl; do wc -l \$f; done"
+  echo "跑完后: bash $0 xling-check   # 会自动优先用 s2_trans.*.jsonl"
+  ;;
 # ------------------------------------------------- ⑤b S2 判定体检（S2 跑完必做）
 s2-check)
   # 纯 stdlib，不需要 numpy/torch——没激活虚拟环境也能跑
@@ -267,10 +286,21 @@ xling-check)
   python -c 'import numpy' 2>/dev/null || {
     echo "错误：当前 Python（$(command -v python)）缺 numpy。"
     echo "  多半是没激活虚拟环境：source ~/audit_env/bin/activate"; exit 1; }
-  ls "$OUT"/s2_verdicts.*.jsonl >/dev/null 2>&1 || \
+  # 优先用文本-only 重判的 trans_score：主力档的 trans_score 与 en_score 92.5%
+  # 逐条同值（halo，DATA_ISSUES.md 问题 8），拿它算差率是自证循环。
+  if ls "$OUT"/s2_trans.*.jsonl >/dev/null 2>&1; then
+    XV="$OUT/s2_trans.*.jsonl"
+    echo "[xling-check] 用文本-only 重判的 trans_score（s2_trans.*.jsonl）—— 独立测量，可信"
+  else
+    XV="$OUT/s2_verdicts.*.jsonl"
+    echo "⚠️ [xling-check] 未找到 $OUT/s2_trans.*.jsonl，退回主力档 s2_verdicts.*.jsonl。"
+    echo "   主力档的 trans_score 与 en_score 92.5% 逐条同值（halo，见 DATA_ISSUES.md 问题 8），"
+    echo "   **本次输出只能当参考，不足以裁决决策 1** —— 先跑: bash $0 s2-trans"
+  fi
+  ls $XV >/dev/null 2>&1 || \
     { echo "未找到 $OUT/s2_verdicts.*.jsonl（先跑完: bash $0 s2）"; exit 1; }
   python tools/data_audit/calibrate_xling.py \
-    --verdicts "$OUT/s2_verdicts.*.jsonl" --scores "$OUT/s1_scores.*.jsonl" \
+    --verdicts "$XV" --scores "$OUT/s1_scores.*.jsonl" \
     --target-precision "${TARGET_PRECISION:-0.8}" \
     --out-md "$OUT/xling_calibration.md"
   echo
