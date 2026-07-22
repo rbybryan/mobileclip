@@ -308,6 +308,18 @@ head -1 s2_verdicts_judge.jsonl | python -m json.tool
 **验收点**：每条都有完整的 `verdict` 对象，含
 `en_score / zh_score / trans_score / action / better_zh`。
 
+> ✅ **实测通过（2026-07-22）**：`[frames] backend=opencv`、
+> `[done] wrote 5 verdicts`，5/5 判定完整，**无 `no valid verdict JSON`**
+> ——`enable_thinking=False`、opencv 后端、`CLIPS` 三处全部生效。
+>
+> 📌 **首条判定就出现了主力模型给不出的东西**：`en_score=0 / zh_score=0 /
+> trans_score=5 / action=recaption` —— 三个分数**彼此解耦**（英文写错了、
+> 但中文忠实地翻译了那段错英文，所以该重写而非重翻）。而主力 8B 在 10k 上
+> `en==trans` 逐条同值率 **92.5%**、`zh==trans` **98.9%**（见
+> [`DATA_ISSUES.md`](DATA_ISSUES.md) 问题 8）。
+> **这是 n=1 的观察，不是结论**——但它指向「halo 是 8B 的毛病、不是 rubric 的
+> 毛病」，跑完 500 条后要在 T4 里正式验证。
+
 **冒烟输出直接写进正式产物文件是有意的**：`vlm_audit.py` 支持断点续跑
 （按 `video` 去重跳过），所以这 5 条会计入第 6 步的 500 条，不会重复推理。
 
@@ -341,6 +353,26 @@ watch -n 30 'wc -l ~/judge/s2_verdicts_judge.jsonl; tail -3 ~/judge/judge.log'
 超时默认已是 600 秒；重试带指数退避。跑得慢可以提到 16，仍在 house 值以内。
 
 **中断了直接重跑同一条命令**即可续（按 `video` 跳过已完成的）。
+
+跑完后，**先做一个 30 秒的解耦自查**（这决定裁判有没有价值）：
+
+```bash
+python3 - <<'PY'
+import json, collections
+rows=[json.loads(l) for l in open("s2_verdicts_judge.jsonl")]
+v=[r["verdict"] for r in rows if "action" in (r.get("verdict") or {})]
+def same(a,b): return sum(1 for x in v if x.get(a)==x.get(b))/max(len(v),1)
+print(f"n={len(v)}")
+print(f"en==trans 逐条同值率: {same('en_score','trans_score'):.1%}   (主力 8B 是 92.5%)")
+print(f"zh==trans 逐条同值率: {same('zh_score','trans_score'):.1%}   (主力 8B 是 98.9%)")
+print("action 分布:", dict(collections.Counter(x.get("action") for x in v)))
+PY
+```
+
+同值率**明显低于主力**（例如 <70%）→ 裁判确实在独立评估三个维度，
+它的 `trans_score` 可以用来裁决 §4 决策 1；
+若同样高到 90%+ → 裁判也塌缩了，**别拿它当独立信号**，走
+[`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0 路线 D 的人工兜底。
 
 **验收点**：`wc -l` 到 500；错误率检查——
 
