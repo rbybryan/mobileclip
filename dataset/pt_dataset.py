@@ -28,6 +28,69 @@ def caption_to_idx(caption):
     return int.from_bytes(digest[:8], "little") & 0x7FFFFFFFFFFFFFFF
 
 
+# Floor on load retries, independent of the `num_tries` config knob.
+#
+# Sizing matters in both directions. InternVid suffers permanent YouTube
+# attrition, so a *healthy* corpus still has a fraction `p` of dead files, and
+# the chance a sample exhausts n retries is ~p^(n+1). At the config default of
+# n=3 and a plausible p=0.1-0.3 that is 1e-4 to 8e-3 per sample -- 5 to 445
+# spurious crashes per 55k-sample epoch, i.e. a regression versus the old
+# unbounded recursion (which tolerated ~1000 consecutive misses).
+#
+# At n=50: 1e-51 (p=0.1), 2e-27 (p=0.3) -- never fires by accident, while a
+# fully-missing corpus still fails after 51 quick attempts instead of blowing
+# the stack ~1000 frames deep.
+MIN_LOAD_RETRIES = 50
+
+
+def retry_load_item(dataset, index):
+    """Load `dataset._load_item(index)`, resampling a random index on failure.
+
+    Upstream retried by recursing into `__getitem__`, with no bound on the
+    plain image/video/audio datasets. That is fine when a few files are
+    corrupt, but when *every* file is missing (wrong `data_root`, dataset not
+    downloaded yet) it recurses until the interpreter dies, and the operator
+    sees `RecursionError: maximum recursion depth exceeded` instead of the
+    path that was actually missing. Bounded loop, and a terminal error that
+    names the file and points at the readiness check.
+
+    The bound is `max(num_tries, MIN_LOAD_RETRIES)` -- see MIN_LOAD_RETRIES for
+    why honouring the config default of 3 here would itself be a regression.
+    """
+    num_tries = max(getattr(dataset, "num_tries", None) or 0, MIN_LOAD_RETRIES)
+    last_exc = None
+    for _ in range(num_tries + 1):
+        try:
+            return dataset._load_item(index)
+        except Exception as e:
+            last_exc = e
+            # get_anno() can itself be what failed, so guard the lookup.
+            # media_type is "audio_video" for the AV dataset, which is not an
+            # anno key -- fall back to whichever media key is present.
+            try:
+                anno = dataset.get_anno(index)
+                path = next(
+                    (anno[k] for k in (dataset.media_type, "video", "image", "audio")
+                     if k in anno),
+                    f"<index {index}>",
+                )
+            except Exception:
+                path = f"<index {index}>"
+            logger.warning(
+                f"Caught exception {e} when loading {dataset.media_type} {path}"
+            )
+            index = np.random.randint(0, len(dataset))
+
+    raise RuntimeError(
+        f"Failed to load a {dataset.media_type} after {num_tries + 1} attempts; "
+        f"last error: {last_exc!r}. If every sample is failing, the media files "
+        f"are probably not where the corpus says they are — check `data_root` "
+        f"for this corpus in configs/data.py and the MVC_DATA_DIR env var, and "
+        f"run `python experiments/check_readiness.py` to see which corpora are "
+        f"actually on disk."
+    ) from last_exc
+
+
 def preprocess_para_retrieval_data(anno_list):
     processed_anno_list = []
     for d in anno_list:
@@ -229,23 +292,20 @@ class ImgTxtPtTrainDataset(BaseDataset):
         else:
             raise NotImplementedError(caption)
 
+    def _load_item(self, index):
+        ann = self.get_anno(index)
+        caption = self.pre_caption(ann["caption"])
+        if self.crop_img:
+            data_path = {"image":ann["image"], "crop_bbox":ann["crop_bbox"]}
+            image, index = self.load_and_transform_media_data(index, data_path)
+        else:
+            image, index = self.load_and_transform_media_data(index, ann["image"])
+        if self.use_caption_idx and isinstance(caption, str):
+            return image, caption, caption_to_idx(caption)
+        return image, caption, index
+
     def __getitem__(self, index):
-        try:
-            ann = self.get_anno(index)
-            caption = self.pre_caption(ann["caption"])
-            if self.crop_img:
-                data_path = {"image":ann["image"], "crop_bbox":ann["crop_bbox"]}
-                image, index = self.load_and_transform_media_data(index, data_path)
-            else:
-                image, index = self.load_and_transform_media_data(index, ann["image"])
-            if self.use_caption_idx and isinstance(caption, str):
-                return image, caption, caption_to_idx(caption)
-            return image, caption, index
-        except Exception as e:
-            logger.warning(f"Caught exception {e} when loading image {ann}")
-            print(e)
-            index = np.random.randint(0, len(self))
-            return self.__getitem__(index)
+        return retry_load_item(self, index)
 
 
 class VidTxtPtTrainDataset(ImgTxtPtTrainDataset):
@@ -291,33 +351,25 @@ class VidTxtPtTrainDataset(ImgTxtPtTrainDataset):
         
         return anno
 
-    def __getitem__(self, index):
-        try:
-            ann = self.get_anno(index)
-            caption = self.pre_caption(ann["caption"])
-            
-            if self.read_clip_from_video:
-                data_path = {
-                    "video": ann["video"],
-                    "video_start_frame": ann["video_start_frame"],
-                    "video_end_frame": ann["video_end_frame"],
-                    "read_clip_from_video": True
-                }
-            else:
-                data_path = ann["video"]
+    def _load_item(self, index):
+        ann = self.get_anno(index)
+        caption = self.pre_caption(ann["caption"])
 
-            video, index = self.load_and_transform_media_data(index, data_path)
+        if self.read_clip_from_video:
+            data_path = {
+                "video": ann["video"],
+                "video_start_frame": ann["video_start_frame"],
+                "video_end_frame": ann["video_end_frame"],
+                "read_clip_from_video": True
+            }
+        else:
+            data_path = ann["video"]
 
-            if self.use_caption_idx and isinstance(caption, str):
-                return video, caption, caption_to_idx(caption)
-            return video, caption, index
-        
-        except Exception as e:
-            logger.warning(f"Caught exception {e} when loading video {ann}")
-            # raise e
-            print(e)
-            index = np.random.randint(0, len(self))
-            return self.__getitem__(index)
+        video, index = self.load_and_transform_media_data(index, data_path)
+
+        if self.use_caption_idx and isinstance(caption, str):
+            return video, caption, caption_to_idx(caption)
+        return video, caption, index
 
 
 class AudioVidTxtPtTrainDataset(VidTxtPtTrainDataset):
@@ -347,8 +399,6 @@ class AudioVidTxtPtTrainDataset(VidTxtPtTrainDataset):
         self.read_audio_from_video = ann_file.get("read_audio_from_video", False)
         self.zero_audio_padding_for_video = ann_file.get("zero_audio_padding_for_video", False)
 
-        self.now_tries = 0
-
     def get_anno(self, index):
         anno = {"caption": self.get_caption(index)}
         anno["video"] = self.data_root_prefix + os.path.join(self.data_root, self.anno[index]["video"])
@@ -364,45 +414,31 @@ class AudioVidTxtPtTrainDataset(VidTxtPtTrainDataset):
         
         return anno
 
-    def __getitem__(self, index):
-        try:
-            ann = self.get_anno(index)
-            caption = self.pre_caption(ann["caption"])
-            data_path = {'video': ann["video"]}
+    def _load_item(self, index):
+        ann = self.get_anno(index)
+        caption = self.pre_caption(ann["caption"])
+        data_path = {'video': ann["video"]}
 
-            if self.read_clip_from_video:
-                data_path["video_start_frame"] = ann["video_start_frame"]
-                data_path["video_end_frame"] = ann["video_end_frame"]
-            
-            if "audio" in ann.keys():
-                data_path["read_audio_from_video"] = False
-                data_path["audio"] = ann["audio"]
-            else:
-                data_path["read_audio_from_video"] = self.read_audio_from_video
+        if self.read_clip_from_video:
+            data_path["video_start_frame"] = ann["video_start_frame"]
+            data_path["video_end_frame"] = ann["video_end_frame"]
 
-            data_path["read_clip_from_video"] = self.read_clip_from_video
-            
-            media, index = self.load_and_transform_media_data(index, data_path)
-            self.now_tries = 0 
+        if "audio" in ann.keys():
+            data_path["read_audio_from_video"] = False
+            data_path["audio"] = ann["audio"]
+        else:
+            data_path["read_audio_from_video"] = self.read_audio_from_video
 
-            audio = media[0]
-            if audio is None and self.zero_audio_padding_for_video:
-                logger.warning(f"No audio in {data_path}")
-                media[0] = torch.zeros((998, 64), dtype=torch.float32)
+        data_path["read_clip_from_video"] = self.read_clip_from_video
 
-            return media, caption, index
-        
-        except Exception as e:
-            # print(e)
-            if self.num_tries < self.now_tries:
-                raise e
-            else:
-                self.now_tries += 1
-            logger.warning(f"Caught exception {e} when loading audio-video {ann}")
-            # logger.warning(f"Caught exception when loading audio-video {ann['video']}")
-            
-            index = np.random.randint(0, len(self))
-            return self.__getitem__(index)
+        media, index = self.load_and_transform_media_data(index, data_path)
+
+        audio = media[0]
+        if audio is None and self.zero_audio_padding_for_video:
+            logger.warning(f"No audio in {data_path}")
+            media[0] = torch.zeros((998, 64), dtype=torch.float32)
+
+        return media, caption, index
 
 
 class AudioTxtPtTrainDataset(BaseDataset):
@@ -539,14 +575,11 @@ class AudioTxtPtTrainDataset(BaseDataset):
         else:
             raise NotImplementedError(caption)
         
+    def _load_item(self, index):
+        ann = self.get_anno(index)
+        caption = self.pre_caption(ann["caption"])
+        audio, index = self.load_and_transform_media_data(index, ann["audio"])
+        return audio, caption, index
+
     def __getitem__(self, index):
-        try:
-            ann = self.get_anno(index)
-            caption = self.pre_caption(ann["caption"])
-            audio, index = self.load_and_transform_media_data(index, ann["audio"])
-            return audio, caption, index
-        except Exception as e:
-            logger.warning(f"Caught exception {e} when loading audio {ann}")
-            print(e)
-            index = np.random.randint(0, len(self))
-            return self.__getitem__(index)
+        return retry_load_item(self, index)

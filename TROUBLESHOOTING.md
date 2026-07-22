@@ -1594,3 +1594,86 @@ python -c "import json;print([e['video'] for e in json.load(open('anno_downstrea
 「§3 B0 五个评测全部失败」一节的 §4 更正);若文件在、只是命名不同,
 那就是 `--out` 的字段命名和 anno 的 `video` 字段没对齐,重建软链/改名即可,
 **不必重抓**。
+
+---
+
+## Training dies with `RecursionError: maximum recursion depth exceeded` on one rank
+
+**Symptom** — thousands of `No such file or directory` lines, then:
+
+```
+maximum recursion depth exceeded in comparison
+maximum recursion depth exceeded while calling a Python object
+maximum recursion depth exceeded in __instancecheck__
+```
+
+```
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError:
+  rank : 5 (local_rank: 5)  exitcode : 1
+```
+
+**Read this failure backwards.** Two things mislead:
+
+- **The `RecursionError` is not the bug.** It is what the retry path does when
+  *every* sample fails. The real message is the flood above it, which names a
+  file that is not on disk.
+- **Rank 5 is not special.** It is just the first stack to blow; the others were
+  killed by torchrun (`Sending process ... closing signal SIGTERM`). Nothing about
+  rank 5, GPU 5, or its data shard is implicated.
+
+### Cause: a corpus whose videos are not on disk
+
+If the failing paths look like `data/video_sample/InternVId-FLT_<N>/`, that is the
+**full 11-shard** `internvid_v*` / `internvid_all` corpus. Why those shards are
+missing on this machine, and what to check, is already covered above in
+「§3 B0 五个评测全部失败」一节的「连带影响:§4 的 InternVid 训练视频**一个都不在**」
+与「§4 线索:`InternVId-FLT_1` 的目录已存在但抓取没完成」两节。
+
+The trap worth stating separately: **the pilot and the full corpus use different
+`data_root`s**, so a green smoke test on the pilot says nothing about a
+full-corpus config finding its data.
+
+| corpus | `data_root` |
+|---|---|
+| `internvid_v{1..11}`, `internvid_all` | `data/video_sample/InternVId-FLT_<N>` |
+| `internvid_zh_10k_pilot`, `..._val` | `data/internvid_zh_10k/videos` |
+
+The full-corpus configs are `experiments/configs/r1_both.py` and
+`experiments/configs/r1a_sigmoid.py` (both iterate `available_corpus["internvid_all"]`);
+the pilot ones are `pilot_10k_r0.py` / `pilot_10k_r1.py`. Preflight either way:
+
+```bash
+python experiments/check_readiness.py      # --decode also tries decoding 1 file/corpus
+```
+
+### Why it surfaced as `RecursionError` instead of a clear error
+
+`VidTxtPtTrainDataset.__getitem__` handled a bad sample by picking a random new
+index and **recursing into itself**, with no bound. `num_tries` was stored on the
+dataset but only ever checked by `AudioVidTxtPtTrainDataset`; the plain
+image / video / audio datasets ignored it. Fine for a handful of corrupt files;
+with 100 % missing it recursed until the interpreter's stack limit.
+
+Fixed — all four pretraining datasets now go through `retry_load_item()` in
+`dataset/pt_dataset.py`: a **bounded loop** that then raises a message naming the
+file and pointing at `check_readiness.py`.
+
+The bound is `max(num_tries, MIN_LOAD_RETRIES)` with `MIN_LOAD_RETRIES = 50`, and
+the floor is the point. InternVid has permanent YouTube attrition, so a *healthy*
+corpus still has some fraction `p` of dead links, and the chance one sample
+exhausts n retries is ~`p^(n+1)`. Honouring the config default of `num_tries = 3`
+would mean 1e-4 (p=0.1) to 8e-3 (p=0.3) per sample — **5 to 445 spurious crashes
+per 55k-sample epoch**, which is worse than the recursion it replaced. At n=50 the
+same figures are 1e-51 and 2e-27: random attrition never trips it, while a
+fully-missing corpus still fails after 51 quick attempts. Covered by
+`tests/test_dataset_retry.py` (including a 30 %-attrition case).
+
+On old code you get `RecursionError`; after `git pull` the same data problem names
+the missing path directly.
+
+> Two smaller things went with it: the handlers logged `{ann}`, which is assigned
+> *inside* the `try` — had `get_anno()` itself thrown, the handler would have died
+> with `UnboundLocalError` while reporting the original error (it never fired,
+> since `get_anno()` is pure string joining). And the stray `print(e)` alongside
+> the logger, which is what interleaved bare `Error reading ...mp4` lines into the
+> flood, is gone.

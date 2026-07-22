@@ -182,6 +182,19 @@ torchrun --nproc_per_node=1 --master_port=$((10000 + RANDOM % 20000)) \
 
 ## 4. Training (pretraining)
 
+**Preflight — run this before every pretraining launch, not just the first:**
+```bash
+python experiments/check_readiness.py            # add --decode to also try decoding 1 file/corpus
+```
+
+Cheap, and it catches the failure that costs the most time: a config pointing at
+videos that are not on disk. Note the pilot and the full corpus use **different**
+`data_root`s (`data/internvid_zh_10k/videos` vs `data/video_sample/InternVId-FLT_<N>`),
+so a green smoke test on `pilot_10k_r0.py` does *not* mean a full-corpus config
+will find its data. Skipping this yields a multi-thousand-line flood of
+`No such file or directory` ending in `RecursionError` — see
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md#training-dies-with-recursionerror-maximum-recursion-depth-exceeded-on-one-rank).
+
 General form:
 ```bash
 bash scripts/pretraining/clip/mobileviclip_<tiny|small>/run.sh
