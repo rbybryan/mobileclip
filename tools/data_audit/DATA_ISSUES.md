@@ -25,7 +25,7 @@
 | **S2 VLM 审核** | ✅ 完成（2026-07-22） | `s2_verdicts.*.jsonl` | 10k 全覆盖，8 分片各 1250 条，无中断 |
 | **S2 判定体检** | ✅ 完成（2026-07-22） | `s2_health.md` | 机械层面全过（10000/10000 可用、失败 0、六字段 100%）。**但 §6 坐实：三个分数是同一个数复制三份（逐条同值 92.5%），`action` 是该数上的固定阶梯 → 见 §2 问题 8，`retranslate` 41.2% 不是翻译证据** |
 | **S2 翻译重判**（文本-only） | ⬜ **未开始 —— 当前关键路径** | `s2_trans.*.jsonl` | `run_v100.sh s2-trans`。修问题 8：不给帧、先证据后打分。**不解码视频，比 s2 快得多**。跑完 `xling-check` 自动优先用它 |
-| S2 裁判 | 🟡 改在中转机跑 | `s2_verdicts_judge.jsonl` | 走内网 `Qwen3.6-27B`（**✅ 已确认多模态**）。**101vector 和 H100 都连不上端点**，改到 7 卡 V100 `10.55.87.68` 上跑（该机可访问 b100 存储）——三项前提待测，见 §4 决策 2b。主力/裁判分工见 [`SETUP_V100.md`](SETUP_V100.md) §4.2–4.3 |
+| S2 裁判 | 🟡 改在中转机跑 | `s2_verdicts_judge.jsonl` | 走内网 `Qwen3.6-27B`（**✅ 已确认多模态**）。**101vector 和 H100 都连不上端点**，改到 7 卡 V100 `10.55.87.68` 上跑。端点连通/环境/`CLIPS` 均已落定，**待跑视频预检→冒烟→500 条**，见 §4 决策 2b。主力/裁判分工见 [`SETUP_V100.md`](SETUP_V100.md) §4.2–4.3 |
 | S2 人工抽检 300 | ⬜ 未开始 | `human_check_300.jsonl` | 在 §6 Gradio 里过 |
 | **xling 阈值裁决** | ⬜ 未开始（工具已就位） | `xling_calibration.md` | `run_v100.sh xling-check`，**S2 一完成就跑，裁决 §4 决策 1** |
 | S3 校准 + 分桶 | ⬜ 未开始 | `report.md` / `buckets.jsonl` | **开跑前先解决 §4 的两个待决策** |
@@ -291,11 +291,12 @@ vLLM 端点，模型均为 `Qwen3.6-27B`（`172.30.85.198:8000`、`172.30.62.177
 - ❌ **101vector 连不上端点**（2026-07 实测）——`172.30.x.x` 与 `10.235.31.101` 不同网段。
 - ❌ **H100 也连不上端点**（2026-07 实测）。
 - 🔄 **当前方案：在 7 卡 V100 `root@10.55.87.68 -p 31179` 上跑裁判**。
-  已确认该机**能访问 `/workspace/mount/b100_zaip_data` 存储**，而端点的模型权重
-  与全量语料都在该挂载下，所以它多半在 B100 网内。附带好处：10k 记录保留
-  `abs_path`（`resolve_video_path` 第三候选），**很可能不用拷视频，
-  只需搬一个 500 行的 `s2_judge_sample.jsonl`**。环境也轻——`vlm_audit.py`
-  只要 `requests/numpy/pillow/decord`，**不需要 torch、不占 GPU**。
+  该机能访问 `/workspace/mount/b100_zaip_data`（端点的模型权重在该挂载下），
+  且**同一份 10k 子集也在其中**，所以 `CLIPS` 指到它即可、**不用拷视频**，
+  只需搬一个 500 行的 `s2_judge_sample.jsonl`。环境也轻——`vlm_audit.py`
+  只要 `requests/numpy/pillow` ＋ 任一视频后端，**不需要 torch、不占 GPU**。
+  ⚠️ 全量语料**不在**该挂载（在 `b100_zaip_data_luan`，中转机不可达）；
+  「靠 `abs_path` 直接打开」的设想**实测不成立**。
   **逐条命令见 [`SETUP_JUDGE_RELAY.md`](SETUP_JUDGE_RELAY.md)**（选型理由见
   [`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0 路线 A′）。
 
