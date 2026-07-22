@@ -495,6 +495,26 @@ if gn:
                 err += 1
             else:
                 c[v["n_info"]] += 1
+    # n_info 是模型自报的总数，但五个列表也在 JSON 里——两者对不上就说明它没在数，
+    # 而是凭印象填了个数。重算一遍（列表长度之和）才知道该信哪个。
+    rc, agree, zero_but_listed, zero_total = Counter(), 0, 0, 0
+    LISTS = ("subjects", "actions", "scenes", "attributes", "temporal")
+    for f in glob.glob(os.path.join(OUT, "s2_gran.*.jsonl")):
+        for line in open(f, encoding="utf-8", errors="ignore"):
+            try:
+                v = (json.loads(line).get("verdict") or {})
+            except json.JSONDecodeError:
+                continue
+            if v.get("n_info") is None:
+                continue
+            k = sum(len(v.get(x) or []) for x in LISTS if isinstance(v.get(x), list))
+            rc[k] += 1
+            if k == v["n_info"]:
+                agree += 1
+            if v["n_info"] == 0:
+                zero_total += 1
+                if k > 0:
+                    zero_but_listed += 1
     print(f"## 粒度重判 n_info 分布（{sum(c.values()):,} 条可用，失败 {err}）\n")
     if c:
         tt = sum(c.values())
@@ -540,10 +560,35 @@ if gn:
                         break
                 if len(ex) >= 6:
                     break
-            print(f"\n- ⚠️ **`n_info=0` 占 {z/tt:.1%}** —— 字幕零信息点本不该这么多，"
-                  "要么原字幕真的是空/无意义，要么是模型在这批上没按 rubric 走。样例：")
+            print(f"\n- ⚠️ **`n_info=0` 占 {z/tt:.1%}** —— 字幕零信息点本不该这么多。样例原字幕：")
             for t in ex:
                 print(f"  - `{t[:60]}`")
+        # 自报 vs 重算：区分"没在数"（列表也空）和"数错了"（列了却报 0）
+        rt = sum(rc.values())
+        if rt:
+            print(f"\n### 自报 `n_info` vs 按列表重算\n")
+            print(f"- 两者一致：**{agree:,} / {rt:,} = {agree/rt:.1%}**")
+            if zero_total:
+                r0 = zero_but_listed / zero_total
+                print(f"- 自报 0 的 {zero_total:,} 条里，列表其实非空的有 "
+                      f"**{zero_but_listed:,}（{r0:.1%}）**")
+                if r0 > 0.5:
+                    print("  → 主要是**算术错**（列了却报 0）：直接按列表重算即可救回，不必重跑")
+                elif r0 < 0.1:
+                    print("  → 模型**确实什么都没列出来**：这是判断失败，重算救不回。"
+                          "先人工看几条原字幕——若字幕本身明显有信息点，说明该批 prompt "
+                          "没生效（多半是静态/截图类内容触发了模型的某种拒答），需改 prompt 重跑")
+                else:
+                    print("  → 两种失败模式都有：能重算的先重算，剩下的按判断失败处理")
+            ks2 = sorted(rc)
+            print("\n| 重算 n_info | " + " | ".join(str(k) for k in ks2) + " |")
+            print("|---" * (len(ks2) + 1) + "|")
+            print("| 条数 | " + " | ".join(f"{rc[k]:,}" for k in ks2) + " |")
+            co2 = sum(v for k, v in rc.items() if k <= 2)
+            ad2 = sum(v for k, v in rc.items() if k in (3, 4))
+            de2 = sum(v for k, v in rc.items() if k >= 5)
+            print(f"\n- **按重算分档：≤2 粗 {co2/rt:.1%}｜3–4 中 {ad2/rt:.1%}｜"
+                  f"≥5 密 {de2/rt:.1%}**　← 与自报分档不同就以**这一版**为准")
     print()
 
 print("## 人工抽检表")
