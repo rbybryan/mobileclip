@@ -71,21 +71,34 @@ VERDICT_KEYS = {"video_readable", "en_score", "zh_score", "trans_score", "action
 
 
 def resolve_video_path(video_root, rec, video):
-    """video_root/<video> -> video_root/<InternVId-... suffix of abs_path> ->
-    raw abs_path; first existing wins (else first candidate)."""
+    """First existing of:
+      1. video_root/<video>
+      2. video_root/<InternVId-... suffix of video>    (drops a host-specific
+         prefix such as "videos/" that does not exist on another machine)
+      3. video_root/<InternVId-... suffix of abs_path>
+      4. raw abs_path
+    else candidate 1, so the error message still shows what was tried."""
     cands = []
     if video:
         cands.append(os.path.join(video_root, str(video)))
+        m = re.search(r"InternVId[^/]*/.*", str(video))
+        if m:
+            cands.append(os.path.join(video_root, m.group(0)))
     ap = rec.get("abs_path")
     if ap:
         m = re.search(r"InternVId[^/]*/.*", str(ap))
         if m:
             cands.append(os.path.join(video_root, m.group(0)))
         cands.append(str(ap))
-    for c in cands:
+    seen, uniq = set(), []
+    for c in cands:                      # 2 and 3 collide when video==abs_path tail
+        if c not in seen:
+            seen.add(c)
+            uniq.append(c)
+    for c in uniq:
         if os.path.exists(c):
             return c
-    return cands[0] if cands else ""
+    return uniq[0] if uniq else ""
 
 
 _FRAME_BACKEND = None  # resolved once, reported so the choice is visible in logs
