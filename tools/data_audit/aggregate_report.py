@@ -220,7 +220,7 @@ def main():
 
     bucket_counter = Counter()
     n = 0
-    n_trans_labeled = n_trans_proxy = 0
+    n_trans_labeled = n_trans_proxy = n_flag_vs_label = 0
     with open(args.out_buckets, "w", encoding="utf-8") as fout:
         for rec in iter_jsonl(score_files):
             v = rec.get("video")
@@ -230,6 +230,11 @@ def main():
             n += 1
             fl = set(flags_by_video.get(v, []))
             reasons = []
+            # 真标签说"翻译没问题"、S0 旗标却说"该重翻"——这批正是
+            # untranslated 0.3% vs S0 语言污染 3.3% 那个 10x 缺口的人群
+            if trans_scores.get(v) is not None and trans_scores[v] > 2 \
+                    and (fl & RETRANSLATE_FLAGS):
+                n_flag_vs_label += 1
             if rec.get("error") or fl & DROP_FLAGS:
                 bucket = "DROP"
                 reasons = ([rec["error"]] if rec.get("error") else []) + \
@@ -249,12 +254,16 @@ def main():
                 bucket = "RETRANSLATE"
                 reasons = [f"trans_score={trans_scores[v]}(text-only)"]
                 n_trans_labeled += 1
-            elif (fl & RETRANSLATE_FLAGS) or \
-                    (rec.get("xling_cos") is not None
-                     and rec["xling_cos"] < args.xling_threshold):
-                # No measured label for this record (full-corpus run): fall back
-                # to the weak proxy, but count it so the report can say how much
-                # of the bucket rests on a 6.6%-precision detector.
+            elif v not in trans_scores and \
+                    ((fl & RETRANSLATE_FLAGS)
+                     or (rec.get("xling_cos") is not None
+                         and rec["xling_cos"] < args.xling_threshold)):
+                # Only records with NO measured label fall back to the proxy.
+                # A record the text-only pass scored >=2 has been *measured* to
+                # translate fine; letting a 6.6%-precision flag overrule that
+                # would be preferring the proxy to the ground truth it was
+                # validated against. (This is what inflated RETRANSLATE from
+                # 333 to 628 on the first labelled run.)
                 if trans_scores:
                     n_trans_proxy += 1
                 bucket = "RETRANSLATE"
@@ -325,6 +334,15 @@ def main():
                          "且漏掉约 93% 的真实翻译错误**。这部分**不能当作翻译问题率**，"
                          "全量跑想要真标签就得把 `--mode trans` 跑到全量"
                          "（不解码视频，比主力档便宜得多）。")
+    if n_flag_vs_label:
+        lines.append(f"\n> 🔎 另有 **{n_flag_vs_label:,}** 条：**文本-only 实测说翻译没问题"
+                     f"（`trans_score≥3`），但命中了 S0 的 RETRANSLATE 旗标**。"
+                     "已按真标签处理（**不**进 RETRANSLATE），但这批人正是"
+                     "「`untranslated` 仅 0.3% vs S0 语言污染 3.3%」那个 **10× 缺口**的所在——"
+                     "**它还没有结论**，建议人工抽十几条看看到底谁对："
+                     "S0 可能把「中英混杂但主体已翻」也算成了污染，"
+                     "也可能是文本-only rubric 对残留英文不够敏感。"
+                     "见 `notes/audit-10k-findings.md` 结论 11。")
     if calib:
         lines.append("\n## VLM 审核样本（Stage-2）校准\n")
         lines.append(f"- 有效判定数: {calib['n_verdicts']:,}")
