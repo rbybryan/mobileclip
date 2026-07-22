@@ -1435,16 +1435,14 @@ anno 记的是**裸文件名**,所以可以做外科式搜索,比乱翻目录快
 
 ```bash
 cd ~/mobileclip
-python - <<'PY'
-import json
-d = json.load(open("anno_downstream/hmdb51_act_test.json"))
-print("anno 条数:", len(d))
-for e in d[:3]:
-    print("  ", e["video"])
-PY
-# 用上面任意一个文件名(整串,含扩展名)全盘找:
-find ~ /home/vca1 -name '<粘贴那个文件名>' 2>/dev/null
+ANNO=anno_downstream/hmdb51_act_test.json       # 换成任何数据集的 anno 即可
+NAME=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))[0]['video'])" "$ANNO")
+echo "找这个文件:$NAME"
+find ~ /home/vca1 -name "$NAME" 2>/dev/null
 ```
+
+找到后,`data_root` 就是**该文件所在目录**(分类数据集是平铺的,检索数据集同理);
+把它对上 `configs/data.py` 里那一行,或用 `MVC_DATA_DIR` / 软链接过去即可。
 
 找不到单个文件时,按目录聚合统计**视频文件都堆在哪**,一眼看出数据集位置:
 
