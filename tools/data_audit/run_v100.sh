@@ -11,6 +11,9 @@
 #   bash tools/data_audit/run_v100.sh status     # 随时看 S1/S2 进度
 #   bash tools/data_audit/run_v100.sh s2-sample  # ④ 抽样（默认参数在 10k 上=全覆盖）
 #   bash tools/data_audit/run_v100.sh s2         # ⑤ 8 卡 VLM 审核全部 10k（HF 后端，~2–3h）
+#   bash tools/data_audit/run_v100.sh s2-check   # ⑤b S2 判定体检 -> s2_health.md（秒级，S2 跑完必做）
+#   bash tools/data_audit/run_v100.sh s2-trans   # ⑤c 文本-only 翻译重判（修 halo；不解码视频，比 s2 快）
+#   bash tools/data_audit/run_v100.sh trans-check # ⑤d 重判体检（可中途跑：早判修复有没有生效）
 #   JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge  # ⑥ 云端裁判（可选，需 API key）
 #   bash tools/data_audit/run_v100.sh judge-agree # ⑥b 一致率+Cohen's κ（可对外来裁判文件独立重算）
 #   bash tools/data_audit/run_v100.sh xling-check # ⑥c 裁决 xling 阈值（s3 前必做）
@@ -80,6 +83,7 @@ expected_total() { wc -l < "$DATA"; }
 # 整条管道判 1，再被 set -e 杀掉整个脚本（症状：status 一行都不输出就退出）
 s1_lines() { { cat "$OUT"/s1_scores.*.jsonl 2>/dev/null || true; } | wc -l; }
 s2_lines() { { cat "$OUT"/s2_verdicts.*.jsonl 2>/dev/null || true; } | wc -l; }
+trans_lines() { { cat "$OUT"/s2_trans.*.jsonl 2>/dev/null || true; } | wc -l; }
 
 case "${1:-}" in
 # ---------------------------------------------------------------- ① 冒烟
@@ -188,6 +192,11 @@ status)
     echo "---- S2 各分片已写行数（每审完 1 条实时 +1；V100 单条约 20–60s）----"
     for f in "$OUT"/s2_verdicts.*.jsonl; do echo "  $(wc -l < "$f")  $f"; done
   fi
+  if ls "$OUT"/s2_trans.*.jsonl >/dev/null 2>&1; then
+    tr_alive=$(pgrep -fc "vlm_audit_hf.py.*--mode trans" || true)
+    echo "---- S2-trans（文本-only 翻译重判）: $(trans_lines) / $s2t  存活进程: $tr_alive ----"
+    echo "  体检（可中途跑，早发现修复没生效就不用等）: bash $0 trans-check"
+  fi
   echo "---- 各分片日志尾行 ----"
   tail -n 1 "$OUT"/s1_shard*.log "$OUT"/s2_shard*.log 2>/dev/null || true
   ;;
@@ -221,6 +230,55 @@ s2)
     echo "shard $i -> GPU$i (log: $OUT/s2_shard$i.log)"
   done
   echo "已后台启动（可续跑）。进度: bash $0 status"
+  echo "跑完后先做体检再进下一步: bash $0 s2-check"
+  ;;
+# --------------------------------- ⑤c 文本-only 翻译重判（修 halo，见 DATA_ISSUES 问题 8）
+s2-trans)
+  need_py
+  [ -f "$OUT/s2_sample.jsonl" ] || { echo "先跑 s2-sample"; exit 1; }
+  echo "[model] S2_MODEL=$S2_MODEL （文本模式：不读视频、不解码、不看帧）"
+  for i in $(seq 0 $((NGPU-1))); do
+    CUDA_VISIBLE_DEVICES=$i nohup python tools/data_audit/vlm_audit_hf.py \
+      --input "$OUT/s2_sample.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
+      --mode trans --num-shards "$NGPU" --shard-id "$i" \
+      --max-new-tokens "${TRANS_MAX_TOKENS:-512}" \
+      --output "$OUT/s2_trans.{shard}.jsonl" \
+      > "$OUT/s2_trans_shard$i.log" 2>&1 &
+    echo "shard $i -> GPU$i (log: $OUT/s2_trans_shard$i.log)"
+  done
+  echo "已后台启动（可续跑）。比 s2 快得多：S2 的瓶颈是视频解码，这一趟完全不解码。"
+  echo "进度: for f in $OUT/s2_trans.*.jsonl; do wc -l \$f; done"
+  echo "跑完后: bash $0 xling-check   # 会自动优先用 s2_trans.*.jsonl"
+  echo "中途随时: bash $0 trans-check # 早判修复有没有生效，没生效就别等它跑完"
+  ;;
+# ------------------------------- ⑤d 重判体检（可中途跑：修复没生效就不必等跑完）
+trans-check)
+  ls "$OUT"/s2_trans.*.jsonl >/dev/null 2>&1 || \
+    { echo "未找到 $OUT/s2_trans.*.jsonl（先跑: bash $0 s2-trans）"; exit 1; }
+  # 用数组传参：`--main $OUT/s2_verdicts.*.jsonl` 不加引号会被 shell 展开成 8 个
+  # 文件名，argparse 只收第一个、其余全变成 unrecognized arguments。
+  TC_ARGS=(--trans "$OUT/s2_trans.*.jsonl")
+  ls "$OUT"/s2_verdicts.*.jsonl >/dev/null 2>&1 && \
+    TC_ARGS+=(--main "$OUT/s2_verdicts.*.jsonl")
+  [ -f "$OUT/s2_sample.jsonl" ] && TC_ARGS+=(--sample "$OUT/s2_sample.jsonl")
+  python3 tools/data_audit/check_trans.py "${TC_ARGS[@]}" \
+    --out-md "$OUT/trans_health.md" || {
+      echo; echo "== 重判体检未通过：先看上方结论，别把它喂给 xling-check =="; exit 1; }
+  ;;
+# ------------------------------------------------- ⑤b S2 判定体检（S2 跑完必做）
+s2-check)
+  # 纯 stdlib，不需要 numpy/torch——没激活虚拟环境也能跑
+  ls "$OUT"/s2_verdicts.*.jsonl >/dev/null 2>&1 || \
+    { echo "未找到 $OUT/s2_verdicts.*.jsonl（先跑: bash $0 s2）"; exit 1; }
+  SC_ARGS=(--verdicts "$OUT/s2_verdicts.*.jsonl")
+  [ -f "$OUT/s2_sample.jsonl" ] && SC_ARGS+=(--sample "$OUT/s2_sample.jsonl")
+  python3 tools/data_audit/check_s2.py "${SC_ARGS[@]}" \
+    --out-md "$OUT/s2_health.md" || {
+      echo
+      echo "== 体检未通过（详见上方「结论」与 $OUT/s2_health.md）：先处理再跑 xling-check/s3 =="
+      exit 1; }
+  echo
+  echo "== 体检通过。下一步: bash $0 xling-check（裁决决策 1，阻塞 s3） =="
   ;;
 # ---------------------------------------------------------------- ⑥ 云端裁判（可选）
 s2-judge)
@@ -250,10 +308,34 @@ xling-check)
   python -c 'import numpy' 2>/dev/null || {
     echo "错误：当前 Python（$(command -v python)）缺 numpy。"
     echo "  多半是没激活虚拟环境：source ~/audit_env/bin/activate"; exit 1; }
-  ls "$OUT"/s2_verdicts.*.jsonl >/dev/null 2>&1 || \
+  # 优先用文本-only 重判的 trans_score：主力档的 trans_score 与 en_score 92.5%
+  # 逐条同值（halo，DATA_ISSUES.md 问题 8），拿它算差率是自证循环。
+  if ls "$OUT"/s2_trans.*.jsonl >/dev/null 2>&1; then
+    XV="$OUT/s2_trans.*.jsonl"
+    echo "[xling-check] 用文本-only 重判的 trans_score（s2_trans.*.jsonl）—— 独立测量，可信"
+    # 别在半成品上校准：s2-trans 是后台 8 分片，刚起步时只有几十条
+    if [ -f "$OUT/s2_sample.jsonl" ]; then
+      have=$(trans_lines); want=$(wc -l < "$OUT/s2_sample.jsonl")
+      alive=$(pgrep -fc "vlm_audit_hf.py.*--mode trans" || true)
+      if [ "$have" -lt "$(( want * 95 / 100 ))" ]; then
+        echo "⚠️ s2-trans 才写了 $have / $want 条（$(python3 -c "print(f'{$have/$want:.1%}')")）——**还没跑完**。"
+        echo "   在半成品上校准出来的阈值没有意义。存活进程: $alive"
+        [ "$alive" -gt 0 ] && echo "   还在跑，等着就行： bash $0 status" \
+                           || echo "   ⛔ 进程已退出且未跑完：查 $OUT/s2_trans_shard*.log 的 Traceback，重跑 s2-trans 可续跑"
+        echo "   想先看修复有没有生效： bash $0 trans-check"
+        exit 1
+      fi
+    fi
+  else
+    XV="$OUT/s2_verdicts.*.jsonl"
+    echo "⚠️ [xling-check] 未找到 $OUT/s2_trans.*.jsonl，退回主力档 s2_verdicts.*.jsonl。"
+    echo "   主力档的 trans_score 与 en_score 92.5% 逐条同值（halo，见 DATA_ISSUES.md 问题 8），"
+    echo "   **本次输出只能当参考，不足以裁决决策 1** —— 先跑: bash $0 s2-trans"
+  fi
+  ls $XV >/dev/null 2>&1 || \
     { echo "未找到 $OUT/s2_verdicts.*.jsonl（先跑完: bash $0 s2）"; exit 1; }
   python tools/data_audit/calibrate_xling.py \
-    --verdicts "$OUT/s2_verdicts.*.jsonl" --scores "$OUT/s1_scores.*.jsonl" \
+    --verdicts "$XV" --scores "$OUT/s1_scores.*.jsonl" \
     --target-precision "${TARGET_PRECISION:-0.8}" \
     --out-md "$OUT/xling_calibration.md"
   echo
@@ -261,9 +343,20 @@ xling-check)
   ;;
 # ---------------------------------------------------------------- ⑦ 报告
 s3)
-  python tools/data_audit/aggregate_report.py \
-    --scores "$OUT/s1_scores.*.jsonl" --flags "$OUT/s0_flags.jsonl" \
-    --verdicts "$OUT/s2_verdicts.*.jsonl" --target-precision 0.8 \
+  # 决策 1 已裁决（2026-07-22）：xling_cos 退出分桶规则。实测 ρ=-0.031、
+  # lift 1.34×，默认 0.7 的精度 4.8%（基准 3.6%）= 95.2% 误伤，且会抢在
+  # sig_zh 的 RECAPTION 判断之前把 21.1% 的语料钉死。详见 DATA_ISSUES.md 决策 1。
+  # 想复现旧行为：XLING_THRESHOLD=0.7 bash run_v100.sh s3
+  S3_ARGS=(--scores "$OUT/s1_scores.*.jsonl" --flags "$OUT/s0_flags.jsonl"
+           --verdicts "$OUT/s2_verdicts.*.jsonl"
+           --target-precision "${TARGET_PRECISION:-0.8}"
+           --xling-threshold "${XLING_THRESHOLD:-0}")
+  # 有文本-only 重判就用它算「翻译差率」——合并 rubric 那一列实为整体质量分的
+  # 复制品（DATA_ISSUES.md 问题 8），会把 3.6% 的真实差率报成 19.6%。
+  ls "$OUT"/s2_trans.*.jsonl >/dev/null 2>&1 && \
+    S3_ARGS+=(--trans-verdicts "$OUT/s2_trans.*.jsonl")
+  [ -n "${SIG_ZH_THRESHOLD:-}" ] && S3_ARGS+=(--sig-zh-threshold "$SIG_ZH_THRESHOLD")
+  python tools/data_audit/aggregate_report.py "${S3_ARGS[@]}" \
     --out-buckets "$OUT/buckets.jsonl" --out-report "$OUT/report.md"
   echo "== 诊断报告: $OUT/report.md（含问题率外推表；本轮到此为止，不改数据） =="
   ;;

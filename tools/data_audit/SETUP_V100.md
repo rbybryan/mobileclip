@@ -168,30 +168,14 @@ python tools/data_audit/show_flags.py --flags outputs/audit_10k/s0_flags.jsonl \
 **③ S1 + s2-sample 不用等 8B**——SigLIP2/LaBSE 一到就先把 S1 全量
 （10–30 分钟）和 `s2-sample`（全覆盖）跑完；8B 落地后直接开 `s2`。
 
-**④ 裁判链路冒烟（不依赖任何本地权重）**——用 5 条验证 `vlm_audit.py` 完整链路
-（路径解析→抽帧→base64→API→JSON 解析），顺便提前看裁判的判定质量。
-**默认走内网 `Qwen3.6-27B` 端点，不需要任何 API key**（前提是本机连得到
-`172.30.x.x`，见 §4.3-端点）：
+**④ 裁判链路冒烟 —— ⚠️ 本机做不了，已作废。**
+~~从 101vector 直接打内网端点~~：**实测 101vector 连不上 `172.30.x.x`**
+（2026-07，见 §4.3-端点），所以这一步在本机无法进行。
+裁判链路的冒烟改在中转机上做，见
+[`SETUP_JUDGE_RELAY.md`](SETUP_JUDGE_RELAY.md) §5（那边 `--limit 5`，同样 5 条）。
 
-```bash
-python - <<'PY'
-import json
-recs=[json.loads(l) for _,l in zip(range(5), open("/home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl"))]
-with open("outputs/audit_10k/api_smoke.jsonl","w") as f:
-    for r in recs:
-        f.write(json.dumps({"video":r["video"],"abs_path":r.get("abs_path"),
-          "zh":r["raw_caption_zh_translated"],"en":r["caption"]},ensure_ascii=False)+"\n")
-PY
-python tools/data_audit/vlm_audit.py --input outputs/audit_10k/api_smoke.jsonl \
-  --video-root /home/vca1/datasets/internvid_zh_10k/videos \
-  --api-base http://172.30.85.198:8000/v1 --api-key EMPTY \
-  --model /workspace/mount/b100_zaip_data/model_zoo/Qwen3.6-27B \
-  --frames 8 --concurrency 2 \
-  --output outputs/audit_10k/api_smoke_verdicts.jsonl
-cat outputs/audit_10k/api_smoke_verdicts.jsonl
-# 用云端 key 时改回：--api-base https://dashscope.aliyuncs.com/compatible-mode/v1
-#   --api-key $JUDGE_API_KEY --model qwen3-vl-235b-a22b-instruct
-```
+> 仍想在本机验证 `vlm_audit.py` 的**非网络**部分（路径解析→抽帧→base64）时，
+> 指一个本机能连的端点即可；纯粹验证抽帧的话直接看 §4.5 `s2-check` 更省事。
 
 **⑤ Gradio 人工摸底（零权重、零 GPU）**——按 §6 优先翻
 `quality_issue_candidates.jsonl`，频次表与 ② 的观察互相印证。
@@ -378,20 +362,22 @@ wc -l outputs/audit_10k/s2_sample.jsonl        # 应 ≈10000
 bash tools/data_audit/run_v100.sh s2
 bash tools/data_audit/run_v100.sh status
 
-# 4.3 裁判档 —— 当前默认走【内网已有的 Qwen3.6-27B 端点】（无需 API key、
-#     无需下权重、不占本机 GPU，可与 4.2 主力同时跑，只依赖 4.1 抽样完成）
-#     ⚠️ 前提：本机能连到 172.30.x.x（不同网段，必须先实测，见下方 4.3-端点）
-export JUDGE_API_BASE=http://172.30.85.198:8000/v1    # 优先 8 卡端点
-export JUDGE_MODEL=/workspace/mount/b100_zaip_data/model_zoo/Qwen3.6-27B
-export JUDGE_API_KEY=EMPTY                            # vLLM 不校验，但脚本要求非空
-JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge   # 跑完自动算一致率+κ
-# 裁判在别的机器上跑完、只把 s2_verdicts_judge.jsonl 拷回来时，单独重算：
-#   bash tools/data_audit/run_v100.sh judge-agree
+# 4.3 裁判档 —— ⚠️【本机跑不了，别在这台执行 s2-judge】
+#     实测 101vector 连不上内网端点 172.30.x.x（H100 也连不上），
+#     而本机既无云端 key、也装不下 235B。裁判改在 7 卡 V100 中转机
+#     root@10.55.87.68 -p 31179 上跑，逐条命令见 SETUP_JUDGE_RELAY.md。
+#
+#     本机只做最后一步：把中转机产出的 s2_verdicts_judge.jsonl 拷回来后算分
+scp -P 31179 root@10.55.87.68:~/judge/s2_verdicts_judge.jsonl outputs/audit_10k/
+bash tools/data_audit/run_v100.sh judge-agree      # 一致率 + Cohen's κ
 # （其他裁判路线——H100 本地 235B-FP8 / 本机 32B / 无大裁判协议——
 #   全部选型与命令见 SETUP_JUDGE_API.md §0 的路线表）
 
 # 4.4 人工抽检 300 条（在 §6 的 Gradio 里过）
 shuf -n 300 <(cat outputs/audit_10k/s2_verdicts.*.jsonl) > outputs/audit_10k/human_check_300.jsonl
+
+# 4.5 【S2 跑完必做】判定体检——8 个分片都说 "1250 verdicts" 不等于 1250 条判定可用
+bash tools/data_audit/run_v100.sh s2-check     # 秒级，纯 CPU，产出 s2_health.md
 ```
 
 ### 4.2 与 4.3 分别在做什么（一句话：**4.2 给数据打分，4.3 给 4.2 打分**）
@@ -448,6 +434,109 @@ shuf -n 300 <(cat outputs/audit_10k/s2_verdicts.*.jsonl) > outputs/audit_10k/hum
 fp16 若出现乱码/NaN 输出（罕见）：`export S2_MODEL=Qwen/Qwen3-VL-4B-Instruct`
 并在 `vlm_audit_hf.py` 加 `--dtype fp32` 重跑。
 
+### 4.5 S2 完成后体检（秒级，**进 xling-check / S3 之前必做**）
+
+```bash
+bash tools/data_audit/run_v100.sh s2-check      # -> outputs/audit_10k/s2_health.md
+```
+
+**为什么必须单独做这一步**：分片日志的 `[done] shard i: 1250 verdicts` 是**写出的行数**，
+不是**可用判定数**。`vlm_audit_hf.py:160-167` 把每一个异常都兜住并照样写一行，
+写成 `{"verdict": {"error": ...}}`；而下游两个消费者都会**静默丢弃**这些行：
+
+| 位置 | 代码 | 行为 |
+|---|---|---|
+| `aggregate_report.py:72` | `if "error" in v and "action" not in v: continue` | 不计入任何比率 |
+| `calibrate_xling.py:136` | 同一判断，计入 `n_noverdict` | 只在报告脚注里出现一行 |
+
+于是一个在 40% 的片子上失败的分片，在 `status` 里看起来是 100% 完成，
+只是让 `report.md` 变得更安静一点。**`report.md` 里每一个百分比都是在幸存记录上算的，
+而幸存记录不是随机子集**——解码失败集中在坏视频上，JSON 解析失败集中在长/怪 caption 上，
+两者都与「质量差」正相关，丢掉它们会**系统性低估**问题率。
+
+`s2-check` 按「能否让下一步失效」的顺序查五项：
+
+1. **覆盖率** —— 判定行数 vs `s2_sample` 行数、重复 video、漏判 video。
+   （断点续跑重复写入会让同一条被计两次，直接污染分桶比例。）
+2. **失败率与失败原因** —— 拆成 `video_decode` / `json_parse` / `oom` / `other`，
+   因为三者的处置完全不同：解码失败重跑无用（H 类工程问题），
+   JSON 解析失败重跑或缩 prompt 有救，OOM 减 `--frames` 有救。默认门 **失败率 ≤5%**。
+3. **字段完整性** —— 判定能解析、却仍缺 `trans_score` 的情况很常见；
+   下游是 `.get()` 读的，**缺值会被当成「不坏」从而稀释差率**。
+   `trans_score` 覆盖率 <90% 直接判不通过——§4 决策 1 的全部差率都建立在它上面。
+4. **分布塌缩** —— 这是唯一能穿过前三项的失败：能解析、字段齐全、但 95% 都判 `keep`
+   或所有分数都是 3。**S3 的分位校准靠的是判定与嵌入分之间的对比度**，
+   判定没有方差，校准出来的阈值就是噪声。
+5. **各层可用量** —— 抽样是分层的，稀有层（S0 命中、低 xling 尾）本来就小，
+   被失败吃掉之后就报不出该层结论了——而那几层正是 T1/T3 要回答的问题所在。
+6. **维度独立性 + action 自洽性** —— 前五项都过了，判定仍可能是**假的**：
+   - rubric 要求 `trans_score` **只比中英两条文本、不看画面**，与 `en_score`
+     （英文 vs 画面）量的是两回事。若两列**逐条同值率 >60%**，说明模型在照抄
+     而非独立评估——**「翻译坏没坏」这件事根本没被测量过**，而
+     §4 决策 1 的全部差率都建立在它上面（2026-07-22 的 10k 实测触发了这项怀疑：
+     三列分数的逐档计数近乎重合，见 `DATA_ISSUES.md` 问题 8）。
+   - `action` 与自身分数是否矛盾：rubric 用分数模式定义每个 action
+     （`retranslate` = 翻译坏了 = `trans_score` 低）。矛盾意味着
+     **S3 按分数算阈值、`apply_buckets.py` 按 action 分流任务队列，
+     两半流水线在同一批记录上各说各话**——报告里的问题率和实际派下去的
+     任务描述的不是同一件事。10k 实测：`retranslate` 4120 条 vs
+     `trans_score≤2` 仅 1958 条 → **≥52.5% 的 retranslate 自身 `trans_score≥3`**。
+
+脚本**不通过时返回非零**（`run_v100.sh` 会拦住并提示），产出
+`outputs/audit_10k/s2_health.md`。**体检结论要抄进
+[`DATA_ISSUES.md`](DATA_ISSUES.md) §1 状态表**（`outputs/` 是 gitignore 的，
+不落库就随会话丢失）。
+
+### 4.6 文本-only 翻译重判 `s2-trans`（10k 实测触发，**决策 1 的前置**）
+
+```bash
+bash tools/data_audit/run_v100.sh s2-trans      # 8 卡；不解码视频，比 s2 快得多
+bash tools/data_audit/run_v100.sh xling-check   # 自动优先用 s2_trans.*.jsonl
+```
+
+**为什么需要它**：2026-07-22 的 10k 全覆盖跑，机械体检 10000/10000 全过，
+但 §6 查出 `en_score`/`zh_score`/`trans_score` **逐条同值率 92.5%／98.9%**——
+模型只产生了**一个**整体质量分、复制进三个字段，`action` 再按固定阶梯
+（`5→keep, 4→fix_text, 3→retranslate, ≤2→recaption/drop`）由它决定。
+「翻译坏没坏」从未被测量过，而决策 1 的全部差率都建立在 `trans_score` 上。
+完整证据与作废清单见 [`DATA_ISSUES.md`](DATA_ISSUES.md) 问题 8 详解。
+
+**修法为什么是拆调用而不是改措辞**：翻译忠实度本就不需要看视频
+（rubric 原话"仅比较中英两条文本"）。`vlm_audit.py:TRANS_PROMPT` 两处设计：
+
+1. **不给帧** —— `--mode trans` 完全不打开视频文件，锚点从"不鼓励"变成"物理不可得"。
+   附带好处：S2 的真正瓶颈是视频解码，这一趟没有解码，**快得多**。
+2. **先证据后打分** —— 必须先逐条列出 `mismatches`，评分规则再锁死在该列表上
+   （"mismatches 为空则必须给 5"），分数无法作为整体印象浮空输出。
+
+产物 `s2_trans.*.jsonl` 与 `calibrate_xling.py` 直接兼容（同样的 `s1` 透传 +
+`trans_score`），`xling-check` 会自动优先用它；找不到时退回主力档并打印警告，
+**没跑完（<95%）时直接拒绝**——在半成品上校准出来的阈值没有意义。
+
+**跑起来之后先别干等**（`s2-trans` 是后台 8 分片，`bash run_v100.sh status`
+会显示进度）：
+
+```bash
+bash tools/data_audit/run_v100.sh trans-check    # 中途随时可跑
+```
+
+「修复跑了」不等于「修复生效了」。`check_trans.py` 从**部分产物**就能回答三件事，
+好让失败的修复在几百条时就被发现，而不是等一整趟跑完：
+
+1. **还锚不锚定**（最关键）——新 `trans_score` 与**旧 `en_score`** 的逐条同值率。
+   旧 `trans` 本就≈旧 `en`，所以**新值若仍与旧 `en` >60% 同值，说明拿掉画面没解除锚定**，
+   该停下来重想 prompt 而不是烧完剩下的机时。
+2. **守不守自己的规则**——`TRANS_PROMPT` 写死「`mismatches` 为空 → 必须给 5」，
+   这条的遵守率直接量化指令遵循度；低了说明分数仍是浮空的整体印象、证据列表只是摆设。
+3. **改判幅度**——新差率（≤2）与分数分布。对照：主力档旧 `trans_score≤2` 是 19.6%，
+   但那是整体质量分的复制品、**不是翻译差率**；这里才是第一个可信估计。
+   S1 结论 3 预期它不会很高，**若显著偏高反而是新发现**，要回头查 S1 的假设。
+
+分片按 `行号 % 8` 取样而非前 N 条，所以部分产物是均匀子样本，趋势可信。
+
+> 同一个方法可推广：日后若要让 `en_score` / `zh_score` 真正分离，
+> 也应拆成两次只给一侧文本的调用，而不是在同一个 prompt 里多写几句"请独立打分"。
+
 ---
 
 ### 4.3-端点 裁判档首选：内网已有的 Qwen3.6-27B 端点（零部署，**先试这条**）
@@ -466,31 +555,32 @@ B100 集群上已经有别人起好的 vLLM OpenAI 兼容服务，**模型已确
 （起服务时没设 `--served-model-name`，**对外 ID 就是这串权重路径，原样传**；
 不确定时先 `curl $JUDGE_API_BASE/models` 看一眼）。
 
-**第一步永远是连通性实测**——`172.30.x.x` 与本机 `10.235.31.101` 不同网段：
+### ⚠️ 连通性已经定案，**不要再在本机试**
 
-```bash
-for ep in 172.30.85.198:8000 172.30.62.177:8000 172.30.86.57:5000; do
-  echo -n "$ep: "
-  timeout 5 curl -s -o /dev/null -w "%{http_code}\n" "http://$ep/v1/models" || echo unreachable
-done
-```
+`172.30.x.x` 与本机 `10.235.31.101` 不同网段。**2026-07 实测：101vector 连不上，
+H100 也连不上**；只有 7 卡 V100 `root@10.55.87.68 -p 31179` 连得上
+（那边 `172.30.85.198:8000` 和 `172.30.62.177:8000` 返回 200，
+4 卡的 `172.30.86.57:5000` 不通）。上面那张端点表**是给中转机看的，不是给本机**。
 
-- **连得上** → 用 §4 命令块里 4.3 的三个 `export` 直接跑 `s2-judge`；
-  正式跑之前先用 §0.5 ④ 的 5 条冒烟验证整条链路。
-- **连不上** → **实测结果就是连不上**（101vector 和 H100 都不行，2026-07）。
-  **裁判改到 7 卡 V100 `root@10.55.87.68 -p 31179` 上跑** —— 该机已确认能访问
-  `/workspace/mount/b100_zaip_data`（端点的模型权重和全量语料都在该挂载下），
-  多半在 B100 网内。10k 记录保留了 `abs_path`（`resolve_video_path` 第三候选），
-  **很可能连视频都不用拷，只需搬一个 500 行的 `s2_judge_sample.jsonl`**；
-  真要拷也**只拷 `JUDGE_N` 条，不是全部 1 万条**。
-  **逐条命令见 [`SETUP_JUDGE_RELAY.md`](SETUP_JUDGE_RELAY.md)**
-  （三项前提实测 → 轻量环境 → 送脚本和样本 → 视频解析预检 → 冒烟 →
-  正式跑 500 → 回传算分 → 常见问题表）；选型理由见
-  [`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0 路线 A′。
+所以在 101vector 上：**不要跑 `s2-judge`，只跑 `judge-agree`**（见 §4 命令块 4.3）。
 
-  > ⛔ **别在中转机上重新抽样**：裁判必须评的是主力判过的**同一批记录**，
-  > 从全量 10M 另抽一批与本机 10k 交集可能为空，`judge-agree` 会直接报
-  > 「重叠不足」。搬 `s2_judge_sample.jsonl`，不要重抽。
+**裁判的全部步骤在 [`SETUP_JUDGE_RELAY.md`](SETUP_JUDGE_RELAY.md)**
+（前提实测 → 轻量环境 → 送脚本和样本 → 视频解析预检 → 冒烟 → 跑 500 → 回传算分）。
+选型理由见 [`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0 路线 A′。
+
+两条实测得来的要点（都和当初的猜测不同，别按旧假设行事）：
+
+- **视频路径**：中转机上 `CLIPS` 要指向 **`b100_zaip_data` 下的 10k 子集**
+  （`.../20_outputs/internvid_zh_10k`）。全量语料在
+  `b100_zaip_data_**luan**/InternVid-10M-FLT`，但**那个挂载中转机不可达**。
+  当初以为「靠记录里的 `abs_path` 就能直接打开、不用拷视频」——
+  **实测预检 500/500 全 missing**，真正解决问题的是给 `resolve_video_path`
+  新加的候选（`video` 字段里从 `InternVId` 起的后缀）+ 正确的 `CLIPS`。
+- **解码后端**：中转机 pip 出不去、装不上 `decord`，用 `--frame-backend opencv`。
+
+> ⛔ **别在中转机上重新抽样**：裁判必须评的是主力判过的**同一批记录**，
+> 从全量 10M 另抽一批与本机 10k 交集可能为空，`judge-agree` 会直接报
+> 「重叠不足」。搬 `s2_judge_sample.jsonl`，不要重抽。
 
 **参数已按内网既有调用代码对齐完毕**（2026-07，逐项比对表见
 `SETUP_JUDGE_API.md` §0 路线 A′）。三个结论：
@@ -902,18 +992,29 @@ S3 阈值**。二值口径的理由见 `SETUP_JUDGE_API.md`「路线 D」的 D3
 
 ---
 
-### 4.3-跨族 备选裁判：InternVL3.5-38B-HF 本机部署（B0–B8 完整流程）
+### 4.3-半跨族 备选裁判：InternVL3.5-38B-HF 本机部署（B0–B9 完整流程）
 
-与上面 32B 那条并列的**另一个兜底**，差别只在裁判是**跨族**的：主力
-`Qwen3-VL-8B` 与 A′ 的 `Qwen3.6-27B`、C 的 `Qwen3-VL-32B` 都是 Qwen 系，
-共有盲区会一起犯错；换成 InternVL 后误差独立，一致率才真正有信息量。
+与上面 32B 那条并列的**另一个兜底**。它 ＝ **InternViT ＋ Qwen3-32B**，
+所以是**半跨族**（详见上面选型表下的「2026-07-21 实测更正」块）：
+
+| 维度 | 独立性 | 后果 |
+|---|---|---|
+| `en_score` / `zh_score` / 对齐类 | ✅ **真独立**（视觉塔换了族） | 一致率有信息量，跨族收益成立 |
+| `trans_score`（纯文本判断） | ❌ 几乎没有（共用 Qwen3 语言先验） | **这一维仍受同族盲区污染** |
+
+**为什么这仍然值得做**：相比 C 的 `Qwen3-VL-32B`（视觉+语言**双同源**），
+它至少在吃视觉的那几维买到了真独立，外加 4× 规模差。
+**但要记住它买不到什么**：决策 1（xling 阈值）的全部差率押在 `trans_score`
+上，而那恰是它最不独立的一维——**那条结论只能靠人工抽检兜底，
+不要因为裁判点头就当它被验证过了。**
+
 代价是集成风险更高（下面 B1/B5/B6 三处验收点就是为它设的）。
-
-**本节自包含**，照 B0→B8 顺序执行即可，不用回看 32B 那节。
+**本节自包含**，照 B0→B9 顺序执行即可，不用回看 32B 那节。
 
 #### B0. 先确认该不该走这条
 
-- 路线 A′（H100 中转，零下载）**还没排除**就别开始——见 §1「下一步做什么」。
+- 路线 A′（中转机 `10.55.87.68` + 27B 端点，零下载）**还没排除**就别开始——
+  见 §1「下一步做什么」与 [`SETUP_JUDGE_RELAY.md`](SETUP_JUDGE_RELAY.md)。
 - 磁盘要再腾 **~76GB**。已下的 32B 若不再需要，可 `rm -rf ckpts/Qwen3-VL-32B-Instruct` 换空间。
 - **只做审查、不动环境**：本模型要求 `transformers>=4.52.1`，§0 装的 ≥4.57 已满足，
   **不需要 pip 安装任何东西**（`audit_env` 审核期间冻结，见步骤 0 的红线）。
@@ -951,6 +1052,30 @@ python -c "import transformers, accelerate, torch; print(transformers.__version_
 ```
 
 #### B3. 下载（~76GB，后台）
+
+> 🔍 **先花 30 秒查 b100 存储——很可能根本不用下。** 中转机
+> `10.55.87.68` 能访问 `/workspace/mount/b100_zaip_data`，端点的权重就放在
+> 该挂载的 `model_zoo/` 下，InternVL 很可能已经在那儿：
+>
+> ```bash
+> ssh -p 31179 root@10.55.87.68 \
+>   'ls /workspace/mount/b100_zaip_data/model_zoo/ | head -50
+>    find /workspace/mount/b100_zaip_data -maxdepth 4 -iname "*InternVL*" 2>/dev/null | head'
+> ```
+>
+> 找到且 101vector 连得到该机 → `rsync -avP` 走内网约 100 MB/s，
+> **76GB 十几分钟**，比任何外网通道快一到两个数量级。
+>
+> ⏱ **本网络实测（2026-07-21）**：ModelScope `--max-workers 4` 时
+> **每连接稳定在 230–250 kB/s、总吞吐约 1 MB/s → 76GB 要 ~21 小时**。
+> 四条连接速率几乎一致，是**按连接限速**的特征而非总带宽跑满，
+> 因此**加并发通常近似线性提速**：改 `--max-workers 16` 后测 60 秒，
+> 涨到 3–4 MB/s 即证实（~6 小时），仍是 1 MB/s 则说明总带宽就这么多、
+> 换通道无用，只能走上面的 b100 存储或放弃这条路线。
+>
+> ⚠️ **别让它变成关键路径。** 这是路线 C 的备选，主线是 A′（中转机 + 27B
+> 端点，几分钟预检）。让它后台慢慢下（断了自动续传、不丢进度），
+> 人去推进 A′ 和 `xling-check`——A′ 一通，这 76GB 大概率用不上。
 
 hf-mirror 通道在本机**已实测不可用**（新版 `huggingface_hub` 改走 Xet →
 `Local entry not found`，详见 `TROUBLESHOOTING.md`），直接用 ModelScope：

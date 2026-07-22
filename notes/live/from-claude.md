@@ -23,7 +23,7 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
-## 2026-07-22 (10) — 冒烟通过 ✅ 可以跑真 A/B 了(但评测已近饱和,判据要改)
+## 2026-07-22 (11) — 冒烟通过 ✅ 可以跑真 A/B 了(但评测已近饱和,判据要改)
 
 **链路全通了。** 8 卡起来、数据读到、前向反向都过、epoch 末评测出表、下一个 epoch
 接着跑。`initial_scale_power 5` 全程**零** `OVERFLOW`,anomaly detection 按预期
@@ -101,6 +101,107 @@ PY
 ```
 
 以及最后一个 epoch 的评测表(两臂各一份)。
+## 2026-07-22 (10) — 裁判（中转机）：清掉重复进程和重复行，单进程跑完 500
+
+> 这一条只关 **S2 裁判**（中转机 `10.55.87.68`），与上面第 (9) 条的训练崩溃无关，可并行。
+
+**现状：链路已全通，卡的是并发不是端点。** 已实测通过的：端点连通
+（`172.30.85.198:8000` / `172.30.62.177:8000` 返回 200，4 卡那个不通）、
+conda base 环境零安装（用 `cv2` 后端）、`CLIPS` 指向 b100 上的 10k 子集、
+`enable_thinking=False` 生效、冒烟 5/5 无失败。
+
+**踩到两个坑，都已修：**
+
+1. **两个进程在写同一个文件** —— 500 条的输入却有 644 行。
+   信号是 `nohup … &` 返回 `[2]`（说明 `[1]` 还在跑）。
+2. **看起来卡在 `[progress] 200/476`** —— 不是端点慢，是 `vlm_audit.py` 的两个缺陷：
+   `pool.map` 按提交顺序产出，一条慢请求把后面所有已完成结果堵住不写盘
+   （`--timeout 600` + 重试 ≈ 堵 20 分钟）；进度又写死每 200 条才打一次。
+   **已改成 `as_completed` + `--progress-every 25`**（实测首条落盘从 3.05s → 0.16s）。
+
+**Do this next**（逐条，注意标注的机器）：
+
+```bash
+# ① [中转] 只留一个进程
+jobs -l; pgrep -af vlm_audit.py
+pkill -f vlm_audit.py
+
+# ② [101] 送新版脚本（上面两处修复都在里面，旧版跑还会再卡一次）
+cd ~/mobileclip && git pull origin main
+scp -P 31179 tools/data_audit/vlm_audit.py root@10.55.87.68:~/judge/
+```
+
+```bash
+# ③ [中转] 去重：按 video 唯一，成功的判定覆盖失败的
+cd ~/judge
+python3 - <<'PY'
+import json
+rows=[json.loads(l) for l in open("s2_verdicts_judge.jsonl")]
+best={}
+for r in rows:
+    v=r.get("video")
+    if v is None: continue
+    ver=r.get("verdict") or {}
+    ok = "action" in ver and "error" not in ver
+    if v not in best or (ok and not best[v][1]):
+        best[v]=(r, ok)
+with open("s2_verdicts_judge.dedup.jsonl","w",encoding="utf-8") as f:
+    for r,_ in best.values(): f.write(json.dumps(r,ensure_ascii=False)+"\n")
+print(f"原 {len(rows)} 行 -> 去重后 {len(best)} 条唯一 video")
+PY
+mv s2_verdicts_judge.jsonl s2_verdicts_judge.raw.bak
+mv s2_verdicts_judge.dedup.jsonl s2_verdicts_judge.jsonl
+```
+
+```bash
+# ④ [中转] 单进程跑完剩下的（已完成的按 video 自动跳过）
+export CLIPS=/workspace/mount/b100_zaip_data/zyc/vibe_coding/low_resource_cv/MobileViCLIP/outputs/internvid_alignment/caption_translation_qwen36_v0_1/20_outputs/internvid_zh_10k
+export JUDGE_EP=http://172.30.85.198:8000/v1
+pgrep -af vlm_audit.py || echo "确认无残留进程，可以开跑"
+nohup python vlm_audit.py \
+  --input s2_judge_sample.jsonl --video-root "$CLIPS" \
+  --api-base "$JUDGE_EP" --api-key EMPTY \
+  --model /workspace/mount/b100_zaip_data/model_zoo/Qwen3.6-27B \
+  --frames 8 --concurrency 8 --frame-backend opencv \
+  --output s2_verdicts_judge.jsonl > judge.log 2>&1 &
+watch -n 30 'wc -l ~/judge/s2_verdicts_judge.jsonl; tail -3 ~/judge/judge.log'
+# 判断是否真卡住：看 wc -l 一分钟内涨没涨，别看进度行
+```
+
+```bash
+# ⑤ [中转] 跑完先自查（这决定裁判有没有价值），再回传
+python3 - <<'PY'
+import json, collections
+rows=[json.loads(l) for l in open("s2_verdicts_judge.jsonl")]
+v=[r["verdict"] for r in rows if "action" in (r.get("verdict") or {})]
+def same(a,b): return sum(1 for x in v if x.get(a)==x.get(b))/max(len(v),1)
+print(f"n={len(v)}  总行数={len(rows)}（两者应相等，不等说明又有重复）")
+print(f"en==trans: {same('en_score','trans_score'):.1%}   (主力 8B 92.5%)")
+print(f"zh==trans: {same('zh_score','trans_score'):.1%}   (主力 8B 98.9%)")
+print("action 分布:", dict(collections.Counter(x.get("action") for x in v)))
+PY
+
+# ⑥ [101] 取回并算一致率 + Cohen's κ
+scp -P 31179 root@10.55.87.68:~/judge/s2_verdicts_judge.jsonl outputs/audit_10k/
+bash tools/data_audit/run_v100.sh judge-agree
+```
+
+**一个已经站住的中间结论**（n=13 时）：`en==trans` **30.8%** vs 主力 **92.5%**、
+`zh==trans` **30.8%** vs **98.9%**。若裁判和 8B 一样塌缩，这个结果的概率是
+`4e-08` / `2e-15` —— 即**裁判确实在独立评估三个维度，halo 是 8B 这个模型的毛病，
+不是 rubric 的毛病**。它的 `trans_score` 因此可以拿来裁决决策 1。
+
+**一个预测**：action 分布已透出 T4 会怎么走 —— 主力最大桶是 `retranslate`（41.2%），
+裁判至今一条没给、全判 `recaption`。**五类一致率大概率过不了 75%**，
+但二值口径（主力 `keep+fix_text` 35.7% vs 裁判 30.8%）可能没问题。
+真出现这个结果**别简单判 T4 不达标**——它说明的是主力的 `action` 不可信，
+而 `apply_buckets.py` 正是按 action 分流任务队列的。
+
+**Then report back** in `from-server.md`：⑤ 的自查输出（n / 两个同值率 / action 分布）、
+错误率、以及 ⑥ `judge-agree` 打印的三个门和各维度 κ。拿到就能把 T4 和决策 1 一起结掉。
+
+完整手册：[`tools/data_audit/SETUP_JUDGE_RELAY.md`](../../tools/data_audit/SETUP_JUDGE_RELAY.md)
+（§6 跑 500、§7 回传算分、§9 常见问题含「重复写入」一节）。
 
 ---
 

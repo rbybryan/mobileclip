@@ -62,7 +62,7 @@ curl -s $JUDGE_EP/models | python3 -m json.tool | head -20
 ls -d /workspace/mount/b100_zaip_data && echo "存储 OK"
 ```
 
-**验收点**：能列出。这是第 4 步「不用拷视频」的前提。
+**验收点**：能列出。10k 子集就在这个挂载下（第 4 步用它当 `CLIPS`）。
 
 ---
 
@@ -174,8 +174,13 @@ echo -n "frame-backend:   "; grep -c "frame-backend" vlm_audit.py
 
 ## 4. `[中转]` 视频解析预检 —— 决定要不要拷视频（~1 分钟）
 
-10k 记录保留了 `abs_path`，而 `resolve_video_path` 的第三候选就是它的原值。
-若指向共享存储上的原始位置，本机直接就能打开，**一个视频都不用拷**。
+`CLIPS` 指对之后，`resolve_video_path` 能命中共享存储上的 10k 子集，
+**一个视频都不用拷**。
+
+> 📝 **别按旧假设排查**：最初以为靠记录里的 `abs_path` 就能直接打开——
+> **实测这条不成立**（`abs_path` 指向 101vector 本地路径，本机没有），
+> 首轮预检因此 500/500 全 missing。真正管用的是 2026-07-22 新加的候选
+> （`video` 字段里从 `InternVId` 起的后缀）＋ 指向 10k 子集的 `CLIPS`。
 
 ```bash
 cd ~/judge          # 用 conda base，见 §2；不要激活空 venv
@@ -200,13 +205,87 @@ PY
 
 **验收点与分支**：
 
-- `ok` = 500 → **不用拷视频**，直接进第 5 步（`--video-root` 传什么都行，
-  实际命中的是 `abs_path` 那条候选）。
-- `ok` 是 0 或很少 → 看打印的 `MISSING` 路径差在哪，按序尝试：
-  1. 共享存储里若有语料视频根目录，`export CLIPS=<该目录>` 后重跑本预检；
-  2. 仍不行 → 按
-     [`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0「若预检没通过：把那 500 条视频也拷过去」
-     生成清单并 rsync（**只拷 500 条，不是全部 1 万条**）。
+- `ok` = 500 → **不用拷视频**，直接进第 5 步。
+  ⚠️ **`--video-root` 必须传对**（就是下面那个 `CLIPS`）——命中的是
+  `video` 字段的 `InternVId` 后缀那条候选，根设错就全落空。
+- `ok` 是 0 或很少 → 按下面的 §4.1 定位，别急着拷视频。
+
+> 📌 **读懂这里的输出**：`resolve_video_path` 全部落空时返回的是**候选 1**
+> （`video_root/<video>`），所以打印出来的那条路径**不代表**它试过的全部
+> （现在共四个候选，见该函数 docstring）。**几乎总是 `CLIPS` 没设对**，
+> 先照下面的 📍 设好再说。
+
+> 📍 **`CLIPS` 就设这个（2026-07-22 确认）**——裁判机上有**同一份 10k 子集**：
+>
+> ```bash
+> export CLIPS=/workspace/mount/b100_zaip_data/zyc/vibe_coding/low_resource_cv/MobileViCLIP/outputs/internvid_alignment/caption_translation_qwen36_v0_1/20_outputs/internvid_zh_10k
+> ```
+>
+> **走过的弯路，别再走**：全量语料在
+> `/workspace/mount/b100_zaip_data_**luan**/InternVid-10M-FLT/`
+> （`InternVId-FLT_1…11`），但**那个 `luan` 挂载在裁判机上不可达**——
+> 它只在另一台（`…cka…`）上能看到。裁判机可达的是 `b100_zaip_data`，
+> 而 10k 子集正好在它下面，**用子集就够**（裁判只看这 500 条）。
+>
+> 顺带解释为什么之前怎么设都不对：样本的 `video` 字段形如
+> `videos/InternVId-FLT_10/shard_00044/InternVId-FLT_10/xxx.mp4`，那个
+> `videos/` 前缀是各机器本地的。`resolve_video_path` 现在**额外尝试 `video`
+> 字段里从 `InternVId` 起的后缀**（2026-07-22 新增，已用真实路径形状测过），
+> 所以 `CLIPS` 指到**含 `videos/` 的那一层**（候选 1 命中）或**再往下一层的
+> `videos/` 本身**（候选 2 命中）**都能解析**，不必纠结。
+
+### 4.1 `[中转]` 全 missing 时的定位（~3 分钟）
+
+```bash
+# ① 记录里到底有哪些路径字段？
+cd ~/judge
+python3 - <<'PY'
+import json
+rec = json.loads(open("s2_judge_sample.jsonl").readline())
+print("字段:", sorted(rec.keys()))
+print("video    =", rec.get("video"))
+print("abs_path =", rec.get("abs_path", "<<< 没有这个字段 >>>"))
+PY
+```
+
+- **有 `abs_path`** → 它指向的多半是 101vector 上的本地路径，本机自然没有；
+  但候选 2（`CLIPS` + `abs_path` 里从 `InternVId` 起的后缀）只要 `CLIPS` 设对就能命中。
+- **没有 `abs_path`** → 只剩候选 1，**必须把 `CLIPS` 设成正确的根**才行。
+
+```bash
+# ② 确认 10k 子集在本机可见，并核对目录层级
+export CLIPS=/workspace/mount/b100_zaip_data/zyc/vibe_coding/low_resource_cv/MobileViCLIP/outputs/internvid_alignment/caption_translation_qwen36_v0_1/20_outputs/internvid_zh_10k
+ls "$CLIPS" | head                       # 应能看到 videos/ 等
+ls "$CLIPS/videos" | head                # 应是 InternVId-FLT_* 若干目录
+
+# 直接找样本第一条那个 clip
+FN=$(python3 -c "import json;print(json.loads(open('s2_judge_sample.jsonl').readline())['video'].split('/')[-1])")
+echo "找: $FN"
+find "$CLIPS/videos" -name "$FN" 2>/dev/null | head -3
+```
+
+> 这里**看不到**（路径变了/权限不够）→ 才走本节末尾的「拷 500 条视频」。
+
+```bash
+# ③ 重新拉最新 vlm_audit.py（候选 2 是 2026-07-22 才加的），再重跑 §4 预检
+#    [101] 上执行：
+#      cd ~/mobileclip && git pull origin main
+#      scp -P 31179 tools/data_audit/vlm_audit.py root@10.55.87.68:~/judge/
+#    [中转] 上确认 CLIPS 已 export（见 ②），然后重跑 §4 那段预检，ok 应变成 500
+```
+
+**换个根时的反推规则**：把 ② 找到的**完整路径**与记录的 `video` 字段右对齐，
+**公共后缀之前的那一截就是 `CLIPS`**。例如
+
+```
+实际      <CLIPS>/videos/InternVId-FLT_10/shard_00044/InternVId-FLT_10/xxx.mp4
+video 字段         videos/InternVId-FLT_10/shard_00044/InternVId-FLT_10/xxx.mp4
+=> CLIPS = 上面那截 <CLIPS>
+```
+
+- **共享存储里根本没有这批视频** → 才走拷贝路线：按
+  [`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0「若预检没通过：把那 500 条视频也拷过去」
+  生成清单并 rsync（**只拷 500 条，不是全部 1 万条**，几百 MB 量级）。
 
 ---
 
@@ -228,6 +307,18 @@ head -1 s2_verdicts_judge.jsonl | python -m json.tool
 
 **验收点**：每条都有完整的 `verdict` 对象，含
 `en_score / zh_score / trans_score / action / better_zh`。
+
+> ✅ **实测通过（2026-07-22）**：`[frames] backend=opencv`、
+> `[done] wrote 5 verdicts`，5/5 判定完整，**无 `no valid verdict JSON`**
+> ——`enable_thinking=False`、opencv 后端、`CLIPS` 三处全部生效。
+>
+> 📌 **首条判定就出现了主力模型给不出的东西**：`en_score=0 / zh_score=0 /
+> trans_score=5 / action=recaption` —— 三个分数**彼此解耦**（英文写错了、
+> 但中文忠实地翻译了那段错英文，所以该重写而非重翻）。而主力 8B 在 10k 上
+> `en==trans` 逐条同值率 **92.5%**、`zh==trans` **98.9%**（见
+> [`DATA_ISSUES.md`](DATA_ISSUES.md) 问题 8）。
+> **这是 n=1 的观察，不是结论**——但它指向「halo 是 8B 的毛病、不是 rubric 的
+> 毛病」，跑完 500 条后要在 T4 里正式验证。
 
 **冒烟输出直接写进正式产物文件是有意的**：`vlm_audit.py` 支持断点续跑
 （按 `video` 去重跳过），所以这 5 条会计入第 6 步的 500 条，不会重复推理。
@@ -262,6 +353,26 @@ watch -n 30 'wc -l ~/judge/s2_verdicts_judge.jsonl; tail -3 ~/judge/judge.log'
 超时默认已是 600 秒；重试带指数退避。跑得慢可以提到 16，仍在 house 值以内。
 
 **中断了直接重跑同一条命令**即可续（按 `video` 跳过已完成的）。
+
+跑完后，**先做一个 30 秒的解耦自查**（这决定裁判有没有价值）：
+
+```bash
+python3 - <<'PY'
+import json, collections
+rows=[json.loads(l) for l in open("s2_verdicts_judge.jsonl")]
+v=[r["verdict"] for r in rows if "action" in (r.get("verdict") or {})]
+def same(a,b): return sum(1 for x in v if x.get(a)==x.get(b))/max(len(v),1)
+print(f"n={len(v)}")
+print(f"en==trans 逐条同值率: {same('en_score','trans_score'):.1%}   (主力 8B 是 92.5%)")
+print(f"zh==trans 逐条同值率: {same('zh_score','trans_score'):.1%}   (主力 8B 是 98.9%)")
+print("action 分布:", dict(collections.Counter(x.get("action") for x in v)))
+PY
+```
+
+同值率**明显低于主力**（例如 <70%）→ 裁判确实在独立评估三个维度，
+它的 `trans_score` 可以用来裁决 §4 决策 1；
+若同样高到 90%+ → 裁判也塌缩了，**别拿它当独立信号**，走
+[`SETUP_JUDGE_API.md`](SETUP_JUDGE_API.md) §0 路线 D 的人工兜底。
 
 **验收点**：`wc -l` 到 500；错误率检查——
 
@@ -338,3 +449,36 @@ bash tools/data_audit/run_v100.sh s3
 | 大量 `decode:` 错误 | 视频没解析到 | 回到 §4 预检，先把 `ok` 修到 500 |
 | 大量超时 / 429 | 端点被占满或本机并发过高 | 降 `--concurrency` 到 4；脚本已带指数退避，不必手动重试 |
 | `judge-agree` 报「重叠不足 30 条」 | 裁判评的不是主力那批记录 | 十有八九是在中转机上重新抽了样；改用 101vector 的 `s2_judge_sample.jsonl` |
+| **输出行数 > 输入条数**（如 500 条却有 644 行） | **同时跑了两个进程写同一个文件**（`nohup … &` 返回 `[2]` 就是信号：`[1]` 还在） | 见下方「重复写入」 |
+| 看起来卡住不动 | ① 旧版每 200 条才打一次进度；② 旧版用 `pool.map`**按提交顺序**产出，一条慢请求会把它后面所有已完成结果堵住不写盘（`--timeout 600` + 重试 ≈ 堵 20 分钟） | 两者都已修（`--progress-every` 默认 25、改用 `as_completed`）——**重新 `git pull` 并 scp 新版 `vlm_audit.py`**；判断真假卡住看 `wc -l` 一分钟内有没有涨 |
+
+### 重复写入：两个进程写同一个文件
+
+```bash
+# ① 确认并只留一个
+jobs -l; pgrep -af vlm_audit.py
+pkill -f vlm_audit.py            # 全杀掉，稍后单进程续跑更干净
+
+# ② 去重（成功的判定覆盖失败的，按 video 唯一）
+cd ~/judge
+python3 - <<'PY'
+import json
+rows=[json.loads(l) for l in open("s2_verdicts_judge.jsonl")]
+best={}
+for r in rows:
+    v=r.get("video")
+    if v is None: continue
+    ver=r.get("verdict") or {}
+    ok = "action" in ver and "error" not in ver
+    if v not in best or (ok and not best[v][1]):   # 成功的覆盖失败的
+        best[v]=(r, ok)
+with open("s2_verdicts_judge.dedup.jsonl","w",encoding="utf-8") as f:
+    for r,_ in best.values(): f.write(json.dumps(r,ensure_ascii=False)+"\n")
+print(f"原 {len(rows)} 行 -> 去重后 {len(best)} 条唯一 video")
+PY
+mv s2_verdicts_judge.jsonl s2_verdicts_judge.raw.bak
+mv s2_verdicts_judge.dedup.jsonl s2_verdicts_judge.jsonl
+
+# ③ 单进程续跑（已完成的按 video 自动跳过）
+#    ——照 §6 的命令跑一次即可，跑之前先确认 pgrep 是空的
+```
