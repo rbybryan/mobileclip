@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""把一张抽检表打包成可离线评审的目录：视频 + 一个自带填写界面的 HTML。
+
+为什么不用 §6 的 Gradio：
+  1. 它需要 `gradio`，装进验证过的 `audit_env` 会拉进 fastapi/pandas/pydantic
+     一堆依赖，有污染冻结环境的风险（这个仓库已经踩过 torch 被静默升级的坑）；
+  2. 更根本的是**它是浏览数据集用的，没有抽检表的填写字段** —— 即使装上，
+     也得一边看 Gradio 一边在 Excel 里按 video id 对着填，两个窗口来回切；
+  3. 服务器无 GUI，看画面还得端口转发。
+
+这个脚本把「看画面」和「填表」合成一件事：产出的目录 scp 到本地，
+浏览器打开 `index.html` 即可 —— 视频、原字幕、候选字幕、单选按钮在同一屏，
+进度存 localStorage（关掉再开不丢），填完点一个按钮导出 TSV，传回服务器统计。
+全程离线、无外部依赖、不需要在服务器上装任何东西。
+
+    python tools/data_audit/make_review_bundle.py \
+        --sheet outputs/audit_10k/review_better_zh.tsv \
+        --out-dir outputs/audit_10k/bundle_better_zh
+
+然后：
+    tar czf bundle.tgz -C outputs/audit_10k bundle_better_zh
+    # 本地： scp ... && tar xzf bundle.tgz && open bundle_better_zh/index.html
+
+Deps: stdlib only（视频用 copy/硬链接，不转码）。
+"""
+
+import argparse
+import csv
+import html
+import json
+import os
+import shutil
+import sys
+
+PAGE = """<!doctype html>
+<meta charset="utf-8">
+<title>抽检 · __TITLE__</title>
+<style>
+ :root{--bd:#d6d9de;--mut:#666;--hi:#0b64c8}
+ *{box-sizing:border-box}
+ body{font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans CJK SC",sans-serif;
+      margin:0;background:#f4f5f7;color:#1b1e22}
+ header{position:sticky;top:0;z-index:9;background:#fff;border-bottom:1px solid var(--bd);
+        padding:10px 16px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+ header b{font-size:16px} .sp{flex:1}
+ button{font:inherit;padding:7px 14px;border:1px solid var(--bd);border-radius:6px;
+        background:#fff;cursor:pointer}
+ button.p{background:var(--hi);color:#fff;border-color:var(--hi)}
+ #prog{color:var(--mut)}
+ .card{background:#fff;margin:14px auto;max-width:1080px;border:1px solid var(--bd);
+       border-radius:10px;padding:14px 16px}
+ .card.done{opacity:.55}
+ .top{display:flex;gap:16px;flex-wrap:wrap}
+ video{width:420px;max-width:100%;background:#000;border-radius:6px}
+ .meta{flex:1;min-width:280px}
+ .idx{color:var(--mut);font-size:13px}
+ .cap{margin:8px 0;padding:8px 10px;border-radius:6px;background:#f7f8fa;border:1px solid #eceef1}
+ .cap .lbl{font-size:12px;color:var(--mut);display:block;margin-bottom:2px}
+ .orig{background:#fffdf2;border-color:#f0e6c0}
+ .q{margin-top:10px;padding-top:10px;border-top:1px dashed var(--bd)}
+ .q .name{font-weight:600;margin-right:8px}
+ label.opt{display:inline-block;margin:3px 6px 3px 0;padding:4px 12px;border:1px solid var(--bd);
+           border-radius:20px;cursor:pointer;user-select:none}
+ label.opt:has(input:checked){background:var(--hi);color:#fff;border-color:var(--hi)}
+ label.opt input{display:none}
+ .note{width:100%;margin-top:6px;padding:6px 8px;border:1px solid var(--bd);border-radius:6px;font:inherit}
+ .hint{max-width:1080px;margin:14px auto;color:var(--mut);font-size:14px;
+       background:#fff;border:1px solid var(--bd);border-left:3px solid var(--hi);
+       border-radius:6px;padding:10px 14px}
+</style>
+<header>
+  <b>抽检 · __TITLE__</b>
+  <span id="prog"></span><span class="sp"></span>
+  <button onclick="jumpNext()">跳到下一条未填 (n)</button>
+  <button class="p" onclick="dump()">导出 TSV</button>
+</header>
+<div class="hint">__HINT__<br>
+进度自动存在浏览器本地，关掉再开不会丢。填完点<b>导出 TSV</b>，把下载到的文件传回服务器跑
+<code>run_v100.sh review-score</code>。</div>
+<div id="app"></div>
+<script>
+const ROWS=__ROWS__, COLS=__COLS__, QS=__QS__, KEY="rev_"+__KEY__;
+const st=JSON.parse(localStorage.getItem(KEY)||"{}");
+function save(){localStorage.setItem(KEY,JSON.stringify(st));prog()}
+function prog(){
+  const d=ROWS.filter((_,i)=>QS.some(q=>q.opts.length&&(st[i]||{})[q.name])).length;
+  document.getElementById("prog").textContent=`已填 ${d} / ${ROWS.length}`;
+  ROWS.forEach((_,i)=>document.getElementById("c"+i)?.classList.toggle("done",
+    QS.filter(q=>q.opts.length).every(q=>(st[i]||{})[q.name])));
+}
+function set(i,k,v){(st[i]=st[i]||{})[k]=v;save()}
+function jumpNext(){
+  const i=ROWS.findIndex((_,i)=>!QS.filter(q=>q.opts.length).every(q=>(st[i]||{})[q.name]));
+  if(i>=0)document.getElementById("c"+i).scrollIntoView({behavior:"smooth",block:"center"});
+}
+addEventListener("keydown",e=>{if(e.key==="n"&&!/INPUT|TEXTAREA/.test(e.target.tagName))jumpNext()});
+const app=document.getElementById("app");
+ROWS.forEach((r,i)=>{
+  const d=document.createElement("div");d.className="card";d.id="c"+i;
+  const caps=COLS.filter(c=>/^(原zh|候选\\d|英文en)$/.test(c)&&r[c])
+    .map(c=>`<div class="cap ${c==="原zh"?"orig":""}"><span class="lbl">${c}</span>${r[c]}</div>`).join("");
+  const other=COLS.filter(c=>!/^(原zh|候选\\d|英文en|video|video_path)$/.test(c)&&r[c])
+    .map(c=>`${c}=<b>${r[c]}</b>`).join(" · ");
+  const qs=QS.map(q=>q.opts.length
+    ? `<div class="q"><span class="name">${q.name}</span>`+q.opts.map(o=>
+        `<label class="opt"><input type="radio" name="q${i}_${q.name}" value="${o}"
+         ${(st[i]||{})[q.name]===o?"checked":""}
+         onchange="set(${i},'${q.name}',this.value)">${o}</label>`).join("")+`</div>`
+    : `<div class="q"><input class="note" placeholder="备注（可留空）" value="${(st[i]||{})[q.name]||""}"
+        oninput="set(${i},'${q.name}',this.value)"></div>`).join("");
+  d.innerHTML=`<div class="top"><video src="videos/${r.__f}" controls preload="metadata"></video>
+    <div class="meta"><div class="idx">#${i+1} / ${ROWS.length} · ${r.video}</div>
+    <div style="margin:4px 0 8px;color:#666;font-size:13px">${other}</div>${caps}</div></div>${qs}`;
+  app.appendChild(d);
+});
+prog();
+function dump(){
+  const hdr=COLS.concat(QS.map(q=>q.col));
+  const lines=[hdr.join("\\t")].concat(ROWS.map((r,i)=>
+    COLS.map(c=>r[c]??"").concat(QS.map(q=>((st[i]||{})[q.name]||""))).join("\\t")));
+  const b=new Blob([lines.join("\\n")+"\\n"],{type:"text/tab-separated-values"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(b);
+  a.download=__FNAME__;a.click();
+}
+</script>
+"""
+
+HINTS = {
+    "better_zh": "对着画面比较<b>原 zh</b> 与 3 条候选：候选整体上更准确吗？信息更具体吗？"
+                 "<b>有没有说画面里没有的东西（幻觉）</b>——这一列最要紧。",
+    "conflicts": "S0 规则说这条该重翻，而文本-only 实测说翻译没问题。"
+                 "看画面和中英文本，判断<b>谁对</b>：<code>s0</code>=中文确实有未翻译/污染；"
+                 "<code>vlm</code>=翻译其实没问题。",
+    "random": "看画面判断这条字幕的质量，与模型给的 <code>zh分</code> 是否一致。",
+}
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--sheet", required=True, help="review_*.tsv（make_review_sheet.py 产出）")
+    ap.add_argument("--out-dir", required=True)
+    ap.add_argument("--link", action="store_true",
+                    help="用硬链接代替复制（同盘时省空间；打包 tar 时会自动展开）")
+    args = ap.parse_args()
+
+    with open(args.sheet, encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.DictReader(f, delimiter="\t"))
+    if not rows:
+        sys.exit(f"{args.sheet} 是空的")
+    hdr = [c for c in rows[0] if c]
+    qcols = [c for c in hdr if "[" in c or c == "note"]
+    cols = [c for c in hdr if c not in qcols]
+    qs = [{"name": c.split("[")[0], "col": c,
+           "opts": (c.split("[")[1].rstrip("]").split("/") if "[" in c else [])}
+          for c in qcols]
+
+    vdir = os.path.join(args.out_dir, "videos")
+    os.makedirs(vdir, exist_ok=True)
+    ok, miss = 0, []
+    for r in rows:
+        src = (r.get("video_path") or "").strip()
+        fn = os.path.basename(src) or (r.get("video") or "").replace("/", "_")
+        r["__f"] = fn
+        dst = os.path.join(vdir, fn)
+        if os.path.exists(dst):
+            ok += 1
+            continue
+        if src and os.path.exists(src):
+            try:
+                (os.link if args.link else shutil.copy2)(src, dst)
+            except OSError:
+                shutil.copy2(src, dst)
+            ok += 1
+        else:
+            miss.append(r.get("video"))
+
+    base = os.path.basename(args.sheet).replace("review_", "").replace(".tsv", "")
+    page = (PAGE.replace("__ROWS__", json.dumps(rows, ensure_ascii=False))
+                .replace("__COLS__", json.dumps(cols, ensure_ascii=False))
+                .replace("__QS__", json.dumps(qs, ensure_ascii=False))
+                .replace("__KEY__", json.dumps(base))
+                .replace("__FNAME__", json.dumps(os.path.basename(args.sheet)))
+                .replace("__TITLE__", html.escape(base))
+                .replace("__HINT__", HINTS.get(base, "按表头提示填写。")))
+    idx = os.path.join(args.out_dir, "index.html")
+    with open(idx, "w", encoding="utf-8") as f:
+        f.write(page)
+
+    size = sum(os.path.getsize(os.path.join(vdir, x)) for x in os.listdir(vdir))
+    print(f"[bundle] {args.out_dir}")
+    print(f"  视频 {ok}/{len(rows)} 份，合计 {size/1e6:.0f} MB")
+    if miss:
+        print(f"  ⚠️ {len(miss)} 条找不到视频（页面仍可填文本）：{miss[:3]}...")
+    print(f"  打包： tar czf {base}.tgz -C {os.path.dirname(args.out_dir) or '.'} "
+          f"{os.path.basename(args.out_dir)}")
+    print(f"  本地： scp <server>:<path>/{base}.tgz . && tar xzf {base}.tgz && "
+          f"open {os.path.basename(args.out_dir)}/index.html")
+
+
+if __name__ == "__main__":
+    main()
