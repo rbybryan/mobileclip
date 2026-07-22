@@ -124,6 +124,15 @@ def main():
     better_zh_counts = Counter()
     stratum_total, stratum_ok = Counter(), Counter()
     unreadable_model, unreadable_decode = 0, 0
+    # check 6: are the three "independent" scores actually independent, and does
+    # the chosen `action` agree with the scores the same record was given?
+    n_scored = 0
+    eq = Counter()          # how often two scores land on the exact same value
+    absdiff = Counter()     # summed |a-b|, divided by n_scored at print time
+    per_action = defaultdict(lambda: {"n": 0, "en": 0, "zh": 0, "tr": 0,
+                                      "en_bad": 0, "zh_bad": 0, "tr_bad": 0})
+    conflicts = Counter()
+    action_n = Counter()
 
     for path, rec in iter_jsonl(paths):
         v = rec.get("verdict") or {}
@@ -157,6 +166,40 @@ def main():
                 unreadable_decode += 1
             else:
                 unreadable_model += 1
+
+        en, zh, tr = (v.get("en_score"), v.get("zh_score"), v.get("trans_score"))
+        act = v.get("action")
+        if None not in (en, zh, tr):
+            n_scored += 1
+            eq["en=zh"] += (en == zh)
+            eq["en=trans"] += (en == tr)
+            eq["zh=trans"] += (zh == tr)
+            eq["all three"] += (en == zh == tr)
+            absdiff["en-zh"] += abs(en - zh)
+            absdiff["en-trans"] += abs(en - tr)
+            absdiff["zh-trans"] += abs(zh - tr)
+            d = per_action[act or "(missing)"]
+            d["n"] += 1
+            d["en"] += en
+            d["zh"] += zh
+            d["tr"] += tr
+            d["en_bad"] += en <= 2
+            d["zh_bad"] += zh <= 2
+            d["tr_bad"] += tr <= 2
+            # Rubric (vlm_audit.py PROMPT) defines each action by a score
+            # pattern. Where the action contradicts the scores, S3 and
+            # apply_buckets.py disagree about the same record: calibrate()
+            # thresholds on scores, apply_buckets routes on action.
+            if act == "retranslate" and tr >= 3:
+                conflicts["action=retranslate 但 trans_score≥3（翻译并不坏）"] += 1
+            if act == "keep" and zh <= 2:
+                conflicts["action=keep 但 zh_score≤2（中文与画面不符）"] += 1
+            if act == "recaption" and en >= 4:
+                conflicts["action=recaption 但 en_score≥4（英文源头没问题）"] += 1
+            if act == "drop" and v.get("video_readable") is not False and zh >= 3:
+                conflicts["action=drop 但画面可辨且 zh_score≥3"] += 1
+        if act is not None:
+            action_n[act] += 1
 
     total = usable + failed
     emit("# S2 判定体检（check_s2.py）")
@@ -269,10 +312,60 @@ def main():
         emit(f"| {s} | {n} | {stratum_ok[s]} | {pct(stratum_ok[s], n)} |")
     emit()
 
+    # ------------------------------------------------ 6 维度独立性 + 自洽性
+    emit("## 6. 三个分数真的独立吗 / action 与分数自洽吗")
+    emit()
+    emit("rubric 要求 `en_score`（英文 vs 画面）、`zh_score`（中文 vs 画面）、"
+         "`trans_score`（**只比中英两条文本**，不看画面）**独立打分**。"
+         "前两个天然相关（同一段视频、互为译文），但 `trans_score` 量的是"
+         "**另一回事**——它若与 `en_score` 高度同值，说明模型是照抄而非独立评估，"
+         "那么「翻译坏没坏」这件事其实**没有被测量过**。")
+    emit()
+    if n_scored:
+        emit("| 两两关系 | 完全同值 | 占比 | 平均绝对差 |")
+        emit("|---|---|---|---|")
+        for a, b in (("en=zh", "en-zh"), ("en=trans", "en-trans"),
+                     ("zh=trans", "zh-trans")):
+            emit(f"| `{a}` | {eq[a]} | {pct(eq[a], n_scored)} | "
+                 f"{absdiff[b] / n_scored:.2f} |")
+        emit(f"| **三者全同** | {eq['all three']} | {pct(eq['all three'], n_scored)} | — |")
+        emit()
+        emit("| action | 条数 | 均 en | 均 zh | 均 trans | en≤2 | zh≤2 | trans≤2 |")
+        emit("|---|---|---|---|---|---|---|---|")
+        for a in ACTIONS + [k for k in per_action if k not in ACTIONS]:
+            d = per_action.get(a)
+            if not d or not d["n"]:
+                continue
+            n = d["n"]
+            emit(f"| {a} | {n} | {d['en'] / n:.2f} | {d['zh'] / n:.2f} | "
+                 f"{d['tr'] / n:.2f} | {pct(d['en_bad'], n)} | "
+                 f"{pct(d['zh_bad'], n)} | {pct(d['tr_bad'], n)} |")
+        emit()
+        emit("> 这张表是**读 rubric 边界**用的：`retranslate` 那行的 `trans≤2` 该明显"
+             "高于 `keep` 行，`recaption` 那行的 `en≤2` 该明显高于其他行。"
+             "若各行数字差不多，说明模型是按别的东西在选 action，"
+             "**`action_dist` 里那个最大占比就不能当结论用**。")
+        emit()
+        if conflicts:
+            emit("**action 与自身分数矛盾的记录**（同一条记录，S3 按分数算阈值、"
+                 "`apply_buckets.py` 按 action 分流，矛盾即两半流水线各说各话）：")
+            emit()
+            emit("| 矛盾 | 条数 | 占该 action |")
+            emit("|---|---|---|")
+            for k, n in conflicts.most_common():
+                act = k.split("=")[1].split(" ")[0]
+                emit(f"| {k} | {n} | {pct(n, action_n.get(act, 0))} |")
+        else:
+            emit("- 未发现 action 与分数矛盾的记录。")
+    else:
+        emit("- （没有三项分数齐全的记录，跳过）")
+    emit()
+
     # ---------------------------------------------------------------- 判定门
     emit("## 结论")
     emit()
-    problems = []
+    problems = []   # 拦住流程
+    notes = []      # 不拦，但必须读到（多半是真实数据问题而非流程问题）
     fail_rate = failed / total if total else 1.0
     if fail_rate > args.max_fail_rate:
         problems.append(f"判定失败率 {fail_rate:.1%} > {args.max_fail_rate:.0%}"
@@ -290,6 +383,33 @@ def main():
             top = max((v for kk, v in score_dist[k].items() if kk is not None))
             if top / nz > 0.9:
                 problems.append(f"`{k}` 有 >90% 落在同一个分值上，该维度无区分度")
+    gz = sum(gran_dist.values())
+    if gz and max(gran_dist.values()) / gz > 0.9:
+        top_g = gran_dist.most_common(1)[0]
+        notes.append(f"`granularity` 有 {pct(top_g[1], gz)} 判为 `{top_g[0]}`。"
+                     "E 类（粒度粗）在 InternVid 上本就是主症状、且已被 S1 独立佐证"
+                     "（`xling` 动态范围窄的同一病因），**大概率是真的**——"
+                     "但该维度因此没有区分度，别再拿它做分桶特征")
+    if n_scored:
+        if eq["en=trans"] / n_scored > 0.6:
+            problems.append(
+                f"`en_score` 与 `trans_score` 有 {pct(eq['en=trans'], n_scored)} "
+                "完全同值——两者量的是不同的东西（画面对齐 vs 文本忠实），"
+                "如此同步说明是 halo/照抄而非独立评估。**决策 1（xling 阈值）的差率"
+                "全部建立在 `trans_score` 上，这一项不成立则那个决策无从裁起**；"
+                "先在 §6 表里看 `retranslate` 行的 `trans≤2` 是否真的高于 `keep` 行，"
+                "再靠裁判档/人工抽检定夺")
+        for k, n in conflicts.items():
+            act = k.split("=")[1].split(" ")[0]
+            base = action_n.get(act, 0)
+            if base and n / base > 0.3:
+                problems.append(f"{pct(n, base)} 的 `{act}` 记录与自身分数矛盾（{k}）"
+                                "——S3 按分数、`apply_buckets.py` 按 action，两半会打架")
+    if notes:
+        emit("📌 **不拦流程，但结论里必须写进去**：")
+        for p in notes:
+            emit(f"- {p}")
+        emit()
     if problems:
         emit("⚠️ **先处理这些再进下一步**：")
         for p in problems:

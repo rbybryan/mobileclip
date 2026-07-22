@@ -486,6 +486,18 @@ bash tools/data_audit/run_v100.sh s2-check      # -> outputs/audit_10k/s2_health
    判定没有方差，校准出来的阈值就是噪声。
 5. **各层可用量** —— 抽样是分层的，稀有层（S0 命中、低 xling 尾）本来就小，
    被失败吃掉之后就报不出该层结论了——而那几层正是 T1/T3 要回答的问题所在。
+6. **维度独立性 + action 自洽性** —— 前五项都过了，判定仍可能是**假的**：
+   - rubric 要求 `trans_score` **只比中英两条文本、不看画面**，与 `en_score`
+     （英文 vs 画面）量的是两回事。若两列**逐条同值率 >60%**，说明模型在照抄
+     而非独立评估——**「翻译坏没坏」这件事根本没被测量过**，而
+     §4 决策 1 的全部差率都建立在它上面（2026-07-22 的 10k 实测触发了这项怀疑：
+     三列分数的逐档计数近乎重合，见 `DATA_ISSUES.md` 问题 8）。
+   - `action` 与自身分数是否矛盾：rubric 用分数模式定义每个 action
+     （`retranslate` = 翻译坏了 = `trans_score` 低）。矛盾意味着
+     **S3 按分数算阈值、`apply_buckets.py` 按 action 分流任务队列，
+     两半流水线在同一批记录上各说各话**——报告里的问题率和实际派下去的
+     任务描述的不是同一件事。10k 实测：`retranslate` 4120 条 vs
+     `trans_score≤2` 仅 1958 条 → **≥52.5% 的 retranslate 自身 `trans_score≥3`**。
 
 脚本**不通过时返回非零**（`run_v100.sh` 会拦住并提示），产出
 `outputs/audit_10k/s2_health.md`。**体检结论要抄进
