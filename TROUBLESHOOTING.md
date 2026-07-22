@@ -1499,3 +1499,35 @@ HMDB51 实例:split-1 测试集 51 类 × 30 = **1530**,盘上 anno 是 **1511**
 > 尽管预检确认那 1 万条视频存在。最可能的原因是它是个**软链**,而 `find`
 > 默认不跟随软链(要跟随得用 `find -L`)。排查数据位置时记住这一条,
 > 否则会误判成"那批数据也没了"。
+
+### §4 线索:`InternVId-FLT_1` 的目录已存在但抓取没完成
+
+2026-07-22 的预检里,11 个 InternVid 分片**报错并不一致**,这条信息容易被略过:
+
+```
+internvid_v1   anno 5000 条,抽查 20 条视频全部缺失(检查 MVC_DATA_DIR / 目录层级)
+internvid_v2   anno 5000 条,但 data_root 缺失: data/video_sample/InternVId-FLT_2
+```
+
+差别来自 `check_corpus()` 的两级判断:先 `os.path.isdir(root)`,过了才抽查视频。
+所以:
+
+- **v2–v11** —— 目录**不存在**,连抓取都没开始过。
+- **v1** —— 目录**存在**,但 anno 要的 20 条视频一条都不在。
+
+⇒ 有人开过 shard 1 的抓取(`tools/download_internvid.py` 会 `mkdir -p` 出 `--out`),
+但没抓成、或抓下来的文件名与 anno 对不上。排查:
+
+```bash
+cd ~/mobileclip
+ls data/video_sample/InternVId-FLT_1 | head
+ls data/video_sample/InternVId-FLT_1 | wc -l
+cat data/video_sample/InternVId-FLT_1/_download_log.tsv 2>/dev/null | tail -20
+# 和 anno 要的名字对一下(前 3 条):
+python -c "import json;print([e['video'] for e in json.load(open('anno_downstream/InternVid/InternVid-10M-flt_1.json'))[:3]])"
+```
+
+若 `_download_log.tsv` 里大量 `fail`,那是 YouTube 侧的永久损耗(见
+「§3 B0 五个评测全部失败」一节的 §4 更正);若文件在、只是命名不同,
+那就是 `--out` 的字段命名和 anno 的 `video` 字段没对齐,重建软链/改名即可,
+**不必重抓**。
