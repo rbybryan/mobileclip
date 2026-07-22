@@ -13,6 +13,7 @@
 #   bash tools/data_audit/run_v100.sh s2         # ⑤ 8 卡 VLM 审核全部 10k（HF 后端，~2–3h）
 #   bash tools/data_audit/run_v100.sh s2-check   # ⑤b S2 判定体检 -> s2_health.md（秒级，S2 跑完必做）
 #   bash tools/data_audit/run_v100.sh s2-trans   # ⑤c 文本-only 翻译重判（修 halo；不解码视频，比 s2 快）
+#   bash tools/data_audit/run_v100.sh trans-check # ⑤d 重判体检（可中途跑：早判修复有没有生效）
 #   JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge  # ⑥ 云端裁判（可选，需 API key）
 #   bash tools/data_audit/run_v100.sh judge-agree # ⑥b 一致率+Cohen's κ（可对外来裁判文件独立重算）
 #   bash tools/data_audit/run_v100.sh xling-check # ⑥c 裁决 xling 阈值（s3 前必做）
@@ -82,6 +83,7 @@ expected_total() { wc -l < "$DATA"; }
 # 整条管道判 1，再被 set -e 杀掉整个脚本（症状：status 一行都不输出就退出）
 s1_lines() { { cat "$OUT"/s1_scores.*.jsonl 2>/dev/null || true; } | wc -l; }
 s2_lines() { { cat "$OUT"/s2_verdicts.*.jsonl 2>/dev/null || true; } | wc -l; }
+trans_lines() { { cat "$OUT"/s2_trans.*.jsonl 2>/dev/null || true; } | wc -l; }
 
 case "${1:-}" in
 # ---------------------------------------------------------------- ① 冒烟
@@ -190,6 +192,11 @@ status)
     echo "---- S2 各分片已写行数（每审完 1 条实时 +1；V100 单条约 20–60s）----"
     for f in "$OUT"/s2_verdicts.*.jsonl; do echo "  $(wc -l < "$f")  $f"; done
   fi
+  if ls "$OUT"/s2_trans.*.jsonl >/dev/null 2>&1; then
+    tr_alive=$(pgrep -fc "vlm_audit_hf.py.*--mode trans" || true)
+    echo "---- S2-trans（文本-only 翻译重判）: $(trans_lines) / $s2t  存活进程: $tr_alive ----"
+    echo "  体检（可中途跑，早发现修复没生效就不用等）: bash $0 trans-check"
+  fi
   echo "---- 各分片日志尾行 ----"
   tail -n 1 "$OUT"/s1_shard*.log "$OUT"/s2_shard*.log 2>/dev/null || true
   ;;
@@ -242,6 +249,20 @@ s2-trans)
   echo "已后台启动（可续跑）。比 s2 快得多：S2 的瓶颈是视频解码，这一趟完全不解码。"
   echo "进度: for f in $OUT/s2_trans.*.jsonl; do wc -l \$f; done"
   echo "跑完后: bash $0 xling-check   # 会自动优先用 s2_trans.*.jsonl"
+  echo "中途随时: bash $0 trans-check # 早判修复有没有生效，没生效就别等它跑完"
+  ;;
+# ------------------------------- ⑤d 重判体检（可中途跑：修复没生效就不必等跑完）
+trans-check)
+  ls "$OUT"/s2_trans.*.jsonl >/dev/null 2>&1 || \
+    { echo "未找到 $OUT/s2_trans.*.jsonl（先跑: bash $0 s2-trans）"; exit 1; }
+  MAIN_ARG=""
+  ls "$OUT"/s2_verdicts.*.jsonl >/dev/null 2>&1 && \
+    MAIN_ARG="--main $OUT/s2_verdicts.*.jsonl"
+  SAMPLE_ARG=""
+  [ -f "$OUT/s2_sample.jsonl" ] && SAMPLE_ARG="--sample $OUT/s2_sample.jsonl"
+  python3 tools/data_audit/check_trans.py --trans "$OUT/s2_trans.*.jsonl" \
+    $MAIN_ARG $SAMPLE_ARG --out-md "$OUT/trans_health.md" || {
+      echo; echo "== 重判体检未通过：先看上方结论，别把它喂给 xling-check =="; exit 1; }
   ;;
 # ------------------------------------------------- ⑤b S2 判定体检（S2 跑完必做）
 s2-check)
@@ -291,6 +312,19 @@ xling-check)
   if ls "$OUT"/s2_trans.*.jsonl >/dev/null 2>&1; then
     XV="$OUT/s2_trans.*.jsonl"
     echo "[xling-check] 用文本-only 重判的 trans_score（s2_trans.*.jsonl）—— 独立测量，可信"
+    # 别在半成品上校准：s2-trans 是后台 8 分片，刚起步时只有几十条
+    if [ -f "$OUT/s2_sample.jsonl" ]; then
+      have=$(trans_lines); want=$(wc -l < "$OUT/s2_sample.jsonl")
+      alive=$(pgrep -fc "vlm_audit_hf.py.*--mode trans" || true)
+      if [ "$have" -lt "$(( want * 95 / 100 ))" ]; then
+        echo "⚠️ s2-trans 才写了 $have / $want 条（$(python3 -c "print(f'{$have/$want:.1%}')")）——**还没跑完**。"
+        echo "   在半成品上校准出来的阈值没有意义。存活进程: $alive"
+        [ "$alive" -gt 0 ] && echo "   还在跑，等着就行： bash $0 status" \
+                           || echo "   ⛔ 进程已退出且未跑完：查 $OUT/s2_trans_shard*.log 的 Traceback，重跑 s2-trans 可续跑"
+        echo "   想先看修复有没有生效： bash $0 trans-check"
+        exit 1
+      fi
+    fi
   else
     XV="$OUT/s2_verdicts.*.jsonl"
     echo "⚠️ [xling-check] 未找到 $OUT/s2_trans.*.jsonl，退回主力档 s2_verdicts.*.jsonl。"

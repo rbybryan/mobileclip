@@ -43,7 +43,8 @@ bash tools/data_audit/run_v100.sh status        # S1/S2 行数 + 存活进程 + 
 | # | 动作 | 为什么是这个顺序 |
 |---|---|---|
 | 1 | ~~`s2-check` 机械体检 + §6 自洽性~~ ✅ **已完成** | 机械层面 10000/10000 全通过；§6 坐实问题 8（三分数逐条同值 92.5%、action 是固定阶梯） |
-| 1b | **`git pull` 后 `bash tools/data_audit/run_v100.sh s2-trans`** | **当前唯一的关键路径**。文本-only 重判 `trans_score`，修问题 8。不解码视频（S2 的瓶颈就在解码），8 卡跑完比 `s2` 快得多。产物直接喂 `xling-check` |
+| 1b | ✅ `s2-trans` **已启动**（2026-07-22） | 文本-only 重判 `trans_score`，修问题 8。后台 8 分片，进度看 `run_v100.sh status` |
+| 1c | **`bash tools/data_audit/run_v100.sh trans-check`（中途就可以跑）** | **「修复跑了」≠「修复生效了」**。从部分产物就能判：新 `trans_score` 若仍与**旧 `en_score`** >60% 逐条同值 → 拿掉画面没解除锚定，该停下重想 prompt 而不是等它跑完。同时核对模型守不守自己的评分规则（`mismatches` 空 → 必须给 5） |
 | 2 | **裁判走 7 卡 V100 中转机 `10.55.87.68`（路线 A′）**：照 [`SETUP_JUDGE_RELAY.md`](SETUP_JUDGE_RELAY.md) 逐条走，先测端点连通性 + 视频解析预检 | **101vector 和 H100 都连不上端点**（§4 决策 2b），只有这台能连 b100 网；**零下载、零占卡**，预检只要几分钟。可与第 1 步并行 |
 | 3 | `s2-trans` 跑完后 `run_v100.sh xling-check` | 裁决 §4 决策 1，**阻塞 S3**。脚本会自动优先用 `s2_trans.*.jsonl`；**没有它就退回主力档并打印警告——那种输出只能当参考，不足以裁决** |
 | 4 | Gradio 人工抽检 300（§6），**优先翻 `action=retranslate` 的那 4120 条** | 不占 GPU、随时可插空。问题 8 已把机制讲清楚，人工的作用变成**验证单一质量分 s 本身准不准**（s≈3 的片子到底什么样），以及给 `s2-trans` 的结果当独立锚点 |
