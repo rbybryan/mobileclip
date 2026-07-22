@@ -963,6 +963,30 @@ python -c "import transformers, accelerate, torch; print(transformers.__version_
 
 #### B3. 下载（~76GB，后台）
 
+> 🔍 **先花 30 秒查 b100 存储——很可能根本不用下。** 中转机
+> `10.55.87.68` 能访问 `/workspace/mount/b100_zaip_data`，端点的权重就放在
+> 该挂载的 `model_zoo/` 下，InternVL 很可能已经在那儿：
+>
+> ```bash
+> ssh -p 31179 root@10.55.87.68 \
+>   'ls /workspace/mount/b100_zaip_data/model_zoo/ | head -50
+>    find /workspace/mount/b100_zaip_data -maxdepth 4 -iname "*InternVL*" 2>/dev/null | head'
+> ```
+>
+> 找到且 101vector 连得到该机 → `rsync -avP` 走内网约 100 MB/s，
+> **76GB 十几分钟**，比任何外网通道快一到两个数量级。
+>
+> ⏱ **本网络实测（2026-07-21）**：ModelScope `--max-workers 4` 时
+> **每连接稳定在 230–250 kB/s、总吞吐约 1 MB/s → 76GB 要 ~21 小时**。
+> 四条连接速率几乎一致，是**按连接限速**的特征而非总带宽跑满，
+> 因此**加并发通常近似线性提速**：改 `--max-workers 16` 后测 60 秒，
+> 涨到 3–4 MB/s 即证实（~6 小时），仍是 1 MB/s 则说明总带宽就这么多、
+> 换通道无用，只能走上面的 b100 存储或放弃这条路线。
+>
+> ⚠️ **别让它变成关键路径。** 这是路线 C 的备选，主线是 A′（中转机 + 27B
+> 端点，几分钟预检）。让它后台慢慢下（断了自动续传、不丢进度），
+> 人去推进 A′ 和 `xling-check`——A′ 一通，这 76GB 大概率用不上。
+
 hf-mirror 通道在本机**已实测不可用**（新版 `huggingface_hub` 改走 Xet →
 `Local entry not found`，详见 `TROUBLESHOOTING.md`），直接用 ModelScope：
 
