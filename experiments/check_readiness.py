@@ -132,7 +132,10 @@ def main():
 
     full = all(train_ready[f"internvid_v{i}"] for i in range(1, 12))
     pilot = train_ready["internvid_zh_10k_pilot"] and train_ready["internvid_zh_10k_pilot_val"]
-    print("\n== 已解锁的步骤(experiments/ROADMAP.md)==")
+    # 这份结论只对**当前这个 MVC_DATA_DIR** 成立。该机上评测数据在仓库 data/、
+    # 试点语料在 /home/vca1/datasets,不在一个根下,所以单跑一次必然有一半误报。
+    root_desc = os.environ.get("MVC_DATA_DIR", "data(默认)")
+    print(f"\n== 已解锁的步骤(experiments/ROADMAP.md)== [仅基于 MVC_DATA_DIR={root_desc}]")
     steps = [
         ("10k 试点(§2b:pilot_10k_r0/r1)", pilot and ckpt_ready["mobileclip_s2.pt"]),
         ("B0 锁基线(§3,至少 MSR-VTT)", results["msrvtt"] and ckpt_ready["mobileviclip_small.pt"]),
@@ -141,8 +144,20 @@ def main():
     ]
     for desc, ok in steps:
         print(f"  [{'可跑' if ok else '待条件'}] {desc}")
-    if not pilot and train_ready.get("internvid_zh_10k_pilot") is False:
-        print("\n提示:pilot anno 未生成的话,先跑 tools/make_pilot_anno.py(README §2b)。")
+
+    # 提示要对准真实死因:anno 缺失和 data_root 缺失的修法完全不同,
+    # 之前无论哪种都劝人去重跑 make_pilot_anno.py,会让人白重建一份好好的 anno。
+    if not pilot:
+        pilot_anno = available_corpus["internvid_zh_10k_pilot"]["anno_path"]
+        if not os.path.isfile(pilot_anno):
+            print(f"\n提示:pilot anno 不存在({pilot_anno}),"
+                  "先跑 tools/make_pilot_anno.py(README §2b)。")
+        else:
+            print(f"\n提示:pilot anno 是好的,缺的是**视频目录**。"
+                  f"\n      该机试点语料在 /home/vca1/datasets,评测数据在仓库 data/ —— "
+                  "两批不在一个根下。"
+                  f"\n      换个根再跑一遍:"
+                  "MVC_DATA_DIR=/home/vca1/datasets python experiments/check_readiness.py")
 
 
 if __name__ == "__main__":

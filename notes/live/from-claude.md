@@ -23,6 +23,59 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-22 (17) — 四基准全绿 ✅ **B0 现在就能跑,零操作**;附 §4 的一条线索
+
+预检确认:`unset MVC_DATA_DIR` 后 msrvtt / k400 / ucf101 / hmdb51 **全部 `[OK ]`**,
+连那条软链都不用建 —— `data/MSRVTT_Videos` 本来就在(它是**软链**,所以上一轮
+`find` 没跟进去,才没出现在聚合结果里)。**没有任何前置操作了,直接跑:**
+
+```bash
+cd ~/mobileclip && unset MVC_DATA_DIR
+CKPT=./checkpoints/mobileviclip_small.pt
+for b in msrvtt hmdb51 ucf101 k400; do
+  CUDA_VISIBLE_DEVICES=0 \
+    bash experiments/run_eval.sh small $b $CKPT experiments/evals/baseline_official/$b
+done
+python experiments/collect_results.py --dirs experiments/evals \
+       --baseline baseline_official --out experiments/BASELINE.md
+```
+
+> `nvidia-smi` 先看哪张卡空着再定 `CUDA_VISIBLE_DEVICES`(卡是共享的)。
+> **先盯 MSR-VTT 的 `ret_test/` t2v R@1 是否 ≈42.5** —— 唯一有外部数字可对照的,
+> 它对上了,另外三个的数字才可信。K400 有 1 万条视频,是四个里最慢的。
+
+### 你那份输出里的两条附带信息
+
+**① §4 线索:shard 1 的抓取开过头,没抓完。** 11 个分片的报错**不一样**:
+
+```
+internvid_v1   anno 5000 条,抽查 20 条视频全部缺失(检查 MVC_DATA_DIR / 目录层级)
+internvid_v2   anno 5000 条,但 data_root 缺失: data/video_sample/InternVId-FLT_2
+```
+
+v2–v11 是**目录都不存在**(没开始过);v1 是**目录存在但视频一条都不在** ——
+有人跑过 `tools/download_internvid.py`(它会 `mkdir -p` 出 `--out`)但没抓成,
+或者抓下来的文件名和 anno 对不上。查一下,别重复劳动:
+
+```bash
+ls data/video_sample/InternVId-FLT_1 | wc -l
+tail -20 data/video_sample/InternVId-FLT_1/_download_log.tsv 2>/dev/null
+python -c "import json;print([e['video'] for e in json.load(open('anno_downstream/InternVid/InternVid-10M-flt_1.json'))[:3]])"
+```
+
+大量 `fail` = YouTube 永久损耗;文件在但命名不同 = 只是对不齐,**不必重抓**。
+
+**② 最后那行提示是误导,我已经改掉了。** 它写"pilot anno 未生成的话,先跑
+`make_pilot_anno.py`" —— 但你的 pilot anno 好好的(9000 条读入正常),缺的是
+**视频目录**,因为这一遍没 export `MVC_DATA_DIR`。照着那句去重建 anno 就白干了。
+现在它会分清死因:anno 真缺才劝重建,否则直接告诉你换个根再跑一遍。
+同时"已解锁的步骤"标题会带上本次用的根,提醒你这份结论只对这个根成立。
+
+**Then report back**:`BASELINE.md` 的内容,尤其 MSR-VTT 的
+`ret_test/` 与 `ret_test_emb/` 两行。
+
+---
+
 ## 2026-07-22 (16) — 数据**全都在** ✅ B0 四个基准零下载,只差一条软链
 
 搜索结果很干脆:**四个基准的视频一个都没丢**,全在 `~/mobileclip/data/` 下。
