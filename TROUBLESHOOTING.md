@@ -1378,3 +1378,97 @@ python experiments/collect_results.py --dirs experiments/evals \
 
 2) 脚本现在会在生成文件顶部写明**扫了哪些目录、含哪些 run**,并在
    `--baseline` 指定的 run 找不到时打印显式警告。读 BASELINE.md 前先看头两行。
+
+## 下过的数据集被预检报成缺失(`data_root 缺失`)—— 先别重下
+
+### Symptom
+
+`experiments/check_readiness.py` 报某个评测集 `data_root 缺失`,但你记得下过。
+2026-07-22 的 HMDB51 就是这样。
+
+### Cause 1(最常见):`MVC_DATA_DIR` 让预检看错了根
+
+**各数据集的下载脚本/文档写死的是仓库相对路径 `data/…`**,例如
+`tools/download_hmdb51.sh`:
+
+```bash
+RAW_DIR="data/hmdb51_hf"
+DEST_DIR="data/hmdb51/videos_test"
+```
+
+而 `configs/data.py` 的 `data_root` 是 `$MVC_DATA_DIR/hmdb51/videos_test`。
+一旦 `export MVC_DATA_DIR=/home/vca1/datasets`(10k 试点需要它),预检就跑去
+`/home/vca1/datasets/hmdb51/videos_test` 找 —— 那里从来没放过评测数据。
+
+**这台机器上两批数据不在一个根下**:评测集在仓库 `data/`,试点语料在
+`/home/vca1/datasets`。所以预检要**跑两遍**,见 `experiments/README.md` §3.0。
+
+```bash
+cd ~/mobileclip
+unset MVC_DATA_DIR
+python experiments/check_readiness.py          # 评测集应在这一遍亮灯
+```
+
+### Cause 2:软链悬空(`ls` 看得见,`os.path.exists` 说没有)
+
+`videos_test/` 里是**软链**,指向 `data/hmdb51_hf/…`。若为了回收那 2.1 GB 把
+`data/hmdb51_hf/` 删了(或用相对路径建过软链),软链就全部悬空:
+`ls` 照样列出 6766 个名字,但跟随软链的检查全失败。
+
+```bash
+find data/hmdb51/videos_test -maxdepth 1 -xtype l | wc -l   # >0 就是悬空
+```
+
+修法**不需要重下**(只要 `data/hmdb51_hf/` 里的 `.avi` 还在):
+
+```bash
+find data/hmdb51/videos_test -maxdepth 1 -xtype l -delete
+find "$(cd data/hmdb51_hf && pwd)" -name '*.avi' -exec ln -sf {} data/hmdb51/videos_test/ \;
+```
+
+注意 `find` 的根必须是**绝对路径**,否则软链目标会相对于**软链所在目录**解析,
+再次全部悬空(`tools/download_hmdb51.sh` 里对此有长注释)。
+
+### 通用定位手法:拿 anno 里的真实文件名去搜
+
+anno 记的是**裸文件名**,所以可以做外科式搜索,比乱翻目录快得多:
+
+```bash
+cd ~/mobileclip
+python - <<'PY'
+import json
+d = json.load(open("anno_downstream/hmdb51_act_test.json"))
+print("anno 条数:", len(d))
+for e in d[:3]:
+    print("  ", e["video"])
+PY
+# 用上面任意一个文件名(整串,含扩展名)全盘找:
+find ~ /home/vca1 -name '<粘贴那个文件名>' 2>/dev/null
+```
+
+找不到单个文件时,按目录聚合统计**视频文件都堆在哪**,一眼看出数据集位置:
+
+```bash
+for d in ~ /home/vca1 /data /mnt; do
+  [ -d "$d" ] && find "$d" \( -name '*.avi' -o -name '*.mp4' \) -printf '%h\n' 2>/dev/null
+done | sort | uniq -c | sort -rn | head -20
+```
+
+顺带找找原始压缩包(还在就不用重下,`download_hmdb51.sh` 会校验字节数后跳过下载):
+
+```bash
+find ~ /home/vca1 -name 'hmdb51*.zip' -size +1G -printf '%10s  %p\n' 2>/dev/null
+# 期望 2117581749 字节;放回 data/hmdb51_hf/hmdb51.zip 再跑脚本即可(幂等)
+```
+
+### 一条可用于任何数据集的判据
+
+`anno` 若是用 `preprocess/build_act_rec_anno.py --videos <data_root>` 生成的,
+它**只保留磁盘上真实存在的视频**(见该文件 `--videos` 的实现:
+"Keep only entries whose video exists in videos_dir")。所以:
+
+> **anno 的条数 < 官方划分条数 ⇒ 生成它的那一刻,视频就在盘上。**
+
+HMDB51 实例:split-1 测试集 51 类 × 30 = **1530**,盘上 anno 是 **1511**,
+少 19 条 —— 那 19 条是当时磁盘上就缺的。**1511 这个数字本身就是"视频曾在盘上"
+的证据**,遇到"是不是根本没下过"的疑问时可以用它反推。
