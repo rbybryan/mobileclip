@@ -17,6 +17,7 @@
 #   bash tools/data_audit/run_v100.sh review       # ⑧ 生成三张人工抽检表（TSV，填完用 review-score 统计）
 #   bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/review_better_zh.tsv
 #   bash tools/data_audit/run_v100.sh s2-gran      # ⑨ 粒度计数式重判（验证 dense=0 是不是标签塌缩）
+#   bash tools/data_audit/run_v100.sh gran-check   # ⑨b 粒度结果分析 + n_info=0 归因 -> gran_health.md
 #   JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge  # ⑥ 云端裁判（可选，需 API key）
 #   bash tools/data_audit/run_v100.sh judge-agree # ⑥b 一致率+Cohen's κ（可对外来裁判文件独立重算）
 #   bash tools/data_audit/run_v100.sh xling-check # ⑥c 裁决 xling 阈值（s3 前必做）
@@ -394,6 +395,15 @@ s2-gran)
   echo "已后台启动（可续跑）。同样不解码视频，比 s2 快得多。"
   echo "跑完后统计 n_info 分布："
   echo "  python3 -c \"import json,glob;from collections import Counter;c=Counter(json.loads(l).get('verdict',{}).get('n_info') for f in glob.glob('$OUT/s2_gran.*.jsonl') for l in open(f));print(sorted(c.items(),key=lambda x:(x[0] is None,x[0])))\""
+  ;;
+# ------------------------------- ⑨b 粒度重判结果分析 + n_info=0 归因
+gran-check)
+  ls "$OUT"/s2_gran.*.jsonl >/dev/null 2>&1 || \
+    { echo "未找到 $OUT/s2_gran.*.jsonl（先跑: bash $0 s2-gran）"; exit 1; }
+  GC_ARGS=(--gran "$OUT/s2_gran.*.jsonl" --sample "$OUT/s2_sample.jsonl")
+  ls "$OUT"/s2_verdicts.*.jsonl >/dev/null 2>&1 && \
+    GC_ARGS+=(--verdicts "$OUT/s2_verdicts.*.jsonl")
+  python3 tools/data_audit/check_gran.py "${GC_ARGS[@]}" --out-md "$OUT/gran_health.md"
   ;;
 # ------------------------------------------------ ⑩ 快照：一条命令打印全部状态
 snapshot)
