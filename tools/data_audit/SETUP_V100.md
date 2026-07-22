@@ -1329,7 +1329,35 @@ bash tools/data_audit/run_v100.sh review
 - **`.jsonl`** —— 拿来**看画面**。Gradio 按 jsonl 加载子集（与 §6 里
   `quality_issue_candidates.jsonl` 同一用法），把它指过去就只翻这一批。
 
-### 7.0b 实际怎么过一遍
+### 7.0b 实际怎么过一遍（推荐：离线评审包）
+
+> ⚠️ **不要为了看画面往 `audit_env` 里装 `gradio`**：它会拉进 fastapi/pandas/pydantic
+> 一堆依赖，有污染这套验证过的冻结环境的风险（本仓库已踩过 torch 被静默升级的坑）。
+> 更根本的是 **§6 的 Gradio 是浏览数据集用的、没有抽检表的填写字段** —— 即使装上，
+> 也得一边看 Gradio 一边在 Excel 里按 video id 对着填。
+
+```bash
+# ① 服务器上打包（视频 + 自带填写界面的 HTML，纯 stdlib，不装任何东西）
+bash tools/data_audit/run_v100.sh review-bundle
+tar czf ~/review_bundles.tgz -C outputs/audit_10k $(cd outputs/audit_10k && ls -d bundle_*)
+
+# ② 取回本地，浏览器打开
+scp vca1@10.235.31.101:~/review_bundles.tgz . && tar xzf review_bundles.tgz
+open bundle_conflicts/index.html      # 先过 15 条这个，最快
+open bundle_better_zh/index.html      # 再过 50 条这个（v0.2 落地前的硬前置）
+
+# ③ 填完点页面上的「导出 TSV」，把下载到的文件传回服务器统计
+scp review_better_zh.tsv vca1@10.235.31.101:~/mobileclip/outputs/audit_10k/
+bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/review_better_zh.tsv
+```
+
+页面里视频、原字幕、候选字幕、单选按钮**在同一屏**；进度存浏览器 localStorage，
+关掉再开不丢；按 `n` 跳到下一条未填。默认不打包 `random` 那 300 条（视频体积大），
+需要时 `BUNDLE_RANDOM=1`；同盘可加 `BUNDLE_LINK=1` 用硬链接省空间。
+
+<details><summary>备选：非要用 Gradio / 直接播视频</summary>
+
+
 
 ```bash
 # ① 表在服务器上，拉到本地用 Excel 填最顺手
@@ -1349,8 +1377,13 @@ scp review_better_zh.tsv vca1@10.235.31.101:~/mobileclip/outputs/audit_10k/
 bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/review_better_zh.tsv
 ```
 
+</details>
+
 > **填一半就统计完全可以**——未填的行自动跳过，只在已填行上算比例。
 > 建议先把 15 条的 `review_conflicts.tsv` 过掉（几分钟，直接了结「语言污染 3.3%」的待核标记）。
+
+> 真要用 Gradio，**装到独立 venv 里**，别碰 `audit_env`：
+> `python -m venv ~/gradio_env && source ~/gradio_env/bin/activate && pip install gradio`
 
 **填完统计**（脚本会直接判决策门，不用自己算比例）：
 

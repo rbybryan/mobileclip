@@ -15,6 +15,7 @@
 #   bash tools/data_audit/run_v100.sh s2-trans   # ⑤c 文本-only 翻译重判（修 halo；不解码视频，比 s2 快）
 #   bash tools/data_audit/run_v100.sh trans-check # ⑤d 重判体检（可中途跑：早判修复有没有生效）
 #   bash tools/data_audit/run_v100.sh review       # ⑧ 生成三张人工抽检表（TSV，填完用 review-score 统计）
+#   bash tools/data_audit/run_v100.sh review-bundle # ⑧b 打离线评审包（视频+HTML，本地浏览器里评，不用装 gradio）
 #   bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/review_better_zh.tsv
 #   bash tools/data_audit/run_v100.sh s2-gran      # ⑨ 粒度计数式重判（验证 dense=0 是不是标签塌缩）
 #   bash tools/data_audit/run_v100.sh gran-check   # ⑨b 粒度结果分析 + n_info=0 归因 -> gran_health.md
@@ -373,6 +374,25 @@ review)
   echo
   echo "== 三张表已生成在 $OUT/ ；在 Excel/VSCode 里填最后几列，配合 §6 的 Gradio 看画面 =="
   echo "== 填完统计： bash $0 review-score $OUT/review_better_zh.tsv =="
+  ;;
+review-bundle)
+  # 打离线评审包：视频 + 自带填写界面的 HTML，scp 到本地浏览器里评，
+  # 不需要在服务器上装 gradio（那会污染验证过的 audit_env，且它没有填写字段）
+  B=tools/data_audit/make_review_bundle.py
+  made=0
+  for k in better_zh conflicts random; do
+    [ -f "$OUT/review_$k.tsv" ] || continue
+    [ "$k" = "random" ] && [ -z "${BUNDLE_RANDOM:-}" ] && \
+      { echo "跳过 random（300 条视频较大）；需要就 BUNDLE_RANDOM=1 再跑"; continue; }
+    python3 $B --sheet "$OUT/review_$k.tsv" --out-dir "$OUT/bundle_$k" ${BUNDLE_LINK:+--link}
+    made=$((made+1)); echo
+  done
+  [ "$made" -gt 0 ] || { echo "没有可打包的表（先跑: bash $0 review）"; exit 1; }
+  echo "== 打包并取回本地 =="
+  echo "  服务器： tar czf ~/review_bundles.tgz -C $OUT \$(cd $OUT && ls -d bundle_* )"
+  echo "  本地：   scp vca1@10.235.31.101:~/review_bundles.tgz . && tar xzf review_bundles.tgz"
+  echo "           浏览器打开 bundle_better_zh/index.html —— 视频/字幕/选项同屏，进度自动保存"
+  echo "  填完点「导出 TSV」，传回服务器： bash $0 review-score $OUT/review_better_zh.tsv"
   ;;
 review-score)
   [ -n "${2:-}" ] || { echo "用法: bash $0 review-score <填好的.tsv>"; exit 1; }
