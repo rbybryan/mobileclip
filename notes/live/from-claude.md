@@ -68,14 +68,10 @@ find "$(cd data/hmdb51_hf && pwd)" -name '*.avi' -exec ln -sf {} data/hmdb51/vid
 两步都没找到,再全盘搜(拿 anno 里的**真实文件名**做外科式搜索,比翻目录快):
 
 ```bash
-# 3) 先取几个真实文件名
-python - <<'PY2'
-import json
-d = json.load(open("anno_downstream/hmdb51_act_test.json"))
-print("anno 条数:", len(d))
-for e in d[:3]: print("  ", e["video"])
-PY2
-find ~ /home/vca1 -name '<粘贴其中一个文件名>' 2>/dev/null
+# 3) 外科式搜索:自动从 anno 取真实文件名再全盘找(不用手动粘贴)
+NAME=$(python -c "import json;print(json.load(open('anno_downstream/hmdb51_act_test.json'))[0]['video'])")
+echo "找这个文件:$NAME"
+find ~ /home/vca1 -name "$NAME" 2>/dev/null
 
 # 4) 或者按目录聚合看视频都堆在哪
 for d in ~ /home/vca1 /data /mnt; do
