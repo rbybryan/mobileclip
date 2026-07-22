@@ -44,8 +44,20 @@ class LayerNormFP32(nn.LayerNorm):
     def forward(self, x: Tensor) -> Tensor:
         # Convert input from dtype X to FP32 and perform normalization operation.
         # This may help with underflow/overflow issues that we typically see with normalization layers
+        #
+        # weight/bias 要和输入一起转 FP32——理由同
+        # models/backbones/internvideo2/mobileclip/transformer.py 里的同名类
+        # (只转输入会在 .half() 后的模型上报 "expected scalar type Float but
+        # found Half")。这两个副本请保持同步。
         inp_dtype = x.dtype
-        return super().forward(x.to(torch.float32)).to(inp_dtype)
+        out = F.layer_norm(
+            x.to(torch.float32),
+            self.normalized_shape,
+            self.weight.to(torch.float32) if self.weight is not None else None,
+            self.bias.to(torch.float32) if self.bias is not None else None,
+            self.eps,
+        )
+        return out.to(inp_dtype)
 
 
 def get_normalization_layer(norm_type, num_features):
