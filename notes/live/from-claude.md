@@ -23,6 +23,68 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-22 (16) — 数据**全都在** ✅ B0 四个基准零下载,只差一条软链
+
+搜索结果很干脆:**四个基准的视频一个都没丢**,全在 `~/mobileclip/data/` 下。
+我之前让你下的 15 GB **完全不用下**,那个说法是错的(错因就是预检带着
+`MVC_DATA_DIR=/home/vca1/datasets` 跑,而数据在仓库的 `data/`)。
+
+先说个读数陷阱:你那条 `find ~ /home/vca1 ...` 里 `~` = `/home/vca1/rby`,
+**正是 `/home/vca1` 的子目录**,同一棵树被遍历了两遍 —— 所以第 3 步每条命中
+打印两次、第 4 步的计数**全部翻倍**。折半后:
+
+| 基准 | 盘上目录 | 实际数量 | 与 config |
+|---|---|---|---|
+| `hmdb51` | `data/hmdb51/videos_test` | 6754 | ✅ 完全一致 |
+| `ucf101` | `data/ucf101/videos` | 13320 | ✅ 完全一致 |
+| `k400` | `data/kinetics_400_val_10s_320p` | 10119 | ✅ 完全一致(anno 10117) |
+| `msrvtt` | `data/MSRVTT/videos/all` | 10004 | ⚠️ 只差软链名 `MSRVTT_Videos` |
+
+`hmdb51_hf/hmdb51.zip` 也在,字节数 `2117581749`,与脚本 `EXPECTED_SIZE` 分毫不差。
+另有全量 `data/kinetics-dataset/k400/{train,val,test}`(train 约 24 万条)。
+
+**Do this next:**
+
+```bash
+cd ~/mobileclip && git pull origin main
+unset MVC_DATA_DIR                    # 关键:评测数据在仓库 data/,不是 /home/vca1/datasets
+
+# 唯一要做的事:给 MSR-VTT 补一条软链
+ls data/MSRVTT/videos/all | head -3   # 确认是 videoXXXX.mp4 这种裸文件名
+ls -ld data/MSRVTT_Videos 2>/dev/null || \
+  ln -s "$(pwd)/data/MSRVTT/videos/all" "$(pwd)/data/MSRVTT_Videos"
+
+python experiments/check_readiness.py --sample 50 --decode    # 四行应全部 [OK ]
+```
+
+四行都亮了就直接跑 **B0 四基准**(零下载):
+
+```bash
+CKPT=./checkpoints/mobileviclip_small.pt
+for b in msrvtt hmdb51 ucf101 k400; do
+  CUDA_VISIBLE_DEVICES=0 \
+    bash experiments/run_eval.sh small $b $CKPT experiments/evals/baseline_official/$b
+done
+python experiments/collect_results.py --dirs experiments/evals \
+       --baseline baseline_official --out experiments/BASELINE.md
+```
+
+先看 **MSR-VTT 的 `ret_test/` t2v R@1 是否≈42.5** —— 这是唯一有外部数字可对照的,
+对上了才说明整条评测链路(权重、解码、划分)是通的,另外三个的数字才可信。
+
+**两个提醒:**
+
+1. 盘上有 `data/MSRVTT/MSRVTT/videos/all`(同样 10004 个),疑似解压嵌套多出的
+   副本。**先别删** —— 等软链指向的那份确认能解码,再回收空间。
+2. `/home/vca1/datasets` **没出现**在按目录聚合的结果里,但预检确认那 1 万条试点
+   视频存在 —— 多半因为它是**软链**而 `find` 默认不跟随(要 `find -L`)。
+   §2b 的数据没问题,别被这个吓到。
+
+**Then report back**:`check_readiness.py` 的四行,以及 `BASELINE.md` 的内容
+(尤其 MSR-VTT 那两行 `ret_test/` 与 `ret_test_emb/`)。
+
+---
+
 ## 2026-07-22 (15) — HMDB51 **多半没丢**:是预检看错了根(这坑是我埋的)
 
 `tools/download_hmdb51.sh` 写死的是**仓库相对路径**:
