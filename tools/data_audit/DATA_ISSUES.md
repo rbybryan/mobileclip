@@ -78,7 +78,7 @@ bash tools/data_audit/run_v100.sh status        # S1/S2 行数 + 存活进程 + 
 |---|---|---|
 | 1 | `git pull` 后 `bash tools/data_audit/run_v100.sh trans-check` | 补跑留档。差率 19.6%→3.6% 已是「锚定解除」的强证据，这一步给出逐条同值率的直接数字，并核对模型守不守自己的评分规则（`mismatches` 空 → 必须给 5） |
 | 2 | ~~裁判走中转机 `10.55.87.68`~~ ✅ **已完成**（500 条 / 0 失败 / `judge-agree` 已出） | 二值门 **87.2% κ=0.720 通过** → S3 分桶站得住；五类门 49.2% ❌ 但那是主力 `action` 不可信。见 §4 决策 2b |
-| **2b** | 🔴 **查 `granularity` 的真分歧**（几秒，纯 CPU）——一条命令：<br>`python3 -c "import json,collections;v=[json.loads(l)['verdict'] for l in open('outputs/audit_10k/s2_verdicts_judge.jsonl')];print(collections.Counter(x.get('granularity') for x in v))"` | T4 逐维里 `granularity` 一致率仅 **48.2%**，是**真分歧**（不是退化）。而「粒度粗 93.6%」是 §0 一页结论的**头条**、也是「重心是 RECAPTION」的主要依据。**若裁判说 coarse 只有 ~45%，那个头条要加限定** —— 它可能和 `action` 一样，只是同一个整体质量分的另一个投影。见问题 13 |
+| **2b** | 🔴 **查 `granularity` 的真分歧**——几秒、纯 CPU、不占卡。**命令见 §2 的「问题 13 待查」** | T4 逐维里 `granularity` 一致率仅 **48.2%**，是**真分歧**（不是退化）。而「粒度粗 93.6%」是 §0 一页结论的**头条**、也是「重心是 RECAPTION」的主要依据。**若裁判说 coarse 只有 ~45%，那个头条要加限定** —— 它可能和 `action` 一样，只是同一个整体质量分的另一个投影 |
 | 3 | ~~S3 校准 + 分桶~~ ✅ **已完成**（`TARGET_PRECISION=0.3`） | KEEP 71.9% / **RECAPTION 24.6%** / RETRANSLATE 3.3% / DROP 0.15%，与结论 10 的预测一致 |
 | 3b | ~~重跑 S3 修真标签~~ ✅ **已完成（终稿）** | RETRANSLATE 回到 **312 条全部真标签**；另 **351 条**冲突已单列 → 问题 12 |
 | 4 | 读 `report.md` 时**记住问题 8** | `action` 分布那一栏是「整体质量分的阶梯」，**不是四类问题的真实占比**；翻译差率一律以 3.6%（`s2_trans`）为准 |
@@ -114,6 +114,50 @@ bash tools/data_audit/run_v100.sh status        # S1/S2 行数 + 存活进程 + 
 | **11** | C | **`RETRANSLATE` 桶若用 S0 旗标/xling 代理构建，与它命名的问题近乎无关** | 该代理精度 **6.6%**、召回 **7.0%**（`xling_calibration.md` §F）→ 333 条的桶里真正翻译坏的约 **22 条**，且漏掉约 **333 条** | `xling-check` + S3 | **已处置（10k）**：`aggregate_report.py` 现在优先用 `s2_trans` 真标签分桶；**全量仍是代理**，见下 |
 | **13** | E | ⬜ **「粒度粗 93.6%」未被裁判证实——可能又是同一个质量分的投影** | T4 逐维：`granularity` 一致率仅 **48.2%**、κ=0.083，**且非退化**（两边都有足够方差）→ 真分歧。主力判 coarse **93.6%**，裁判明显低得多 | `judge-agree` | ⬜ **待查**（跑 §1 第 2b 步，几秒） |
 | **9** | E | **粒度粗是压倒性主症状** | `granularity`：**coarse 9362（93.6%）/ adequate 638 / dense 0** | S2 | **已确认**（规模最大的一类） |
+
+### 问题 13 待查：裁判的 `granularity` 分布（几秒，纯 CPU）
+
+在 **101vector** 仓库根目录跑（`s2_verdicts_judge.jsonl` 已从中转机拷回）：
+
+```bash
+cd ~/mobileclip
+python3 - <<'GRAN'
+import json, glob, collections
+J = [json.loads(l) for l in open("outputs/audit_10k/s2_verdicts_judge.jsonl")]
+jv = {r["video"]: r["verdict"] for r in J if "action" in (r.get("verdict") or {})}
+c = collections.Counter(v.get("granularity") for v in jv.values())
+n = sum(c.values())
+print(f"裁判 granularity (n={n}):")
+for k, v in c.most_common():
+    print(f"  {str(k):10s} {v:5d}  {v/n:6.1%}")
+print("  主力 10k 对照: coarse 93.6% / adequate 6.4% / dense 0")
+
+# 同一批记录上主力判 coarse 的比例 —— 排除「抽样差异」这个解释
+mv = {}
+for f in glob.glob("outputs/audit_10k/s2_verdicts.*.jsonl"):
+    for l in open(f):
+        r = json.loads(l)
+        if r.get("video") in jv and "action" in (r.get("verdict") or {}):
+            mv[r["video"]] = r["verdict"]
+both = [v for v in mv if v in jv]
+mc = sum(1 for v in both if mv[v].get("granularity") == "coarse") / max(len(both), 1)
+jc = sum(1 for v in both if jv[v].get("granularity") == "coarse") / max(len(both), 1)
+print(f"\n重叠 {len(both)} 条上: 主力 coarse {mc:.1%}  vs  裁判 coarse {jc:.1%}")
+GRAN
+```
+
+**判读**：
+
+- 裁判 coarse **也在 90% 上下** → 「粒度粗 93.6%」被独立证实，§0 头条不动；
+  48.2% 的低一致率只是**边界样本上的抖动**（coarse/adequate 本就连续）。
+- 裁判 coarse **明显更低（如 ~45%）** → **§0 头条要加限定**。届时把
+  「粒度粗 93.6%」改写为「主力判 93.6%、裁判仅 X%，两者未收敛」，
+  并把「重心是 RECAPTION」的依据**改挂到 `zh_bad` 19.6%** ——
+  那一维 κ=0.628、**已被裁判证实**，粒度这一维没有。
+
+> **为什么值得跑**：问题 8 已经抓到「模型只给一个整体质量分、`action` 是它上面的
+> 固定阶梯」。`granularity` 完全可能是**同一个分数的又一个投影**。
+> 这条命令几秒钟，却直接决定 §0 头条要不要改写。
 
 ### 问题 8 详解：`action` 是单一质量分上的固定阶梯（2026-07-22 坐实）
 
