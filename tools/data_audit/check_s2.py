@@ -113,6 +113,11 @@ def main():
         print(s)
         lines.append(s)
 
+    # 判定结论累积器。**必须在所有检查段落之前定义**：任何一节都可能 append，
+    # 放到最后定义会让"门一旦触发就 UnboundLocalError"（曾经如此，靠门没触发侥幸没炸）。
+    problems = []   # 拦住流程
+    notes = []      # 不拦，但必须读到（多半是真实数据问题而非流程问题）
+
     per_shard = defaultdict(lambda: {"n": 0, "ok": 0})
     seen = Counter()
     usable, failed = 0, 0
@@ -364,37 +369,49 @@ def main():
     emit()
 
     # ------------------------------------------------------- 7 时序维度
-    emit("## 7. 时序维度到底被评估了吗（F 类）")
+    emit("## 7. 时序维度：视频有时序，字幕说了吗（F 类）")
     emit()
-    emit("rubric 规定：`temporal_order_relevant=false` 时 `temporal_order_correct` 记 `null`、"
-         "**不计入时序错误率**。而 caption 若普遍笼统、只描述单一事件，`relevant` 就会全是 false——"
-         "此时「时序错误率很低」并不表示时序没问题，而表示**这一维根本没被评估**。"
-         "对视频-文本模型来说，时序恰恰是它区别于图文模型的地方。")
+    emit("rubric 把时序拆成两问：`temporal_order_relevant`=**视频本身**有没有多个先后事件；"
+         "`temporal_order_correct`=**字幕**描述的顺序对不对，**字幕没描述顺序则记 `null`**。"
+         "于是 `null` 不是「没问题」，而是「**字幕对时序只字未提**」——"
+         "对视频-文本模型来说，这正是 F 类（时序信息缺失）的直接测量。")
     emit()
-    rel_true = sum(n for (r, _), n in temporal.items() if r is True)
-    emit("| `relevant` | `correct` | 条数 | 占比 |")
+    emit("| `relevant`（视频有时序） | `correct`（字幕说对了吗） | 条数 | 占比 |")
     emit("|---|---|---|---|")
     for (r, c), n in temporal.most_common():
         emit(f"| {r} | {c} | {n} | {pct(n, usable)} |")
     emit()
-    emit(f"- **判定为「含多个先后事件」（`relevant=true`）的只有 {rel_true} 条"
-         f"（{pct(rel_true, usable)}）**")
+    rel = sum(n for (r, _), n in temporal.items() if r is True)
+    omitted = temporal.get((True, None), 0)
+    said_ok = temporal.get((True, True), 0)
+    said_bad = temporal.get((True, False), 0)
+    said = said_ok + said_bad
+    emit(f"- **视频含多个先后事件**：{rel} 条（{pct(rel, usable)}）")
+    if rel:
+        emit(f"- 其中**字幕根本没描述顺序**：**{omitted} 条（{pct(omitted, rel)}）**")
+        emit(f"- 字幕描述了顺序：{said} 条（{pct(said, rel)}）——其中写反 {said_bad} 条"
+             + (f"（{pct(said_bad, said)}，n 小仅供参考）" if said else ""))
+    emit(f"- **全库描述了事件顺序的字幕只有 {said} 条（{pct(said, usable)}）**")
     emit()
-    if usable and rel_true / usable < 0.05:
+    if rel and omitted / rel > 0.9:
         notes.append(
-            f"**时序维度实际上没有被评估**：`relevant=true` 仅 {pct(rel_true, usable)}，"
-            "「时序错误率」是在这个极小的子集上算的，**不能当作全库时序质量的结论**。"
-            "报告里应改写为「本轮未能测评时序维度」。这与粒度粗占压倒多数是同一件事的两面："
-            "笼统的单事件字幕天然不含时序信息 → **这份数据几乎没有提供时序监督信号**，"
-            "对视频-文本模型是比「字幕不够准」更根本的问题，"
-            "直接决定 v0.2 要不要专门生成含时序的字幕")
+            f"🔴 **时序监督信号几乎为零**：{pct(rel, usable)} 的视频含多个先后事件，"
+            f"但其中 **{pct(omitted, rel)} 的字幕对顺序只字未提**；"
+            f"全库只有 {said} 条（{pct(said, usable)}）字幕描述了事件顺序。"
+            "**这是 F 类「时序信息缺失」的直接证据，且规模远超预期。** "
+            "对 MobileViCLIP 这样的**视频**-文本模型，时序正是它区别于图文模型之处——"
+            "**这份数据在时序上基本没有提供可学的监督**。"
+            "→ v0.2 的 RECAPTION prompt 应当在视频含多事件时**强制要求写出顺序**；"
+            "也应检查现有 `better_zh` 候选是否已带时序（prompt 里要求过「描述不同侧面…时序」）")
+    elif rel and rel / usable < 0.05:
+        notes.append(
+            f"`relevant=true` 仅 {pct(rel, usable)}，时序维度实际上没有被评估——"
+            "「时序错误率」是在极小子集上算的，不能当全库结论")
     emit()
 
     # ---------------------------------------------------------------- 判定门
     emit("## 结论")
     emit()
-    problems = []   # 拦住流程
-    notes = []      # 不拦，但必须读到（多半是真实数据问题而非流程问题）
     fail_rate = failed / total if total else 1.0
     if fail_rate > args.max_fail_rate:
         problems.append(f"判定失败率 {fail_rate:.1%} > {args.max_fail_rate:.0%}"
