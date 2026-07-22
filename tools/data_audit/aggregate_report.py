@@ -37,6 +37,8 @@ from collections import Counter, defaultdict
 FIX_ONLY_FLAGS = {"wrapping_quotes", "multiline", "instruction_leak", "meta_note",
                   "html_or_escape"}
 DROP_FLAGS = {"zh_empty", "refusal", "zh_no_chinese", "repetition_loop"}
+RECOMMENDED_MIN_LIFT = 2.0
+
 RETRANSLATE_FLAGS = {"zh_mostly_english", "zh_equals_en", "zh_low_cjk_ratio",
                      "think_leak", "zh_too_short_vs_en", "zh_too_long_vs_en"}
 
@@ -172,6 +174,34 @@ def calibrate(verdict_path, target_precision, trans_scores=None):
     }
 
 
+def validate_proxy(flags_by_video, trans_scores, proxy_flags):
+    """Measure the S0-flag proxy against the text-only labels, on their overlap.
+
+    Lesson 3 in DATA_ISSUES.md §0 has now been learned three times -- xling
+    (decision 1), flags-as-translation-judge (problem 11, precision 6.6%),
+    flags-as-contamination-judge (problem 12, 15/15 false positives). Each time
+    a proxy was allowed to assign buckets without anyone checking it against
+    ground truth first. This makes that check a gate instead of a lesson.
+
+    Returns None when there are no labels to validate against.
+    """
+    if not trans_scores:
+        return None
+    bad = {v for v, s in trans_scores.items() if s <= 2}
+    hit = {v for v in trans_scores
+           if set(flags_by_video.get(v, [])) & proxy_flags}
+    base = len(bad) / len(trans_scores)
+    tp = len(hit & bad)
+    return {
+        "n_labelled": len(trans_scores),
+        "n_hit": len(hit),
+        "base_rate": base,
+        "precision": tp / len(hit) if hit else 0.0,
+        "recall": tp / len(bad) if bad else 0.0,
+        "lift": (tp / len(hit)) / base if hit and base else 0.0,
+    }
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -190,6 +220,10 @@ def main():
     ap.add_argument("--sig-en-threshold", type=float, default=None,
                     help="defaults to the zh threshold")
     ap.add_argument("--xling-threshold", type=float, default=0.7)
+    ap.add_argument("--proxy-min-lift", type=float, default=RECOMMENDED_MIN_LIFT,
+                    help="S0 旗标要参与分桶，其对真标签的 lift 至少要到这个值"
+                         "（lift = 精度/基准率）。达不到就退出分桶规则，只对"
+                         "没有真标签的记录生效。设 0 可强行启用（不建议）")
     ap.add_argument("--out-buckets", required=True)
     ap.add_argument("--out-report", required=True)
     args = ap.parse_args()
@@ -217,6 +251,27 @@ def main():
     if args.flags:
         for rec in iter_jsonl([args.flags]):
             flags_by_video[rec["video"]] = rec["flags"]
+
+    # Gate: never let the flag proxy assign a bucket before it has been checked
+    # against ground truth (see validate_proxy).
+    proxy = validate_proxy(flags_by_video, trans_scores, RETRANSLATE_FLAGS)
+    proxy_ok = True
+    if proxy is None:
+        if args.flags:
+            print("[proxy] ⚠️ 没有 --trans-verdicts，S0 旗标无法验证就在分桶——"
+                  "\n        这正是问题 11/12 的成因。先跑 s2-trans 再来。",
+                  file=sys.stderr)
+    else:
+        proxy_ok = proxy["lift"] >= args.proxy_min_lift
+        print(f"[proxy] S0 旗标 vs 真标签（{proxy['n_labelled']:,} 条有判定）："
+              f"基准 {proxy['base_rate']:.1%} → 精度 {proxy['precision']:.1%}，"
+              f"召回 {proxy['recall']:.1%}，lift {proxy['lift']:.2f}×",
+              file=sys.stderr)
+        if not proxy_ok:
+            print(f"[proxy] ❌ lift < {args.proxy_min_lift} → **旗标退出分桶规则**；"
+                  f"无真标签的记录改由 sig_* 决定。"
+                  f"\n        要强行启用：--proxy-min-lift 0（不建议）",
+                  file=sys.stderr)
 
     bucket_counter = Counter()
     n = 0
@@ -254,7 +309,7 @@ def main():
                 bucket = "RETRANSLATE"
                 reasons = [f"trans_score={trans_scores[v]}(text-only)"]
                 n_trans_labeled += 1
-            elif v not in trans_scores and \
+            elif proxy_ok and v not in trans_scores and \
                     ((fl & RETRANSLATE_FLAGS)
                      or (rec.get("xling_cos") is not None
                          and rec["xling_cos"] < args.xling_threshold)):
@@ -288,6 +343,30 @@ def main():
     lines.append(f"- 打分记录数: **{n:,}**")
     lines.append(f"- 阈值: sig_zh<{t_zh} / sig_en<{t_en} → RECAPTION; "
                  f"xling_cos<{args.xling_threshold} → RETRANSLATE\n")
+    if proxy is not None:
+        if not proxy_ok:
+            verdict = f"❌ 未通过（lift < {args.proxy_min_lift}）→ 已退出分桶规则"
+        elif proxy["lift"] < RECOMMENDED_MIN_LIFT:
+            # Passing only because the caller lowered the bar -- do not let that
+            # render as an endorsement of the proxy.
+            verdict = (f"⚠️ 门槛被手动调低到 {args.proxy_min_lift}（建议 "
+                       f"{RECOMMENDED_MIN_LIFT}）→ 强行启用。lift "
+                       f"{proxy['lift']:.2f}× 意味着这个旗标几乎不带信息")
+        else:
+            verdict = "✅ 通过，允许参与分桶"
+        lines.append("## 代理指标验证门（S0 旗标 vs 真标签）\n")
+        lines.append(f"在 **{proxy['n_labelled']:,}** 条有文本-only 真标签的记录上实测：\n")
+        lines.append(f"| 基准率 | 精度 | 召回 | lift |\n|---|---|---|---|")
+        lines.append(f"| {proxy['base_rate']:.1%} | **{proxy['precision']:.1%}** | "
+                     f"{proxy['recall']:.1%} | **{proxy['lift']:.2f}×** |\n")
+        lines.append(f"**判定**：{verdict}\n")
+        if not proxy_ok:
+            lines.append("旗标只对**没有真标签**的记录起兜底作用，现已停用——"
+                         "那些记录改由 `sig_*` 规则决定。**本报告的 RETRANSLATE 桶"
+                         "因此只含真标签判进来的记录。**\n")
+        lines.append("> 这道门是 DATA_ISSUES.md §0 教训 3 的代码化：代理指标"
+                     "（`xling`、S0 旗标）先后三次被发现「不测量它命名的东西」，"
+                     "所以它现在必须先对真标签验一次精度才能参与分桶。\n")
     if t_zh is None and calib:
         base = calib.get("zh_bad_base_rate") or 0
         best = calib.get("best_achievable_precision") or 0
@@ -337,12 +416,15 @@ def main():
     if n_flag_vs_label:
         lines.append(f"\n> 🔎 另有 **{n_flag_vs_label:,}** 条：**文本-only 实测说翻译没问题"
                      f"（`trans_score≥3`），但命中了 S0 的 RETRANSLATE 旗标**。"
-                     "已按真标签处理（**不**进 RETRANSLATE），但这批人正是"
-                     "「`untranslated` 仅 0.3% vs S0 语言污染 3.3%」那个 **10× 缺口**的所在——"
-                     "**它还没有结论**，建议人工抽十几条看看到底谁对："
-                     "S0 可能把「中英混杂但主体已翻」也算成了污染，"
-                     "也可能是文本-only rubric 对残留英文不够敏感。"
-                     "见 `notes/audit-10k-findings.md` 结论 11。")
+                     "已按真标签处理（**不**进 RETRANSLATE）。这批人就是"
+                     "「`untranslated` 仅 0.3% vs S0 语言污染 3.3%」那个 **10× 缺口**——"
+                     "**已结案（问题 12）：缺口是 S0 误报，0.3% 才是真的**。"
+                     "15 条抽检 15/15 判「译文没问题」，机制是比例旗标在惩罚"
+                     "**正确保留的专有名词**（`Windows 10 开始菜单` 这类）。"
+                     "`profile_jsonl.py` 已加 `strip_shared_latin()` 修正；"
+                     "**若本行数字仍然很大，说明跑的是修复前的 `s0_flags.jsonl`，"
+                     "重跑 `run_v100.sh s0` 即可**。"
+                     "见 `notes/audit-10k-findings.md` 结论 14。")
     if calib:
         lines.append("\n## VLM 审核样本（Stage-2）校准\n")
         lines.append(f"- 有效判定数: {calib['n_verdicts']:,}")
