@@ -136,7 +136,10 @@ def setup_deepspeed_config(config):
                     "enabled": True,
                     "auto_cast": False,
                     "loss_scale": 0,
-                    "initial_scale_power": 16,
+                    # 可从配置/命令行覆盖:`deepspeed.initial_scale_power 5`。
+                    # 默认见 scripts/pretraining/clip/mobileviclip_small/config.py
+                    # 里的说明(与可学习 temp 的梯度量级有关)。
+                    "initial_scale_power": config.deepspeed.get("initial_scale_power", 16),
                     "loss_scale_window": 1000,
                     "hysteresis": 2,
                     "consecutive_hysteresis": False,
