@@ -1393,6 +1393,29 @@ bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/review_better_z
 
 > 中途填一半就统计也可以——没填的行自动跳过，只在已填行上算比例。
 
+### 7.1b 合并 `better_zh` 三条候选为一条密字幕（抽检通过后）
+
+`better_zh` 的 prompt 特意让 3 条候选**各写一个侧面**（主体动作／场景／时序），
+所以它们互补而非重复。人工抽检确认候选可用后，可把三条合并成一条信息更密的字幕
+——直接对治「字幕粒度粗」（中位仅 3 个信息点）：
+
+```bash
+bash tools/data_audit/run_v100.sh s2-merge      # 8 卡，纯文本不解码视频，比 s2 快
+```
+
+**纯文本、低幻觉风险**：只把已验证的候选重组，prompt 明令「不得新增候选中没有的细节」
+（`vlm_audit.py:MERGE_PROMPT`），单条候选原样带出、空的跳过。产物 `s2_merged.*.jsonl`。
+
+**落地时两个都留**——合并字幕当主 `caption`，三条候选仍作额外正样本：
+
+```bash
+python tools/data_audit/apply_buckets.py ... --merged 'outputs/audit_10k/s2_merged.*.jsonl'
+```
+
+> ⚠️ **别急着把多条塌成一条**：对比学习里「一个视频配多条字幕」本身是优势
+> （更多正样本对）。`--merged` 的设计是**主 caption 用密字幕、`captions` 仍保留多条**，
+> 鱼与熊掌兼得。合并后建议再抽十条看一眼有没有把互相冲突的细节硬拼到一起。
+
 ### 7.1 【P0】`better_zh` 质量抽检 —— **落地 v0.2 之前必须做**
 
 **为什么它排第一**：那 9,951×3 条候选字幕在整条流水线里**只被数过个数、按长度过滤过**，
