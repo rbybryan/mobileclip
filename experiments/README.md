@@ -425,8 +425,8 @@ python experiments/collect_results.py \
 
 ## 4. R0 → R1 — 训练 A/B(等步数、等数据、等超参)
 
-> 📍 **在 B100 机（ZTE 集群，全量 10M）上从零把这条线跑起来** —— 联网(反向隧道+代理)、
-> Blackwell/sm_100 的 torch 构建、`/workspace/mount/.../InternVid-10M-FLT` 的探盘+软链接线、
+> 📍 **在 b100 主机（ZTE 集群，8×H100，全量 10M）上从零把这条线跑起来** —— 联网(反向隧道+代理)、
+> Hopper/sm_90 的 torch 构建（默认只用前 4 张卡）、`/workspace/mount/.../InternVid-10M-FLT` 的探盘+软链接线、
 > 预检、启动 —— 见 [`SETUP_B100.md`](SETUP_B100.md)。本节只讲 R0/R1 *是什么*;那份手册讲
 > 在那台机器上*怎么搭起来*。与 §2b 的 V100 试点并行、互不阻塞。
 
