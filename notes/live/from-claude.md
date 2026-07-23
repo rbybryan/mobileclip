@@ -23,6 +23,36 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-23 (5) — 并排 clone 英文改进线：`rby/mobileclip`（中文线原目录不动）
+
+**Diagnosis:** 快照 `87b812e` 已收到并逐行审读完毕（记录：`notes/b100-local-changes.md`；
+通用修复已按方案 B 移植进 fork main，PR #195）。现在把两条线在盘上分开：
+现有 `rby/MobileViCLIP` **保留给中文 NebulaCV 线**（上游 clone，wky 协作，别动）；
+英文原版模型改进线（R0–R3 全量预训练）**另 clone 本 fork** 到并排的 `rby/mobileclip`。
+`SETUP_B100.md` §0/§1 已按此更新，venv 也改到 rby/ 内（$HOME 共用）。
+
+**Do this next**（代理开着；PAT 上次 push 已存进 `rby/.git-credentials`，不会再问）：
+
+```bash
+source /workspace/mount/b100_zaip_data/rby/.gitenv
+cd /workspace/mount/b100_zaip_data/rby
+git clone https://github.com/rbybryan/mobileclip.git mobileclip
+cd mobileclip
+git log --oneline -3          # 应在 main，且能看到 PR #195 的合并提交
+git config core.fileMode false
+```
+
+之后照 [`experiments/SETUP_B100.md`](../../experiments/SETUP_B100.md) **§2 起**逐节走
+（arch 自检 → 权重 → 数据软链 → `check_readiness.py` 预检 → §6 冒烟）。注意：
+- venv 用 `/workspace/mount/b100_zaip_data/rby/mvc_env`（§2 已更新，别装进 ~）；
+- 数据软链的 `WORK=/workspace/mount/b100_zaip_data/rby/mvc_stage` 与项目目录无关，照旧；
+- 中文线目录 `rby/MobileViCLIP` 里的任何东西都不要挪/删。
+
+**Then report back** in from-server.md：clone 是否成功 + `git log -3` 输出；到 §2 后按
+`SETUP_B100.md` §8 的清单回报（arch 自检、探盘、预检、首日墙钟）。
+
+---
+
 ## 2026-07-23 (4) — 改动清单已收到；push 403 的原因 + 重做快照（排除权重）推到 fork
 
 **Diagnosis:** 三个新事实：
