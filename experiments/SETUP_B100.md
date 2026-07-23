@@ -35,7 +35,10 @@
 - [x] §0 隧道/代理 —— 已验证可用（clone / push 都走通过）
 - [x] §1 项目 —— git 隔离（`.gitenv`）与 PAT 凭据已就绪；`rby/mobileclip` 的 clone
       指令已发（`notes/live/from-claude.md`「2026-07-23 (5)」）
-- [ ] **§2 环境 + arch 自检 ⟵ 从这里继续**（clone 确认成功后立即做这节）
+- [ ] **§2 环境 + arch 自检 ⟵ 从这里继续**。2026-07-23 第一次尝试翻车（venv 无 pip
+      → 包全进共用 conda base + py3.12 编不出 tokenizers）：先按
+      `notes/live/from-claude.md`「2026-07-23 (6)」**清理 base**，再按 §2 新配方
+      （conda python=3.10）重装
 - [ ] §3 权重 `checkpoints/mobileclip_s2.pt`（gdown，需代理）
 - [ ] §4 探盘 + 软链 + `export MVC_DATA_DIR`
 - [ ] §5 `check_readiness.py` 预检（11 个 `[OK ]` + 权重在位，才算解锁）
@@ -106,19 +109,26 @@ torch 构建的 arch 列表里没有本机的 SM。**修法同一套**——装�
 **更新**的构建，不是 cu117——但没 Blackwell 那么苛刻，任一 **cu118 及以上的 torch 2.x**
 wheel 都带 sm_90（cu118 里就有；cu124 对 Hopper 更快，作稳妥起点）。
 
+**⚠️ 别用 `python -m venv`（2026-07-23 实测翻车）**：miniforge 的 python 是 3.12，
+venv 建出来**没有自带 pip**——shell 里的 `pip` 于是落到共用 conda base，torch 等全装进
+`/root/miniforge3`（污染共用环境）；而且 py3.12 没有 tokenizers 0.13.3 的预编译轮子，
+源码编译还要 Rust。完整症状/清理见 `TROUBLESHOOTING.md`「b100 §2：pip 装错解释器」。
+**正确做法：conda 建 python=3.10 环境（目录仍在 rby/ 内），全程 `python -m pip`：**
+
 ```bash
-# 建议起点：Python 3.10 venv + cu124 的 torch 2.x（自带 sm_90；cu118/cu121 也都行）
-# venv 也放 rby/ 内（$HOME 是共用的，别往 ~ 里装）
-python -m venv /workspace/mount/b100_zaip_data/rby/mvc_env
-source /workspace/mount/b100_zaip_data/rby/mvc_env/bin/activate
-pip install --upgrade pip
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+# Python 3.10 + cu124 的 torch 2.x（自带 sm_90；cu118/cu121 也都行）
+source /root/miniforge3/etc/profile.d/conda.sh
+conda create -y -p /workspace/mount/b100_zaip_data/rby/mvc_env310 python=3.10
+conda activate /workspace/mount/b100_zaip_data/rby/mvc_env310
+which python && which pip   # 必须都在 .../rby/mvc_env310/bin/ 下；不是就停，别继续装
+python -m pip install --upgrade pip
+python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 
 # 其余依赖：版本以 scripts/setup_env.sh / COMMANDS.md §1 为准，torch 已单独装好、
 # 下面这些都别把它覆盖掉。关键几条：
-pip install "numpy<2"          # decord 0.6 的 wheel 在 numpy 2.x 下报 _ARRAY_API
-pip install open_clip_torch --no-deps   # 必须 --no-deps，否则悄悄把 torch 换成 PyPI 版
-pip install transformers==4.28.1 tokenizers==0.13.3 timm==0.5.4 openai-clip==1.0.1 \
+python -m pip install "numpy<2"        # decord 0.6 的 wheel 在 numpy 2.x 下报 _ARRAY_API
+python -m pip install open_clip_torch --no-deps  # 必须 --no-deps，否则悄悄把 torch 换成 PyPI 版
+python -m pip install transformers==4.28.1 tokenizers==0.13.3 timm==0.5.4 openai-clip==1.0.1 \
     einops decord==0.6.0 av==12.0.0 opencv-python ftfy regex pandas scipy scikit-learn \
     pyyaml easydict yacs tabulate tensorboard wandb webdataset imageio \
     accelerate safetensors huggingface-hub setuptools
@@ -126,7 +136,7 @@ pip install transformers==4.28.1 tokenizers==0.13.3 timm==0.5.4 openai-clip==1.0
 #    见 TROUBLESHOOTING.md 同名节）；预训练路径本就用不到 peft。
 # torch 2.x 路径需要新版 deepspeed（0.10.1 在 torch 2.x 下 import 就崩，见
 # TROUBLESHOOTING.md「import deepspeed 崩」一节）：
-pip install "deepspeed>=0.14" || true   # 装不上先跳过，§6 首光用 deepspeed.enable False 绕开
+python -m pip install "deepspeed>=0.14" || true   # 装不上先跳过，§6 首光用 deepspeed.enable False 绕开
 # flash-attn 可跳过（setup_env.sh 本就跳它）；H100 上 flash-attn 2.x 就支持（FA3 更快）。
 # torch-2.x 下若仍有 transformers/import 报错，见 TROUBLESHOOTING.md 对应故障节。
 ```
@@ -163,7 +173,7 @@ PY
 
 ```bash
 # 代理开着时下（gdown 走 https_proxy）
-pip install gdown
+python -m pip install gdown
 mkdir -p checkpoints
 gdown --folder https://drive.google.com/drive/folders/1ROJYwQeO8lt4mEfNjEIAIDWj736WIQq7 -O checkpoints
 ls -la checkpoints/mobileclip_s2.pt    # 必须在

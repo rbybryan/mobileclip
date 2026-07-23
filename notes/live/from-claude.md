@@ -23,6 +23,60 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-23 (6) — §2 返工：先清理误装进 conda base 的包，再用 conda py3.10 重建
+
+**Diagnosis:** 你的 §2 输出显示两个叠加故障：**(a)** `python -m venv` 建的环境没带
+pip，`pip` 落到共用 conda base——torch 2.6+cu124 等全装进了 `/root/miniforge3`，venv
+是空的（所以 arch 自检报 `No module named 'torch'`；提示符 `(mvc_env) (base)` 叠着就是
+警报）；**(b)** miniforge 是 py3.12，tokenizers 0.13.3 没有 cp312 轮子、源码编译要
+Rust，所以 transformers 那整条 pip 一个包都没装上。已把 §2 配方改成 conda python=3.10
++ 全程 `python -m pip`（`SETUP_B100.md` §2），故障记入 `TROUBLESHOOTING.md`
+「b100 §2：pip 装错解释器」。
+
+**Do this next**（照顺序；③④ 需要代理开着）：
+
+```bash
+# ① 退出坏 venv 并删除
+deactivate 2>/dev/null || true
+rm -rf /workspace/mount/b100_zaip_data/rby/mvc_env
+
+# ② 清理误装进共用 base 的包（这些装之前 base 里都没有，卸载=还原，不影响别人已有的东西）
+/root/miniforge3/bin/python -m pip uninstall -y \
+  torch torchvision torchaudio triton sympy mpmath numpy networkx jinja2 MarkupSafe \
+  fsspec pillow open_clip_torch deepspeed py-cpuinfo hjson msgpack ninja einops \
+  psutil pydantic pydantic-core annotated-types typing-inspection \
+  nvidia-cublas-cu12 nvidia-cuda-cupti-cu12 nvidia-cuda-nvrtc-cu12 nvidia-cuda-runtime-cu12 \
+  nvidia-cudnn-cu12 nvidia-cufft-cu12 nvidia-curand-cu12 nvidia-cusolver-cu12 \
+  nvidia-cusparse-cu12 nvidia-cusparselt-cu12 nvidia-nccl-cu12 nvidia-nvjitlink-cu12 nvidia-nvtx-cu12
+
+# ③ conda 建 py3.10 环境（仍在 rby/ 内）并自检解释器归属
+source /root/miniforge3/etc/profile.d/conda.sh
+conda create -y -p /workspace/mount/b100_zaip_data/rby/mvc_env310 python=3.10
+conda activate /workspace/mount/b100_zaip_data/rby/mvc_env310
+which python && which pip   # 必须都在 .../rby/mvc_env310/bin/ 下；不是就停下来贴回来
+
+# ④ 重装（全程 python -m pip；torch 768MB 走隧道约 20 分钟，正常）
+python -m pip install --upgrade pip
+python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+python -m pip install "numpy<2"
+python -m pip install open_clip_torch --no-deps
+python -m pip install transformers==4.28.1 tokenizers==0.13.3 timm==0.5.4 openai-clip==1.0.1 \
+    einops decord==0.6.0 av==12.0.0 opencv-python ftfy regex pandas scipy scikit-learn \
+    pyyaml easydict yacs tabulate tensorboard wandb webdataset imageio \
+    accelerate safetensors huggingface-hub setuptools
+python -m pip install "deepspeed>=0.14" || true
+
+# ⑤ arch 自检（SETUP_B100.md §2 原样；这回 python=py3.10 环境里的）
+```
+
+> 若 ③ 的 `conda create` 走不通（频道被墙/代理不认），把报错贴回来，我再给
+> rustup+py3.12 的备选路线。
+
+**Then report back** in from-server.md：② 卸载是否顺利、③ 的 `which python`/`which pip`
+输出、⑤ arch 自检整段输出（torch 版本 + arch 列表 + tensor 打印）。
+
+---
+
 ## 2026-07-23 (5) — 并排 clone 英文改进线：`rby/mobileclip`（中文线原目录不动）
 
 **Diagnosis:** 快照 `87b812e` 已收到并逐行审读完毕（记录：`notes/b100-local-changes.md`；
