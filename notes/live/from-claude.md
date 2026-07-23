@@ -33,6 +33,12 @@ Rust，所以 transformers 那整条 pip 一个包都没装上。已把 §2 配�
 + 全程 `python -m pip`（`SETUP_B100.md` §2），故障记入 `TROUBLESHOOTING.md`
 「b100 §2：pip 装错解释器」。
 
+**为什么不换个方式继续用 venv：** venv 只能复制机器上已有的解释器——本机唯一的
+python 是 miniforge 的 3.12，venv 建出来永远还是 3.12，而 tokenizers 0.13.3 没有
+cp312 轮子（源码编译要 Rust），装到它必死；`ensurepip` 只能修好"venv 没 pip"这一层，
+修不了 3.12 这一层。要拿到仓库钉的 python 3.10，本机只有 conda 能提供——所以
+conda create 是唯一同时解决两个问题的路，不是偏好。
+
 **Do this next**（照顺序；③④ 需要代理开着）：
 
 ```bash
@@ -66,7 +72,14 @@ python -m pip install transformers==4.28.1 tokenizers==0.13.3 timm==0.5.4 openai
     accelerate safetensors huggingface-hub setuptools
 python -m pip install "deepspeed>=0.14" || true
 
-# ⑤ arch 自检（SETUP_B100.md §2 原样；这回 python=py3.10 环境里的）
+# ⑤ arch 自检（这回 python = py3.10 环境里的）
+python - <<'ARCH'
+import torch
+a = torch.cuda.get_arch_list()
+print("torch", torch.__version__, "| archs:", a, "| dev:", torch.cuda.get_device_name(0))
+assert "sm_90" in a, "torch 无 Hopper(sm_90) 内核 -> 换 cu118+/cu12x 的 torch 2.x"
+print(torch.zeros(1).cuda())   # 必须打印 tensor([0.], device='cuda:0')
+ARCH
 ```
 
 > 若 ③ 的 `conda create` 走不通（频道被墙/代理不认），把报错贴回来，我再给
