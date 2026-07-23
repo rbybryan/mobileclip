@@ -23,6 +23,52 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-23 — b100 本地"优化"改动盘点：先把 diff 完整传回来
+
+**Diagnosis:** b100 上 `/workspace/mount/b100_zaip_data/rby/MobileViCLIP` 的代码相对
+远程仓库做过少量优化，但这些改动**只存在于服务器工作区**——仓库里没有任何记录
+（`from-server.md` 为空、也没有对应分支；`exp/opt-vs-baseline` 是早已合入 main 的旧
+分支，与此无关）。Claude 连不上 b100，所以第一步是在服务器上把改动完整采集回来；
+收到后 Claude 会把「改了哪里、为什么」记录到 `notes/b100-local-changes.md`，再评审
+是否合入 main。
+
+**Do this next**（①–③ 纯本地 git 操作，不需要外网；只有 ④ 的 push 需要隧道+代理，
+见 `experiments/SETUP_B100.md` §0）：
+
+```bash
+cd /workspace/mount/b100_zaip_data/rby/MobileViCLIP
+
+# ① 全景：基于哪个 commit、改了哪些文件、有没有本地 commit / stash
+git status -sb
+git log --oneline -5
+git log --oneline origin/main..HEAD
+git stash list
+git diff HEAD --stat
+
+# ② 未跟踪的新文件（数据/权重等 gitignored 的不会出现在这里）
+git ls-files --others --exclude-standard
+
+# ③ 把完整改动（含未跟踪新文件）做成一个快照 commit —— 不动工作区、不切分支、
+#    不影响正在跑的任务：
+git add -A
+STASH=$(git stash create "b100 local optimizations snapshot $(date +%F_%H%M)")
+git reset -q
+echo "snapshot commit: $STASH"
+
+# ④ 推回（需要代理开着；SETUP_B100.md §0 的 http_proxy 设好后执行）
+git push origin "$STASH":refs/heads/server/b100-local-opts
+```
+
+> ④ 推不动（隧道没起）时的替代：`git diff HEAD > /workspace/mount/b100_zaip_data/rby/b100_local_changes.patch`，
+> 把 patch 内容连同 ① 的输出一起贴进 `from-server.md` 顶部新块再推 handoff；
+> patch 太长贴不下就先只贴 ① ② 的输出。
+
+**Then report back** in from-server.md：① ② 的完整输出 + `snapshot commit` 哈希 +
+④ push 是否成功。Claude 拿到 `server/b100-local-opts` 后会 `git diff <snapshot>^1 <snapshot>`
+读出全部改动并记录。
+
+---
+
 ## 2026-07-22 (20) — 评审包视频全空：**路径 bug 已修**，重打包即可
 
 **Diagnosis:** 你本地 `videos/` 全空 = 服务器打包时一个视频都没定位到。根因是**重复
