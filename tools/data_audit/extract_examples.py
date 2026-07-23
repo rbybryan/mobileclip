@@ -79,9 +79,15 @@ def load():
     return src, verd, trans, s1, flags
 
 
-def short(t, n=90):
+def short(t, n=None):
+    """Collapse whitespace. By default returns the FULL caption (no truncation)
+    so the appendix shows verbatim text a reader can check against the video --
+    a data-quality report should not hide the very strings it is judging. Pass n
+    to cap length only where a runaway cell would break table layout."""
     t = " ".join((t or "").split())
-    return t if len(t) <= n else t[:n] + "…"
+    if n is not None and len(t) > n:
+        return t[:n] + "…"
+    return t
 
 
 def clip(v):
@@ -130,8 +136,8 @@ def main():
                 if x.get("en_score") is not None and x["en_score"] <= 2
                 and sig(v) is not None]
         for v, x in sorted(cand, key=lambda kv: sig(kv[0]))[:N]:
-            rows.append([f"`{clip(v)}`", short(src.get(v, ("", ""))[1], 60),
-                         short(src.get(v, ("", ""))[0], 40),
+            rows.append([f"`{clip(v)}`", short(src.get(v, ("", ""))[1]),
+                         short(src.get(v, ("", ""))[0]),
                          f"{sig(v):.3f}", x.get("en_score"),
                          ", ".join(x.get("en_issues") or []) or "—"])
         block(f, "1. 与画面不符（源头错）",
@@ -145,8 +151,8 @@ def main():
                 if x.get("temporal_order_relevant") is True
                 and x.get("temporal_order_correct") is None]
         for v, x in sorted(cand, key=lambda kv: -(len(src.get(kv[0], ("", ""))[1])))[:N]:
-            rows.append([f"`{clip(v)}`", short(src.get(v, ("", ""))[1], 70),
-                         short(src.get(v, ("", ""))[0], 45)])
+            rows.append([f"`{clip(v)}`", short(src.get(v, ("", ""))[1]),
+                         short(src.get(v, ("", ""))[0])])
         block(f, "2. 视频有先后事件，字幕只字未提（时序缺失）",
               "`temporal_order_relevant=true` 且 `temporal_order_correct=null`，"
               "取英文最长的前 N 条（长句都不写顺序，最能说明问题）",
@@ -156,8 +162,8 @@ def main():
         rows = []
         for v, x in list((v, x) for v, x in verd.items()
                          if x.get("temporal_order_correct") is False)[:N]:
-            rows.append([f"`{clip(v)}`", short(src.get(v, ("", ""))[1], 70),
-                         short(src.get(v, ("", ""))[0], 45)])
+            rows.append([f"`{clip(v)}`", short(src.get(v, ("", ""))[1]),
+                         short(src.get(v, ("", ""))[0])])
         block(f, "2b. 字幕写了顺序、但写反了",
               "`temporal_order_correct=false` —— **全库仅 8 条**，此处列出前 N 条。"
               "n 太小不可外推，仅作定性参考",
@@ -167,7 +173,7 @@ def main():
         rows = []
         cand = [(v, x) for v, x in verd.items() if src.get(v)]
         for v, x in sorted(cand, key=lambda kv: len(src[kv[0]][1]))[:N]:
-            rows.append([f"`{clip(v)}`", short(src[v][1], 60), short(src[v][0], 35),
+            rows.append([f"`{clip(v)}`", short(src[v][1]), short(src[v][0]),
                          len(src[v][1].split()), x.get("granularity") or "—"])
         block(f, "3. 描述笼统（粒度粗）",
               "英文 caption **最短**的前 N 条 —— 用**长度**这个不依赖模型的客观量挑选，"
@@ -175,17 +181,18 @@ def main():
               rows, ["clip", "英文源 caption", "中文译文", "英文词数", "VLM 粒度判定"])
 
         # 4. error types
-        for issue, label in (("wrong_subject", "认错主体"),
-                             ("wrong_action", "认错动作"),
-                             ("hallucinated_detail", "编造细节"),
-                             ("ocr_or_watermark_read", "把水印/字幕当画面内容")):
+        for sub, (issue, label) in zip("abcd", (
+                ("wrong_subject", "认错主体"),
+                ("wrong_action", "认错动作"),
+                ("hallucinated_detail", "编造细节"),
+                ("ocr_or_watermark_read", "把水印/字幕当画面内容"))):
             rows = []
             cand = [(v, x) for v, x in verd.items()
                     if issue in (x.get("en_issues") or []) and sig(v) is not None]
             for v, x in sorted(cand, key=lambda kv: sig(kv[0]))[:N]:
-                rows.append([f"`{clip(v)}`", short(src.get(v, ("", ""))[1], 65),
+                rows.append([f"`{clip(v)}`", short(src.get(v, ("", ""))[1]),
                              f"{sig(v):.3f}", x.get("en_score")])
-            block(f, f"4. 错误类型：{label}（`{issue}`）",
+            block(f, f"4{sub}. 错误类型：{label}（`{issue}`）",
                   f"`en_issues` 含 `{issue}`，按 `sig_zh` 从低到高取前 N 条。"
                   "⚠️ 该标签出自已塌缩的合并 rubric，**看形态、不看比例**",
                   rows, ["clip", "英文源 caption", "sig_zh", "en分"])
@@ -197,8 +204,8 @@ def main():
         cand = [(v, x) for v, x in trans.items()
                 if x.get("trans_score") is not None and x["trans_score"] <= 2]
         for v, x in sorted(cand, key=lambda kv: kv[1].get("trans_score", 9))[:N]:
-            rows.append([f"`{clip(v)}`", short(src.get(v, ("", ""))[1], 55),
-                         short(src.get(v, ("", ""))[0], 55),
+            rows.append([f"`{clip(v)}`", short(src.get(v, ("", ""))[1]),
+                         short(src.get(v, ("", ""))[0]),
                          x.get("trans_score"),
                          ", ".join(x.get("trans_issues") or []) or "—"])
         block(f, "5. 真实翻译错误（3.6% 的那批）",
@@ -210,8 +217,8 @@ def main():
         rows = []
         cand = [(v, x) for v, x in trans.items() if x.get("untranslated") is True]
         for v, x in cand[:N]:
-            rows.append([f"`{clip(v)}`", short(src.get(v, ("", ""))[1], 55),
-                         short(src.get(v, ("", ""))[0], 55)])
+            rows.append([f"`{clip(v)}`", short(src.get(v, ("", ""))[1]),
+                         short(src.get(v, ("", ""))[0])])
         block(f, "6. 真·未翻译（0.3%）",
               "文本-only 重判 `untranslated=true` —— **全库仅 33 条**",
               rows, ["clip", "英文源", "中文栏内容"])
@@ -221,7 +228,7 @@ def main():
         cand = [v for v, fl in flags.items() if RATIO_FLAGS & set(fl)]
         for v in sorted(cand, key=lambda v: len(src.get(v, ("", ""))[0]))[:N]:
             zh, en = src.get(v, ("", ""))
-            rows.append([f"`{clip(v)}`", short(zh, 45), short(en, 45),
+            rows.append([f"`{clip(v)}`", short(zh), short(en),
                          ", ".join(sorted(RATIO_FLAGS & set(flags[v])))])
         block(f, "7. 语言污染的**误报**（3.3% → ~0.3% 的由来）",
               "**修复后**仍命中比例旗标的记录。修复前有 327 条，"
@@ -242,7 +249,7 @@ def main():
         rows = []
         cand = [(v, x) for v, x in verd.items() if x.get("video_readable") is False]
         for v, x in cand[:N]:
-            rows.append([f"`{clip(v)}`", short(src.get(v, ("", ""))[1], 55),
+            rows.append([f"`{clip(v)}`", short(src.get(v, ("", ""))[1]),
                          "空" if not (x.get("better_zh") or []) else "非空",
                          x.get("action") or "—"])
         block(f, "8. 画面本身不可用（黑屏/花屏/纯色，0.49%）",
@@ -258,8 +265,8 @@ def main():
         for v, x in sorted(cand, key=lambda kv: sig(kv[0]) if sig(kv[0]) is not None
                            else 9)[:N]:
             cands = [c for c in x["better_zh"] if isinstance(c, str)]
-            rows.append([f"`{clip(v)}`", short(src.get(v, ("", ""))[0], 30),
-                         " ／ ".join(short(c, 28) for c in cands[:3])])
+            rows.append([f"`{clip(v)}`", short(src.get(v, ("", ""))[0]),
+                         " ／ ".join(short(c) for c in cands[:3])])
         block(f, "9. RECAPTION 桶的候选字幕（原文 vs 重写）",
               "`zh_score≤2` 且 `sig_zh` 最低的前 N 条 —— 即最该被重写的那批。"
               "⚠️ **这些候选的质量从未被评估**（final_report §5 的 P0 硬门），"
