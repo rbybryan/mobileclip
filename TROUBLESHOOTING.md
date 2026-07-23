@@ -1677,3 +1677,52 @@ the missing path directly.
 > since `get_anno()` is pure string joining). And the stray `print(e)` alongside
 > the logger, which is what interleaved bare `Error reading ...mp4` lines into the
 > flood, is gone.
+
+---
+
+## b100 上一切 git 命令都报 `fatal: not a git repository (or any parent up to mount point /workspace/mount)`
+
+**Symptom** — 在 `/workspace/mount/b100_zaip_data/rby/MobileViCLIP` 里跑任何 git 命令
+（`git status`、`git diff`、`git stash create`…）都得到：
+
+```
+fatal: not a git repository (or any parent up to mount point /workspace/mount)
+Stopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).
+```
+
+`GIT_DISCOVERY_ACROSS_FILESYSTEM` 那行是干扰项——问题不是"跨文件系统找不到上层
+仓库"，而是这个目录**根本没有 `.git`**。
+
+**Cause** — 项目当年不是按 `experiments/SETUP_B100.md` §1 `git clone` 下来的，而是
+把文件直接拷贝到盘上（rsync/cp 不带 `.git`）。目录里只有工作区文件，没有版本库，
+git 自然一路向上找到挂载点也找不到仓库。
+
+**Fix** — 用 `git clone --no-checkout` 只下载版本库，把 `.git` 嫁接进现有目录；现有
+文件一个字节都不动，之后它就是一个"基于 `origin/main` 的脏工作区"，本地改动全部
+可见，`git pull` 也恢复可用：
+
+```bash
+cd /workspace/mount/b100_zaip_data/rby
+git clone --no-checkout https://github.com/rbybryan/mobileclip.git MobileViCLIP_gitref
+mv MobileViCLIP_gitref/.git MobileViCLIP/.git
+rm -rf MobileViCLIP_gitref
+cd MobileViCLIP
+git config core.fileMode false   # 挂载盘权限位噪声不算改动
+git reset -q origin/main         # 索引对齐 main；不碰工作区
+git status -sb                   # 至此本地改动现形
+```
+
+**共用账号的隔离** — b100 的 root 账号多人共用，git 的"全局"配置不要写进
+`~/.gitconfig`。每个用 git 的 shell 先 source 这份环境（文件生成一次即可）：
+
+```bash
+cat > /workspace/mount/b100_zaip_data/rby/.gitenv <<'EOF'
+export GIT_CONFIG_GLOBAL=/workspace/mount/b100_zaip_data/rby/.gitconfig
+export GIT_CONFIG_SYSTEM=/dev/null
+EOF
+source /workspace/mount/b100_zaip_data/rby/.gitenv
+```
+
+之后 `git config --global …`（`safe.directory`、`user.name/email`、代理等）都只写进
+`rby/.gitconfig`，其他使用者完全看不到。凭据同理：优先把 token 写在仓库自己的
+remote URL（`.git/config`，本就在 rby/ 内），别用会落到 `$HOME` 的 credential helper。
