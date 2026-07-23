@@ -42,6 +42,9 @@ import random
 import sys
 from collections import Counter
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from vlm_audit import resolve_video_path  # noqa: E402 —— 审查时真正解码成功的那个解析器
+
 # Columns the human fills in. Kept to closed vocabularies so scoring is
 # unambiguous -- free-text goes in `note`.
 BLANKS = {
@@ -89,14 +92,17 @@ def load(pattern):
 def build(args):
     sample = {r["video"]: r for r in load(args.sample)}
 
+    n_missing = [0]
+
     def vpath(vid):
-        """能被播放器/Gradio 直接打开的路径。优先数据自带的 abs_path（跨机可能失效），
-        否则用 --video-root 拼。表里没有这一列的话，评审者拿着 id 根本调不出画面。"""
+        """能被播放器/Gradio 直接打开的路径。复用 vlm_audit.resolve_video_path ——
+        它会在 video_root/<video>、剥前缀、abs_path 等候选里返回**第一个真实存在**的，
+        正是审查时成功解码这些视频用的同一套逻辑（简化版会盲拼一个多半不存在的路径）。"""
         rec = sample.get(vid) or {}
-        ap = rec.get("abs_path")
-        if ap:
-            return str(ap)
-        return os.path.join(args.video_root, str(vid)) if args.video_root else str(vid)
+        pth = resolve_video_path(args.video_root, rec, vid)
+        if not (pth and os.path.exists(pth)):
+            n_missing[0] += 1
+        return pth
     if not sample:
         sys.exit("--sample is required to build a sheet (it carries zh/en)")
     verdicts = {r["video"]: (r.get("verdict") or {}) for r in load(args.verdicts)} \
@@ -181,8 +187,15 @@ def build(args):
             src = sample.get(rec["video"]) or {}
             f.write(json.dumps({**{k: v for k, v in src.items() if k != "s1"}, **rec},
                                ensure_ascii=False) + "\n")
+    found = len(rows) - n_missing[0]
     print(f"[written] {args.out} —— {len(rows)} 行待评")
     print(f"[written] {jl} —— 同一批，供 Gradio 加载看画面")
+    print(f"[videos]  可定位 {found}/{len(rows)}", file=sys.stderr)
+    if found == 0:
+        print("  ⚠️ 一个视频都定位不到！检查 --video-root 是否指向真实的视频目录，"
+              "以及 s2_sample.jsonl 里的 video/abs_path 字段。"
+              "\n     诊断： python3 -c \"import json;r=json.loads(open('%s').readline());"
+              "print(r.get('video'),'|',r.get('abs_path'))\"" % args.sample, file=sys.stderr)
     print(f"  评审列：{'  '.join(c + ('(' + h + ')' if h else '') for c, h in blanks)}")
     print(f"  填完后： python {sys.argv[0]} --score {args.out}")
 
