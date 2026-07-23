@@ -23,6 +23,62 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-23 (2) — b100 目录不是 git 仓库：嫁接 `.git` 再采集；git 配置全部圈在 rby/ 内
+
+**Diagnosis:** 上一块的命令全报 `fatal: not a git repository` ⇒
+`/workspace/mount/b100_zaip_data/rby/MobileViCLIP` **没有 `.git`**——代码当年不是按
+`SETUP_B100.md` §1 clone 的，而是直接拷贝过去的，所以 git 无法对比。修法：用
+`git clone --no-checkout` 只取 `.git` 嫁接进现有目录，把它变成"基于 origin/main 的脏
+工作区"，改动就全部现形。另外账号是**共用的**：所有 git "全局"配置一律通过
+`GIT_CONFIG_GLOBAL` 圈在 `rby/` 目录内，不碰共用的 `~/.gitconfig`。
+（已同步记入 `TROUBLESHOOTING.md`。）
+
+**Do this next**（① 每次开工都要 source；②需要代理，见 `SETUP_B100.md` §0）：
+
+```bash
+# ① git 环境隔离（只此一次生成；以后每个要用 git 的 shell 先 source 它）
+cat > /workspace/mount/b100_zaip_data/rby/.gitenv <<'EOF'
+export GIT_CONFIG_GLOBAL=/workspace/mount/b100_zaip_data/rby/.gitconfig
+export GIT_CONFIG_SYSTEM=/dev/null
+EOF
+source /workspace/mount/b100_zaip_data/rby/.gitenv
+git config --global safe.directory /workspace/mount/b100_zaip_data/rby/MobileViCLIP
+git config --global user.name  "rby (b100)"
+git config --global user.email "rbybryan1995@gmail.com"
+
+# ② 嫁接 .git（代理开着；只下载版本库，不碰现有工作区任何文件）
+cd /workspace/mount/b100_zaip_data/rby
+git clone --no-checkout https://github.com/rbybryan/mobileclip.git MobileViCLIP_gitref
+mv MobileViCLIP_gitref/.git MobileViCLIP/.git
+rm -rf MobileViCLIP_gitref
+cd MobileViCLIP
+git config core.fileMode false      # 挂载盘的权限位噪声不算改动（写进仓库自己的 .git/config）
+git reset -q origin/main            # 索引对齐 main；工作区一个字节都不动
+
+# ③ 现在改动全部可见了——把这些输出贴回 from-server.md：
+git status -sb | head -60
+git diff --stat
+git ls-files --others --exclude-standard | head -60
+
+# ④ 快照并推回（不动工作区、不切分支、不影响正在跑的任务）
+git add -A
+STASH=$(git stash create "b100 local optimizations snapshot $(date +%F_%H%M)")
+git reset -q
+echo "snapshot commit: $STASH"
+git push origin "$STASH":refs/heads/server/b100-local-opts
+```
+
+> 注意：③ 的 diff 是相对**当前 main HEAD** 的——如果这份拷贝当初基于旧版本，里面会混入
+> "仓库后来的演进"。不用管：Claude 拿到快照后会自己在历史里找最小 diff 的基准 commit，
+> 把真正的本地优化和版本漂移分开。
+> `git add -A` 遵守仓库 `.gitignore`，`data/`、`checkpoints/` 等大文件不会进快照。
+
+**Then report back** in from-server.md：③ 的三段输出 + `snapshot commit` 哈希 + ④ push
+是否成功。之后这个目录就是正规 git 仓库，`SETUP_B100.md` §1 的 `git pull origin main`
+也能用了（记得先 `source /workspace/mount/b100_zaip_data/rby/.gitenv`）。
+
+---
+
 ## 2026-07-23 — b100 本地"优化"改动盘点：先把 diff 完整传回来
 
 **Diagnosis:** b100 上 `/workspace/mount/b100_zaip_data/rby/MobileViCLIP` 的代码相对
