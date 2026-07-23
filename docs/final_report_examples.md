@@ -26,9 +26,9 @@
 
 | clip | 英文源 caption | 中文译文 |
 |---|---|---|
-| `zYmDM9M9x8M_00:02:42.199_00:02:52.199.mp4` | the first step is to prepare the plants for planting. the seed is plan… | 第一步是为种植做准备。种子已种入花盆，准备移栽。第一步是为种植做准备。 |
-| `vlpMAtuMDv0_00:03:33.856_00:03:43.856.mp4` | a screenshot of the step to select a number. an image of a keyboard wi… | 选择号码的步骤截图。应用内键盘及短信界面的图片。应用内短信的截图。 |
-| `ebMpPFoAEMM_00:03:03.967_00:03:11.100.mp4` | the pattern is repeated with the introduction of a third ball and the … | 引入第三个球后，模式重复，指令要求重复该模式 |
+| `zYmDM9M9x8M_00:02:42.199_00:02:52.199.mp4` | the first step is to prepare the plants for planting. the seed is planted in a pot and ready to be planted. the first step is to prepare the plants for planting. | 第一步是为种植做准备。种子已种入花盆，准备移栽。第一步是为种植做准备。 |
+| `vlpMAtuMDv0_00:03:33.856_00:03:43.856.mp4` | a screenshot of the step to select a number. an image of a keyboard with a text message on the app. a screenshot of a text message from the app. | 选择号码的步骤截图。应用内键盘及短信界面的图片。应用内短信的截图。 |
+| `ebMpPFoAEMM_00:03:03.967_00:03:11.100.mp4` | the pattern is repeated with the introduction of a third ball and the instruction the pattern is to be repeated instruction | 引入第三个球后，模式重复，指令要求重复该模式 |
 
 ### 2b. 字幕写了顺序、但写反了
 
@@ -50,7 +50,7 @@
 | `9P6EGIwz4Vk_00:05:32.966_00:05:35.702.mp4` | cz pistol grip | CZ手枪握把 | 3 | coarse |
 | `S6SV9GVqPGQ_00:07:11.333_00:07:13.533.mp4` | pea ea ga - 00 | pea ea ga - 00 | 5 | coarse |
 
-### 4. 错误类型：认错主体（`wrong_subject`）
+### 4a. 错误类型：认错主体（`wrong_subject`）
 
 **选取规则**：`en_issues` 含 `wrong_subject`，按 `sig_zh` 从低到高取前 N 条。⚠️ 该标签出自已塌缩的合并 rubric，**看形态、不看比例**
 
@@ -60,7 +60,7 @@
 | `WW8icbd0XHo_00:00:23.267_00:00:34.433.mp4` | аруител наал авлетс оател | -0.004 | 0 |
 | `kopHHwN8-Uo_00:00:20.920_00:00:22.680.mp4` | an image of a black background with a small bird | 0.007 | 0 |
 
-### 4. 错误类型：认错动作（`wrong_action`）
+### 4b. 错误类型：认错动作（`wrong_action`）
 
 **选取规则**：`en_issues` 含 `wrong_action`，按 `sig_zh` 从低到高取前 N 条。⚠️ 该标签出自已塌缩的合并 rubric，**看形态、不看比例**
 
@@ -70,7 +70,7 @@
 | `fst9tjBKC2Y_00:06:15.775_00:06:23.850.mp4` | a man is cutting a piece of plastic that looks like a lamp | 0.029 | 2 |
 | `ymDhLSV0CeI_00:08:49.240_00:09:02.920.mp4` | tania morgan and amy osborn show you how to get the sexy glow | 0.033 | 2 |
 
-### 4. 错误类型：编造细节（`hallucinated_detail`）
+### 4c. 错误类型：编造细节（`hallucinated_detail`）
 
 **选取规则**：`en_issues` 含 `hallucinated_detail`，按 `sig_zh` 从低到高取前 N 条。⚠️ 该标签出自已塌缩的合并 rubric，**看形态、不看比例**
 
@@ -80,7 +80,7 @@
 | `xOTVi9EM7bA_00:00:41.375_00:01:39.499.mp4` | russian police use toyota cars to patrol the city | -0.006 | 2 |
 | `WW8icbd0XHo_00:00:23.267_00:00:34.433.mp4` | аруител наал авлетс оател | -0.004 | 0 |
 
-### 4. 错误类型：把水印/字幕当画面内容（`ocr_or_watermark_read`）
+### 4d. 错误类型：把水印/字幕当画面内容（`ocr_or_watermark_read`）
 
 **选取规则**：`en_issues` 含 `ocr_or_watermark_read`，按 `sig_zh` 从低到高取前 N 条。⚠️ 该标签出自已塌缩的合并 rubric，**看形态、不看比例**
 
@@ -100,7 +100,7 @@
 
 | clip | 英文源 | 中文译文 | 翻译分 | 问题标签 |
 |---|---|---|---|---|
-| `fXUqy-x8Q-g_00:03:08.720_00:03:27.240.mp4` | an image of someone on a laptop with the words je sais … | 一张有人在笔记本电脑上的图片，上面写着“je sais pas à l'oise” | 0 | untranslated_fragment |
+| `fXUqy-x8Q-g_00:03:08.720_00:03:27.240.mp4` | an image of someone on a laptop with the words je sais pas à l'oise | 一张有人在笔记本电脑上的图片，上面写着“je sais pas à l'oise” | 0 | untranslated_fragment |
 | `TQaJ3IiJAUc_00:03:39.967_00:03:43.933.mp4` | kak susu dana jumlah nisa khan | 卡克苏苏达纳朱马特尼萨汗 | 0 | mistranslation, artifact_text |
 | `nsNVm7esIys_00:00:13.080_00:00:15.840.mp4` | и тем олени на он влтс | 以及驯鹿 | 0 | mistranslation, artifact_text |
 
@@ -110,9 +110,9 @@
 
 | clip | 英文源 | 中文栏内容 |
 |---|---|---|
-| `fXUqy-x8Q-g_00:03:08.720_00:03:27.240.mp4` | an image of someone on a laptop with the words je sais … | 一张有人在笔记本电脑上的图片，上面写着“je sais pas à l'oise” |
+| `fXUqy-x8Q-g_00:03:08.720_00:03:27.240.mp4` | an image of someone on a laptop with the words je sais pas à l'oise | 一张有人在笔记本电脑上的图片，上面写着“je sais pas à l'oise” |
 | `3OU6wtbZsdQ_00:11:39.433_00:11:43.633.mp4` | korean language, korean hw esl student loan calculation | 韩语，韩国hw esl学生贷款计算 |
-| `OuPEacoosis_00:00:00.000_00:00:09.409.mp4` | an image of a french language letter with the words app… | 一张法语信件图片，上面写着“apprend a cire les chiffres”（学习书写数字），以及1、… |
+| `OuPEacoosis_00:00:00.000_00:00:09.409.mp4` | an image of a french language letter with the words apprend a cire les chiffres, 1, 2 and | 一张法语信件图片，上面写着“apprend a cire les chiffres”（学习书写数字），以及1、2和 |
 
 ### 7. 语言污染的**误报**（3.3% → ~0.3% 的由来）
 
@@ -121,8 +121,8 @@
 | clip | 中文译文 | 英文源 | 命中旗标 |
 |---|---|---|---|
 | `QkLf4dqrWrE_00:09:50.920_00:09:59.920.mp4` | Essence 提供上门服务 | есеен доли сервис ире удет | zh_mostly_english |
-| `3qsMXB3LkIU_00:07:42.444_00:07:43.333.mp4` | 皇室战争 APK v3.1.3.1 | clash royale apk v3 1 3 1 | zh_low_cjk_ratio |
-| `hRS2c9e-uTo_00:01:40.640_00:01:48.200.mp4` | Cop Games v5.0 截图 | cop games v5 0 screenshot | zh_low_cjk_ratio |
+| `7ipoOwru4XA_00:11:56.600_00:11:57.360.mp4` | Roblox Ota Oti Oti | roblox ора оти оти | zh_mostly_english |
+| `1Mfr5pGSmCM_00:01:58.367_00:02:05.067.mp4` | Hobby Consolas 的标志 | the logo for hobby consollas | zh_low_cjk_ratio, zh_mostly_english |
 
 > 📌 **修复前被误报的典型形态**（人工抽检的 15 条，逐字摘自 `review_conflicts.tsv`）：
 >
@@ -156,7 +156,7 @@
 
 | clip | 原中文字幕 | better_zh 候选（≤30 字） |
 |---|---|---|
-| `sZ1tpezSfgc_00:02:37.200_00:02:39.400.mp4` | lululemon虚拟性感女孩身穿蓝色上衣 | 短发人士身穿蓝色衬衫，低头后抬头说话 ／ 屏幕上显示搜索框，输入' Samuel Bendahan… ／ 室内场景，背景有绿植和家具 |
+| `sZ1tpezSfgc_00:02:37.200_00:02:39.400.mp4` | lululemon虚拟性感女孩身穿蓝色上衣 | 短发人士身穿蓝色衬衫，低头后抬头说话 ／ 屏幕上显示搜索框，输入' Samuel Bendahan' ／ 室内场景，背景有绿植和家具 |
 | `xOTVi9EM7bA_00:00:41.375_00:01:39.499.mp4` | 俄罗斯警察使用丰田汽车在城市巡逻 | 画廊内男子演讲，背景有警察与汽车的影像叠加 ／ 男子在艺术展现场发言，画面中出现警察巡逻场景 ／ 演讲者与摄影师在画廊，背景影像显示警察与丰田车 |
 | `WW8icbd0XHo_00:00:23.267_00:00:34.433.mp4` | 汽车旅馆 | 男子在黑板前讲解经济数据图表 ／ 讲解者手势指向上升曲线，讨论油价与出口关系 ／ 黑板上有手写数字和俄文经济分析文字 |
 
