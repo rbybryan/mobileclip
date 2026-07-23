@@ -1,0 +1,15 @@
+{
+    "embed_dim": 512,
+    "image_cfg": {
+        "image_size": 256,
+        "model_name": "fastvit_mci0"
+    },
+    "text_cfg": {
+        "context_length": 512,
+        "hf_model_name": "hfl/minirbt-h288",
+        "hf_tokenizer_name": "hfl/minirbt-h288",
+        "hf_pooler_type": "mean_pooler",
+        "hf_proj_type": "mlp",
+        "local_files_only": true
+    }
+}

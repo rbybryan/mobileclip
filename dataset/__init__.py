@@ -72,7 +72,12 @@ def get_train_transform(config, train_file):
     else:
         raise NotImplementedError(vision_enc_name)
 
+    mean = tuple(config.inputs.get("image_mean", mean))
+    std = tuple(config.inputs.get("image_std", std))
     normalize = transforms.Normalize(mean, std)
+    interpolation = getattr(
+        InterpolationMode, config.inputs.get("interpolation", "bilinear").upper()
+    )
 
     # loaded images and videos are torch.Tensor of torch.uint8 format,
     # ordered as (T, 1 or 3, H, W) where T=1 for image
@@ -83,18 +88,19 @@ def get_train_transform(config, train_file):
     else:
         aug_transform = transforms.Lambda(lambda x: x)
 
-    train_transform = transforms.Compose(
-        [
-            aug_transform,
-            transforms.RandomResizedCrop(
-                config.inputs.image_res,
-                scale=(0.5, 1.0),
-                interpolation=InterpolationMode.BILINEAR, 
-            ),
-            transforms.RandomHorizontalFlip(),
-            type_transform,
-        ]
-    )
+    train_transforms = [
+        aug_transform,
+        transforms.RandomResizedCrop(
+            config.inputs.image_res,
+            scale=(0.5, 1.0),
+            interpolation=interpolation,
+        ),
+        transforms.RandomHorizontalFlip(),
+        type_transform,
+    ]
+    if config.inputs.get("normalize", False):
+        train_transforms.append(normalize)
+    train_transform = transforms.Compose(train_transforms)
 
     return train_transform
 
@@ -109,22 +115,27 @@ def get_test_transform(config, test_file):
     else:
         raise NotImplementedError(vision_enc_name)
 
+    mean = tuple(config.inputs.get("image_mean", mean))
+    std = tuple(config.inputs.get("image_std", std))
     normalize = transforms.Normalize(mean, std)
+    interpolation = getattr(
+        InterpolationMode, config.inputs.get("interpolation", "bilinear").upper()
+    )
 
     # loaded images and videos are torch.Tensor of torch.uint8 format,
     # ordered as (T, 1 or 3, H, W) where T=1 for image
     type_transform = transforms.Lambda(lambda x: x.float().div(255.0))
 
-    test_transform = transforms.Compose(
-        [
-            transforms.Resize(
-                (config.inputs.image_res, config.inputs.image_res),
-                interpolation=InterpolationMode.BILINEAR, 
-            ),
-            type_transform,
-            # normalize,
-        ]
-    )
+    test_transforms = [
+        transforms.Resize(
+            (config.inputs.image_res, config.inputs.image_res),
+            interpolation=interpolation,
+        ),
+        type_transform,
+    ]
+    if config.inputs.get("normalize", False):
+        test_transforms.append(normalize)
+    test_transform = transforms.Compose(test_transforms)
     return test_transform
 
 

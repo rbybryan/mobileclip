@@ -10,7 +10,7 @@ import torchvision.transforms as transforms
 from torchvision.transforms import InterpolationMode
 
 import torch.utils.checkpoint as checkpoint
-from .backbones.internvideo2 import InternVideo2, TextTransformer, ClipTokenizer
+from .backbones.internvideo2 import TextTransformer, ClipTokenizer
 from .criterions import VTC_VTM_Loss
 
 import copy
@@ -1461,4 +1461,3 @@ class AttentionPoolingBlock(AttentiveBlock):
         x = super().forward(x_q, x_kv, pos_q, pos_k, bool_masked_pos=None, rel_pos_bias=None)
         x = x.squeeze(1)
         return x
-
