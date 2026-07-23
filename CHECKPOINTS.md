@@ -19,9 +19,16 @@ checkpoints
 |------|--------|
 | `mobileclip_s0.pt`, `mobileclip_s2.pt` | Apple MobileCLIP — https://github.com/apple/ml-mobileclip (mirror on Google Drive below) |
 | `mobileviclip_tiny.pt`, `mobileviclip_small.pt` | Authors' Google Drive |
+| `mobileclip2_s2.pt` (optional, U8 init swap) | Apple MobileCLIP2 — https://huggingface.co/apple/MobileCLIP2-S2 |
 
 - **MobileViCLIP + MobileCLIP weights (Google Drive):** https://drive.google.com/drive/folders/1ROJYwQeO8lt4mEfNjEIAIDWj736WIQq7?usp=drive_link
 - **Apple MobileCLIP (official):** https://github.com/apple/ml-mobileclip
+- **Apple MobileCLIP2-S2 (optional student init, see `notes/plan-review-upgrades.md` U8):**
+  https://huggingface.co/apple/MobileCLIP2-S2 — architecture identical to MobileCLIP-S2
+  (verified 2026-07-23: same per-tower param counts, HF card instantiates the
+  `MobileCLIP-S2` OpenCLIP config), so it loads wherever `mobileclip_s2.pt` does after
+  the same state-dict conversion. Improved arms use it as init; R0 keeps the original
+  `mobileclip_s2.pt` to anchor reproduction.
 
 ## Annotations
 
