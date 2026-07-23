@@ -27,6 +27,8 @@
       **通过标准(只看动力学)**:损失正常下降;r1 的 ckpt 里
       `logit_scale/logit_bias` 离开初始值(t≠10、b≠−10);
       `temporal_pool.proj` 非零。不满足 = 配置/代码有问题,先修再前进。
+      **结果见 [`experiments/pilot_10k_results.md`](pilot_10k_results.md)**:r0 全过、
+      r1 判据一(损失下降)过、判据二三待服务器读 ckpt 核实(文档内附命令)。
 - [ ] **1.4 B0 锁基线**(1.1 完成后,README §3):官方权重跑已到位的
       基准 → `collect_results.py --out experiments/BASELINE.md`。
       核对 MSR-VTT DSL 口径 t2v R@1 ≈ 42.5;**论文主口径 = raw(`_emb/`)**。
@@ -64,7 +66,7 @@
 | 计划文档(P1–P10 → C1–C4 → 审核修正) | ✅ | notes/ 四份,均已 merge |
 | 实验框架 + 组件开关 + 卫生修复 | ✅ | PR #64 |
 | 10k 试点配置 | ✅ | PR #67 |
-| 10k 试点跑通 | ⬜ | ← 第一线 1.3 |
+| 10k 试点跑通 | 🟡 | r0 过·r1 判据一过·二三待核实,见 pilot_10k_results.md |
 | B0 基线锁定 | ⬜ | ← 第一线 1.4 |
 | C2 T 无关化 | ⬜ | ← 第二线 2.1 |
 | R2 教师管线 | ⬜ | ← 第二线 2.2 |
