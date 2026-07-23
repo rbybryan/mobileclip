@@ -1001,17 +1001,19 @@ image = image.to(device, dtype=param_dtype, non_blocking=True)
 ```
 
 Deliberately **`param_dtype`, not `data_type`**: the precision switch is read in
-three places under two different key names with two different defaults, so
-`data_type` is not reliably the dtype the weights actually have —
+three places with different defaults, so `data_type` is not reliably the dtype
+the weights actually have —
 
 | file | key | default | decides |
 |------|-----|---------|---------|
-| `tasks_clip/shared_utils.py:57` | **`bf16`** | `True` | model → bf16 or fp16 |
+| `tasks_clip/shared_utils.py` | `use_bf16` (legacy `bf16` as fallback) | `True` | model → bf16 or fp16 |
 | `tasks_clip/pretrain.py` | `use_bf16` | `True` | `data_type` for autocast |
 | `utils/config_utils.py:130` | `use_bf16` | `False` | `bf16` vs `fp16` section in `deepspeed_config.json` |
 
-They only agree when a config sets **both** `bf16` and `use_bf16` explicitly
-(the pilot configs do). Asking the model for its dtype sidesteps all three; when
+(`shared_utils.py` originally read a **different key**, `bf16` — unified to
+`use_bf16` in 2026-07, ported from the b100 NebulaCV line, keeping `bf16` as a
+fallback for old configs. The defaults still differ, so:) they only agree when
+a config sets `use_bf16` explicitly (the pilot configs set both spellings). Asking the model for its dtype sidesteps all three; when
 `use_half_precision` is false it is `float32` and the cast is a no-op.
 
 **Why not `fp16: {auto_cast: true}` instead?** That DeepSpeed option ("*auto_cast

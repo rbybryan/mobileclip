@@ -84,10 +84,17 @@ InternVid-10M-FLT 英文 R0–R3 计划（`experiments/SETUP_B100.md`）**平行
    - `pretrain.py` 的输入 dtype cast。
 4. `dataset/__init__.py` 的 transform 参数化与惰性导入也是无害通用增强，可一并评估。
 
-## 处置（待维护者决定）
+## 处置（已决定：B，2026-07-23）
 
-| 选项 | 内容 |
-|------|------|
-| A | 全量作为 `nebulacv` 特性分支进 fork（保留中文线完整可复现） |
-| B | 只移植上面第 3、4 条通用修复进 fork main，中文线留在 b100 |
-| C | 仅存档（快照分支 `server/b100-local-opts` 已在 fork 上，随时可取） |
+**维护者选定方案 B：只移植通用修复进 fork main，中文线留在 b100。**
+
+移植时逐项比对发现，三处修复里 fork **已经独立修过两处**，实际移植内容如下：
+
+| b100 修复 | fork 现状 | 处置 |
+|-----------|-----------|------|
+| `pretrain.py` 输入 dtype cast | fork 已有更稳的版本（cast 到 `param_dtype` 而非 `data_type`，见 `TROUBLESHOOTING.md` 精度三开关一节） | 不动 |
+| `mobileviclip_tiny/small.py` 冻结死代码（`hasattr(name,'_1d')`） | fork 已修（显式 `head.` 判断） | 不动；但 b100 版本多解冻了 **`temporal_embedding`**（zeros 初始化、image 权重里没有，冻住=永远为零）——此增量已移植进 tiny+small |
+| `shared_utils.py` 读错 key（`'bf16'`→`'use_bf16'`） | fork 未修，只是文档绕行（配置两键同设） | **已移植**：统一读 `use_bf16`，`bf16` 保留为旧拼写回退；配套更新 `README_zh.md`、`TROUBLESHOOTING.md`、两个 `config.py` 注释、`SETUP_B100.md` |
+
+未移植（属中文线专用，留在 b100 / 快照分支）：HF 文本塔、checkpoint 转换器、
+中文标注管线、nebulacv 配置等全部其余内容。快照分支 `server/b100-local-opts` 保留存档。

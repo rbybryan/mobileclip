@@ -858,7 +858,7 @@ bash scripts/pretraining/clip/mobileviclip_small/run.sh
 |------|------|------|------|
 | `run.sh` `NNODE` / `NUM_GPUS` | `2`/`8`(tiny)、`2`/`4`(small)（共 16 / 8 卡，含 slurm 残留） | `1` / `8` | 单机 8 卡；并显式加 `--nnodes=1`、`CUDA_VISIBLE_DEVICES=0..7` |
 | `config.py` `use_bf16` | `True` | `False` | V100 无 bf16 张量核，改用 fp16 |
-| `config.py` `bf16`（新增） | 默认 `True` | `False` | `shared_utils.py` 用该键决定模型 dtype，默认 True，必须显式关掉，否则模型仍被转成 bf16 |
+| `config.py` `bf16`（新增） | 默认 `True` | `False` | 历史键：`shared_utils.py` 曾只读该键决定模型 dtype。现已统一读 `use_bf16`（`bf16` 仅作旧配置的回退），两键同设仍然无害 |
 | tiny `config.py` `batch_size` | `32` | `64` | 8 卡 ×64 = 全局 512（原为 16 卡 ×32） |
 
 > 显存吃紧时可把 `batch_size` 调回 `32`（全局 256），或减小 `num_frames`；`gradient_checkpointing`

@@ -57,7 +57,11 @@ class MobileViCLIP_Tiny(nn.Module):
                 # False on a string, so the projector was silently frozen.
                 if self.config.model.open_vision_clip_projector and name.startswith("head."):
                     logger.info(f"Unfreeze {name}")
-                elif  "mixer_1d" in name or "norm_1d" in name or "layer_scale_1d" in name:
+                elif  "mixer_1d" in name or "norm_1d" in name or "layer_scale_1d" in name \
+                        or "temporal_embedding" in name:
+                    # temporal parts are absent from the image-pretrained
+                    # checkpoint (temporal_embedding is zeros-init) and must
+                    # stay trainable, else they are frozen at zero forever
                     logger.info(f"Unfreeze {name}")
                 elif "temporal_pool" in name:
                     # newly added temporal-aggregation head has no pretrained

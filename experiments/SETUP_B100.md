@@ -122,7 +122,8 @@ PY
 
 > **H100（Hopper）有 bf16 tensor core** —— 基础配置把 `use_bf16`/`bf16` 写死成 `False`
 > **只是因为 V100/Volta 没有 bf16**（`scripts/pretraining/clip/mobileviclip_small/config.py:88-96`）。
-> H100 上应当在启动时用 `use_bf16 True bf16 True` 覆盖回来（§6）：这样一来
+> H100 上应当在启动时用 `use_bf16 True bf16 True` 覆盖回来（§6；2026-07 起
+> `shared_utils.py` 已统一只认 `use_bf16`、`bf16` 只是旧拼写回退，两个都传依旧无害）：这样一来
 > fp16 那一整套动态 loss-scaling / NaN / `LayerNormFP32` 的故事（`TROUBLESHOOTING.md`
 > 「反向出 NaN」一节）在 H100 上**根本不发生**，`deepspeed.initial_scale_power`
 > 也变成无关项。**代价**：bf16 与 fp16 数值不完全一致，所以 A/B 两臂必须**都**用
