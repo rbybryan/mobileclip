@@ -10,7 +10,13 @@ import torchvision.transforms as transforms
 from torchvision.transforms import InterpolationMode
 
 import torch.utils.checkpoint as checkpoint
-from .backbones.internvideo2 import InternVideo2, TextTransformer, ClipTokenizer
+from .backbones.internvideo2 import (
+    ClipTokenizer,
+    HFTextEncoder,
+    HFTokenizer,
+    TextTransformer,
+)
+from .checkpoint_utils import load_openclip_mobileclip_checkpoint
 from .criterions import VTC_VTM_Loss
 
 import copy
@@ -36,15 +42,38 @@ class MobileViCLIP_Tiny(nn.Module):
         self.is_pretrain = is_pretrain
 
         # create modules.
-        text_encoder_cfg = json.load(
-            open(os.path.join(
-                "./models/backbones/internvideo2/mobileclip/configs/" + \
-                f"{self.config.model.text_encoder.name}.json"))
-        )
+        text_config_path = self.config.model.text_encoder.get("config_path")
+        if text_config_path is None:
+            text_config_path = os.path.join(
+                "./models/backbones/internvideo2/mobileclip/configs/",
+                f"{self.config.model.text_encoder.name}.json",
+            )
+        with open(text_config_path) as config_file:
+            text_encoder_cfg = json.load(config_file)
+        text_cfg = text_encoder_cfg["text_cfg"].copy()
+        for key in (
+            "hf_model_name",
+            "hf_tokenizer_name",
+            "hf_config_name",
+            "hf_pooler_type",
+            "hf_proj_type",
+            "local_files_only",
+            "cache_dir",
+        ):
+            if key in self.config.model.text_encoder:
+                text_cfg[key] = self.config.model.text_encoder[key]
         if tokenizer is None:
-            self.tokenizer = ClipTokenizer(text_encoder_cfg)
+            if text_cfg.get("hf_model_name"):
+                tokenizer_length = self.config.model.text_encoder.get(
+                    "tokenizer_max_length", text_cfg.get("context_length")
+                )
+                self.tokenizer = HFTokenizer(text_cfg, context_length=tokenizer_length)
+            else:
+                self.tokenizer = ClipTokenizer(text_encoder_cfg)
         self.vision_encoder = self.build_vision_encoder()
-        self.text_encoder = self.build_text_encoder(cfg=text_encoder_cfg['text_cfg'], projection_dim=text_encoder_cfg["embed_dim"])
+        self.text_encoder = self.build_text_encoder(
+            cfg=text_cfg, projection_dim=text_encoder_cfg["embed_dim"]
+        )
         # adopt 1 / 100. as in ViCLIP
         self.temp = nn.parameter.Parameter(torch.ones([]) * config.model.temp)
         self.temp_min = config.model.temp_min
@@ -52,22 +81,34 @@ class MobileViCLIP_Tiny(nn.Module):
         # freeze model
         if self.config.model.freeze_vision:
             for name, p in self.vision_encoder.named_parameters():
-                if self.config.model.open_vision_clip_projector and hasattr(name, '_1d'):
-                    logger.info(f"Unfreeze {name}")
-                elif  "mixer_1d" in name or "norm_1d" in name or "layer_scale_1d" in name:
+                is_temporal = any(
+                    part in name
+                    for part in ("mixer_1d", "norm_1d", "layer_scale_1d", "temporal_embedding")
+                )
+                is_projection = name.startswith("head.")
+                if is_temporal or (
+                    self.config.model.open_vision_clip_projector and is_projection
+                ):
                     logger.info(f"Unfreeze {name}")
                 else:
                     logger.info(f"Freeze {name}")
                     p.requires_grad = False
         if self.config.model.freeze_text:
             for name, p in self.text_encoder.named_parameters():
-                if self.config.model.open_text_projection and name.startswith('projection_layer'):
+                is_projection = name.startswith(("projection_layer", "proj."))
+                if self.config.model.open_text_projection and is_projection:
                     logger.info(f"Unfreeze {name}")
                 else:
                     logger.info(f"Freeze {name}")
                     p.requires_grad = False
 
         img_size = self.config.model.vision_encoder.img_size
+        image_mean = tuple(
+            self.config.inputs.get("image_mean", (0.485, 0.456, 0.406))
+        )
+        image_std = tuple(
+            self.config.inputs.get("image_std", (0.229, 0.224, 0.225))
+        )
         self.transform = transforms.Compose(
             [
                 transforms.Resize(
@@ -75,12 +116,12 @@ class MobileViCLIP_Tiny(nn.Module):
                     interpolation=InterpolationMode.BICUBIC,
                 ),
                 transforms.Lambda(lambda x: x.float().div(255.0)),
-                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+                transforms.Normalize(image_mean, image_std),
             ]
         )
         
         # load pretrained models
-        self.load_checkpoint(
+        self.checkpoint_load_report = self.load_checkpoint(
             config.model.vision_ckpt_path, config.model.text_ckpt_path, 
             config.model.get("extra_ckpt_path", None)
         )
@@ -187,6 +228,7 @@ class MobileViCLIP_Tiny(nn.Module):
             pretrained_cfg=None,
             pretrained_cfg_overlay=None,
             projection_dim=512,
+            head_bias=self.config.model.vision_encoder.get("head_bias", False),
         )
         model.default_cfg = default_cfgs["fastvit_s"]
         return model
@@ -196,13 +238,25 @@ class MobileViCLIP_Tiny(nn.Module):
         Returns: nn.Module. The text encoder
 
         """
-        text_encoder = TextTransformer(cfg, projection_dim)
+        if cfg.get("hf_model_name"):
+            text_encoder = HFTextEncoder(cfg, projection_dim)
+        else:
+            text_encoder = TextTransformer(cfg, projection_dim)
 
         return text_encoder
 
     def load_checkpoint(self, vision_ckpt_path=None, text_ckpt_path=None, extra_ckpt_path=None):
         assert vision_ckpt_path is not None, "No vision_encoder checkpoint"
         assert text_ckpt_path is not None, "No text_encoder checkpoint"
+
+        if self.config.model.get("checkpoint_format") == "openclip":
+            return load_openclip_mobileclip_checkpoint(
+                self,
+                vision_ckpt_path,
+                text_ckpt_path,
+                extra_checkpoint=extra_ckpt_path,
+                min_match_ratio=self.config.model.get("checkpoint_min_match_ratio", 0.9),
+            )
 
         new_ckpt = {}
 
@@ -1135,6 +1189,7 @@ class FastViT(nn.Module):
         clip_embed_dim=512,
         attn_pool_num_heads=16,
         head_drop_path_rate=0,
+        head_bias=False,
         **kwargs,
     ) -> None:
 
@@ -1209,7 +1264,11 @@ class FastViT(nn.Module):
             use_se=True,
             num_conv_branches=1,
         )
-        self.head = GlobalPool2D(in_dim=int(embed_dims[-1] * cls_ratio),out_dim=int(embed_dims[-1]))
+        self.head = GlobalPool2D(
+            in_dim=int(embed_dims[-1] * cls_ratio),
+            out_dim=int(embed_dims[-1]),
+            bias=head_bias,
+        )
         self.apply(self.cls_init_weights)
         self.init_cfg = copy.deepcopy(init_cfg)
 
@@ -1265,11 +1324,12 @@ class FastViT(nn.Module):
 class GlobalPool2D(nn.Module):
     """This class implements global pooling with linear projection."""
 
-    def __init__(self, in_dim, out_dim, *args, **kwargs):
+    def __init__(self, in_dim, out_dim, bias=False, *args, **kwargs):
         super().__init__()
         scale = in_dim**-0.5
         self.pool = GlobalPool(pool_type="mean", keep_dim=False)
         self.proj = nn.Parameter(scale * torch.randn(size=(in_dim, out_dim)))
+        self.bias = nn.Parameter(torch.zeros(out_dim)) if bias else None
         self.in_dim = in_dim
         self.out_dim = out_dim
 
@@ -1285,6 +1345,8 @@ class GlobalPool2D(nn.Module):
         x = self.pool(x)
         # [batch, in_dim]  x [in_dim, out_dim] --> [batch, out_dim]
         x = x @ self.proj
+        if self.bias is not None:
+            x = x + self.bias
         return x
 
 class GlobalPool(nn.Module):
@@ -1484,4 +1546,3 @@ class AttentionPoolingBlock(AttentiveBlock):
         x = super().forward(x_q, x_kv, pos_q, pos_k, bool_masked_pos=None, rel_pos_bias=None)
         x = x.squeeze(1)
         return x
-

@@ -49,7 +49,7 @@ def setup_model(
 
     model = model.to(torch.device(config.device))
     if config.use_half_precision:
-        if config.get('bf16', True):
+        if config.get('use_bf16', True):
             logger.info("Change to bfloat16 for model")
             model = model.to(torch.bfloat16)
         else:

@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 *.pyo
 .Python
+pretrain_mobileviclip_nebulacv_24m/

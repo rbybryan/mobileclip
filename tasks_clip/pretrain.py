@@ -68,7 +68,11 @@ def train(
 
     iterator = metric_logger.log_every(train_loader, log_freq, header)
     for i, (media_type, (image, text, idx)) in enumerate(iterator):
-        image = image.to(device, non_blocking=True)
+        image = image.to(
+            device=device,
+            dtype=data_type if config.use_half_precision else image.dtype,
+            non_blocking=True,
+        )
         idx = idx.to(device, non_blocking=True)
         text_input = tokenizer(text).to(device)
 
