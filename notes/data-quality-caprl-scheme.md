@@ -139,6 +139,12 @@
 - 4B 模型达 72B/235B 质量 → 标注 3M 片在**单机多卡**可行，成本可控；
 - **时序定位 MCQ 直接对症 MobileViCLIP 的顺序盲**——这是本方案最独特的一环（见 §5）。
 
+> **候选融合（补充件）**：Pillar B0 每片产出 K 条**互补**候选后、切成训练视图**之前**，可插入
+> 一步「并集-验证-整合」把它们融合成一条更全、且验收过幻觉的字幕，再按 §4.4 降维。
+> 该算子（union→verify→consolidate，基于 OwlCap/CCCaption/CapRL/Scene-Graph-Consolidation）
+> 单列于 [`notes/caption-fusion-scheme.md`](caption-fusion-scheme.md)。**是否比直接 uniform-K 更好，
+> 是其 §6.3 的可证伪消融**，不预设结论。
+
 ### 4.4 一级约束：`max_txt_l = 32`，密集字幕必须「降维」进训练（v2 新增）
 
 CapRL++ 的原生输出是**带时间戳的密集长段落**，而本仓库文本塔训练窗口只有
