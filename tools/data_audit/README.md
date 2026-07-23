@@ -15,6 +15,20 @@
 > 流水线状态 + 问题登记 + 待决策）。统计细节见
 > [`notes/audit-10k-findings.md`](../../notes/audit-10k-findings.md)。
 
+> **想「用」这 1 万条训练、而不是「审」它？走另一条路。** 本工具集只做质量审核
+> （字幕↔视频对齐打分/分桶）。要拿 101vector 上的
+> `/home/vca1/datasets/internvid_zh_10k` **跑 10k 试点训练**（`pilot_10k_r0/r1`），
+> 见 [`experiments/README.md`](../../experiments/README.md) §2b。三步：
+> ① 用 [`tools/make_pilot_anno.py`](../make_pilot_anno.py) 从 `internvid_zh_10k.jsonl`
+> 建出 `anno_downstream/internvid_zh_10k_pilot{,_val}.json`（约 9k 训 + 1k 评）；
+> ② `export MVC_DATA_DIR=/home/vca1/datasets`，让 corpus 的 `data_root`
+> （`configs/data.py` 里的 `internvid_zh_10k/videos`）直接对上那个 `videos/` 目录，
+> 免软链；③ `python experiments/check_readiness.py` 确认 pilot 亮灯后启动。
+> ⚠️ **字幕默认取英文**（`make_pilot_anno.py --caption-field en`）：文本塔是
+> CLIP 英文 BPE；切 `zh` 是另一个实验，别为了「能跑」就改。数据缺失时训练怎么
+> 报错、怎么排查见
+> [`TROUBLESHOOTING.md`](../../TROUBLESHOOTING.md)「Training dies with `RecursionError`」一节。
+
 ## 按机器选手册（两台服务器分工不同）
 
 | 机器 | 手册 | 数据范围 | S2 路径 | 耗时 |
