@@ -91,6 +91,7 @@ expected_total() { wc -l < "$DATA"; }
 s1_lines() { { cat "$OUT"/s1_scores.*.jsonl 2>/dev/null || true; } | wc -l; }
 s2_lines() { { cat "$OUT"/s2_verdicts.*.jsonl 2>/dev/null || true; } | wc -l; }
 trans_lines() { { cat "$OUT"/s2_trans.*.jsonl 2>/dev/null || true; } | wc -l; }
+merged_lines() { { cat "$OUT"/s2_merged.*.jsonl 2>/dev/null || true; } | wc -l; }
 
 case "${1:-}" in
 # ---------------------------------------------------------------- ① 冒烟
@@ -203,6 +204,11 @@ status)
     tr_alive=$(pgrep -fc "vlm_audit_hf.py.*--mode trans" || true)
     echo "---- S2-trans（文本-only 翻译重判）: $(trans_lines) / $s2t  存活进程: $tr_alive ----"
     echo "  体检（可中途跑，早发现修复没生效就不用等）: bash $0 trans-check"
+  fi
+  if ls "$OUT"/s2_merged.*.jsonl >/dev/null 2>&1; then
+    mg_alive=$(pgrep -fc "vlm_audit_hf.py.*--mode merge" || true)
+    echo "---- S2-merge（候选融合 better_zh→1 条）: $(merged_lines) / $s2  存活进程: $mg_alive ----"
+    echo "  （总行数达 $s2 即全部处理完；只有 ≥2 候选的片真调模型，<2 候选秒过。落地: bash $0 s4-merged）"
   fi
   echo "---- 各分片日志尾行 ----"
   tail -n 1 "$OUT"/s1_shard*.log "$OUT"/s2_shard*.log 2>/dev/null || true
