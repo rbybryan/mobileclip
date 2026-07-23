@@ -4,6 +4,11 @@
 > 数据：10,000 条 clip 全覆盖 ｜ 更新：2026-07-22
 >
 > 证据强度沿用原报告：✅✅ 三方印证 ｜ ✅ 有独立外部证据 ｜ ⚠️ 单一来源 ｜ ❌ 已撤回 ｜ 🚫 不可外推
+>
+> **每个小节下都附了真实例子**（📎 标记），逐字摘自审查产物、未经改写，由
+> `tools/data_audit/extract_examples.py` 生成的快照（2026-07-22）。完整版（每节更多例、
+> 可重跑刷新）见 [`final_report_examples.md`](final_report_examples.md)。
+> `clip` 列 = `youtube_id_起始_结束.mp4`，在 Gradio 里搜此名即可对着画面看。
 
 ---
 
@@ -40,16 +45,48 @@
 > **A（描述了画面里没有的东西）与 E（描述对但太笼统）本轮从未被分开** ——
 > 16% 里两者各占多少，**目前无法回答**。
 
+📎 **例子**（`en_score≤2` 且 `sig_zh` 最低 —— VLM 与嵌入模型都判最差）：
+
+| clip | 英文源 caption | 中文译文 | sig_zh | en分 | VLM 标注 |
+|---|---|---|---|---|---|
+| `sZ1tpezSfgc_00:02:37.200_…` | the lululemon virtual sexy girl is wearing a blue shirt | lululemon虚拟性感女孩身穿蓝色上衣 | -0.018 | 2 | wrong_subject, hallucinated_detail |
+| `xOTVi9EM7bA_00:00:41.375_…` | russian police use toyota cars to patrol the city | 俄罗斯警察使用丰田汽车在城市巡逻 | -0.006 | 2 | wrong_scene, hallucinated_detail |
+| `WW8icbd0XHo_00:00:23.267_…` | `аруител наал авлетс оател` | 汽车旅馆 | -0.004 | 0 | wrong_subject, hallucinated_detail |
+
+> 🔎 **附带发现（未登记为独立问题）**：第三行的「英文源」根本不是英文，是上游 captioner
+> 把画面上的文字 **OCR 错了**当成描述（`аруител наал авлетс оател`），译文只能跟着胡翻成
+> 「汽车旅馆」。这类「源 caption 本身是乱码 OCR」在 §一.4 的 `ocr_or_watermark_read`
+> 和 §二.1 的翻译错误里反复出现 —— 是同一个上游故障的不同侧面。
+
 ### 2. 几乎不含时序信息：99.2% ⚠️
 
 - **69.1%** 的视频含多个先后事件（6,913 条）
 - 但其中 **99.2%（6,858 条）的字幕对顺序只字未提**
-- 全库只有 **55 条（0.55%）** 描述了事件顺序，其中还有 **8 条写反**
-- **对 MobileViCLIP 这是最要紧的一条** —— 它是**视频**-文本模型，时序正是它区别于
-  图文模型的地方。**模型能从这份数据里学到的，基本还是「单帧图像-文本对齐」**
+- 全库只有 **55 条（0.55%）** 被模型标为「描述了事件顺序」
 
 > ⚠️ 「字幕没提顺序」是近乎客观的文本事实，**可信**；「视频有时序 69.1%」是模型对画面的
 > 判断，**不宜单独引用**（裁判在时序细判上与主力分歧明显：错误率 6.2% vs 0.2%）。
+
+📎 **例子**（视频有多事件、字幕却是平铺或重复的一句话）：
+
+| clip | 英文源 caption | 中文译文 |
+|---|---|---|
+| `zYmDM9M9x8M_…` | the first step is to prepare the plants for planting. the seed is plan… | 第一步是为种植做准备。种子已种入花盆，准备移栽。第一步是为种植做准备。 |
+| `vlpMAtuMDv0_…` | a screenshot of the step to select a number. an image of a keyboard wi… | 选择号码的步骤截图。应用内键盘及短信界面的图片。应用内短信的截图。 |
+| `ebMpPFoAEMM_…` | the pattern is repeated with the introduction of a third ball and the … | 引入第三个球后，模式重复，指令要求重复该模式 |
+
+> ⚠️ **原「8 条写反了」的说法已撤下（准确性修正）**。抽查那 8 条 `temporal_order_correct=false`
+> 的记录，**没有一条真的描述了顺序**：
+>
+> | clip | 字幕 | 是否描述了顺序 |
+> |---|---|---|
+> | `_dKRitNWn6I_…` | 蓝色糖霜正倒入锅中 | 否（单一持续动作）|
+> | `motX6kkA-r4_…` | 一名士兵站在黑暗的屋顶上 | 否（静态）|
+> | `ra1kQED6S5w_…` | 一辆黑色豪华轿车行驶在繁忙的街道上 | 否（单一动作）|
+>
+> rubric 明写「未描述顺序则记 `null`」，所以这 8 条是模型在**无序可判时错填了 `false`**，
+> 不是真写反。这与裁判在时序维度上的分歧（6.2% vs 0.2%）互为印证：**时序的「细判」不可靠，
+> 能站住的只有「字幕基本不含时序」这一层。**
 
 ### 3. 描述太笼统（粒度粗）—— 方向成立，**规模数字已撤回** ❌
 
@@ -61,6 +98,17 @@
 - `dense` 全库 **0 条** —— 标签空间塌缩的典型特征
 - **方向仍成立**：S1 独立佐证 —— `xling_cos` 动态范围极窄（p25–p75 仅 0.711–0.813），
   正因为 caption 又短又套路，LaBSE 在这种短文本上分不开
+
+📎 **例子**（英文 caption **最短**的几条 —— 用长度这个**不依赖模型**的量挑，因为
+`granularity` 已作废，用它挑例子会把结论洗成自证）：
+
+| clip | 英文源 caption | 中文译文 | 英文词数 |
+|---|---|---|---|
+| `uPttz67FhK8_…` | air save logo | Air Save 标志 | 3 |
+| `9P6EGIwz4Vk_…` | cz pistol grip | CZ手枪握把 | 3 |
+| `S6SV9GVqPGQ_…` | `pea ea ga - 00` | pea ea ga - 00 | 5 |
+
+> （最后一条又是 OCR 乱码，且中文栏原样照抄未翻 —— 三个上游毛病叠在一条上。）
 
 ### 4. 错误类型的相对排序（⚠️ 仅供参考，计数不可当占比读）
 
@@ -74,15 +122,27 @@ VLM 标注的 `en_issues` 频次由高到低（源：`report.md` 的「高频问
 - `wrong_scene`（认错场景）1,263
 - `ocr_or_watermark_read`（把水印/字幕当画面内容）28
 
-> ⚠️ 这些计数出自已塌缩的合并 rubric（§5.1），**绝对数值不可当问题率引用**。
+> ⚠️ 这些计数出自已塌缩的合并 rubric（§三），**绝对数值不可当问题率引用**。
 > 但**排序**提示：源 caption 的首要错误是**认错主体与动作**，而非编造细节。
+
+📎 **例子**（每类各取 `sig_zh` 最低的一条；⚠️ 看形态、不看比例）：
+
+| 错误类型 | clip | 英文源 caption | sig_zh |
+|---|---|---|---|
+| 认错主体 `wrong_subject` | `kopHHwN8-Uo_…` | an image of a black background with a small bird | 0.007 |
+| 认错动作 `wrong_action` | `fst9tjBKC2Y_…` | a man is cutting a piece of plastic that looks like a lamp | 0.029 |
+| 编造细节 `hallucinated_detail` | `xOTVi9EM7bA_…` | russian police use toyota cars to patrol the city | -0.006 |
+| 读水印/字幕 `ocr_or_watermark_read` | `ad1-l4_WslE_…` | video card balance - mai 2020 | 0.050 |
+| （同上，OCR 乱码形态）| `0eISQGAM5D0_…` | i f t possible t d ve l heure e de développement de d eve | 0.072 |
 
 ### 5. 上游成因（解释了为什么以上问题同时出现）
 
 - InternVid 的英文 caption 由**逐帧图像 captioner 生成 → LLM 汇总**
 - 这条管线**天然产出笼统、无时序的句子** —— 单帧看不到事件顺序，汇总时也不会凭空产生
+- **且会把画面上的文字 OCR 下来当描述**（见 §一.1、§一.4 的乱码例子）—— OCR 错了，
+  整条 caption 就与画面无关
 - FLT 版本只是「按英文 CLIP 分取前 30%」，**筛的是对齐度，不是信息量**
-- → 「笼统」和「无时序」不是两个 bug，是**同一个上游机制的两个侧面**
+- → 「笼统」「无时序」「OCR 乱码」不是三个孤立 bug，是**同一条上游管线的几个侧面**
 
 ---
 
@@ -99,13 +159,31 @@ VLM 标注的 `en_issues` 频次由高到低（源：`report.md` 的「高频问
 - **翻译差率在各 `sig_zh` 分位上基本持平**（2.0%–6.5%，无趋势）
   → 翻译问题与视频-文本对齐**相互独立**，是一个独立的小问题
 
+📎 **例子**（文本-only 重判 `trans_score≤2`，只比中英两条文本、不看画面）：
+
+| clip | 英文源 | 中文译文 | 问题标签 |
+|---|---|---|---|
+| `fXUqy-x8Q-g_…` | …with the words je sais… | 一张有人在笔记本电脑上的图片，上面写着"je sais pas à l'oise" | untranslated_fragment |
+| `TQaJ3IiJAUc_…` | kak susu dana jumlah nisa khan | 卡克苏苏达纳朱马特尼萨汗 | mistranslation, artifact_text |
+| `nsNVm7esIys_…` | `и тем олени на он влтс` | 以及驯鹿 | mistranslation, artifact_text |
+
+> 注意：这几条的**英文源本身**就是非英文/乱码（印尼语音译、俄文 OCR），译文的「错」
+> 一半是**在替源头的乱码背锅**。真正干净的误译（该译却译错）在本批里更少。
+
 ### 2. 未翻译 / 语言污染：~0.3% ✅（原报 3.3% 已证伪）
 
 - `untranslated=true` 实测仅 **33 条（0.3%）**
 - 逐字照抄英文原文 **12 条（0.12%）**，量级可忽略
 - **S0 规则原报的 3.3% 是误报** —— 人工抽 15 条冲突记录，**15/15 判定译文没问题**
 
-**误报机制**（这条值得单独记）：
+📎 **真·未翻译的例子**（`untranslated=true`，全库仅 33 条）：
+
+| clip | 英文源 | 中文栏内容 |
+|---|---|---|
+| `3OU6wtbZsdQ_…` | korean language, korean hw esl student loan calculation | 韩语，韩国hw esl学生贷款计算 |
+| `OuPEacoosis_…` | …with the words apprend a cire les chiffres… | 一张法语信件图片，上面写着"apprend a cire les chiffres"（学习书写数字），以及1、… |
+
+**误报机制**（3.3% → ~0.3% 的由来，值得单独记）：
 
 - `zh_low_cjk_ratio` / `zh_mostly_english` 是**纯字符比例**规则（CJK 占比 <0.4 报警）
 - 而这批字幕内容**本身就是品牌名/型号/画面文字**，正确译文必然拉丁字符占比高：
@@ -114,9 +192,24 @@ VLM 标注的 `en_issues` 频次由高到低（源：`report.md` 的「高频问
 |---|---|---|---|
 | `华硕 P8Z77-V BM 主板` | `asus p8z77-v bm motherboard` | 0.27 | ✅ 连 ASUS 都译成了「华硕」 |
 | `Windows 10 开始菜单` | `windows 10 start menu` | 0.31 | ✅ `start menu`→`开始菜单` |
+| `Sun Cool 官方网站` | `sun cool official site` | 0.29 | ✅ `official site`→`官方网站` |
+
+（以上三条逐字摘自人工抽检表 `review_conflicts.tsv`，15 条 15/15 判译文没问题，可直接引用。）
 
 - **即：译得越好（保留不该翻的型号名），越容易被判「污染」**
 - 已修（`strip_shared_latin`）：`zh_mostly_english` 327→**8**、`zh_low_cjk_ratio` 280→**13**
+
+📎 **修复后仍残留的命中**（说明还没修干净）：
+
+| clip | 中文译文 | 英文源 | 命中旗标 |
+|---|---|---|---|
+| `3qsMXB3LkIU_…` | 皇室战争 APK v3.1.3.1 | `clash royale apk v3 1 3 1` | zh_low_cjk_ratio |
+| `hRS2c9e-uTo_…` | Cop Games v5.0 截图 | `cop games v5 0 screenshot` | zh_low_cjk_ratio |
+
+> 🔎 **附带发现**：这两条仍误报，是因为版本号 `v3.1.3.1` 在英文源里写作 `v3 1 3 1`
+> —— **带标点 vs 空格分隔，非逐字匹配**，`strip_shared_latin` 没剔掉。修法是匹配前先做
+> 一次标点/空格归一化；改完真实污染比会比 ≤41 条**更低**。（另一条
+> `Essence 提供上门服务 ← есеен доли сервис…` 则是源头俄文乱码，属 §一 的 OCR 问题。）
 
 ### 3. 翻译工程残留：几乎为零 ✅
 
@@ -159,6 +252,14 @@ VLM 标注的 `en_issues` 频次由高到低（源：`report.md` 的「高频问
 - **重复字幕（假负例）**：10k 上测得 0.0% 🚫 **无意义** ——
   抽样率仅 0.1%，一组 k=2 的重复被抽中的概率是 1e-6，该决策门只能用全量判
 
+📎 **画面不可用的例子**（`video_readable=false`；注意 `better_zh` 应为空 —— 模型看不到
+画面就写不出字幕，这是一条自洽性检查，**通过**）：
+
+| clip | 英文源 caption | better_zh | VLM 动作 |
+|---|---|---|---|
+| `ybhN89tKcbI_…` | a black background with an airplane flying in the air | 空 | drop |
+| `XqACXtN5twQ_…` | the black background with an animal in it | 空 | drop |
+
 ---
 
 ## 五、对 v0.2 的直接含义
@@ -172,6 +273,19 @@ VLM 标注的 `en_issues` 频次由高到低（源：`report.md` 的「高频问
 - ⚠️ **落地前的硬门**：已生成的 9,951×3 条候选字幕（`better_zh`）**质量从未被评估**，
   却已排进 v0.2 的对比学习正样本。**必须先抽检 50 条**（幻觉率 >10% 即不可直接入库）
 
+📎 **`better_zh` 长什么样**（最该重写的那批，原文 vs 3 条候选；⚠️ 质量未验证，仅看形态）：
+
+| clip | 原中文字幕 | better_zh 候选（≤30 字） |
+|---|---|---|
+| `sZ1tpezSfgc_…` | lululemon虚拟性感女孩身穿蓝色上衣 | 短发人士身穿蓝色衬衫，低头后抬头说话 ／ 屏幕上显示搜索框，输入' Samuel Bendahan… ／ 室内场景，背景有绿植和家具 |
+| `WW8icbd0XHo_…` | 汽车旅馆 | 男子在黑板前讲解经济数据图表 ／ 讲解者手势指向上升曲线，讨论油价与出口关系 ／ 黑板上有手写数字和俄文经济分析文字 |
+
+> 🔎 **这张表把 P0 抽检的赌注说清楚了**：两行的原字幕（`汽车旅馆`）与重写
+> （`男子在黑板前讲解经济数据`）**内容完全不同** —— 重写不是润色，是彻底换内容。
+> **必有一个是错的**，而现在没人知道是哪个 → 这正是 §五 那道 P0 硬门要回答的。
+> 另外第一行的候选之一「屏幕上显示搜索框，输入' Samuel Bendahan…」显示**重写本身也在读
+> 屏幕文字**，把上游那个 OCR 毛病复现了 —— 抽检时要专门看幻觉这一项。
+
 ---
 
 ## 六、本报告**不能**支持的结论
@@ -182,6 +296,7 @@ VLM 标注的 `en_issues` 频次由高到低（源：`report.md` 的「高频问
 - ❌ 「粒度粗 93.6%」 —— 已撤回，三方不收敛
 - ❌ 「41.2% 的数据需要重新翻译」 —— `retranslate` 是质量分的阶梯，不是翻译证据
 - ❌ 「语言污染 3.3%」 —— 已证伪，实际 ~0.3%
+- ❌ 「时序有 8 条写反」 —— 那 8 条根本没描述顺序，`correct=false` 是模型乱填（§一.2）
 - ❌ 「数据没有重复字幕问题」 —— 10k 抽样对此毫无检出力
 - ❌ 「视频文件都是好的」 —— 0/10,000 不可外推
 - ⚠️ 「RECAPTION 占 25.32%」 —— 应视为**下界**；裁判在同批上判 63% 该重写
@@ -191,43 +306,21 @@ VLM 标注的 `en_issues` 频次由高到低（源：`report.md` 的「高频问
 
 ---
 
-## 七、真实例子（附录）
+## 附：例子怎么来的、怎么核对
 
-上面每一条结论都能调出**原始记录**核对。在数据机上跑一条命令即可生成：
+本文各节的 📎 例子是 `extract_examples.py` 输出的**快照**（2026-07-22，每节取代表性 1–3 条）。
+三条约束保证它们和正文的数字守同一可追溯标准：
+
+- **逐字摘录、无改写** —— 唯一的编辑行为是「挑哪几条」，选取规则印在每张表旁；
+- **确定性** —— 按给定顺序取前 N 条、无随机，同输入可复现；
+- **粒度那节故意按「英文最短」挑而非 `granularity` 标签** —— 那维已作废，用它挑会自证。
+
+完整附录（每节更多例、可重跑刷新）：
 
 ```bash
 python tools/data_audit/extract_examples.py          # -> docs/final_report_examples.md
 python tools/data_audit/extract_examples.py -n 5     # 每节 5 例
 ```
 
-生成的 `final_report_examples.md` 按本文件的结构分节，逐条对应：
-
-| 附录小节 | 对应本文 | 选取规则（同样印在附录里） |
-|---|---|---|
-| 1 与画面不符 | §一.1 | `en_score≤2` 且 `sig_zh` 最低 —— **两个独立信号交叉确认** |
-| 2 / 2b 时序缺失 / 写反 | §一.2 | `relevant=true & correct=null`；`correct=false`（全库仅 8 条）|
-| 3 描述笼统 | §一.3 | 英文 caption **最短**的几条 |
-| 4 认错主体 / 动作 / 编造细节 / 读水印 | §一.4 | 按 `en_issues` 标签分组 |
-| 5 真实翻译错误 | §二.1 | **文本-only 重判**的 `trans_score≤2` |
-| 6 真·未翻译 | §二.2 | `untranslated=true`（全库仅 33 条）|
-| 7 语言污染**误报** | §二.2 | 修复后仍命中比例旗标的记录 |
-| 8 画面不可用 | §四 | `video_readable=false`（49 条）|
-| 9 `better_zh` 候选预览 | §五 | 最该重写的那批：原文 vs 重写 |
-
-**三条设计约束**（报告的价值在可追溯，例子必须守同一标准）：
-
-- **逐字摘录、无改写** —— 唯一的编辑行为是「挑哪几条」，而挑选规则印在每节标题下；
-- **确定性** —— 按给定顺序取前 N 条、无随机，同样的输入可复现同一份附录；
-- **粒度那一节故意用「英文最短」而不是 `granularity` 标签** —— 那一维已被证实作废
-  （§一.3），**拿坏尺子选样品会把结论洗成自证**。
-
-> `clip` 列是 `youtube_id_起始时间_结束时间.mp4`，在 Gradio 里搜这个名字就能对着画面看。
-
-### 已经可以直接引用的实例
-
-§二.2 那张「误报机制」表里的三条 —— `华硕 P8Z77-V BM 主板`、`Windows 10 开始菜单`、
-`Sun Cool 官方网站` —— 是**逐字摘自人工抽检表 `review_conflicts.tsv` 的真实记录**
-（15 条冲突记录，15/15 判定译文没问题），无需重跑即可引用。
-
-其余各节的例子**尚未生成** —— `outputs/` 不入库，需在数据机上跑上面那条命令。
-**本文件不预置任何示例**：数据质量报告里出现编造的样本，比没有样本糟糕得多。
+> `clip` 列 = `youtube_id_起始_结束.mp4`，在 Gradio 工具里搜此名即可对着画面看。
+> ⚠️ 生成文件 `final_report_examples.md` 头部标了「请勿手改」——要调呈现改脚本，别改产物。
