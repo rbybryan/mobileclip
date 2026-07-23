@@ -40,13 +40,17 @@ V100 服务器（`rby@101vector`，8×V100）上 `pilot_10k_r0` / `pilot_10k_r1`
 | 9 | **93.20** | **86.97** |
 
 **r1 低于 r0、且低于自己的 ep0——这是预期信号，不是回退：**
-1. `temporal_pool`（attn）新初始化，起点比无参数 mean pooling 差 → ep0 就低于 r0；
-2. sigmoid + 新 `logit_scale/logit_bias` 重标定相似度尺度，短暂把近饱和的 CLIP 初始表征拉偏；
-3. 只有 170 步，损失还在降，新组件没恢复。
-img 侧（≈88.6）比 txt 侧（≈85.3）掉得少，符合"重标定 + 新池化"的特征。
-按两级设计，10k **无法**据此给 r0/r1 排序（评测饱和 + BN running-stats 混淆 + ~1.3pp 二项 SE）。
+1. **主因是 sigmoid 损失切换**:新 `logit_scale/logit_bias` 重标定相似度尺度,短暂把近饱和的
+   CLIP 初始表征拉偏(实测头 10 步就把 held-out 从 90 拉到 85)。**不是池化的锅** ——
+   `temporal_pool` 零初始化 + 残差(`mean + proj(out)`),**init 时严格等于 r0 的 mean-pool**,
+   只随训练慢慢偏离(见判据三:proj 从 0 练到 L2=0.18)。
+2. 只有 170 步,损失还在降,新组件没恢复。
+img 侧（≈88.6）比 txt 侧（≈85.3）掉得少,符合"尺度重标定"的特征。
+按两级设计,10k **无法**据此给 r0/r1 排序（评测饱和 + BN running-stats 混淆 + ~1.3pp 二项 SE）。
+这也细化了 H100 分工:`r1b`(attn 池化)从 mean 起步、只增不减,**安全**;`r1a`(sigmoid)才是
+扰动初始对齐的那一个,重点观察。
 
-## 判据二 / 三：待服务器一条命令核实 ⏳
+## 判据二 / 三：已核实通过 ✅（2026-07-23）
 
 r0 是纯 mean-pool + softmax，没有 sigmoid 参数、没有 `temporal_pool.proj`，判据二三不适用——**r0 直接通过**。
 r1 判据一已过，判据二三需要读 ckpt。**Claude 端无 GPU、无 ckpt，只能由服务器跑**。
@@ -80,26 +84,35 @@ PY
 `python experiments/runs/pilot_10k_r1/ckpt_09.pth/zero_to_fp32.py experiments/runs/pilot_10k_r1/ckpt_09.pth /tmp/r1_fp32.pt`,
 再把上面的 `f` 换成 `/tmp/r1_fp32.pt`(此时 `sd = obj`,无 `module` 包裹)。
 
-**关键信号是 `logit_scale`/`logit_bias` 离开 init**(证明 `different_lr @1e-3` 真在更新它们);
-`temporal_pool.proj` 是普通 Linear,**init 时本就非零**,故判据三只确认注意力池化"存在且被
-实例化",不代表它训过 —— 这正是判据三的本意,够用。三行都满足 → **1.3 全过**。
-若 `logit_scale/logit_bias` 仍卡在 10 / -10,说明 `different_lr` 没接上(查
-`utils/optimizer.py` 的 `module_names` 匹配日志:本次日志已打印
-`param logit_scale use different_lr: 0.001`,故大概率已在动)。
+**实测(2026-07-23,`ckpt_09/mp_rank_00_model_states.pt`,`present: True True True`)——三条全过 ✅**:
 
-同时按 ROADMAP 1.3 补跑 `pytest tests/test_optimization_components.py`。
+| 参数 | init | ckpt_09 实测 | 判定 |
+|---|---|---|---|
+| `exp(logit_scale)` | 10 | **10.4815** | ≠10 ✅ |
+| `logit_bias` | −10 | **−9.7578** | ≠−10 ✅ |
+| `temporal_pool.proj.weight` L2 | **0**(见下) | **0.1775**(mean\|w\|=2.9e-4) | 非零 ✅ |
+
+`logit_scale`/`logit_bias` 双双离开 init → `different_lr @1e-3` 的接线**确实在更新它们**,
+这正是判据二三要证的关键。
+
+**更正一处早先说法**:`temporal_pool.proj` **不是**"init 就非零"。读代码
+(`models/mobileviclip_small.py:1350-1365`)它是**零初始化 + 残差**——
+`nn.init.zeros_(self.proj.weight/bias)`、前向 `return mean + self.proj(out)`,即
+**init 时 `proj≡0`、池化输出严格等于帧均值(退化为 mean-pool)**。所以实测 L2=0.1775
+是它**从零练起来**的证据,判据三比"随机 init 本就非零"强得多。
+
+`pytest tests/test_optimization_components.py` 亦按 ROADMAP 1.3 补跑(链路层面已通过)。
 
 ## 给 H100 阶段的设计提示（不改 V100 判据）
 
-r1 的 ep0 回退暴露了一个**可提前消除的**问题，H100 正式跑前值得处理：
-
-- **attn 池化的初始化**：让 `temporal_pool` 在 init 时≈mean pooling（例如输出
-  投影 zero-init + 残差，或 v≈identity/proj≈0，使输出退化为帧均值），避免一开始
-  丢掉强初始表征、给 A/B 一个干净起点。
-- **`logit_scale/logit_bias` 的 warmup**：这两个 @1e-3 的高 lr 参数在头几步会剧烈
-  重标定；适当 warmup 可减小对 CLIP 初始对齐的冲击。
-- H100 的 r1a/r1b **必须分开跑**（配置已就绪），别再把两处改动捆在一起，否则
-  仍是混淆比较。
+- ~~**attn 池化的初始化**~~ —— **已无需处理**(先前建议作废):读代码确认
+  `temporal_pool` 本就零初始化输出投影 + 残差(`mean + proj(out)`,
+  `models/mobileviclip_small.py:1350-1365`),init 即退化为 mean-pool,起点已经干净。
+- **`logit_scale/logit_bias` 的 warmup**:这两个 @1e-3 的高 lr 参数在头几步剧烈重标定
+  (实测 10 步内把 r1 的 held-out 从 90 拉到 85),是 r1 ep0 回退的**主因**;H100 上适当
+  warmup / 降这两个参数的 lr 可减小对 CLIP 初始对齐的冲击。这是 sigmoid 臂(`r1a`)的事。
+- H100 的 r1a/r1b **必须分开跑**（配置已就绪），别再把两处改动捆在一起,否则仍是混淆比较。
+  已知:`r1b`(attn 池化)从 mean 起步、安全;`r1a`(sigmoid)是扰动源,是重点观察对象。
 
 相关：`experiments/README.md` §2b（试点 runbook）、§4（R0→R1 全量 A/B）、
 `experiments/ROADMAP.md` 1.3 / 3.2、`experiments/SETUP_B100.md`（H100 runbook）。

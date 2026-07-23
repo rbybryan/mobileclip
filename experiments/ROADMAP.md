@@ -47,15 +47,17 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 - [ ] **1.2 数据审查流水线**(GPU ~3–4h,产出 10k 诊断报告):
       `bash tools/data_audit/run_v100.sh smoke → s0 → s1 → s2-sample → s2 → s3`。
       报告决定 R2 的真实/合成字幕配比。
-- [ ] **1.3 10k 试点**(README §2b,GPU 空档):
+- [x] **1.3 10k 试点**(README §2b,GPU 空档)—— ✅ 2026-07-23 关闭:
       `make_pilot_anno.py`(记下共享字幕比例)→ `export MVC_DATA_DIR` →
       `pilot_10k_r0` 冒烟 + 正跑 → `pilot_10k_r1`;
       外加 `pytest tests/test_optimization_components.py`。
       **通过标准(只看动力学)**:损失正常下降;r1 的 ckpt 里
       `logit_scale/logit_bias` 离开初始值(t≠10、b≠−10);
       `temporal_pool.proj` 非零。不满足 = 配置/代码有问题,先修再前进。
-      **结果见 [`experiments/pilot_10k_results.md`](pilot_10k_results.md)**:r0 全过、
-      r1 判据一(损失下降)过、判据二三待服务器读 ckpt 核实(文档内附命令)。
+      **结果见 [`experiments/pilot_10k_results.md`](pilot_10k_results.md)** —— 三条判据
+      2026-07-23 已全部核实通过(ckpt_09):r0 全过;r1 损失 7.07→4.2、
+      `exp(logit_scale)=10.48`、`logit_bias=−9.76`、`temporal_pool.proj` 从零练到 L2=0.18。
+      **1.3 关闭**,下一步 H100 全量 A/B(`experiments/SETUP_B100.md`)。
 - [ ] **1.4 B0 锁基线**(1.1 完成后,README §3):官方权重跑已到位的
       基准 → `collect_results.py --out experiments/BASELINE.md`。
       核对 MSR-VTT DSL 口径 t2v R@1 ≈ 42.5;**论文主口径 = raw(`_emb/`)**。
@@ -93,7 +95,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 计划文档(P1–P10 → C1–C4 → 审核修正) | ✅ | notes/ 四份,均已 merge |
 | 实验框架 + 组件开关 + 卫生修复 | ✅ | PR #64 |
 | 10k 试点配置 | ✅ | PR #67 |
-| 10k 试点跑通(链路 go/no-go) | 🟡 | r0 过·r1 判据一过·二三待服务器读 ckpt,见 `pilot_10k_results.md` |
+| 10k 试点跑通(链路 go/no-go) | ✅ | 三条判据全过(exp(ls)=10.48≠10·lb=−9.76≠−10·proj 从零练到 L2=0.18),见 `pilot_10k_results.md` |
 | B0 基线锁定 | ✅ | MSR-VTT t2v R@1=42.50 对上论文,见 README §3.4(msrvtt/hmdb51/ucf101/k400) |
 | C2 T 无关化 | ⬜ | ← 第二线 2.1 |
 | R2 教师管线 | ⬜ | ← 第二线 2.2 |
