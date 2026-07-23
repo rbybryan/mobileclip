@@ -60,6 +60,8 @@ PAGE = """<!doctype html>
  .cap{margin:8px 0;padding:8px 10px;border-radius:6px;background:#f7f8fa;border:1px solid #eceef1}
  .cap .lbl{font-size:12px;color:var(--mut);display:block;margin-bottom:2px}
  .orig{background:#fffdf2;border-color:#f0e6c0}
+ .fused{background:#f0fff4;border-color:#a9dcb9}
+ .fused .lbl{color:#1a7f37;font-weight:600}
  .q{margin-top:10px;padding-top:10px;border-top:1px dashed var(--bd)}
  .q .name{font-weight:600;margin-right:8px}
  label.opt{display:inline-block;margin:3px 6px 3px 0;padding:4px 12px;border:1px solid var(--bd);
@@ -100,9 +102,9 @@ addEventListener("keydown",e=>{if(e.key==="n"&&!/INPUT|TEXTAREA/.test(e.target.t
 const app=document.getElementById("app");
 ROWS.forEach((r,i)=>{
   const d=document.createElement("div");d.className="card";d.id="c"+i;
-  const caps=COLS.filter(c=>/^(原zh|候选\\d|英文en)$/.test(c)&&r[c])
-    .map(c=>`<div class="cap ${c==="原zh"?"orig":""}"><span class="lbl">${c}</span>${r[c]}</div>`).join("");
-  const other=COLS.filter(c=>!/^(原zh|候选\\d|英文en|video|video_path)$/.test(c)&&r[c])
+  const caps=COLS.filter(c=>/^(原zh|候选\\d|英文en|融合稿)$/.test(c)&&r[c])
+    .map(c=>`<div class="cap ${c==="原zh"?"orig":c==="融合稿"?"fused":""}"><span class="lbl">${c}</span>${r[c]}</div>`).join("");
+  const other=COLS.filter(c=>!/^(原zh|候选\\d|英文en|融合稿|video|video_path)$/.test(c)&&r[c])
     .map(c=>`${c}=<b>${r[c]}</b>`).join(" · ");
   const qs=QS.map(q=>q.opts.length
     ? `<div class="q"><span class="name">${q.name}</span>`+q.opts.map(o=>
@@ -145,6 +147,9 @@ HINTS = {
                  "看画面和中英文本，判断<b>谁对</b>：<code>s0</code>=中文确实有未翻译/污染；"
                  "<code>vlm</code>=翻译其实没问题。",
     "random": "看画面判断这条字幕的质量，与模型给的 <code>zh分</code> 是否一致。",
+    "merge": "对着画面看 <b>3 条候选</b> 和绿色的 <b>融合稿</b>："
+             "<b>幻觉</b>=融合稿说了任何一条候选都没提、且画面里也没有的东西（y=有，最要紧）；"
+             "<b>更全</b>=融合稿比其中写得最好的那一条候选含更多<b>真实</b>细节（y=更全）。",
 }
 
 
