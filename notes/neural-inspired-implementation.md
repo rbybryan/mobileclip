@@ -98,21 +98,25 @@ already captures the temporal saliency and A1 is a weaker special case. Cut if n
 **Idea.** Every RepMixer's temporal branch is a depthwise `Conv1d(k=3)` over time
 (`RepMixer.forward:583-606`, `mixer_1d:558`), the *same* short window at every depth. Grow
 the temporal window with depth (Hasson hierarchy, `§N4`): short early, long late — via a
-per-stage **dilation** schedule, keeping k=3 (dilation is free at inference and preserves the
-reparameterization shape better than a larger kernel).
+**dilation** schedule over the **three RepMixer stages** (`token_mixers=("repmixer",
+"repmixer","repmixer","attention")`, `:200` — stage 4 is attention with `temporal_embedding`,
+it has no 1D conv), keeping k=3.
 
-**Touchpoint.** The block/stage builder that instantiates `mixer_1d` (dilation passed per
-stage), and the reparam path (`RepMixer.reparameterize:617-676`) — the `id_tensor` and the
-`w_1d` construction must use the block's actual dilation. The pretrained `mobileclip_s2.pt`
-has **no** temporal 1D convs (they are added fresh), so there is no checkpoint-load conflict;
-the temporal residual `mixer_1d − norm_1d` is ~0 at init, so the baseline path is preserved.
+**Touchpoint.** The stage builder that instantiates `mixer_1d` (pass `dilation` per stage).
+The 2D `MobileOneBlock` already threads `dilation` end-to-end incl. reparam
+(`mobileone.py:123,177`), and the reparam `id_tensor` centre tap is dilation-invariant, so
+`RepMixer.reparameterize:617-676` stays valid. **The one thing to verify/extend:** confirm
+`MobileOneBlock_1d` (the 1D variant used for `mixer_1d`, `:562`) exposes `dilation` — if it
+only takes `kernel_size`, thread `dilation` + dilation-aware padding into it. The pretrained
+`mobileclip_s2.pt` has **no** temporal 1D convs (added fresh), so no checkpoint-load conflict;
+the residual `mixer_1d − norm_1d` is ~0 at init, so the baseline path is preserved.
 
 **Config** (create `experiments/configs/nA2_gradedwindows.py`):
 
 ```python
 from scripts.pretraining.clip.mobileviclip_small.config import *  # noqa
 model["vision_encoder"]["temporal_window"] = "graded"     # default "fixed"
-model["vision_encoder"]["temporal_dilation"] = [1, 1, 2, 4]  # per-stage, read by builder
+model["vision_encoder"]["temporal_dilation"] = [1, 2, 4]  # over the 3 RepMixer stages
 output_dir = "experiments/runs/nA2_gradedwindows"
 ```
 
@@ -123,7 +127,8 @@ dilation — extend the existing reparam test.
 **Full-scale kill criterion.** Free ablation, low bar: must **not regress** overall R-Sum and
 should show its gain where a long temporal receptive field matters (**SSv2-MC** and other
 temporal-sensitive sets). If flat everywhere, keep as a one-line negative result, not a knob.
-Main engineering risk = the reparam identity at dilation ≠ 1; the round-trip test is the gate.
+Main engineering risk = confirming/extending `MobileOneBlock_1d` dilation support; the reparam
+round-trip test is the gate.
 
 ---
 
@@ -137,11 +142,17 @@ embeddings). Two facts make it feasible *now* at pilot scale without waiting for
    (`criterions.py:469`) and `new_UTA_Loss` (`:540`) compute `2 − 2·cos(student, teacher)`,
    InternVideo2's unmasked-token-alignment loss. It is wired into `tasks/pretrain.py`
    (the InternVideo2 path, `c_loss`/`uta_all` at `:73-74`) but **not** into
-   `tasks_clip/pretrain.py` (MobileViCLIP is VTC-only). So B1's first sub-task is a **port**,
-   not new machinery.
-2. **InternVideo2 backbones are in-repo** (`models/backbones/internvideo2/internvideo2.py`),
+   `tasks_clip/pretrain.py` (MobileViCLIP is VTC-only). The **loss math** is reused, but the
+   **teacher-tensor plumbing is genuinely new to `tasks_clip`**: the loss is computed inside
+   `model.forward`, whose signature is `(image, text, idx)` (`tasks_clip/pretrain.py:94`), so
+   feeding teacher embeddings means threading them through dataset → loader → `forward` →
+   `loss_dict`. That plumbing *is* the R2 pipeline work — so B1 = R2 plumbing + reused
+   cosine-KD + the new geo term, **not a flag flip**.
+2. **InternVideo2 model code is in-repo** (`models/backbones/internvideo2/internvideo2.py`),
    so an **online** InternVideo2-S teacher can run in-step on the 10k pilot for the link-test,
-   before the offline R2 storage exists.
+   before the offline R2 storage exists — **but its weights are not in `CHECKPOINTS.md`**;
+   sourcing the teacher checkpoint (and the L-vs-1B decision) is part of ROADMAP 2.2, so the
+   pilot link-test is gated on that download, not runnable this second.
 
 **The novel term (N1).** Cosine-KD matches *where* each embedding lands; it ignores the
 teacher's **relational geometry**, which is what retrieval (a ranking task) depends on. Add a
@@ -200,8 +211,9 @@ batch-composition-sensitive, so keep the sampler seed logged for reproducibility
 ## Tier C — predictive-coding structured gating (N2 efficiency half), gated
 
 **This is the R4 slot with a predictive-coding rationale**, not a mainline item. It is the
-only idea that attacks the 92%-of-MACs per-frame cost, but it is a genuine research bet and
-is **doubly gated**:
+only idea that attacks the dominant per-frame conv cost (the "~92%" figure is an unprofiled
+analytic estimate — **profiling the per-frame vs stage-4 split is itself a prerequisite**),
+but it is a genuine research bet and is **doubly gated**:
 
 - **Prerequisites:** C2 T-agnostic ops (`ROADMAP` 2.1) must exist (dynamic frame counts kill
   the hard-coded `reshape(8,…)`), *and* the on-device latency/export harness (paper-plan Wk8)
@@ -267,6 +279,32 @@ post-convergence, on dual trigger:
 static-graph export; worst-case unchanged), N7 foveation (collapses into the existing
 token-merging line), N8 SNN (no neuromorphic silicon on phones — matches the spikingjelly
 removal already in the hygiene gate).
+
+---
+
+## Audit corrections (2026-07-23 red-team pass, code-verified)
+
+A re-review against the source. Five findings, all fixed in place above:
+
+1. **"92% / 8%" MAC split was presented as fact — it is an unprofiled analytic estimate.**
+   It traces to the feasibility review, not to any measurement; `model-architecture-improvements.md:73`
+   says only that per-frame stages 1–3 dominate ("no measured profile yet") and never states 92%.
+   Softened in both notes; **profiling the split is now an explicit Tier-C prerequisite**.
+2. **A2 dilation schedule was wrong (4 entries).** `token_mixers=("repmixer","repmixer",
+   "repmixer","attention")` (`mobileviclip_tiny.py:200`) → temporal 1D convs live in **stages 1–3
+   only**; stage 4 is attention. Fixed to a 3-entry schedule `[1,2,4]`.
+3. **A2 reparam risk was mislocated.** The 2D `MobileOneBlock` already threads `dilation` incl.
+   reparam (`mobileone.py:123,177`), id_tensor centre is dilation-invariant — so the risk is not
+   "id_tensor hardcodes k=3" but "does `MobileOneBlock_1d` expose `dilation`". Relocated.
+4. **B1 "port, not new machinery" was too rosy.** The loss math is reused, but `model.forward`
+   is `(image,text,idx)` and computes loss internally (`tasks_clip/pretrain.py:94`) — feeding
+   teacher tensors needs new dataset→loader→forward→loss_dict plumbing (the R2 work). Reframed.
+5. **B1 online-teacher "runnable now" overstated.** InternVideo2-S *code* is in-repo but its
+   *weights* are absent from `CHECKPOINTS.md`; the pilot link-test is gated on sourcing that
+   checkpoint (part of ROADMAP 2.2). Corrected.
+
+**Verified correct (no change):** A1 — the `temporal_pooling` dispatch (`:1284-1289`) and the
+`"temporal_pool"` name match for freeze/`different_lr` (`:67`) are exactly as the plan assumes.
 
 ---
 
