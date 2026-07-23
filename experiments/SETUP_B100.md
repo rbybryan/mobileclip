@@ -19,8 +19,12 @@
 >   要用满 8 张必须有维护者的**明确指示**。
 > - 入口/联网与 `SETUP_H100.md` §0 相同（`root@10.55.84.132 -p 31103`）。
 >   全量视频在 `/workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT/`；
->   工作区 `/workspace/mount/b100_zaip_data/rby/`；项目
->   `/workspace/mount/b100_zaip_data/rby/MobileViCLIP`。
+>   工作区 `/workspace/mount/b100_zaip_data/rby/`。
+> - **⚠️ rby/ 下有两个并排的项目目录，别搞混**（2026-07-23 起）：
+>   - `rby/MobileViCLIP` —— **中文 NebulaCV 线**（上游 MCG-NJU 的 clone + 本地改动，
+>     与 wky 协作；改动记录见 `notes/b100-local-changes.md`）。**本手册不管它，别动。**
+>   - `rby/mobileclip` —— **本 fork（英文原版模型改进线）**，R0–R3 全量预训练都在这里跑。
+>     本手册下文的「项目根」都指它。
 
 命令一律从项目根跑，除非另有说明。**逐节执行**：§2 的 arch 自检不过，后面全都白搭。
 
@@ -59,11 +63,16 @@ export NO_PROXY=$no_proxy
 
 ## 1. 项目
 
+账号是共用的，git 的一切配置/凭据都圈在 `rby/` 内——**每个用 git 的 shell 先
+source `.gitenv`**（首次生成见 `TROUBLESHOOTING.md`「共用账号的隔离」一节；PAT 已随
+首次 push 存进 `rby/.git-credentials`，之后 clone/pull/push 不再询问）：
+
 ```bash
+source /workspace/mount/b100_zaip_data/rby/.gitenv
 cd /workspace/mount/b100_zaip_data/rby
-# 首次（走代理 clone）：
-git clone https://github.com/rbybryan/mobileclip.git MobileViCLIP
-cd MobileViCLIP
+# 首次（走代理 clone；注意目标目录是 mobileclip，与中文线的 MobileViCLIP 并排）：
+git clone https://github.com/rbybryan/mobileclip.git mobileclip
+cd mobileclip
 # 之后每次开工只需拉 main（服务器只从 main 取指令，见 CLAUDE.md）：
 git pull origin main
 ```
@@ -85,7 +94,9 @@ wheel 都带 sm_90（cu118 里就有；cu124 对 Hopper 更快，作稳妥起点
 
 ```bash
 # 建议起点：Python 3.10 venv + cu124 的 torch 2.x（自带 sm_90；cu118/cu121 也都行）
-python -m venv ~/mvc_env && source ~/mvc_env/bin/activate
+# venv 也放 rby/ 内（$HOME 是共用的，别往 ~ 里装）
+python -m venv /workspace/mount/b100_zaip_data/rby/mvc_env
+source /workspace/mount/b100_zaip_data/rby/mvc_env/bin/activate
 pip install --upgrade pip
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 
