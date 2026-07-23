@@ -23,6 +23,55 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-22 (20) — 评审包视频全空：**路径 bug 已修**，重打包即可
+
+**Diagnosis:** 你本地 `videos/` 全空 = 服务器打包时一个视频都没定位到。根因是**重复
+实现漏洞**：抽检表用的是简化版路径解析（直接用 `abs_path` 或盲拼），而 `abs_path`
+是**别的主机**的绝对路径、`video` 字段又带 `videos/` 这类本机没有的前缀，拼出来的
+路径本机不存在。审查流水线（S1/S2）当初能成功解码，靠的是 `vlm_audit.resolve_video_path`
+——它会剥掉前缀、在多个候选里返回**第一个真实存在**的。抽检表没复用它。**已修：改成
+复用同一个解析器，并在建表时打印 `[videos] X/N` 命中数。**
+
+**Do this next:**
+
+```bash
+cd ~/mobileclip && git pull
+
+# ① 重新生成表——现在会打印 [videos] X/15，先确认不是 0
+bash tools/data_audit/run_v100.sh review
+```
+
+**看那行 `[videos] X/15`：**
+
+- **是 15/15** → 路径修好了，继续 ②。
+- **还是 0/15** → 视频不在默认 `$CLIPS`（`/home/vca1/datasets/internvid_zh_10k/videos`）下。
+  把下面三行的输出贴到 `from-server.md`，我据此调 `CLIPS`：
+  ```bash
+  head -1 outputs/audit_10k/s2_sample.jsonl | python3 -m json.tool | grep -iE 'video|abs_path'
+  ls /home/vca1/datasets/internvid_zh_10k/videos/ | head -3
+  find /home/vca1/datasets/internvid_zh_10k -name '*.mp4' | head -3
+  ```
+
+```bash
+# ② 命中正常后打包
+bash tools/data_audit/run_v100.sh review-bundle
+tar czf ~/review_bundles.tgz -C outputs/audit_10k $(cd outputs/audit_10k && ls -d bundle_*)
+```
+
+```bash
+# ③ 本地（Linux 用 xdg-open，不是 open；包内附 README.txt）
+scp vca1@10.235.31.101:~/review_bundles.tgz . && tar xzf review_bundles.tgz
+xdg-open bundle_conflicts/index.html
+```
+
+页头会显示 **「视频 X/N」**——一眼确认有没有打包进去；缺失的行会显示占位+路径，
+不再是静默坏掉的播放器。
+
+**Then report back** in from-server.md：`review` 那行 `[videos] X/15` 的数字。
+若是 0，连同上面三行诊断输出一起贴。
+
+---
+
 ## 2026-07-22 (19) — 抽检怎么开跑：**别装 gradio**，用离线评审包
 
 **Diagnosis:** 你那个 `readonly database` 报错**与 gradio 无关，是权限**——
