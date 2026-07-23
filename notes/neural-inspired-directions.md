@@ -31,8 +31,8 @@ Two constraints dominate every idea below and matter more than any single princi
 Both were reached independently by a video-CLIP feasibility review and a
 brain-DNN-alignment review; the convergence is the reason they lead this note.
 
-**T1 — The real lever is temporal redundancy, not "brain-ness."** The 92%-of-MACs
-bottleneck (see §1) exists because the full spatial backbone runs ×T=8 over frames that
+**T1 — The real lever is temporal redundancy, not "brain-ness."** The dominant per-frame
+cost (see §1) exists because the full spatial backbone runs ×T=8 over frames that
 are near-identical at 1 fps. Every idea that actually buys latency — predictive-coding
 gating, two-stream, adaptive-T — is a *different disguise for exploiting inter-frame
 redundancy*, a well-understood efficient-video-recognition insight. **The neuroscience is
@@ -63,10 +63,15 @@ The four bottlenecks a good idea must attack, with current anchors:
 
 | Tag | Bottleneck | Code | Share |
 |-----|-----------|------|-------|
-| **(a)** | Full conv backbone run **per frame** (×T=8) | `FastViT.forward` flattens `T·B` and runs the whole tower: `mobileviclip_tiny.py:1288-1294` (`x.reshape(T*B,3,H,W)` → `forward_embeddings`/`forward_tokens`/`conv_exp`) | **~92% of video MACs** — the real target |
-| **(b)** | Joint T·H·W global attention, 512 tokens, export-hostile | `AttentionBlock` + `temporal_embedding` `:1012-1038`; `MHSA` `:359`; T=8 hard-coded at `:1017` | ~8% of MACs but peak memory + the op that breaks Core ML lowering (`whitespace-directions.md §0`) |
+| **(a)** | Full conv backbone run **per frame** (×T=8) | `FastViT.forward` flattens `T·B` and runs the whole tower: `mobileviclip_tiny.py:1288-1294` (`x.reshape(T*B,3,H,W)` → `forward_embeddings`/`forward_tokens`/`conv_exp`) | **dominant share of video MACs** (analytic est., unprofiled ⚠) — the real target |
+| **(b)** | Joint T·H·W global attention, 512 tokens, export-hostile | `AttentionBlock` + `temporal_embedding` `:1012-1038`; `MHSA` `:359`; T=8 hard-coded at `:1017` | minority of MACs (analytic est. ⚠) but peak memory + the op that breaks Core ML lowering (`whitespace-directions.md §0`) |
 | **(c)** | Lossy aggregator: unweighted mean over 8 frame embeddings | `FastViT.forward:1296-1301` (`x_new_stack.mean(0)`; the `self.temporal_pool` branch at `:1297-1299` is the P3 attention-pool head, now being wired in) | discards temporal saliency |
 | **(d)** | Small-batch InfoNCE, frozen temperature | `VTC_VTM_Loss.vtc_loss` (`criterions.py`), global batch 512, temp fixed 1/100 | small-batch contrastive is quality-limited |
+
+⚠ **The "92% / 8%" split is an unprofiled analytic estimate** (carried from the feasibility
+review). `model-architecture-improvements.md:73` states only that per-frame stages 1–3
+dominate total FLOPs — *"analytic, no measured profile yet"*. **Profile the per-frame vs
+stage-4 MAC/latency split before Tier C's efficiency claim leans on it.**
 
 The temporal RepMixer — a parallel depthwise `Conv1d(k=3)` over time inside every
 RepMixer block (`RepMixer.forward:583-606`, `reparam_conv_1d:589`, `mixer_1d:599`) — is
@@ -259,8 +264,9 @@ True glimpse policies are RL-trained, non-differentiable, **sequential** (serial
 add latency), and export-hostile. The deployable residue is exactly **token
 merging/pruning** — ToMe (Bolya et al., *ICLR* 2023), STTS (Wang et al., *ECCV* 2022),
 TokenLearner (Ryoo et al., *NeurIPS* 2021) — which is already the P6/TempMe line in the
-existing plan, and which targets the cheap 8% (b) anyway. Foveating stage-4 tokens caps the
-speedup at <8%. **The only version that touches the 92% is foveating *which patches get
+existing plan, and which targets the minority-cost stage (b) anyway. Foveating stage-4 tokens
+caps the speedup at that small share. **The only version that touches the dominant per-frame
+cost is foveating *which patches get
 fully encoded per keyframe*** — which is a variant of N2, not a separate idea.
 
 - **Verdict:** fold "saliency-weighted merging" into the existing token-merging line; do
