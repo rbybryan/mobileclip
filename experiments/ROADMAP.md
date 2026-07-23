@@ -26,10 +26,15 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
   step-0 严格等价 mean,不退化**)。两者默认关闭,基线路径与原 repo 逐位一致。
 - **C4 · 结果** — 多帧数零样本检索(MSR-VTT/DiDeMo/ANet)+ 零样本分类/多选
   (K400/UCF101/HMDB51/SSv2-MC)+ **端侧延迟表**,对比 MobileViCLIP /
-  InternVideo2-S/B / TempMe。
+  InternVideo2-S/B / **FluxViT-S(GFLOPs 对齐行)**;TempMe 属微调协议,
+  只进单独的微调/延迟-only 对比区(07-23 评审 §3.5)。
 - **卫生闸门(任何基线数字之前强制)** — 移 `set_detect_anomaly`、清 spikingjelly
   死依赖、修 `hasattr(name,'_1d')` 冻结 bug、DSL/raw 两口径分开报并钉死主口径。
 - **条件项** — R4(P7 非对称帧编码,双触发才回收)、P9(导出阻塞时的分离注意力变体)。
+- **⚠️ 07-23 计划评审(`notes/plan-review-upgrades.md`,U1–U10)** — C2 新颖性按
+  FluxViT(ICCV'25)收窄为「帧数旋钮×移动端骨干×固定 T 锚点×端侧」组合格;导出
+  冒烟提前(下方 1.5);C2 增 per-T BN 校准;R0 全局 batch 对齐 512;预算阶梯;
+  统计口径三件套。paper-plan §七 为计划层准绳。
 
 > ⚙️ **验证分两台机(别把职责搞混)**:V100/10k 只做**链路 go/no-go**(能跑通、
 > loss 正常降、新参数收到梯度),**排不了方案序**(评测饱和 + BN 混淆 + 二项 SE);
@@ -59,16 +64,31 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 - [ ] **1.4 B0 锁基线**(1.1 完成后,README §3):官方权重跑已到位的
       基准 → `collect_results.py --out experiments/BASELINE.md`。
       核对 MSR-VTT DSL 口径 t2v R@1 ≈ 42.5;**论文主口径 = raw(`_emb/`)**。
+- [ ] **1.5 导出冒烟(U1,零训练权重,CPU 可做,立即)**:随机权重实例化
+      `MobileViCLIP_Small`(带全部时序算子),分走 ONNX / TFLite / coremltools
+      转换,按 T∈{2,4,8,16} 各出静态图;记录每路 pass/fail + 失败算子。
+      产出决定 P9 是否提前触发(真机延迟档仍在第 8 周)。
+- [ ] **1.6 B0 多 T 退化曲线(U2,依赖 2.1 代码,纯评测)**:官方
+      `mobileviclip_small.pt` 在 T∈{2,4,8,16} 下评 MSR-VTT
+      (`temporal_embedding` 插值、BN 原样)→ 论文 Fig-1 动机图 +
+      标定 C2 要跨越的 gap。该失配曲线在视频-文本模型上未见发表(评审 §3.3)。
 
 ## 第二线:代码开发(不依赖数据,随时推进)
 
 - [ ] **2.1 C2 T 无关化**(R3/R3b 前置):动态 T 替换三处 `reshape(8,...)`
       硬编码、`temporal_embedding` 插值、随机 T 采样器。
-      验收:T=8 路径与旧代码**逐位一致**的单测。
+      验收:T=8 路径与旧代码**逐位一致**的单测;**外加 per-T BN 漂移诊断
+      (U3,README §2b 矩阵有行)**——同一 ckpt 纯 T=2 vs 纯 T=16 各前向
+      若干 batch,量化 BN running stats 偏移;并附训后 per-T BN 校准脚本
+      (纯前向刷新 buffer,4 套,MB 级)。
 - [ ] **2.2 R2 教师管线**(1.2 的报告出来后设计更准):InternVideo2
       embedding 离线提取脚本,先在 10k 上试点实测每 clip 耗时/存储,
       同时敲定审核修正 9 的三个设计细节(教师维度投影、帧索引记录、
       低 T KD 加权)。用 10k 成本外推 10M,决定教师用 L 还是 1B。
+      **U7 三项一并定**:教师语料 curated 2–3M 先行 vs 全量 10M(等步对照);
+      ~1M 子集加存 per-frame 教师 CLS(≈45GB,解锁低 T 可达性消融/时序显著性
+      蒸馏/R4 复用);合成字幕 K≥2。相对 KD(`vtc_kd`/`kd_geo`)单一所有权
+      并入同一消融表(U9)。
 - [ ] **2.3(条件项)** H5 评测分片(大基准评测前)、P1 torch 升级
       (仅当显存/速度真卡住)。
 
@@ -95,6 +115,8 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 10k 试点配置 | ✅ | PR #67 |
 | 10k 试点跑通(链路 go/no-go) | 🟡 | r0 过·r1 判据一过·二三待服务器读 ckpt,见 `pilot_10k_results.md` |
 | B0 基线锁定 | ✅ | MSR-VTT t2v R@1=42.50 对上论文,见 README §3.4(msrvtt/hmdb51/ucf101/k400) |
-| C2 T 无关化 | ⬜ | ← 第二线 2.1 |
-| R2 教师管线 | ⬜ | ← 第二线 2.2 |
+| C2 T 无关化 | ⬜ | ← 第二线 2.1(验收含 per-T BN 诊断,U3) |
+| R2 教师管线 | ⬜ | ← 第二线 2.2(含 U7/U9 设计项) |
 | 全量数据(H100 真 A/B + 终训) | ⬜ | ← 第三线;`SETUP_B100.md` 就绪,`from-server.md` 尚无回报=未起跑 |
+| 计划评审 + 文献网扫(U1–U10) | ✅ | `notes/plan-review-upgrades.md`;C2 按 FluxViT 收窄、导出冒烟=1.5、多 T 曲线=1.6 |
+| 导出冒烟(U1) | ⬜ | ← 第一线 1.5,零权重即可,决定 P9 触发 |

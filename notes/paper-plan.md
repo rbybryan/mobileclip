@@ -242,5 +242,46 @@ code. Nine findings and their dispositions:
 
 ---
 
+## 7. Plan-review patch (2026-07-23; full analysis in `notes/plan-review-upgrades.md`)
+
+A full review of the plan (incl. the #197 neural-inspired additions) plus a 2024–2026
+literature sweep. The skeleton stands; seven plan-level changes override conflicting
+text above (mirrors §七 of `paper-plan-zh.md`):
+
+1. **C2 novelty narrowed (the big one).** **FluxViT** (ICCV 2025, arXiv:2503.14237)
+   already does elastic sampling (4–24 frames) + token selection, distilled from
+   InternVideo2-1B, with single-checkpoint multi-budget **zero-shot retrieval**. C2's
+   claimable cell shrinks to: *frame-count as the knob* (no dense decode + selector on
+   device) × *mobile conv-hybrid dual encoder* (no token stream to select) × *frozen
+   fixed-T=16 anchor-target distillation* (cross-T consistency) × *measured on-device
+   latency* (FluxViT reports GFLOPs only). FluxViT-S joins the C4 table; never claim
+   "elastic distillation" itself as new (FlexiViT/FluxViT own it). C1 must cite
+   OpenGVLab's released InternVideo2-S/B/L + MobileCLIP-backbone VideoCLIP distillations
+   and pin its novelty to the *offline reinforced-data recipe*. TempMe is a fine-tuned
+   protocol → out of the zero-shot table (separate fine-tuned / latency-only rows).
+2. **P9 split; conversion smoke test now (U1).** Op-coverage/conversion needs only
+   random weights — do it immediately; Wk 8 keeps only real-device latency.
+3. **Per-T BN handling for C2 (U3).** BN running stats drift with T (FFN's temporal
+   frequency deviation; code-level evidence in the review §2.2). Default: post-training
+   per-T BN recalibration (forward-only, 4 buffer sets); escalate to per-T private
+   affine if the drift diagnostic is large. R3 criteria use the *calibrated* protocol;
+   phrase as "one trained weight set + per-T calibration buffers".
+4. **Graded fallback for low-T degradation (U4):** stratified T sampling + low-T KD
+   weighting (§6.9) → sandwich sampling (US-Nets, ≈1.6× step budget) → only then R4.
+5. **Global batch alignment (U5):** 4×H100 default 256 ≠ upstream 512; prefer 4×128=512
+   for R0 fidelity (validate memory at first light); arms never mixed.
+6. **Budget ladder (U6):** after day-1 epoch wall-clock E: normal tier = ranking arms
+   (R1×3, R2+KD sub-arms, R3, R3b, A1/A2) at 1 epoch matched steps; R0 + winner at full
+   3 epochs. The run matrix is already ≈33E without a ladder.
+7. **Statistics (U10):** query-level bootstrap 95% CIs in `collect_results.py`; two
+   seeds for the winner; pre-registered per-T non-inferiority margin δ=0.3 R@1.
+
+Also: §6.9's pre-submission re-sweep expands from "first video DR" to "+ the elastic-
+inference axis + FluxViT successors"; student init switches to MobileCLIP2-S2
+(HF-verified drop-in; attribution scheme in review U8).
+
+---
+
 *Line/file references inherit from the two validated notes; all facts cited
-here were code- or literature-verified there.*
+here were code- or literature-verified there. §7's literature verdicts are as of the
+2026-07-23 web sweep.*

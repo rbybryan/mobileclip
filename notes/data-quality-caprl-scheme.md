@@ -27,6 +27,12 @@
 | 训练损失 | **纯对比 InfoNCE**（`loss_weight=dict(vtc=1.0)`） | `config.py:60-64`；`criterions.py:93-131` |
 | 蒸馏损失 | `UTA_Loss` / `new_UTA_Loss` 存在但未接入；**它们是视觉特征对齐损失**（student/teacher 特征余弦，middle+final，`[K,B,N,C]`），不是相似度矩阵 KD | `models/criterions.py:409, 522` |
 | 骨干 | 加载 MobileCLIP-S2 冻结骨干（**`freeze_text=True`**），仅时序分支 + vision CLIP projector 训练 | `models/mobileviclip_small.py:203-262`；`config.py:51-52` |
+
+> **勘误（2026-07-23，见 `plan-review-upgrades.md` §2.6-2）：** 上表「视觉塔仅时序分支
+> + projector 可训」有误——规范预训练配置是 **`freeze_vision=False`**（config.py:50），
+> **视觉塔全量可训**；「仅时序分支」只适用于 `freeze_vision=True` 的微调模式
+> （whitespace §2）。影响：§6.3 对视频侧 KD 的定性偏保守——KD/`uta` 的梯度受体是
+> **整个视觉塔**，预期效力更强；文本侧（frozen、仅 projection）的结论不变。
 | 帧采样 | 每片**均匀采 8 帧**（`num_frames=8`），无时间戳输入 | `config.py`、`dataset/video_utils.py` |
 
 **三个可量化的数据侧短板：**
