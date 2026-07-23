@@ -126,10 +126,10 @@ bash tools/data_audit/run_v100.sh status   # 看进度；跑完 8 分片行数�
 ```
 
 ```bash
-# 2) 生成 300 片人审表（自包含，无需新工具）
+# 2) 融合体检 + 生成 300 片人审表（一个块：先看健康，再抽样）
 source ~/audit_env/bin/activate && cd ~/mobileclip
 python - <<'PY'
-import json, glob, random
+import json, glob, random, csv
 random.seed(0)                                   # 固定，可复现
 OUT="outputs/audit_10k"
 # 候选（来自 s2_verdicts 的 better_zh）
@@ -139,23 +139,34 @@ for f in glob.glob(f"{OUT}/s2_verdicts.*.jsonl"):
         r=json.loads(l); v=(r.get("verdict") or {})
         cs=[c for c in (v.get("better_zh") or []) if isinstance(c,str) and c.strip()]
         if r.get("video"): cand[r["video"]]=cs
-rows=[]
+# 体检分类：真融合(≥2候选) / 单候选透传 / 空(0候选,黑屏) / 判定失败
+tot=real=passthru=nullc=err=0; rows=[]
 for f in glob.glob(f"{OUT}/s2_merged.*.jsonl"):
     for l in open(f,encoding="utf-8"):
-        r=json.loads(l); m=(r.get("verdict") or {}).get("merged_zh")
-        cs=cand.get(r.get("video")) or []
-        if m and len(cs)>=2: rows.append((r["video"],cs,m))
-random.shuffle(rows)
-import csv
+        r=json.loads(l); v=(r.get("verdict") or {}); tot+=1
+        vid=r.get("video"); cs=cand.get(vid) or []; m=v.get("merged_zh")
+        if v.get("error"): err+=1; continue
+        if len(cs)>=2 and isinstance(m,str) and m.strip():
+            real+=1; rows.append((vid,cs,m))
+        elif len(cs)==1: passthru+=1
+        else: nullc+=1
+print(f"总行数 {tot} | 真融合(≥2候选) {real} | 单候选透传 {passthru} | 空(0候选/黑屏) {nullc} | 判定失败 {err}")
+print(f"→ 进入人审池 {len(rows)} 片\n--- 抽 3 例肉眼看融合质量 ---")
+for vid,cs,m in random.sample(rows, min(3,len(rows))):
+    print(f"候选: {' ／ '.join(cs)}\n融合: {m}\n")
+# 抽 300（固定顺序，可复现）
+random.seed(0); random.shuffle(rows)
 with open(f"{OUT}/review_merge.tsv","w",encoding="utf-8-sig",newline="") as fo:
     w=csv.writer(fo,delimiter="\t")
     w.writerow(["video","候选(全部)","融合稿","幻觉[y/n]","比最佳单条更全[y/n]","note"])
-    for v,cs,m in rows[:300]:
-        w.writerow([v," ／ ".join(cs),m,"","",""])
-print(f"待融合样本 {len(rows)} 片；写出 {min(300,len(rows))} 行 -> {OUT}/review_merge.tsv")
-print("在 Excel/VSCode 里填两列：幻觉(融合稿是否出现候选里都没有的细节) / 更全(是否比其中最好的单条含更多真实细节)")
+    for v,cs,m in rows[:300]: w.writerow([v," ／ ".join(cs),m,"","",""])
+print(f"写出 {min(300,len(rows))} 行 -> {OUT}/review_merge.tsv")
 PY
 ```
+
+**先看体检那几个数**（不健康就别急着审 300）：真融合应 ≈9000+（`better_zh` 是 9951×3）；
+空的应 ≈49（黑屏片，`better_zh` 为空）；**判定失败应接近 0**——若很多，先别审，把数字贴 Claude 查。
+抽的 3 例也扫一眼：融合稿有没有把候选的细节合起来、读着通顺。
 
 **怎么判（填 `review_merge.tsv` 两列）：**
 - **幻觉[y/n]**：融合稿里有没有出现**任何一条候选都没提过**的细节？有=y。这是最要紧的一列
