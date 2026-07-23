@@ -51,27 +51,41 @@ img 侧（≈88.6）比 txt 侧（≈85.3）掉得少，符合"重标定 + 新�
 r0 是纯 mean-pool + softmax，没有 sigmoid 参数、没有 `temporal_pool.proj`，判据二三不适用——**r0 直接通过**。
 r1 判据一已过，判据二三需要读 ckpt。**Claude 端无 GPU、无 ckpt，只能由服务器跑**。
 init 值：`logit_scale = log(10)`（即 `t=exp(logit_scale)=10`）、`logit_bias = -10`
-（`models/mobileviclip_small.py:102-103`）。在服务器上：
+（`models/mobileviclip_small.py:102-103`）。
+
+**注意 ckpt 是 DeepSpeed 目录不是单文件**：ZeRO stage-1 把 `ckpt_09.pth/` 存成**目录**,
+权重在 `ckpt_09.pth/mp_rank_00_model_states.pt` 的 `module` 键下(各 rank 的
+`zero_pp_rank_*_optim_states.pt` 只是优化器分片,不含可读权重)。直接
+`torch.load("…/ckpt_09.pth")` 会报 `IsADirectoryError`。在服务器上:
 
 ```bash
 # 仓库根目录，conda activate mobileviclip
 python - <<'PY'
 import torch
-sd = torch.load("experiments/runs/pilot_10k_r1/ckpt_09.pth", map_location="cpu")
-sd = sd.get("model", sd.get("module", sd))   # 兼容 {'model':...} / {'module':...} / 裸 state_dict
+f = "experiments/runs/pilot_10k_r1/ckpt_09.pth/mp_rank_00_model_states.pt"  # DeepSpeed 权重
+obj = torch.load(f, map_location="cpu")
+sd = obj.get("module", obj)          # 模型 state_dict 在 'module' 键下
 ls, lb = sd.get("logit_scale"), sd.get("logit_bias")
-w = sd.get("vision_encoder.temporal_pool.proj.weight")
-print("exp(logit_scale) =", None if ls is None else round(ls.float().exp().item(), 4), "  (init 10 → 判据: ≠10)")
-print("logit_bias       =", None if lb is None else round(lb.float().item(), 4),        "  (init -10 → 判据: ≠-10)")
-print("temporal_pool.proj.weight  L2 =", None if w is None else round(w.float().norm().item(), 4),
-      " mean|w| =", None if w is None else round(w.float().abs().mean().item(), 6), "  (判据: 非零)")
+w  = sd.get("vision_encoder.temporal_pool.proj.weight")
+print("present:", ("logit_scale" in sd), ("logit_bias" in sd),
+      ("vision_encoder.temporal_pool.proj.weight" in sd))
+print("exp(logit_scale) =", None if ls is None else round(ls.float().exp().item(),4), " (init 10 → 判据 ≠10)")
+print("logit_bias       =", None if lb is None else round(lb.float().item(),4),       " (init -10 → 判据 ≠-10)")
+print("temporal_pool.proj.weight L2 =", None if w is None else round(w.float().norm().item(),4),
+      " mean|w| =", None if w is None else round(w.float().abs().mean().item(),6), " (判据 非零)")
 PY
 ```
 
-三行都满足（`exp(logit_scale)≠10`、`logit_bias≠-10`、proj 范数非零）→ **1.3 全过**。
-若 `logit_scale/logit_bias` 仍卡在 10 / -10，说明 `different_lr` 没接上（检查
-`utils/optimizer.py` 的 `module_names` 匹配日志：本次日志已显示
-`param logit_scale use different_lr: 0.001`，故大概率已在动）。
+若 `module` 键取不到,用目录里的 `zero_to_fp32.py` 先合并出 fp32 全量再读:
+`python experiments/runs/pilot_10k_r1/ckpt_09.pth/zero_to_fp32.py experiments/runs/pilot_10k_r1/ckpt_09.pth /tmp/r1_fp32.pt`,
+再把上面的 `f` 换成 `/tmp/r1_fp32.pt`(此时 `sd = obj`,无 `module` 包裹)。
+
+**关键信号是 `logit_scale`/`logit_bias` 离开 init**(证明 `different_lr @1e-3` 真在更新它们);
+`temporal_pool.proj` 是普通 Linear,**init 时本就非零**,故判据三只确认注意力池化"存在且被
+实例化",不代表它训过 —— 这正是判据三的本意,够用。三行都满足 → **1.3 全过**。
+若 `logit_scale/logit_bias` 仍卡在 10 / -10,说明 `different_lr` 没接上(查
+`utils/optimizer.py` 的 `module_names` 匹配日志:本次日志已打印
+`param logit_scale use different_lr: 0.001`,故大概率已在动)。
 
 同时按 ROADMAP 1.3 补跑 `pytest tests/test_optimization_components.py`。
 

@@ -1585,3 +1585,43 @@ bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 debug Tru
 
 完整版已写进 `TROUBLESHOOTING.md` 末节;`experiments/README.md` §2b 也加了一条
 开跑前的 sm_70 预检命令。
+
+---
+
+## 2026-07-23 · 10k 试点跑完 —— 只差一条 ckpt 核实命令(ROADMAP 1.3 判据二三)
+
+`pilot_10k_r0` / `pilot_10k_r1` 都**正跑完**了(结果 + go/no-go 记在
+`experiments/pilot_10k_results.md`)。**r0 全过;r1 判据一(损失 7.07→4.2 单调降)过**。
+r1 的 held-out 分数低于 r0 是**预期**(新 attn 池化 init + sigmoid 重标定 + 仅 170 步),
+按两级设计 10k 不用来排方案,只看动力学。
+
+只剩判据二三要读 r1 的 ckpt —— **只能你在服务器上跑**,Claude 端无 GPU/ckpt。
+
+⚠️ ckpt 是 **DeepSpeed 目录**不是单文件:`ckpt_09.pth/` 里权重在
+`mp_rank_00_model_states.pt` 的 `module` 键下。直接 `torch.load` 目录会 `IsADirectoryError`。
+
+```bash
+# 仓库根目录，conda activate mobileviclip
+python - <<'PY'
+import torch
+f = "experiments/runs/pilot_10k_r1/ckpt_09.pth/mp_rank_00_model_states.pt"
+obj = torch.load(f, map_location="cpu")
+sd = obj.get("module", obj)
+ls, lb = sd.get("logit_scale"), sd.get("logit_bias")
+w  = sd.get("vision_encoder.temporal_pool.proj.weight")
+print("present:", ("logit_scale" in sd), ("logit_bias" in sd),
+      ("vision_encoder.temporal_pool.proj.weight" in sd))
+print("exp(logit_scale) =", None if ls is None else round(ls.float().exp().item(),4), " (init 10 → ≠10)")
+print("logit_bias       =", None if lb is None else round(lb.float().item(),4),       " (init -10 → ≠-10)")
+print("temporal_pool.proj.weight L2 =", None if w is None else round(w.float().norm().item(),4),
+      " mean|w| =", None if w is None else round(w.float().abs().mean().item(),6), " (非零)")
+PY
+```
+
+判据:`exp(logit_scale)≠10` 且 `logit_bias≠-10`(**关键** —— 证明 `different_lr @1e-3`
+在更新它们)、proj 范数非零。三行都满足 → **1.3 全过**,V100/10k 链路筛完,下一步去
+H100 跑全量 A/B(`experiments/SETUP_B100.md`,r1a/r1b 分开跑)。顺带
+`pytest tests/test_optimization_components.py`。
+
+**把这三行输出贴回 `from-server.md`**,我据此把 1.3 状态 🟡→✅。
+细节见 `experiments/pilot_10k_results.md`。
