@@ -151,6 +151,15 @@ def strip_shared_latin(zh, en):
     the source really is a zh/en discrepancy worth surfacing, even when -- as
     here -- the zh side is the correct one.
 
+    Separator-insensitive match: a version string is written differently on the
+    two sides -- zh "v3.1.3.1" vs source "v3 1 3 1" -- so a verbatim substring
+    test misses it and the caption still trips the ratio flags. We therefore
+    also test the run against `en` with separators ([.\\-_ ] and whitespace)
+    removed, requiring >=2 alnum chars so single digits do not match by
+    accident. This is purely additive (a run is stripped if EITHER test passes),
+    so it can only lower the flag count, never raise it -- the two-sided
+    acceptance below still holds.
+
     KNOWN LIMIT: this cannot tell a retained proper noun from a retained common
     word, since both appear in `en`. A caption that leaves "man is talking"
     untranslated is no longer flagged by the ratio rules. `zh_no_chinese` and
@@ -162,9 +171,12 @@ def strip_shared_latin(zh, en):
     if not en:
         return zh
     en_low = en.lower()
+    en_dense = re.sub(r"[\s._\-]+", "", en_low)
     out, pos = [], 0
     for m in LATIN_RUN.finditer(zh):
-        if m.group(0).lower() in en_low:
+        run = m.group(0).lower()
+        run_dense = re.sub(r"[\s._\-]+", "", run)
+        if run in en_low or (len(run_dense) >= 2 and run_dense in en_dense):
             out.append(zh[pos:m.start()])
             pos = m.end()
     out.append(zh[pos:])
