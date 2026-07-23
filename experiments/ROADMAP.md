@@ -42,6 +42,27 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 
 ---
 
+## 每一步的命令写在哪(文件 × 小节速查)
+
+| 步骤 | 命令所在 md → 小节 |
+|---|---|
+| 第 0 步 就绪自检 | 本文件开头(`python experiments/check_readiness.py`);B0 前预检 = `README.md` §3.0 |
+| 1.1 下载(测试集/权重) | `tools/data_audit/SETUP_V100.md` §0(环境 + 权重后台下载)、§0.5;链接大全 `CHECKPOINTS.md`(Pretrained weights / Google Drive 两节);InternVid 分片抓取 `docs/internvid-download-zh.md` §3–§4;通用下载 `COMMANDS.md` §2 |
+| 1.2 数据审查流水线 | `tools/data_audit/SETUP_V100.md`:§1 冒烟 → §2 S0 → §3 S1(§3.5/3.6 体检)→ §4 S2(4.2 主力 / 4.3 裁判 / 4.5 体检)→ §5 S3 报告;§6.5 一条命令看全状态 |
+| 1.3 10k 试点(✅ 已关闭) | `experiments/README.md` §2b 全套(anno 生成、`export MVC_DATA_DIR`、r0/r1、pytest);结论见 `pilot_10k_results.md`(#199) |
+| 1.4 B0 锁基线 | `experiments/README.md` §3.0 预检 → §3.2 路径对上 → §3.3 跑 B0 + `collect_results.py`;已锁数字在 §3.4 |
+| 1.5 导出冒烟(U1) | 任务与验收:`notes/plan-review-upgrades.md` U1。**具体脚本待写**——落地时命令按约定补进 `COMMANDS.md` |
+| 1.6 B0 多 T 曲线(U2) | 任务与验收:`notes/plan-review-upgrades.md` U2;**命令待 2.1 代码落地后补** |
+| 2.1 C2 T 无关化 | 验收单测命令 `README.md` §2(pytest);per-T BN 诊断行 `README.md` §2b 矩阵;设计准绳 `notes/paper-plan-zh.md` §七.3 |
+| 2.2 R2 教师管线 | 设计决策清单:本文件 2.2 + `paper-plan-zh.md` §六.9 + 评审 U7;**提取脚本待写** |
+| 2.4/2.5 A1/A2/B1(#197) | `notes/neural-inspired-implementation.md` Tier A(配置模板 + 单测)/ Tier B(B1 接线与三臂);配置文件待创建 |
+| 3.1 H100 全量数据审查 | `tools/data_audit/SETUP_H100.md` §0 环境 → §1 冒烟 → §2 S0 → §3 S1 → §4 S2 → §5 S3 |
+| 3.2 R0→R1 全量起跑 | `experiments/SETUP_B100.md`(**文件顶部有进度标记清单,当前位置=§2 环境**):§0 联网 → §1 项目/.gitenv → §2 环境 + arch 自检 → §3 权重 → §4 数据接线 → §5 预检 → **§6 冒烟 / R0 / R1 启动命令**(batch 建议同节)→ §7 两个坑 → §8 交回;预算阶梯 = 评审 U6 |
+| 汇总与判据 | `experiments/README.md` §5 汇总对比、§6 判据 |
+| 环境/评测/git 备查 | `COMMANDS.md` §1 环境、§3 零样本评测、§4 训练、§5 git、§6 handoff |
+
+---
+
 ## 第一线:101vector 机器上执行(GPU + 人工,现在就能开跑)
 
 - [ ] **1.1 后台挂下载**(不占 GPU,越早越好):MSR-VTT 1k 测试集、
