@@ -23,6 +23,59 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-23 (4) — 改动清单已收到；push 403 的原因 + 重做快照（排除权重）推到 fork
+
+**Diagnosis:** 三个新事实：
+1. b100 的 `MobileViCLIP` 是**上游 `MCG-NJU/MobileViCLIP` 的 clone**（`origin` 指向上游），
+   所以快照推送被 `403 Permission denied` 拒了——推错了远端，不是 token 问题。
+2. clone 我们的 fork（`rbybryan/mobileclip`，私有库）时输的是账号密码——GitHub 已废弃
+   密码认证，必须用 **PAT**（个人访问令牌）。
+3. 快照 `1dabf71` **作废**：`git add -A` 把 `checkpoints/nebulacv-clip-24m.pt` 权重也收
+   进去了（上游 .gitignore 不覆盖它）。重做前先用 `.git/info/exclude` 排除。
+
+文件级改动清单已据你回传的 `git status`/diffstat 记入
+[`notes/b100-local-changes.md`](../b100-local-changes.md)（主题：NebulaCV 中文 CLIP
+文本塔 + 中文 InternVid 标注管线）；还差逐行 diff，按下面走完就齐了。
+
+**Do this next**（需要代理开着；PAT 在手边——就是你在别处 push 这个 fork 用的那个 token）：
+
+```bash
+source /workspace/mount/b100_zaip_data/rby/.gitenv
+cd /workspace/mount/b100_zaip_data/rby/MobileViCLIP
+
+# ① origin 是上游（只读）。加一个 fork 远端指向我们的私有仓库：
+git remote add fork https://github.com/rbybryan/mobileclip.git 2>/dev/null
+git remote -v    # 应看到 origin=MCG-NJU（保留）、fork=rbybryan
+
+# ② 凭据也圈在 rby/ 内（不落共用账号的 $HOME）。首次 push 会问一次：
+#    Username 填 rbybryan，Password 填 **PAT**（不是账号密码）
+git config --global credential.helper "store --file=/workspace/mount/b100_zaip_data/rby/.git-credentials"
+
+# ③ 权重不进快照（只写本仓库的 exclude，不动工作区、不改 tracked 的 .gitignore）
+printf 'checkpoints/\n' >> .git/info/exclude
+
+# ④ 重做快照并推到 fork
+git add -A
+git status -s | grep -c '^A.*checkpoints/' || true   # 必须是 0
+STASH=$(git stash create "b100 nebulacv local changes snapshot $(date +%F_%H%M)")
+git reset -q
+echo "snapshot commit: $STASH"
+git push fork "$STASH":refs/heads/server/b100-local-opts
+```
+
+> push 时会把上游那份历史一并传到 fork（两边没有共同历史，git 会补齐对象）——预期行为，
+> 别慌。若 PAT 不在手边、push 实在走不通，替代：
+> ```bash
+> git diff HEAD > ../b100_nebulacv.patch
+> tar czf ../b100_new_files.tgz $(git ls-files --others --exclude-standard)
+> ```
+> 把 patch 全文贴进 `from-server.md`（新文件先只贴文件名，逐个要）。
+
+**Then report back**：`snapshot commit` 新哈希 + push 是否成功。成功后 Claude 直接
+`git fetch` 读快照，把 `notes/b100-local-changes.md` 的「待确认」全部填实。
+
+---
+
 ## 2026-07-23 (3) — 候选字幕融合 F0：跑现成的 `s2-merge` + 300 片人审门
 
 **背景：** 你已人工复核 `better_zh`（P0 通过）：新候选更准更全、3 条各带不同细节，
