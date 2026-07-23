@@ -16,6 +16,10 @@ which contain **no brain-inspired ideas**:
 Where an idea here maps onto an existing P#/C#, that is called out explicitly — the goal
 is to slot brain-inspired mechanisms **into the existing plan**, not to open a parallel one.
 
+**Implementation:** the executable, feasibility-ordered follow-through — exact touchpoints,
+configs, tests, and kill criteria, sequenced into `experiments/ROADMAP.md` 第二线 — is in
+`notes/neural-inspired-implementation.md`.
+
 Anchored to code checked 2026-07-23 (`models/mobileviclip_tiny.py`, `_small.py` is the
 same code at larger width; re-locate by symbol if lines drift).
 
