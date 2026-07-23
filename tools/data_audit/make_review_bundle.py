@@ -19,7 +19,7 @@
 
 然后：
     tar czf bundle.tgz -C outputs/audit_10k bundle_better_zh
-    # 本地： scp ... && tar xzf bundle.tgz && open bundle_better_zh/index.html
+    # 本地： scp ... && tar xzf bundle.tgz\n    #        然后双击 index.html（macOS: open / Linux: xdg-open）——见包内 README.txt
 
 Deps: stdlib only（视频用 copy/硬链接，不转码）。
 """
@@ -52,6 +52,9 @@ PAGE = """<!doctype html>
  .card.done{opacity:.55}
  .top{display:flex;gap:16px;flex-wrap:wrap}
  video{width:420px;max-width:100%;background:#000;border-radius:6px}
+ .nov{width:420px;max-width:100%;min-height:150px;display:flex;flex-direction:column;
+      align-items:center;justify-content:center;text-align:center;color:#a12;
+      background:#fff5f5;border:1px dashed #e0a0a0;border-radius:6px;padding:12px;word-break:break-all}
  .meta{flex:1;min-width:280px}
  .idx{color:var(--mut);font-size:13px}
  .cap{margin:8px 0;padding:8px 10px;border-radius:6px;background:#f7f8fa;border:1px solid #eceef1}
@@ -70,7 +73,7 @@ PAGE = """<!doctype html>
 </style>
 <header>
   <b>抽检 · __TITLE__</b>
-  <span id="prog"></span><span class="sp"></span>
+  <span id="prog"></span><span id="vstat"></span><span class="sp"></span>
   <button onclick="jumpNext()">跳到下一条未填 (n)</button>
   <button class="p" onclick="dump()">导出 TSV</button>
 </header>
@@ -108,12 +111,22 @@ ROWS.forEach((r,i)=>{
          onchange="set(${i},'${q.name}',this.value)">${o}</label>`).join("")+`</div>`
     : `<div class="q"><input class="note" placeholder="备注（可留空）" value="${(st[i]||{})[q.name]||""}"
         oninput="set(${i},'${q.name}',this.value)"></div>`).join("");
-  d.innerHTML=`<div class="top"><video src="videos/${r.__f}" controls preload="metadata"></video>
+  const vhtml=r.__has
+    ? `<video src="videos/${r.__f}" controls preload="metadata"
+        onerror="this.outerHTML='<div class=nov>⚠️ 视频文件在，但浏览器放不了<br><small>多半是编码问题，见 README.txt</small></div>'"></video>`
+    : `<div class="nov">⚠️ 此条视频未打包<br><small>只能看文本判；video_path=<br>${r.video_path||r.video}</small></div>`;
+  d.innerHTML=`<div class="top">${vhtml}
     <div class="meta"><div class="idx">#${i+1} / ${ROWS.length} · ${r.video}</div>
     <div style="margin:4px 0 8px;color:#666;font-size:13px">${other}</div>${caps}</div></div>${qs}`;
   app.appendChild(d);
 });
 prog();
+(function(){
+  const has=ROWS.filter(r=>r.__has).length, el=document.getElementById("vstat");
+  el.textContent=` · 视频 ${has}/${ROWS.length}`;
+  if(has===0){el.style.color="#a12";el.textContent+=" ⚠️ 一个都没打包！见 README.txt";}
+  else if(has<ROWS.length){el.style.color="#a60";}
+})();
 function dump(){
   const hdr=COLS.concat(QS.map(q=>q.col));
   const lines=[hdr.join("\\t")].concat(ROWS.map((r,i)=>
@@ -164,16 +177,15 @@ def main():
         r["__f"] = fn
         dst = os.path.join(vdir, fn)
         if os.path.exists(dst):
-            ok += 1
-            continue
+            r["__has"] = True; ok += 1; continue
         if src and os.path.exists(src):
             try:
                 (os.link if args.link else shutil.copy2)(src, dst)
             except OSError:
                 shutil.copy2(src, dst)
-            ok += 1
+            r["__has"] = True; ok += 1
         else:
-            miss.append(r.get("video"))
+            r["__has"] = False; miss.append(r.get("video"))
 
     base = os.path.basename(args.sheet).replace("review_", "").replace(".tsv", "")
     page = (PAGE.replace("__ROWS__", json.dumps(rows, ensure_ascii=False))
@@ -187,6 +199,25 @@ def main():
     with open(idx, "w", encoding="utf-8") as f:
         f.write(page)
 
+    with open(os.path.join(args.out_dir, "README.txt"), "w", encoding="utf-8") as f:
+        f.write(
+            "抽检评审包 —— 本地打开方法\n"
+            "================================\n\n"
+            "1. 整个文件夹一起传/解压，index.html 和 videos/ 必须在一起。\n"
+            "   只拷 index.html 会导致视频全部加载不了。\n\n"
+            "2. 打开 index.html：\n"
+            "   - Windows：直接双击\n"
+            "   - macOS：  open index.html\n"
+            "   - Linux：  xdg-open index.html   （`open` 是 macOS 命令，Linux 上没有）\n"
+            "   或在浏览器里 文件→打开 选中它。\n\n"
+            "3. 视频放不了时先看页头「视频 X/N」：\n"
+            "   - N 分之 0：打包时服务器没找到视频（$CLIPS 路径不对），\n"
+            "     需重打包，不是本地的问题。\n"
+            "   - 个别放不了、显示「浏览器放不了」：多半是 H.265/HEVC 编码，\n"
+            "     Chrome 放不了，换 Firefox 或用系统播放器打开对应 video_path。\n\n"
+            "4. 填完点页面右上「导出 TSV」，把下载到的 TSV 传回服务器：\n"
+            "   bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/<那张表>.tsv\n")
+
     size = sum(os.path.getsize(os.path.join(vdir, x)) for x in os.listdir(vdir))
     print(f"[bundle] {args.out_dir}")
     print(f"  视频 {ok}/{len(rows)} 份，合计 {size/1e6:.0f} MB")
@@ -194,8 +225,9 @@ def main():
         print(f"  ⚠️ {len(miss)} 条找不到视频（页面仍可填文本）：{miss[:3]}...")
     print(f"  打包： tar czf {base}.tgz -C {os.path.dirname(args.out_dir) or '.'} "
           f"{os.path.basename(args.out_dir)}")
-    print(f"  本地： scp <server>:<path>/{base}.tgz . && tar xzf {base}.tgz && "
-          f"open {os.path.basename(args.out_dir)}/index.html")
+    print(f"  本地： scp <server>:<path>/{base}.tgz . && tar xzf {base}.tgz")
+    print(f"        再双击 {os.path.basename(args.out_dir)}/index.html"
+          "（macOS: open · Linux: xdg-open · 见包内 README.txt）")
 
 
 if __name__ == "__main__":
