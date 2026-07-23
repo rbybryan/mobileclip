@@ -1728,3 +1728,51 @@ source /workspace/mount/b100_zaip_data/rby/.gitenv
 之后 `git config --global …`（`safe.directory`、`user.name/email`、代理等）都只写进
 `rby/.gitconfig`，其他使用者完全看不到。凭据同理：优先把 token 写在仓库自己的
 remote URL（`.git/config`，本就在 rby/ 内），别用会落到 `$HOME` 的 credential helper。
+
+---
+
+## b100 §2：pip 装错解释器——venv 提示符亮着，包却全进了共用 conda base；tokenizers 还编不出来
+
+**Symptom** — 按旧版 §2 `python -m venv` + `source activate` 建环境（提示符变成
+`(mvc_env) (base)` 两个叠着），随后：
+
+- 每条 `pip install` 的日志里路径全是 `/root/miniforge3/lib/python3.12/site-packages`
+  （共用 conda base），不是 venv；
+- `pip install transformers==4.28.1 tokenizers==0.13.3 ...` 在 tokenizers 处失败：
+  `error: can't find Rust compiler`，整条命令一个包都没装上；
+- arch 自检 `python - <<PY import torch` 报 `ModuleNotFoundError: No module named 'torch'`。
+
+**Cause** — 两层：
+
+1. miniforge 的 python 是 **3.12**，它建的 venv **没有自带 `pip`**。于是 shell 里
+   `python` 指向 venv（空的），`pip` 却回落到 PATH 里 conda base 的 pip——torch 等
+   768 MB 全装进了共用的 `/root/miniforge3`，venv 一个包都没有。提示符
+   `(mvc_env) (base)` 叠着就是警报。
+2. 即使解释器对了，**py3.12 也没有 tokenizers 0.13.3 的预编译轮子**（cp312 无 wheel，
+   源码编译需要 Rust）。仓库钉的是 **Python 3.10**——cp310 有现成轮子。
+
+**Fix** — 三步（详见 `experiments/SETUP_B100.md` §2 新配方）：
+
+```bash
+# ① 退出坏 venv 并删除
+deactivate 2>/dev/null || true
+rm -rf /workspace/mount/b100_zaip_data/rby/mvc_env
+
+# ② 清理误装进共用 base 的包（这些在装前都不存在，卸载即还原原状）
+/root/miniforge3/bin/python -m pip uninstall -y \
+  torch torchvision torchaudio triton sympy mpmath numpy networkx jinja2 MarkupSafe \
+  fsspec pillow open_clip_torch deepspeed py-cpuinfo hjson msgpack ninja einops \
+  psutil pydantic pydantic-core annotated-types typing-inspection \
+  nvidia-cublas-cu12 nvidia-cuda-cupti-cu12 nvidia-cuda-nvrtc-cu12 nvidia-cuda-runtime-cu12 \
+  nvidia-cudnn-cu12 nvidia-cufft-cu12 nvidia-curand-cu12 nvidia-cusolver-cu12 \
+  nvidia-cusparse-cu12 nvidia-cusparselt-cu12 nvidia-nccl-cu12 nvidia-nvjitlink-cu12 nvidia-nvtx-cu12
+
+# ③ conda 建 python=3.10 环境（目录在 rby/ 内），此后全程 `python -m pip`
+source /root/miniforge3/etc/profile.d/conda.sh
+conda create -y -p /workspace/mount/b100_zaip_data/rby/mvc_env310 python=3.10
+conda activate /workspace/mount/b100_zaip_data/rby/mvc_env310
+which python && which pip    # 都必须在 .../rby/mvc_env310/bin/ 下，否则停
+```
+
+通用教训：**装第一个包之前先 `which python && which pip`**；两者不在同一个环境
+就别装。`(env) (base)` 提示符叠加 = python/pip 可能已分家。
