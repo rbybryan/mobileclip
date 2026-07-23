@@ -197,19 +197,22 @@ VLM 标注的 `en_issues` 频次由高到低（源：`report.md` 的「高频问
 （以上三条逐字摘自人工抽检表 `review_conflicts.tsv`，15 条 15/15 判译文没问题，可直接引用。）
 
 - **即：译得越好（保留不该翻的型号名），越容易被判「污染」**
-- 已修（`strip_shared_latin`）：`zh_mostly_english` 327→**8**、`zh_low_cjk_ratio` 280→**13**
+- 已修（`strip_shared_latin`，两阶段）：`zh_mostly_english` 327 → 8 → **7**、
+  `zh_low_cjk_ratio` 280 → 13 → **8**（第二阶段是标点归一化补丁，见下方 🔎）
 
-📎 **修复后仍残留的命中**（说明还没修干净）：
+📎 **上一版修复后仍残留、本版已修掉的命中**：
 
-| clip | 中文译文 | 英文源 | 命中旗标 |
+| clip | 中文译文 | 英文源 | 曾命中 |
 |---|---|---|---|
-| `3qsMXB3LkIU_…` | 皇室战争 APK v3.1.3.1 | `clash royale apk v3 1 3 1` | zh_low_cjk_ratio |
-| `hRS2c9e-uTo_…` | Cop Games v5.0 截图 | `cop games v5 0 screenshot` | zh_low_cjk_ratio |
+| `3qsMXB3LkIU_…` | 皇室战争 APK v3.1.3.1 | `clash royale apk v3 1 3 1` | ~~zh_low_cjk_ratio~~ |
+| `hRS2c9e-uTo_…` | Cop Games v5.0 截图 | `cop games v5 0 screenshot` | ~~zh_low_cjk_ratio~~ |
 
-> 🔎 **附带发现**：这两条仍误报，是因为版本号 `v3.1.3.1` 在英文源里写作 `v3 1 3 1`
-> —— **带标点 vs 空格分隔，非逐字匹配**，`strip_shared_latin` 没剔掉。修法是匹配前先做
-> 一次标点/空格归一化；改完真实污染比会比 ≤41 条**更低**。（另一条
-> `Essence 提供上门服务 ← есеен доли сервис…` 则是源头俄文乱码，属 §一 的 OCR 问题。）
+> 🔎 **附带发现 → 已修（2026-07-23）**：这两条曾误报，是因为版本号 `v3.1.3.1` 在英文源里
+> 写作 `v3 1 3 1` —— **带标点 vs 空格分隔，非逐字匹配**，`strip_shared_latin` 没剔掉。
+> 已加**分隔符不敏感匹配**（匹配前去 `[\s._\-]`）。重跑 s0 实测：`zh_low_cjk_ratio` 13→**8**、
+> `zh_mostly_english` 8→**7**，污染类合计降到 **≤35 条**（仍未塌到 0，双向验收过）。
+> （另一条 `Essence 提供上门服务 ← есеен доли сервис…` 是源头俄文乱码，属 §一 的 OCR 问题，
+> 与旗标机制无关。）
 
 ### 3. 翻译工程残留：几乎为零 ✅
 
