@@ -6,7 +6,10 @@ efficient and/or more accurate?* It complements the existing notes:
 
 - `notes/whitespace-directions.md` — data pipeline, temporal hard negatives,
   quantization, frame selection (mostly *around* the model);
-- `notes/data-quality-caprl-scheme.md` — caption/data quality (data side).
+- `notes/data-quality-caprl-scheme.md` — caption/data quality (data side);
+- `notes/neural-inspired-directions.md` — the **neuroscience-inspired** cut of these
+  same bottlenecks (predictive-coding gating, geometry-preserving distillation, etc.),
+  slotted into the C1/C2/C3 spine.
 
 This note is the **model side**: architecture, token mixing, pooling, losses.
 Every claim below is anchored to a file/line in this repo (checked 2026-07-15;
