@@ -86,11 +86,11 @@ evaluation = dict(
 )
 
 # V100 (Volta) has no bfloat16 tensor cores -> use fp16, not bf16.
-# NOTE: two separate keys control precision:
-#   - `use_bf16` is read by utils/config_utils.py (DeepSpeed fp16/bf16 block) and
-#     by the autocast dtype in tasks_clip/pretrain.py.
-#   - `bf16` is read by tasks_clip/shared_utils.py to cast the model, and it
-#     DEFAULTS TO True, so it must be set to False explicitly on V100.
+# NOTE: `use_bf16` is the single precision key, read by utils/config_utils.py
+# (DeepSpeed fp16/bf16 block), tasks_clip/pretrain.py (autocast dtype) and
+# tasks_clip/shared_utils.py (model cast; its default is True, so set False
+# explicitly here). Legacy `bf16` is kept only as a fallback spelling for
+# shared_utils.py in old configs/commands - keep the two in sync if set.
 use_half_precision = True
 use_bf16 = False
 bf16 = False
