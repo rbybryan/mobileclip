@@ -20,6 +20,7 @@
 #   bash tools/data_audit/run_v100.sh s2-gran      # ⑨ 粒度计数式重判（验证 dense=0 是不是标签塌缩）
 #   bash tools/data_audit/run_v100.sh gran-check   # ⑨b 粒度结果分析 + n_info=0 归因 -> gran_health.md
 #   bash tools/data_audit/run_v100.sh s2-merge     # ⑧c 合并 better_zh 三候选为一条密字幕（纯文本）
+#   bash tools/data_audit/run_v100.sh merge-review # ⑧d 融合可视化人审（视频+候选+融合稿离线包，同 better_zh）
 #   JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge  # ⑥ 云端裁判（可选，需 API key）
 #   bash tools/data_audit/run_v100.sh judge-agree # ⑥b 一致率+Cohen's κ（可对外来裁判文件独立重算）
 #   bash tools/data_audit/run_v100.sh xling-check # ⑥c 裁决 xling 阈值（s3 前必做）
@@ -387,7 +388,7 @@ review-bundle)
   # 不需要在服务器上装 gradio（那会污染验证过的 audit_env，且它没有填写字段）
   B=tools/data_audit/make_review_bundle.py
   made=0
-  for k in better_zh conflicts random; do
+  for k in better_zh conflicts random merge; do
     [ -f "$OUT/review_$k.tsv" ] || continue
     [ "$k" = "random" ] && [ -z "${BUNDLE_RANDOM:-}" ] && \
       { echo "跳过 random（300 条视频较大）；需要就 BUNDLE_RANDOM=1 再跑"; continue; }
@@ -441,7 +442,26 @@ s2-merge)
     echo "shard $i -> GPU$i (log: $OUT/s2_merged_shard$i.log)"
   done
   echo "已后台启动（可续跑）。不解码视频，比 s2 快得多。"
-  echo "跑完后落地： bash $0 s4-merged   （或 apply_buckets 加 --merged）"
+  echo "跑完后：可视化人审  bash $0 merge-review   ；或直接落地  bash $0 s4-merged"
+  ;;
+# --------------- ⑧d 融合可视化人审：候选 vs 融合稿 + 视频，同 better_zh 的离线包
+merge-review)
+  need_py
+  ls "$OUT"/s2_merged.*.jsonl >/dev/null 2>&1 || \
+    { echo "缺 $OUT/s2_merged.*.jsonl（先跑: bash $0 s2-merge）"; exit 1; }
+  [ -f "$OUT/s2_sample.jsonl" ] || { echo "缺 $OUT/s2_sample.jsonl"; exit 1; }
+  python3 tools/data_audit/make_review_sheet.py --kind merge \
+    --sample "$OUT/s2_sample.jsonl" --verdicts "$OUT/s2_verdicts.*.jsonl" \
+    --merged "$OUT/s2_merged.*.jsonl" --video-root "$CLIPS" \
+    -n "${MERGE_REVIEW_N:-300}" --out "$OUT/review_merge.tsv"
+  python3 tools/data_audit/make_review_bundle.py \
+    --sheet "$OUT/review_merge.tsv" --out-dir "$OUT/bundle_merge" ${BUNDLE_LINK:+--link}
+  echo
+  echo "== 取回本地看画面评审 =="
+  echo "  服务器： tar czf ~/bundle_merge.tgz -C $OUT bundle_merge"
+  echo "  本地：   scp vca1@10.235.31.101:~/bundle_merge.tgz . && tar xzf bundle_merge.tgz"
+  echo "           浏览器打开 bundle_merge/index.html —— 视频/候选/融合稿/按钮同屏，进度自动保存"
+  echo "  填完点「导出 TSV」，传回服务器统计门： bash $0 review-score $OUT/review_merge.tsv"
   ;;
 # ------------------------------- ⑨b 粒度重判结果分析 + n_info=0 归因
 gran-check)

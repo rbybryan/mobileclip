@@ -62,6 +62,11 @@ BLANKS = {
         ("同意打分", "y/n"),                  # does the quality score match your read
         ("note", ""),
     ],
+    "merge": [
+        ("幻觉", "y/n"),                      # fused caption states something no candidate did
+        ("更全", "y/n"),                      # fused is more complete than the best single candidate
+        ("note", ""),
+    ],
 }
 
 RETRANSLATE_FLAGS = {"zh_mostly_english", "zh_equals_en", "zh_low_cjk_ratio",
@@ -109,6 +114,8 @@ def build(args):
         if args.verdicts else {}
     trans = {r["video"]: (r.get("verdict") or {}) for r in load(args.trans)} \
         if args.trans else {}
+    merged = {r["video"]: (r.get("verdict") or {}) for r in load(args.merged)} \
+        if args.merged else {}
     buckets = {r["video"]: r.get("bucket") for r in load(args.buckets)} \
         if args.buckets else {}
 
@@ -170,6 +177,24 @@ def build(args):
             s, v = sample[vid], verdicts[vid]
             rows.append([vid, vpath(vid), v.get("zh_score"), v.get("action"),
                          v.get("granularity"), s.get("zh") or "", s.get("en") or ""])
+
+    elif args.kind == "merge":
+        if not (verdicts and merged):
+            sys.exit("--verdicts（候选 better_zh）与 --merged（s2_merged.*.jsonl 的 merged_zh）都要给")
+        pool = []
+        for vid, v in verdicts.items():
+            cs = [c for c in (v.get("better_zh") or []) if isinstance(c, str) and c.strip()]
+            m = (merged.get(vid) or {}).get("merged_zh")
+            if len(cs) >= 2 and isinstance(m, str) and m.strip():
+                pool.append(vid)
+        print(f"[info] 可评融合记录（≥2候选且有融合稿）总数 {len(pool)}", file=sys.stderr)
+        rng.shuffle(pool)
+        cols = ["video", "video_path", "候选1", "候选2", "候选3", "融合稿"]
+        for vid in pool[:args.n]:
+            cs = [c for c in (verdicts[vid].get("better_zh") or []) if isinstance(c, str)]
+            cs += [""] * (3 - len(cs))
+            rows.append([vid, vpath(vid), *cs[:3],
+                         (merged[vid].get("merged_zh") or "")])
 
     blanks = BLANKS[args.kind]
     header = cols + [f"{c}[{h}]" if h else c for c, h in blanks]
@@ -240,6 +265,13 @@ def score(path):
                   + ("⚠️ **变差的比变好的多，重写是净损失**，RECAPTION 方案要重新考虑。"
                      if worse > better else
                      "✅ 重写方向正确。"))
+        if c.startswith("更全"):
+            better = (vals.get("y", 0) + vals.get("yes", 0)) / n
+            print(f"\n> **更全率 {better:.1%}** —— "
+                  + ("✅ >50%，融合确比最佳单条更全（信息增益成立，值得进 §6.3 消融证实）。"
+                     if better > 0.5 else
+                     "⚠️ ≤50%，融合相对单条的**增益有限**——先看幻觉率是否达标，"
+                     "再据 §6.3 消融决定是否值得这份算力。"))
         if c.startswith("谁对"):
             s0 = vals.get("s0", 0) / n
             print(f"\n> 判 S0 对的占 {s0:.1%} —— "
@@ -262,6 +294,8 @@ def main():
     ap.add_argument("--sample", default=None, help="s2_sample.jsonl（提供 zh/en/s0_flags）")
     ap.add_argument("--verdicts", default=None, help="s2_verdicts glob（提供 better_zh/分数）")
     ap.add_argument("--trans", default=None, help="s2_trans glob（提供实测 trans_score）")
+    ap.add_argument("--merged", default=None,
+                    help="s2_merged glob（--kind merge 用：提供 merged_zh 融合稿）")
     ap.add_argument("--buckets", default=None, help="buckets.jsonl（提供分桶，用于分层）")
     ap.add_argument("-n", type=int, default=50, help="抽多少条（better-zh 会平分到两个桶）")
     ap.add_argument("--seed", type=int, default=0, help="固定随机种子，保证可复现")
