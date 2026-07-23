@@ -19,6 +19,7 @@
 #   bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/review_better_zh.tsv
 #   bash tools/data_audit/run_v100.sh s2-gran      # ⑨ 粒度计数式重判（验证 dense=0 是不是标签塌缩）
 #   bash tools/data_audit/run_v100.sh gran-check   # ⑨b 粒度结果分析 + n_info=0 归因 -> gran_health.md
+#   bash tools/data_audit/run_v100.sh s2-merge     # ⑧c 合并 better_zh 三候选为一条密字幕（纯文本）
 #   JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge  # ⑥ 云端裁判（可选，需 API key）
 #   bash tools/data_audit/run_v100.sh judge-agree # ⑥b 一致率+Cohen's κ（可对外来裁判文件独立重算）
 #   bash tools/data_audit/run_v100.sh xling-check # ⑥c 裁决 xling 阈值（s3 前必做）
@@ -415,6 +416,26 @@ s2-gran)
   echo "已后台启动（可续跑）。同样不解码视频，比 s2 快得多。"
   echo "跑完后统计 n_info 分布："
   echo "  python3 -c \"import json,glob;from collections import Counter;c=Counter(json.loads(l).get('verdict',{}).get('n_info') for f in glob.glob('$OUT/s2_gran.*.jsonl') for l in open(f));print(sorted(c.items(),key=lambda x:(x[0] is None,x[0])))\""
+  ;;
+# --------------------------------- ⑧c 合并 better_zh 多条候选为一条密字幕（纯文本）
+s2-merge)
+  need_py
+  ls "$OUT"/s2_verdicts.*.jsonl >/dev/null 2>&1 || \
+    { echo "未找到 $OUT/s2_verdicts.*.jsonl（先跑: bash $0 s2）"; exit 1; }
+  # 8 个分片的判定先合成一个输入文件（better_zh 在 verdict 里），再 8 卡分发
+  cat "$OUT"/s2_verdicts.*.jsonl > "$OUT/s2_verdicts_all.jsonl"
+  echo "[model] S2_MODEL=$S2_MODEL （合并模式：只读候选文本，不看视频）"
+  for i in $(seq 0 $((NGPU-1))); do
+    CUDA_VISIBLE_DEVICES=$i nohup python tools/data_audit/vlm_audit_hf.py \
+      --input "$OUT/s2_verdicts_all.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
+      --mode merge --num-shards "$NGPU" --shard-id "$i" \
+      --max-new-tokens "${MERGE_MAX_TOKENS:-256}" \
+      --output "$OUT/s2_merged.{shard}.jsonl" \
+      > "$OUT/s2_merged_shard$i.log" 2>&1 &
+    echo "shard $i -> GPU$i (log: $OUT/s2_merged_shard$i.log)"
+  done
+  echo "已后台启动（可续跑）。不解码视频，比 s2 快得多。"
+  echo "跑完后落地： bash $0 s4-merged   （或 apply_buckets 加 --merged）"
   ;;
 # ------------------------------- ⑨b 粒度重判结果分析 + n_info=0 归因
 gran-check)

@@ -50,6 +50,13 @@ THINK_RE = re.compile(r"<think>.*?</think>", re.S)
 WRAPPING_QUOTES = [("“", "”"), ("\"", "\""), ("'", "'"), ("「", "」"), ("《", "》")]
 
 
+def iglob_lines(pattern):
+    import glob as _g
+    for fp in sorted(_g.glob(pattern)):
+        with open(fp, encoding="utf-8", errors="replace") as fh:
+            yield from fh
+
+
 def clean_zh(text):
     t = html.unescape(text).strip()
     t = THINK_RE.sub("", t)
@@ -77,6 +84,9 @@ def main():
     ap.add_argument("--out-drop", required=True)
     ap.add_argument("--min-better-zh-len", type=int, default=4,
                     help="discard better_zh candidates shorter than this many chars")
+    ap.add_argument("--merged", default=None,
+                    help="s2_merged.*.jsonl（--mode merge 产出）；有则用合并后的密字幕做主"
+                         " caption，三条候选仍作为额外正样本挂在 captions 里")
     args = ap.parse_args()
 
     buckets = {}
@@ -100,6 +110,18 @@ def main():
             if cands:
                 better[r["video"]] = cands[:3]
         print(f"[verdicts] better_zh available for {len(better):,} videos", file=sys.stderr)
+
+    merged = {}
+    if args.merged:
+        for line in iglob_lines(args.merged):
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            m = (r.get("verdict") or {}).get("merged_zh")
+            if isinstance(m, str) and len(m.strip()) >= args.min_better_zh_len:
+                merged[r["video"]] = m.strip()
+        print(f"[merged] merged_zh available for {len(merged):,} videos", file=sys.stderr)
 
     for p in (args.out_data, args.out_retranslate, args.out_recaption, args.out_drop):
         os.makedirs(os.path.dirname(os.path.abspath(p)) or ".", exist_ok=True)
@@ -153,8 +175,13 @@ def main():
                 continue
             if bucket == "FIX_TEXT" and zh_clean != zh.strip():
                 stats["fixed_by_rule"] += 1
-            captions = [zh_clean] + [c for c in better.get(vid, []) if c != zh_clean]
-            out = {"video": vid, "caption": zh_clean}
+            extras = better.get(vid, [])
+            primary = merged.get(vid) or zh_clean         # 合并字幕当主，没有则退回原 zh
+            if merged.get(vid):
+                stats["merged_primary"] += 1
+            # 主 caption + 去重后的候选（原 zh 也进正样本池）
+            captions = [primary] + [c for c in [zh_clean, *extras] if c and c != primary]
+            out = {"video": vid, "caption": primary}
             if len(captions) > 1:
                 out["captions"] = captions
                 stats["with_extra_captions"] += 1

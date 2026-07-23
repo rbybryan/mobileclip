@@ -157,6 +157,33 @@ GRAN_PROMPT = """你是中文视频字幕的信息量分析员。下面给你一
 
 GRAN_KEYS = {"n_info", "subjects", "actions"}
 
+# ---------------------------------------------------------------------------
+# Text-only caption merge rubric (--mode merge).
+#
+# WHY THIS EXISTS. `better_zh` gives 2-3 candidates that the PROMPT deliberately
+# asked to cover DIFFERENT facets ("描述不同侧面：主体动作/场景/时序"). They are
+# complementary, not redundant. A human review found them accurate with few
+# hallucinations, so combining them into one dense caption directly attacks the
+# thin-caption problem (median 3 info points; problem 14) -- without any new
+# visual claim, so no new hallucination risk. Text-only: it only reorganises
+# already-verified text, never looks at the video.
+MERGE_PROMPT = """你是中文视频字幕编辑。下面是针对**同一个视频**、由质检模型生成的
+2-3 条候选字幕，每条各描述画面的不同侧面（主体动作／场景／时序）。
+
+候选：
+{cands}
+
+把它们合并成**一条**通顺、信息完整的中文字幕：
+- **只能用候选里已有的信息，绝不新增任何候选中没有的细节**（这条最重要，防幻觉）；
+- 去重，按「主体＋动作＋场景（＋时序）」自然组织成一句话；
+- 若候选之间冲突（同一属性给了不同值），保留更具体的那个，别硬凑两个都写；
+- 长度 ≤50 字，检索风格，不要引号／编号／解释。
+
+只输出一个 JSON 对象（不要输出任何其他文字）：
+{{"merged_zh": "合并后的中文字幕"}}"""
+
+MERGE_KEYS = {"merged_zh"}
+
 
 def resolve_video_path(video_root, rec, video):
     """First existing of:

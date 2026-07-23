@@ -34,9 +34,9 @@ import torch
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from vlm_audit import (GRAN_KEYS, GRAN_PROMPT, PROMPT,  # noqa: E402
-                       TRANS_KEYS, TRANS_PROMPT, VERDICT_KEYS,
-                       extract_json, resolve_video_path)
+from vlm_audit import (GRAN_KEYS, GRAN_PROMPT, MERGE_KEYS,  # noqa: E402
+                       MERGE_PROMPT, PROMPT, TRANS_KEYS, TRANS_PROMPT,
+                       VERDICT_KEYS, extract_json, resolve_video_path)
 
 
 def sample_frames_pil(path, num_frames, max_side):
@@ -95,7 +95,7 @@ def main():
     ap.add_argument("--num-shards", type=int, default=1)
     ap.add_argument("--shard-id", type=int, default=0)
     ap.add_argument("--limit", type=int, default=0, help="max records for this shard")
-    ap.add_argument("--mode", default="full", choices=["full", "trans", "gran"],
+    ap.add_argument("--mode", default="full", choices=["full", "trans", "gran", "merge"],
                     help="'full' = combined video rubric (default). 'trans' = "
                          "text-only translation re-judgement: no video is read "
                          "and no frames are shown, so trans_score cannot anchor "
@@ -153,7 +153,23 @@ def main():
             out = {"video": rec["video"], "stratum": rec.get("stratum"),
                    "s1": rec.get("s1"), "s0_flags": rec.get("s0_flags")}
             try:
-                if args.mode == "gran":
+                if args.mode == "merge":
+                    # 合并 better_zh 的多条候选（在 s2_verdicts 里）为一条。纯文本。
+                    cands = [c for c in ((rec.get("verdict") or {}).get("better_zh")
+                                         or rec.get("better_zh") or [])
+                             if isinstance(c, str) and c.strip()]
+                    if len(cands) < 2:
+                        # 0-1 条无从合并：原样带出（1 条就是它自己），不调模型
+                        out["verdict"] = {"merged_zh": cands[0] if cands else None,
+                                          "n_cands": len(cands)}
+                        fout.write(json.dumps(out, ensure_ascii=False) + "\n")
+                        fout.flush(); n_done += 1
+                        continue
+                    frames = []
+                    keys = MERGE_KEYS
+                    prompt = MERGE_PROMPT.format(
+                        cands="\n".join(f"{i+1}. {c}" for i, c in enumerate(cands)))
+                elif args.mode == "gran":
                     frames = []
                     keys = GRAN_KEYS
                     prompt = GRAN_PROMPT.format(zh=(rec.get("zh") or "(空)"))
