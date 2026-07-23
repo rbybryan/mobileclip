@@ -1277,12 +1277,18 @@ class FastViT(nn.Module):
         )
         self.head = GlobalPool2D(in_dim=int(embed_dims[-1] * cls_ratio),out_dim=512)
         self.apply(self.cls_init_weights)
-        # Optional attention pooling over the T per-frame embeddings (config:
-        # model.vision_encoder.temporal_pooling = "mean" | "attn"). Built after
-        # cls_init_weights so the zero-init of its output projection (exact
-        # mean-pool equivalence at step 0) is not overwritten.
+        # Optional pooling over the T per-frame embeddings (config:
+        # model.vision_encoder.temporal_pooling = "mean" | "attn" | "surprise").
+        # Built after cls_init_weights so the zero-init/zero-gate of these heads
+        # (exact mean-pool equivalence at step 0) is not overwritten.
         if temporal_pooling == "attn":
             self.temporal_pool = TemporalAttentionPool(self.head.out_dim)
+        elif temporal_pooling == "surprise":
+            # Optional brain-inspired add-on (predictive-coding surprise pooling).
+            # Lazily imported inside this branch so the baseline never depends on
+            # the neural_inspired/ package (see neural_inspired/README.md).
+            from neural_inspired import TemporalSurprisePool
+            self.temporal_pool = TemporalSurprisePool(self.head.out_dim)
         elif temporal_pooling == "mean":
             self.temporal_pool = None
         else:
