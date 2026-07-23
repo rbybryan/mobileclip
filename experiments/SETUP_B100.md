@@ -28,6 +28,20 @@
 
 命令一律从项目根跑，除非另有说明。**逐节执行**：§2 的 arch 自检不过，后面全都白搭。
 
+## ✅ 进度标记（Claude 依据 `from-server.md` 回报维护，服务器不用改这段）
+
+截至 **2026-07-23**：
+
+- [x] §0 隧道/代理 —— 已验证可用（clone / push 都走通过）
+- [x] §1 项目 —— git 隔离（`.gitenv`）与 PAT 凭据已就绪；`rby/mobileclip` 的 clone
+      指令已发（`notes/live/from-claude.md`「2026-07-23 (5)」）
+- [ ] **§2 环境 + arch 自检 ⟵ 从这里继续**（clone 确认成功后立即做这节）
+- [ ] §3 权重 `checkpoints/mobileclip_s2.pt`（gdown，需代理）
+- [ ] §4 探盘 + 软链 + `export MVC_DATA_DIR`
+- [ ] §5 `check_readiness.py` 预检（11 个 `[OK ]` + 权重在位，才算解锁）
+- [ ] §6 冒烟（2 卡 debug）→ R0 真跑（4 卡）→ R1 三臂
+- [ ] §8 每完成一节回报一次（贴 `from-server.md`），Claude 据此更新本清单
+
 ---
 
 ## 0. 联网（反向隧道 + 代理）
@@ -240,6 +254,8 @@ python experiments/check_readiness.py --decode  # 再抽一条真解码，确认
 `<config> <num_gpus> [key value ...]`，多余的 `key value` 直接透传给
 `tasks_clip/pretrain.py` 覆盖配置。基础配置：`internvid_all`、epochs=3、
 batch_size=64/卡、lr=1e-5、deepspeed stage-1。
+**⚠️ b100 上 `<num_gpus>` 绝不能省略**：脚本省参时默认 `NUM_GPUS=8`（那是 V100 机的
+默认），在本机会直接占满 8 张卡、违反前-4-卡纪律——照下面的命令原样带上卡数。
 
 > **本机默认只用前 4 张卡**（GPU 0–3），后 4 张留给别的任务。所以下面所有真跑都是
 > `CUDA_VISIBLE_DEVICES=0,1,2,3` + `NUM_GPUS=4`。**要用满 8 张必须有维护者明确指示。**
