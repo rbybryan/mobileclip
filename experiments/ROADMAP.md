@@ -110,7 +110,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       支持 T 无关设计;③ 8× 帧数只差 ~6.9 r_mean,弹性推理动机成立。
       原始 JSON:服务器 `experiments/evals/b0_multiT/msrvtt_T{2,4,8,16}/eval_res.json`。
       该失配曲线在视频-文本模型上未见发表(评审 §3.3)⇒ 论文 Fig-1 v1 数据到手。
-- [ ] **1.7 GATE-0 时间维容量审计(零训练,现在就能跑;命令见 `COMMANDS.md` §3.1)**
+- [~] **1.7 GATE-0 时间维容量审计(零训练,现在就能跑;命令见 `COMMANDS.md` §3.1)**
       —— **任何时序类改动之前的强制闸门**,判读与后续决策见
       [`notes/neural-inspired-round2.md`](../notes/neural-inspired-round2.md) §2。
       (a) 静态:`python experiments/temporal_capacity_audit.py checkpoints/mobileviclip_small.pt`
@@ -122,6 +122,14 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       (d) **基线换种子重跑一次全量** → 拿到噪声地板(§1.1:±1.5~3 R-Sum,现有
       "+0.3 R-Sum" 判据很可能欠功效)。
       **产出**:无论结果如何都是一张"可测性上界"论文图(与 1.6 同一格)。
+      **结果(2026-07-24)见 [`experiments/gate0_results.md`](gate0_results.md)**:
+      (b) MSR-VTT 四个扰动跑完 —— `shuffle` 相对 B0 **+0.1/+0.2**(两口径,≈零)、
+      `reverse` −1.2/−0.1(两口径不同向 ⇒ 判噪声)、`freeze` **−13.0/−12.1**(两口径同向,巨大)。
+      ⇒ **顺序值 ≈0,帧多样性值 ≈13 个 R@1**;`freeze` 同时充当阳性对照,证明"shuffle 的 0"是真零而非坏开关。
+      ⇒ **MSR-VTT 已被实证取消作为时序指标的资格**,R2 上马前必须先有顺序敏感基准。
+      **未完成**:SSv2-MC 四个扰动全崩于 `FileNotFoundError: anno_downstream/ssv2_mc_val.json`
+      —— **数据缺失**(B0 当初也只锁了 msrvtt/hmdb51/ucf101/k400),不是代码问题。
+      (a) 静态审计、(c) RTime、(d) 种子复现 仍未做。
 
 ## 第二线:代码开发(不依赖数据,随时推进)
 
@@ -198,11 +206,16 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 计划评审 + 文献网扫(U1–U10) | ✅ | `notes/plan-review-upgrades.md`;C2 按 FluxViT 收窄、导出冒烟=1.5、多 T 曲线=1.6 |
 | 导出冒烟(U1) | ⬜ | ← 第一线 1.5,零权重即可,决定 P9 触发 |
 | B0 多 T 曲线(U2/1.6) | ✅ | 2026-07-24 实测:emb r_mean 55.4/60.0/61.6/62.3 @ T=2/4/8/16;T8-DSL t2v=42.5 复现 B0 锚点(2.1 零回归);T16 免训练反超;表在 1.6 + from-claude (18) |
-| **GATE-0 时间维容量审计** | ⬜ | ← 第一线 1.7,**零训练**,阻塞一切时序类改动;`notes/neural-inspired-round2.md` §2 |
+| **GATE-0 时间维容量审计** | 🟡 | MSR-VTT 半边 ✅ 结案(**shuffle 不掉分、freeze 掉 13 点** ⇒ 顺序值≈0、帧多样性值 13);SSv2-MC 半边被**数据缺失**卡住。见 [`experiments/gate0_results.md`](gate0_results.md) |
 | 脑启发第二轮(F1–F4 + R1/R2/R3) | ✅ | `notes/neural-inspired-round2.md`;四份独立评审收敛,含对第一轮 A1/B1 的修正 |
 
 ## 进展日志(实时,倒序;每个会话在此加一行,格式:日期:事件(出处))
 
+- 2026-07-24:**GATE-0 动态审计 MSR-VTT 半边结案**(`experiments/gate0_results.md`):打乱 8 帧顺序
+  **不掉分**(t2v 42.50→42.6 DSL / 40.80→41.0 raw),换成单帧重复**掉 13 个点**(→29.5/28.7,两口径同向)
+  ⇒ **帧多样性值 ~13 R@1、帧顺序值 ~0**;`freeze` 兼作阳性对照,证明零效应为真零。
+  **MSR-VTT 就此失去作为时序指标的资格**(R2 被卡,需先拿顺序敏感基准);R1 不受影响、优先级不变。
+  SSv2-MC 四扰动全崩于缺 `anno_downstream/ssv2_mc_val.json`(数据缺失,非代码)
 - 2026-07-24:**B0 多 T 曲线实测完成,1.6/U2 关闭**:官方权重 MSR-VTT emb 口径 r_mean = 55.4/60.0/61.6/62.3 @ T=2/4/8/16;T=8 DSL t2v R@1=42.5 复现 B0 锚点 ⇒ 2.1 零回归;T=16 插值升采样免训练反超;T=2 gap −6.1 r_mean = C2 目标;Fig-1 v1 数据落档(from-claude (18))
 - 2026-07-24:**C2 V100 验收全过 → 转 ✅**:pytest 18 项 + r3e 8 卡冒烟三判据全过,50 步 T 序列服务器↔本地逐位一致;观察项 fp16 评测偶发 sim NaN 记入 TROUBLESHOOTING 末节(from-claude (17));B0 多 T 曲线(任务 C)服务器跑动中
 - 2026-07-24:**脑启发第二轮合入**(`notes/neural-inspired-round2.md`):四条已数值验证的结构事实

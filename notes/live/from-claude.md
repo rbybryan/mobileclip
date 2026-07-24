@@ -23,6 +23,78 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (20) — GATE-0 判读：**顺序值 ≈0、帧多样性值 13 个点**；MSR-VTT 就此失去时序指标资格；SSv2-MC 是缺数据
+
+**Diagnosis:** (16) 的任务 B 跑完了 MSR-VTT 四个扰动，结论**非常干净**，完整表格已落
+[`experiments/gate0_results.md`](../../experiments/gate0_results.md)。相对 B0 锁定值
+（§3.4：t2v R@1 = 42.50 DSL / 40.80 raw；**`img_r1` 才是 t2v**）：
+
+| 扰动 | t2v ΔDSL | t2v Δraw | 判读 |
+|---|---|---|---|
+| `shuffle` 打乱 8 帧 | **+0.10** | **+0.20** | **零效应** —— 顺序全打乱居然不掉分 |
+| `reverse` 时间反转 | −1.20 | −0.10 | 两口径不同向、在 ±1.6 噪声带内 ⇒ **判噪声** |
+| `freeze` 单帧×8 | **−13.00** | **−12.10** | 两口径同向的**巨大**效应 |
+
+**⇒ 帧的"多样性"值 ~13 个 R@1，帧的"顺序"值 ~0。**
+
+**为什么这个"零"可信 —— `freeze` 是阳性对照。** 零效应最常见的死法是开关没生效；
+本轮同一个 `MVC_FRAME_PERTURB` 钩子在 `freeze` 上打出 −13，说明钩子确实在改帧、评测确实
+对帧内容敏感 ⇒ **`shuffle` 的 0 是真零，不是坏开关**。这一条比那三个数字本身更重要。
+
+**三条不能多说的（已写进结果文件 §3）：**
+1. `freeze` **不等于**"单帧模型不行" —— 拿 8 帧训练的模型只喂 1 帧是**分布偏移**，这 13 点是
+   "饿掉多帧信息"的**上界**，不是 ATP/单帧偏置那种干净对照。别写成"我们反驳了单帧偏置"。
+2. 只测了一半 ⇒ 目前只能说"MSR-VTT 测不出顺序"，**还不能**区分"模型真没顺序信息" vs
+   "模型有、但 MSR-VTT 不奖励"。
+3. `reverse` 的 −1 别当效应。
+
+**SSv2-MC 四个全崩 —— 是缺数据，不是 bug：**
+`FileNotFoundError: anno_downstream/ssv2_mc_val.json`。属 `TROUBLESHOOTING.md`
+「Missing `anno_downstream/*.json`」那一类。佐证：B0 当初也只锁了 msrvtt/hmdb51/ucf101/k400
+四个，**SSv2-MC 从来没在这台机器上到位过**。
+（下次先跑 `python experiments/check_readiness.py`，它认识 `ssv2_mc`，能在开跑前就报缺，
+省掉这 4 次崩溃 —— §3.1 的第一行就是它。）
+
+**对计划的影响（GATE-0 的用途就在这里）：**
+- **R1 精确文本负例库：不受影响，优先级不变，而且相对更值得做了** —— 它打的是小 batch 对比学习
+  这个瓶颈，用普通检索就能测，MSR-VTT 测这个是**有效**的。
+- **R2 可恢复顺序的读出头：被卡住。** MSR-VTT 已被实证取消资格 —— 就算 R2 完美恢复顺序信息，
+  在 MSR-VTT 上也只能测出 ≈0。**上 R2 之前必须先有顺序敏感基准。**
+- **C2 弹性 T：被支持** —— 帧数值 13 个点，帧预算旋钮的动机成立（不成立的只是"顺序"）。
+
+**Do this next（101vector；都不训练，仍低于 recap 主线优先级）：**
+
+**① 把 `none` 的 r_mean 补进表（10 秒，本轮已生成该目录）**
+```bash
+cd ~/mobileclip && git pull origin main
+python -c "import json;d=json.load(open('experiments/evals/gate0/msrvtt_none/eval_res.json'));print(json.dumps(d,ensure_ascii=False)[:400])"
+```
+
+**② 任务 A 静态审计还没跑（不用 GPU、不用数据、秒级）**
+```bash
+python experiments/temporal_capacity_audit.py --self-test
+python experiments/temporal_capacity_audit.py ./checkpoints/mobileviclip_small.pt
+```
+它直接读权重里时间卷积核的**反对称占比**和 `temporal_embedding` 的范数 ——
+能从**参数层面**回答"模型到底有没有编码时间方向"，正好补上 §3 那条"还不能区分"的缺口。
+⚠️ 没在真权重上跑过；键名对不上时它会把候选键打印出来，**把那段原样贴回来**即可。
+
+**③ 顺序敏感基准（这才是关键路径，决定 R2 能不能上）** —— 三选一，从易到难：
+```bash
+# 先确认到底缺什么
+unset MVC_DATA_DIR && python experiments/check_readiness.py
+```
+- **SSv2-MC**：缺 `anno_downstream/ssv2_mc_val.json` + `data/ssv2/20bn-something-something-v2`。
+  SSv2 视频要在官方站注册后下载（20BN/Qualcomm），anno 走 `TROUBLESHOOTING.md` 那一节的路子。
+- **RTime**(`Reversed in Time`, ACM MM 2024)：**最对口** —— 它就是拿"时间反转"做难负例，
+  RTime-Binary 的零假设是**恰好 50%**（时间盲的模型必然掷硬币）。有公开 repo。
+- **SSv2-template / SSv2-label 检索**(Lei et al. ACL 2023)：仍依赖 SSv2 视频。
+
+**Then report back**（from-server.md）：① 的 json 原文；② 的**完整 stdout**（两节 + 末尾汇总两行），
+键名对不上就贴候选键；③ `check_readiness.py` 的输出 + 你倾向走哪条基准路线（我按你选的那条写落地步骤）。
+
+---
+
 ## 2026-07-24 (19) — `No module named 'scripts.pretraining'`：仓库的 `scripts` 被 site-packages 里的同名包顶掉了（已修，pull 即可）
 
 **Diagnosis:** 依赖这一关**过了**——`userbase` 已生效、import 链一路走到配置加载才崩。
