@@ -23,6 +23,57 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (18) — `No module named 'scripts.pretraining'`：仓库的 `scripts` 被 site-packages 里的同名包顶掉了（已修，pull 即可）
+
+**Diagnosis:** 依赖这一关**过了**——`userbase` 已生效、import 链一路走到配置加载才崩。
+新崩点的关键在于报的是 **`'scripts.pretraining'` 而不是 `'scripts'`**：`scripts` 本身
+import 成功了，只是**导进来的不是本仓库那个**。
+
+原因：仓库的 `scripts/` 原先**一个 `__init__.py` 都没有**，是 PEP 420 命名空间包；而命名
+空间包的优先级**低于普通包**——Python 扫 `sys.path` 时，遇到无 `__init__.py` 的同名目录
+只记一个 "portion" 就**继续往后扫**，后面任何一个带 `__init__.py` 的 `scripts` 都会**反超**
+它，哪怕仓库根在 `PYTHONPATH` 里排得更前。b100 共用 site-packages 里恰好有这么一个包；
+V100（101vector）上没有，所以同一份代码只在 b100 发作。
+
+已给 `scripts/` 及其子目录补上 `__init__.py`（本地验证：`import scripts` 现在稳定指到仓库
+自己的 `scripts/__init__.py`）。**别删这些文件**，每个里面都写了原因。
+
+**⚠️ 顺带一件要先处理的事：那个 4 卡 R0 可能还活着。** 你整段粘贴时，冒烟崩了以后
+`nohup ... &` 的 R0 照样被拉起来了（`[1] 195353`），而 **`&` 后台任务不吃 Ctrl-C**——你按的
+`^C` 只停掉了前台的 `tail -f`。它大概率也已经因同样的 `scripts.pretraining` 崩掉了，但要确认。
+
+**Do this next（b100，仓库根）：**
+
+```bash
+cd /workspace/mount/b100_zaip_data/rby/mobileclip
+
+# ① 先确认那个 R0 是死是活（按 PID，禁止 pkill -f —— 本机 root 共用，别人的中文线
+#    跑的是同一个 tasks_clip/pretrain.py）
+ps -p 195353 -o pid,etime,cmd
+tail -5 experiments/runs/r0_baseline.log
+#   —— 没有输出 = 已经死了，什么都不用做；
+#   —— 还活着就先 ls -l /proc/195353/cwd 确认是 rby/ 下的作业，再 kill 195353
+
+# ② 拉修复
+git pull
+
+# ③ 自检：必须打印仓库自己的路径，不是 site-packages 里的
+source experiments/env_b100.sh
+python -c "import scripts; print(scripts.__file__)"
+# 期望 /workspace/mount/b100_zaip_data/rby/mobileclip/scripts/__init__.py
+
+# ④ 只跑冒烟这一步（2 卡）。跑之前 nvidia-smi 看 0、1 号卡空不空。
+CUDA_VISIBLE_DEVICES=0,1 bash experiments/run_pretrain.sh \
+    experiments/configs/r0_baseline.py 2 \
+    use_bf16 True bf16 True deepspeed.enable False debug True
+```
+
+**⛔ 闸门：冒烟没跑到打印 loss，就不要执行 §6 步骤 2 的 4 卡 R0。** SETUP_B100 §6 已经把
+三步拆成三个独立代码块并加了这条闸门 —— 之前写成一整块，整段粘贴会把没验证过的 4 卡作业
+直接拉起来，在共用机器上这是要避免的。
+
+**Then report back** in from-server.md：① `ps -p 195353` 有没有输出；② `import scripts`
+打印的路径；③ 冒烟日志——跑通就贴到出现 loss 的前 30 行，崩了就贴完整 traceback。
 ## 2026-07-24 (17) — (13) 任务 A/B 判读:全过,C2 转 ✅;一个观察项;只差 (13) 任务 C 回报
 
 > **编号提醒**:本块判读的是 **(13) 的任务 A/B/C**(pytest / r3e 冒烟 / 多 T 曲线)。
