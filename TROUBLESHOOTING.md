@@ -1726,8 +1726,63 @@ source /workspace/mount/b100_zaip_data/rby/.gitenv
 ```
 
 之后 `git config --global …`（`safe.directory`、`user.name/email`、代理等）都只写进
-`rby/.gitconfig`，其他使用者完全看不到。凭据同理：优先把 token 写在仓库自己的
-remote URL（`.git/config`，本就在 rby/ 内），别用会落到 `$HOME` 的 credential helper。
+`rby/.gitconfig`，其他使用者完全看不到。
+
+**凭据（每次 `git pull` 都要密码）** — 不要用默认的 `credential.helper store`：它会把
+token 写进 `$HOME/.git-credentials`，正好落在共用的 root 家目录里。改成把 helper 和
+token 都锁进 `rby/`，并用 `includeIf gitdir:` 门控，使它**只对 `rby/` 下的仓库生效**：
+
+```bash
+RBY=$(cd /workspace/mount/b100_zaip_data/rby && pwd -P)   # 取真实路径，软链已解析
+
+# ① 身份 + 凭据 helper：单独一个文件，只放 rby/ 内
+cat > "$RBY/.gitconfig-cred" <<EOF
+[user]
+    name = rbybryan
+    email = br2566@columbia.edu
+[credential]
+    helper = store --file $RBY/.git-credentials
+EOF
+
+# ② source 过 .gitenv 的 shell 走这条
+git config --file "$RBY/.gitconfig" "includeIf.gitdir:$RBY/.path" "$RBY/.gitconfig-cred"
+
+# ③ 兜底：忘了 source .gitenv 时走共用 $HOME（只写路径，不含 token；可跳过）
+git config --file "$HOME/.gitconfig" "includeIf.gitdir:$RBY/.path" "$RBY/.gitconfig"
+
+# ④ 写 token（read -s，不进 shell history）
+read -rsp "GitHub PAT: " TOK; echo
+umask 077
+printf 'https://rbybryan:%s@github.com\n' "$TOK" > "$RBY/.git-credentials"
+unset TOK
+chmod 600 "$RBY/.git-credentials"
+```
+
+②③ 用 `git config --file`（同键覆盖），重复跑不会写重。自检（**新开 shell、不 source**）：
+`git config --show-origin --get credential.helper` 应指向 `rby/.gitconfig-cred`，
+随后 `git pull origin main` 不再问密码。
+
+**做了 ③ 之后不需要每次登录再 `source .gitenv`** —— 身份和凭据由 `$HOME/.gitconfig` 里的
+`includeIf` 自动加载。**唯一例外是 `safe.directory`**：git 检查「可疑的仓库所有权」发生在
+*early / protected config* 阶段，那时仓库尚未认出，`gitdir:` 条件无从匹配，因此写在
+conditional include 里的 `safe.directory` **不被采纳**（实测：`git config --get-all
+safe.directory` 看得见该值，同一仓库仍报 `detected dubious ownership`）。若确实撞上这个报错，
+把它直接写进共用 `$HOME/.gitconfig`（只有路径、无 token），此后永久免 source：
+
+```bash
+git config --global --add safe.directory /workspace/mount/b100_zaip_data/rby/MobileViCLIP
+```
+
+`.gitenv` 里的 `GIT_CONFIG_SYSTEM=/dev/null`（屏蔽 `/etc/gitconfig`）同样只在 source 后生效。
+
+四点提醒：GitHub 已取消密码认证，"密码"处填 **PAT**；共用 root 下 `chmod 600` 给不了任何
+隔离（大家都是 root），所以请用 **只授权 `rbybryan/mobileclip` 的 fine-grained PAT**；
+`gitdir:` 末尾的 `/` 不能省（等价于 `rby/**`）；`credential.helper` 是**叠加**的，若共用
+`$HOME/.gitconfig` 里已有别人的全局 helper，会先轮到它 ——
+`git config --get-all --show-origin credential.helper` 查一下。
+
+另一条路（单仓库够用时）：把 token 直接写进该仓库 `.git/config` 的 remote URL —— 本就在
+`rby/` 内，天然隔离，但只管一个仓库，不像上面那样覆盖 `rby/` 下所有仓库。
 
 ---
 
@@ -1822,3 +1877,33 @@ which python && python -c "import sys,torch; print(sys.executable, torch.__versi
 > ⚠️ **`check_readiness.py` 全绿不代表环境能训**：它只 import `decord` 和
 > `configs.data`，**从不 import torch**。§5 十一个 `[OK ]` 只证明数据接对了；
 > torch/sm_90 要靠 §2 的 arch 自检或 §6 首光冒烟才算验过。
+
+---
+
+## `ModuleNotFoundError: No module named 'open_clip'`——装成了 `openai-clip`
+
+**症状**：`import models` 崩在
+`models/backbones/internvideo2/mobileclip/tokenizer.py:7: import open_clip`，
+而你确信"CLIP 已经装了"（`pip install openai-clip==1.0.1`）。
+
+**Cause**：**这是两个完全不相干的项目，模块名都不一样**：
+
+| 包名 | 项目 | 提供的模块 |
+|------|------|-----------|
+| `openai-clip` | OpenAI CLIP | **`clip`** |
+| **`open_clip_torch`** | LAION / mlfoundations OpenCLIP | **`open_clip`** ← 仓库要的 |
+
+装 `openai-clip` 再多次也补不上 `import open_clip`。
+
+**Fix**（`scripts/setup_env.sh` Stage 6 的规范装法）：
+
+```bash
+python -m pip install --no-cache-dir --no-deps "open_clip_torch==2.20.0"
+```
+
+**`--no-deps` 不是可选项**：`open_clip_torch` 的 metadata 里 torch 没有上界，不加
+`--no-deps` 时 pip 会为"满足依赖"把 torch 升级掉（1.13.1 栈上会连带把
+torchvision/torchaudio 弄坏，报 `cannot import name '_cast_Long'`）。
+
+> 装之前先 `python -c "import sys;print(sys.executable)"` 确认装到的是**自己的**环境——
+> b100 是共用 root 账号，装进 `/usr/local/lib/python3.10/dist-packages` 会影响别人。

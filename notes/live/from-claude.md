@@ -23,18 +23,18 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
-## 2026-07-24 (10) — 确认：pipeline-sample 全链唯一 LLM = 本机 Qwen3-VL-8B（#235 加固）
+## 2026-07-24 (11) — 确认：pipeline-sample 全链唯一 LLM = 本机 Qwen3-VL-8B（#235 加固）
 
 **Diagnosis:** 维护者确认 V100 上唯一 LLM 是 Qwen3-VL-8B。已逐环节核对并加固（#235）：
 ① 重述与派生都走 `$S2_MODEL`（本地 `ckpts/Qwen3-VL-8B-Instruct` 优先）——重述 temp0.9 采样
 （制造投票方差）、派生 temp0 贪心（闭集确定性），启动横幅会打印这行确认；② SigLIP2 打分是
 非 LLM 嵌入模型且 s1 轮已缓存；③ GDINO/RapidOCR 是非 LLM 可选件，装不上自动降级为
 unverified 且不再白解码视频、也不会阻塞 TSV；④ **红线**：验真器缺了就让视图保持
-unverified，**绝不用 Qwen 自验**（§3.5 纪律）。(9) 的命令不变，直接跑即可。
+unverified，**绝不用 Qwen 自验**（§3.5 纪律）。(10) 的命令不变，直接跑即可。
 
 ---
 
-## 2026-07-24 (9) — 完整优化流水线可小样本端到端了：pipeline-sample 一条命令 → 全景 TSV（#233）
+## 2026-07-24 (10) — 完整优化流水线可小样本端到端了：pipeline-sample 一条命令 → 全景 TSV（#233）
 
 **Diagnosis:** 维护者要的是**整条 caption 优化方案**的小样本测评，不只是重述段。缺口已补齐
 （#233 已并入 main）：`--mode derive`（每条重述派生 2–3 条短视图 + en_gloss，文本-only 闭集，
@@ -58,6 +58,102 @@ N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
 en_source / zh_translated / recap_1 / views_pass / views_fail 五列；③ 全程起止时间。
 我据此核：五条是否有差异、验真过滤率是否合理（fail 占比预期 5–20%，>40% 说明 gdino 阈值或
 gloss 质量有问题，我来调）。
+
+---
+
+## 2026-07-24 (9) — b100 每次 `git pull` 都要密码：凭据只在 `rby/` 下生效，不落共用 `$HOME`
+
+**Diagnosis:** b100 的 root 账号多人共用。`TROUBLESHOOTING.md`「b100 上一切 git 命令都报
+`not a git repository`」一节已经把"全局"配置重定向进了 `rby/.gitconfig`（`.gitenv` 里的
+`GIT_CONFIG_GLOBAL`），但**凭据这一块一直没配**，所以每次 `git pull` 都问用户名/密码。
+顺带：GitHub 早就取消了密码认证，这里要填的"密码"是 **PAT**，不是账号密码。
+
+下面这套把凭据 helper 关进 `rby/` 自己的配置，并用 `includeIf gitdir:` **双重门控**：
+无论有没有 `source .gitenv`，都**只对 `rby/` 下的仓库生效**，`rby/` 外的仓库一律不受影响；
+token 文件也只落在 `rby/` 内，不进共用 `$HOME`。四种组合已在 Curta 上逐一验过（见文末表）。
+
+**Do this next（b100，任意目录）：**
+
+```bash
+RBY=$(cd /workspace/mount/b100_zaip_data/rby && pwd -P)   # 取真实路径，软链已解析
+
+# ① 身份 + 凭据 helper：单独一个文件，只放 rby/ 内
+cat > "$RBY/.gitconfig-cred" <<EOF
+[user]
+    name = rbybryan
+    email = br2566@columbia.edu
+[credential]
+    helper = store --file $RBY/.git-credentials
+EOF
+
+# ② rby/.gitconfig 里按 gitdir 门控（source 过 .gitenv 的 shell 走这条）
+git config --file "$RBY/.gitconfig" "includeIf.gitdir:$RBY/.path" "$RBY/.gitconfig-cred"
+
+# ③ 兜底：忘了 source .gitenv 时走共用 $HOME —— 只写一行路径，不含 token（可选，见下）
+git config --file "$HOME/.gitconfig" "includeIf.gitdir:$RBY/.path" "$RBY/.gitconfig"
+
+# ④ 写 token（read -s，不进 shell history）
+read -rsp "GitHub PAT: " TOK; echo
+umask 077
+printf 'https://rbybryan:%s@github.com\n' "$TOK" > "$RBY/.git-credentials"
+unset TOK
+chmod 600 "$RBY/.git-credentials"
+```
+
+②③ 用 `git config --file` 而不是 `>>` 追加，所以**重复跑不会写重**（同键覆盖）。
+
+**自检**（**新开一个 shell、不要 source 任何东西**；第一条应打印 helper 指向
+`rby/.gitconfig-cred`，第二条应全程不问密码）：
+
+```bash
+cd /workspace/mount/b100_zaip_data/rby/MobileViCLIP
+git config --show-origin --get credential.helper
+git pull origin main
+```
+
+**要不要每次登录都 `source .gitenv`？——做了 ③ 就不用。** 身份和凭据靠 `$HOME/.gitconfig`
+里那行 `includeIf` 自动加载，登录后直接用。**唯一的例外是 `safe.directory`**：git 判断
+「可疑的仓库所有权」时读的是 *early / protected config*，那个时刻仓库还没被认出来，
+`gitdir:` 条件无从匹配，所以**放在 conditional include 里的 `safe.directory` 不生效**
+（Curta 实测：`git config --get-all safe.directory` **看得见**这个值，但同一个仓库照样报
+`detected dubious ownership`；`source .gitenv` 后就正常）。所以：
+
+- 从没见过 `dubious ownership` 报错（b100 上大家都是 root、文件也归 root）→ **完全不用 source**。
+- 见过 → 二选一：每个 shell 先 `source "$RBY/.gitenv"`，**或**把这一行直接写进共用
+  `$HOME/.gitconfig`（只是路径，不含 token，一次即可、之后永久免 source）：
+
+  ```bash
+  git config --global --add safe.directory "$RBY/MobileViCLIP"
+  ```
+
+`.gitenv` 里另一半 `GIT_CONFIG_SYSTEM=/dev/null`（屏蔽 `/etc/gitconfig` 里别人塞的东西）
+同理只在 source 后生效；除非系统配置里有 helper/代理来捣乱，一般不用管。
+
+**几个坑：**
+
+- **共用 root 下 `chmod 600` 不提供任何隔离** —— 同账号的人都是 root，照样读得到
+  `.git-credentials`。所以请用 **fine-grained PAT、只授权 `rbybryan/mobileclip` 这一个仓库**，
+  别用带完整 `repo` scope 的经典 token。`upstream`（MCG-NJU）是公开仓库，本来就不需要凭据。
+- **`gitdir:` 末尾的 `/` 不能省** —— `gitdir:…/rby/` 等价于 `…/rby/**`（整棵子树）；
+  少了斜杠就只匹配 gitdir 恰好等于该路径的那一个仓库。
+- **`credential.helper` 是叠加的，不是覆盖的** —— 若共用 `$HOME/.gitconfig` 里已经有别人配的
+  全局 helper，它会**先**被问到，这里配的就轮不上。先查一下
+  `git config --get-all --show-origin credential.helper`，有多余的再处理。
+- **匹配的是 `.git` 目录、不是当前工作目录** —— 建在 `rby/` 外的 linked worktree 不会命中。
+- ③ 会往共用 `$HOME/.gitconfig` 写一行（**只有路径，没有 token**）。若坚持"什么都不落共用
+  `$HOME`"，**跳过 ③ 即可**，代价是每个 shell 都必须先 `source .gitenv`，否则又开始问密码。
+
+**Curta 上验过的四种组合**（`git config --get credential.helper`）：
+
+| 仓库位置 | 已 `source .gitenv` | 未 source |
+|---|---|---|
+| `rby/` 内 | ✅ 命中 | ✅ 命中（走 ③ 兜底） |
+| `rby/` 外 | ⬜ 无（正确） | ⬜ 无（正确） |
+
+固化版见 `TROUBLESHOOTING.md`「b100 上一切 git 命令都报 …」一节的**共用账号的隔离**小节。
+
+**Then report back** in from-server.md：自检那两条的输出 —— `--show-origin` 那行指向哪个文件，
+以及 `git pull origin main` 是不是全程没再问密码。
 
 ---
 
@@ -211,6 +307,88 @@ bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r3e.py 8 debug Tr
 > 均有效，以标题区分；v1.1 块对服务器的指示 = Stage 0 照「重字幕主计划定稿」(4) 跑。
 
 ---
+
+---
+
+## 2026-07-24 (8) — 装错了包（`openai-clip` ≠ `open_clip_torch`）；且 `python` 根本不是 conda 环境
+
+**两个问题，第二个更要紧。**
+
+### (a) 包装错了：`openai-clip` 不是 `open_clip`
+
+它们是**两个不相干的项目**：
+
+| 你装的 | 仓库要的 |
+|---|---|
+| `openai-clip==1.0.1`（OpenAI CLIP）→ 提供模块 **`clip`** | **`open_clip_torch==2.20.0`**（LAION/mlfoundations）→ 提供模块 **`open_clip`** |
+
+`mobileclip/tokenizer.py` 第 7 行 `import open_clip`，要的是后者。装 `openai-clip` 再多次也
+补不上——模块名都不一样。仓库的规范装法（`scripts/setup_env.sh` Stage 6）：
+
+```bash
+python -m pip install --no-cache-dir --no-deps "open_clip_torch==2.20.0"
+```
+**`--no-deps` 是硬性要求**：它的 metadata 写了不带上界的 torch，pip 会顺手把 torch 升级掉。
+
+### (b) ⚠️ 你的 `python` 是 `/usr/bin/python`，**不是** `mvc_env310`
+
+你这条输出是实锤：
+```
+/usr/bin/python 2.5.1+cu124 ['sm_50',...,'sm_90']
+```
+提示符虽然亮着 `(mvc_env310)`，但 `sys.executable` 是 **`/usr/bin/python`**（系统解释器，
+包在共用的 `/usr/local/lib/python3.10/dist-packages`）。含义有三：
+
+1. **好消息**：系统 torch 是 **2.5.1+cu124 且 arch 含 `sm_90`**——Hopper 支持没问题，
+   之前担心的 sm_90 这一关实际上是过的。
+2. **坏消息**：你这一路 `pip install` 很可能**装进了共用的系统 site-packages**——这台是
+   **共用 root 账号**，等于在改 wky/zyc 也在用的环境。**先停手，别再往系统里装。**
+3. `run_pretrain.sh` 现在用 `python -m torch.distributed.run`，`python` 是谁就用谁——
+   所以必须先把 `python` 指对，否则改了启动器也没用。
+
+**先诊断环境到底怎么了：**
+```bash
+ENVP=/workspace/mount/b100_zaip_data/rby/mvc_env310
+echo "CONDA_PREFIX=$CONDA_PREFIX"
+which -a python python3 pip | head
+ls -l "$ENVP/bin/python" 2>&1          # 这个文件在不在？
+"$ENVP/bin/python" -V 2>&1              # 能不能跑？
+"$ENVP/bin/python" -c "import torch;print(torch.__version__, torch.cuda.get_arch_list())" 2>&1 | tail -1
+```
+
+**按结果二选一：**
+
+- **情况 1：`$ENVP/bin/python` 存在且里面有 torch** → 只是 PATH 没生效。
+  ```bash
+  export PATH="$ENVP/bin:$PATH"
+  which python && python -c "import sys;print(sys.executable)"   # 必须是 $ENVP/bin/python
+  python -m pip install --no-cache-dir --no-deps "open_clip_torch==2.20.0"
+  ```
+- **情况 2：`$ENVP/bin/python` 不存在，或里面没有 torch** → 那个 conda env 等于没建成。
+  **别再往系统里装**，最省事的隔离办法是**基于系统 py3.10 建带 `--system-site-packages`
+  的 venv**：直接继承那套已经能用的 torch 2.5.1+cu124(sm_90)，新装的包只落在自己目录，
+  既不用重下 torch，也不污染共用环境：
+  ```bash
+  VENV=/workspace/mount/b100_zaip_data/rby/mvc_venv310
+  /usr/bin/python -m venv --system-site-packages "$VENV"
+  ls -l "$VENV/bin/pip" || "$VENV/bin/python" -m ensurepip --upgrade   # 上次踩过 venv 没 pip 的坑
+  export PATH="$VENV/bin:$PATH"
+  which python pip && python -c "import sys;print(sys.executable)"
+  python -m pip install --no-cache-dir --no-deps "open_clip_torch==2.20.0"
+  ```
+
+**装完复验（仍然零 GPU）：**
+```bash
+cd /workspace/mount/b100_zaip_data/rby/mobileclip
+python -c "import sys,torch;print(sys.executable, torch.__version__, torch.cuda.get_arch_list())"
+PYTHONPATH=. python -c "import models; print('models import OK')"
+```
+
+**Then report back**：诊断那五行的输出（判断走情况 1 还是 2）、以及复验两行是否都过。
+`import models` 一过，就只剩等空闲卡冒烟了。
+
+> `openai-clip==1.0.1` 对本仓库没用（模块名是 `clip`，没人 import 它）。它多半也装进了
+> 共用系统环境；**不建议**再去系统里 uninstall（同样是动共用环境），留着不碍事即可。
 
 ---
 
