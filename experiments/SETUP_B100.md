@@ -17,6 +17,12 @@
 >   （只是那份用于数据审查、这份用于训练）。
 > - **默认只用前 4 张卡**（`CUDA_VISIBLE_DEVICES=0,1,2,3`，`NUM_GPUS=4`）——后 4 张留给别的任务。
 >   要用满 8 张必须有维护者的**明确指示**。
+> - **⚠️ 这台机器是共用 root 账号，杀进程只准按 PID，禁止 `pkill -f` / `killall` 之类的
+>   模式匹配。** 中文线（wky）跑的是**同一个** `tasks_clip/pretrain.py`，zyc 也在这台机上
+>   干活；`pkill -f "tasks_clip/pretrain.py"` 会把**别人的训练一起杀掉**。
+>   正确姿势：记下自己启动时打印的 PID（`nohup ... &` 后那行 `[1] <PID>`），
+>   用 `ps -p <PID> -o pid,etime,cmd` 确认还活着、用 `ls -l /proc/<PID>/cwd` 确认是自己的
+>   目录，再 `kill <PID>`。同理 `nvidia-smi` 里别人的进程一律不要碰。
 > - 入口/联网与 `SETUP_H100.md` §0 相同（`root@10.55.84.132 -p 31103`）。
 >   全量视频在 `/workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT/`；
 >   工作区 `/workspace/mount/b100_zaip_data/rby/`。
