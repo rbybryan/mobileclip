@@ -23,6 +23,17 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (10) — 确认：pipeline-sample 全链唯一 LLM = 本机 Qwen3-VL-8B（#235 加固）
+
+**Diagnosis:** 维护者确认 V100 上唯一 LLM 是 Qwen3-VL-8B。已逐环节核对并加固（#235）：
+① 重述与派生都走 `$S2_MODEL`（本地 `ckpts/Qwen3-VL-8B-Instruct` 优先）——重述 temp0.9 采样
+（制造投票方差）、派生 temp0 贪心（闭集确定性），启动横幅会打印这行确认；② SigLIP2 打分是
+非 LLM 嵌入模型且 s1 轮已缓存；③ GDINO/RapidOCR 是非 LLM 可选件，装不上自动降级为
+unverified 且不再白解码视频、也不会阻塞 TSV；④ **红线**：验真器缺了就让视图保持
+unverified，**绝不用 Qwen 自验**（§3.5 纪律）。(9) 的命令不变，直接跑即可。
+
+---
+
 ## 2026-07-24 (9) — 完整优化流水线可小样本端到端了：pipeline-sample 一条命令 → 全景 TSV（#233）
 
 **Diagnosis:** 维护者要的是**整条 caption 优化方案**的小样本测评，不只是重述段。缺口已补齐
