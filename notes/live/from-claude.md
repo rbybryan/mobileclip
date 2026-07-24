@@ -173,7 +173,7 @@ git push fork "$STASH":refs/heads/server/b100-local-opts
 
 ---
 
-## 2026-07-23 (3) — 候选字幕融合 F0：跑现成的 `s2-merge` + 300 片人审门
+## 2026-07-23 (3) — 候选字幕融合 F0：`s2-merge` 融合 + 可视化人审（同 better_zh）
 
 **背景：** 你已人工复核 `better_zh`（P0 通过）：新候选更准更全、3 条各带不同细节，
 融合有望更好。完整融合方案见 [`notes/caption-fusion-scheme.md`](../caption-fusion-scheme.md)。
@@ -181,7 +181,8 @@ git push fork "$STASH":refs/heads/server/b100-local-opts
 + `MERGE_PROMPT`）已实现「单次 LLM 调用把 2–3 条候选融合成一条、**闭集防幻觉**（绝不新增
 候选里没有的细节）、保时序」。它**还没有** support 计票／单例验真／CSER 双向验收（那些是
 方案的 F1+）。**F0 的目的：用 300 片人审判断「融合是否真比单条更全、且幻觉 <10%」**，
-达标才值得建 F1。
+达标才值得建 F1。人审用**和 better_zh 完全同款的离线可视化包**（视频+候选+融合稿同屏点按钮，
+见第 3 步），不用 Gradio、不用手拼 TSV。
 
 **做这几步（repo 根目录，数据机）：**
 
@@ -193,79 +194,67 @@ bash tools/data_audit/run_v100.sh status   # 看进度；跑完 8 分片行数�
 ```
 
 ```bash
-# 2) 融合体检 + 生成 300 片人审表（一个块：先看健康，再抽样）
+# 2) 融合体检（只看健康、不建表；不健康就别急着审）
 source ~/audit_env/bin/activate && cd ~/mobileclip
 python - <<'PY'
-import json, glob, random, csv
-random.seed(0)                                   # 固定，可复现
+import json, glob, random
+random.seed(0)
 OUT="outputs/audit_10k"
-# 候选（来自 s2_verdicts 的 better_zh）
 cand={}
 for f in glob.glob(f"{OUT}/s2_verdicts.*.jsonl"):
     for l in open(f,encoding="utf-8"):
         r=json.loads(l); v=(r.get("verdict") or {})
         cs=[c for c in (v.get("better_zh") or []) if isinstance(c,str) and c.strip()]
         if r.get("video"): cand[r["video"]]=cs
-# 体检分类：真融合(≥2候选) / 单候选透传 / 空(0候选,黑屏) / 判定失败
-tot=real=passthru=nullc=err=0; rows=[]
+tot=real=passthru=nullc=err=0; ex=[]
 for f in glob.glob(f"{OUT}/s2_merged.*.jsonl"):
     for l in open(f,encoding="utf-8"):
         r=json.loads(l); v=(r.get("verdict") or {}); tot+=1
-        vid=r.get("video"); cs=cand.get(vid) or []; m=v.get("merged_zh")
+        cs=cand.get(r.get("video")) or []; m=v.get("merged_zh")
         if v.get("error"): err+=1; continue
-        if len(cs)>=2 and isinstance(m,str) and m.strip():
-            real+=1; rows.append((vid,cs,m))
+        if len(cs)>=2 and isinstance(m,str) and m.strip(): real+=1; ex.append((cs,m))
         elif len(cs)==1: passthru+=1
         else: nullc+=1
 print(f"总行数 {tot} | 真融合(≥2候选) {real} | 单候选透传 {passthru} | 空(0候选/黑屏) {nullc} | 判定失败 {err}")
-print(f"→ 进入人审池 {len(rows)} 片\n--- 抽 3 例肉眼看融合质量 ---")
-for vid,cs,m in random.sample(rows, min(3,len(rows))):
+print("--- 抽 3 例肉眼看融合质量 ---")
+for cs,m in random.sample(ex, min(3,len(ex))):
     print(f"候选: {' ／ '.join(cs)}\n融合: {m}\n")
-# 抽 300（固定顺序，可复现）
-random.seed(0); random.shuffle(rows)
-with open(f"{OUT}/review_merge.tsv","w",encoding="utf-8-sig",newline="") as fo:
-    w=csv.writer(fo,delimiter="\t")
-    w.writerow(["video","候选(全部)","融合稿","幻觉[y/n]","比最佳单条更全[y/n]","note"])
-    for v,cs,m in rows[:300]: w.writerow([v," ／ ".join(cs),m,"","",""])
-print(f"写出 {min(300,len(rows))} 行 -> {OUT}/review_merge.tsv")
 PY
 ```
 
-**先看体检那几个数**（不健康就别急着审 300）：真融合应 ≈9000+（`better_zh` 是 9951×3）；
+**先看这几个数**（不健康就别急着审）：真融合应 ≈9000+（`better_zh` 是 9951×3）；
 空的应 ≈49（黑屏片，`better_zh` 为空）；**判定失败应接近 0**——若很多，先别审，把数字贴 Claude 查。
 抽的 3 例也扫一眼：融合稿有没有把候选的细节合起来、读着通顺。
 
-**怎么判（填 `review_merge.tsv` 两列）：**
-- **幻觉[y/n]**：融合稿里有没有出现**任何一条候选都没提过**的细节？有=y。这是最要紧的一列
-  ——闭集约束就是防这个，若 y 偏多说明模型没守闭集。
-- **比最佳单条更全[y/n]**：融合稿是否比**其中写得最好的那一条候选**含更多**真实**细节？
-  是=y。这验证「融合有信息增益」这个前提。
-- 中途填一半就统计也行。
-
 ```bash
-# 3) 统计决策门（填完后跑）
-python - <<'PY'
-import csv
-rows=[r for r in csv.DictReader(open("outputs/audit_10k/review_merge.tsv",encoding="utf-8-sig"),delimiter="\t")]
-f=[r for r in rows if r["幻觉[y/n]"].strip().lower() in ("y","n")]
-g=[r for r in rows if r["比最佳单条更全[y/n]"].strip().lower() in ("y","n")]
-if not f: raise SystemExit("还没填")
-hallu=sum(r["幻觉[y/n]"].strip().lower()=="y" for r in f)/len(f)
-fuller=sum(r["比最佳单条更全[y/n]"].strip().lower()=="y" for r in g)/len(g) if g else 0
-print(f"已填 {len(f)} 行 | 幻觉率 {hallu:.1%}（门：<10%）| 更全率 {fuller:.1%}（越高越好）")
-print("判定：", "✅ F0 通过，值得建 F1（验真管线）" if hallu<0.10 and fuller>0.5
-      else "❌ 幻觉率超门 → 收紧 MERGE_PROMPT / 加 support 验真（直接上 F1 的验真分支）"
-      if hallu>=0.10 else "⚠️ 幻觉达标但更全率不高 → 融合增益有限，先看 §6.3 消融再决定")
-PY
+# 3) 可视化人审：一条命令建表 + 打离线包（视频+候选+融合稿同屏，和 better_zh 完全同款）
+bash tools/data_audit/run_v100.sh merge-review        # 默认抽 300；MERGE_REVIEW_N=100 可调
+# 取回本地看画面：
+#   服务器  tar czf ~/bundle_merge.tgz -C outputs/audit_10k bundle_merge
+#   本地    scp vca1@10.235.31.101:~/bundle_merge.tgz . && tar xzf bundle_merge.tgz
+#           浏览器打开 bundle_merge/index.html  （视频 + 3候选 + 绿色融合稿 + 按钮同屏，进度自动存）
 ```
 
-**决策门（对齐方案 §6.2 F0）：**
-- **幻觉率 <10%** 且 **更全率 > 50%** → F0 通过。下一步落地：`bash tools/data_audit/run_v100.sh s4-merged`
-  把 `merged_zh` 写进训练 JSON，再按 §6.3 做 **融合 vs best-single vs uniform-K** 消融（这才是「融合有用」的判据）。
+**在浏览器里每条点两个按钮**（页头有提示）：
+- **幻觉 [y/n]**：绿色融合稿有没有说**任何候选都没提、且画面里也没有**的东西？有=y（最要紧，验闭集守没守）。
+- **更全 [y/n]**：融合稿比**其中写得最好的那一条候选**含更多**真实**细节？是=y（验融合有增益）。
+- 进度存浏览器本地，关掉再开不丢；填一半也能先统计。
+
+```bash
+# 4) 统计决策门（导出的 TSV 传回服务器后跑；复用现成 review-score，自动判两个门）
+bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/review_merge.tsv
+```
+
+**决策门（`review-score` 会自动打印，对齐方案 §6.2 F0）：**
+- **幻觉率 <10%** 且 **更全率 >50%** → F0 通过。落地：`bash tools/data_audit/run_v100.sh s4-merged`
+  把 `merged_zh` 写进训练 JSON，再按 §6.3 做 **融合 vs best-single vs uniform-K** 消融（这才是「融合有用」的硬判据）。
 - **幻觉率 ≥10%** → 现成 `MERGE_PROMPT` 的闭集约束不够，需上方案 F1 的 support 计票 + 单例验真
   （`support≥2` 采信、单例回看 8 帧 yes/no）。这要新写 `tools/fuse_verify.py`，跟我说一声我来写。
 
-**Then report back** in from-server.md：贴第 3 步的「幻觉率 / 更全率 / 判定」三行，我据此定 F1 要不要做、怎么做。
+> 纯文本快速版（不想看画面时）：`merge-review` 建的 `review_merge.tsv` 也能直接在 Excel 里填
+> `幻觉[y/n]`/`更全[y/n]` 两列，再跑同一个 `review-score`。但**判「更全」看画面更靠谱**——能直接核对某个细节到底在不在视频里。
+
+**Then report back** in from-server.md：贴第 4 步 `review-score` 的「幻觉率 / 更全率 + 判定」，我据此定 F1 要不要做、怎么做。
 
 ---
 
