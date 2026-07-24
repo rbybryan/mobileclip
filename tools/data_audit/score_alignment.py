@@ -52,11 +52,16 @@ def detect_keys(rec, args):
 
 def resolve_video_path(video_root, rec, video):
     """Try, in order: video_root/<video>, video_root/<InternVId-... suffix of
-    abs_path>, raw abs_path. First existing path wins (else first candidate,
-    so the decode error message still shows what was tried)."""
+    video> (drops a host-specific prefix such as "videos/" -- same fallback as
+    vlm_audit.py; queue-derived records carry that prefix and no abs_path),
+    video_root/<InternVId-... suffix of abs_path>, raw abs_path. First existing
+    path wins (else first candidate, so the decode error shows what was tried)."""
     cands = []
     if video:
         cands.append(os.path.join(video_root, str(video)))
+        m = re.search(r"InternVId[^/]*/.*", str(video))
+        if m:
+            cands.append(os.path.join(video_root, m.group(0)))
     ap = rec.get("abs_path")
     if ap:
         m = re.search(r"InternVId[^/]*/.*", str(ap))

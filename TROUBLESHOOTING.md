@@ -2087,3 +2087,19 @@ PY
 > 同类风险：仓库里 `configs/`、`utils/`、`tasks_clip/` 也都是命名空间包。目前没撞上，
 > 但只要哪天 site-packages 里出现同名普通包，会以完全一样的方式发作——症状同样是
 > "`No module named '<pkg>.<submodule>'` 而不是 `'<pkg>'`"，认这个特征。
+
+## pipeline-sample 步③ 打分全崩：`ERROR opening .../videos/videos/...`（双重前缀）
+
+**Symptom**：`run_v100.sh pipeline-sample` 的步③（SigLIP 逐重述打分）对每一片都刷
+`ERROR opening: .../videos/videos/InternVId-FLT_.../xxx.mp4, No such file or directory`
+（路径里 `videos/` 出现两次）；`pipe_scores.0.jsonl` 全是 error 记录，TSV 的
+`⟨SigLIP分⟩` 与 `A_minus_keep` 两列为空。步①②（重述/派生）却正常。
+
+**Cause**：`recaption_tasks.jsonl` 的 `video` 字段自带 `videos/` 前缀（照抄源 jsonl）且无
+`abs_path`；`score_alignment.py` 的 `resolve_video_path` 只试 `root/<video>` 与 abs_path
+两类候选，缺 `vlm_audit.py` 那条「video 自身的 `InternVId-...` 后缀回退」——于是拼出
+`$CLIPS/videos/...` 双重前缀。重述/派生走的是 `vlm_audit.py` 的解析器，所以没事。
+
+**Fix**：`score_alignment.py` 的解析器补上同一条后缀回退（与 `vlm_audit.py` 对齐）。
+`git pull` 后重跑 `pipeline-sample` 即可——重述/派生/验真按 video 续跑秒过，
+打分文件每次重建，全程只补打分与 TSV，几分钟。
