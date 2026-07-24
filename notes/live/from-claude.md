@@ -23,6 +23,64 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (21) — 基准定 RTime，但**它不发视频**（已核实）；先跑那件不要钱的：静态审计
+
+**Diagnosis / 修正 (20)：** 你选 RTime，我去核了官方 repo —— 有一条 (20) 没说清、而且是**成本的全部**：
+
+> repo 原文：**"To avoid potential copyright implications, we only provide original video urls,
+> and you can download the corresponding videos after obtaining necessary permission from the
+> source website."**
+
+**公开的是标注和代码，不是视频。** 也没有 HuggingFace 镜像。(20) 把 RTime 列在 SSv2 前面、
+并说"有公开 repo"，容易读成"比 SSv2 省事" —— **不对，视频一样要自己抓**，而且是 URL 逐条抓 +
+链接腐烂，和我们在 InternVid 上吃过的苦同一类。这一条已写进
+[`notes/order-sensitive-eval.md`](../order-sensitive-eval.md)（含核实过的论文/DOI/规模/三任务）。
+
+**所以先做不要钱的那一步 —— 任务 A 静态审计，它至今没跑过。**
+GATE-0 结果文件 §3 留了个明确缺口：现在只能说"MSR-VTT 测不出顺序"，**还不能区分**
+「模型真没有顺序信息」vs「模型有、但 MSR-VTT 不奖励」。静态审计**正好补这个**，
+而且**零数据、零 GPU、秒级** —— 它直接读权重里时间卷积核的**反对称分量占比**
+（时间反转把 `[a,b,c]` 变 `[c,b,a]`，**对称核 = 恰好反转盲**）和 `temporal_embedding` 的范数。
+
+**Do this next（哪台机器都行，不用 GPU、不用数据）：**
+
+```bash
+cd ~/mobileclip && git pull origin main
+python experiments/temporal_capacity_audit.py --self-test
+python experiments/temporal_capacity_audit.py ./checkpoints/mobileviclip_small.pt
+```
+
+**判读直接决定要不要花钱买基准：**
+
+| 结果 | 含义 | 接下来 |
+|---|---|---|
+| 反对称占比中位数 **<0.05**、DC/AC **>0.95**、`temporal_embedding`≈0 | 模型在**参数层面**就几乎不编码时间方向 | **先别买基准**。R2 的前提确认成立，且它的成败可以先用"反转敏感度"自测；RTime 只在要证明**下游收益**时才必需 |
+| 反对称占比明显 **>0** | 模型有方向信息，是基准测不出 | **值得买**，按 `order-sensitive-eval.md` §4 走 |
+
+⚠️ 该脚本**没在真权重上跑过**。训练态 checkpoint 里时间分支还没融合成 `reparam_conv_1d`，
+若键名对不上，它会把**候选键列表打印出来** —— 把那段原样贴回来，我按真实键名调（或给你一条
+先 reparam 再存推理态权重的命令）。
+
+**另外两条小事（顺手）：**
+```bash
+# ① 把 GATE-0 的 none 基线 r_mean 补进结果表（本轮已生成该目录，10 秒）
+python -c "import json;d=json.load(open('experiments/evals/gate0/msrvtt_none/eval_res.json'));print(json.dumps(d,ensure_ascii=False)[:400])"
+# ② 看清到底缺哪些评测数据（顺带确认 SSv2 的缺口）
+unset MVC_DATA_DIR && python experiments/check_readiness.py
+```
+
+**一条成本上的实话（`order-sensitive-eval.md` §5）：** 如果最后视频还是得下 SSv2，
+那么 **SSv2-MC 的接线成本是零** —— `config_ssv2_mc.py` 和 `retrieval_mc.py` 仓库里都已经有了，
+GATE-0 那次崩溃纯粹是缺 anno+视频；而 RTime 还得**额外写标注转换器**（官方没文档化 JSON 结构）
+**外加 RTime-Binary 的单独评测入口**（它是"正放 vs 倒放"二选一，形态像多选，不能硬塞进 `retrieval.py`）。
+⇒ **选哪个，取决于哪份视频你实际拿得到，不取决于代码。**
+
+**Then report back**（from-server.md）：静态审计的**完整 stdout**（`temporal_embedding` 一节 +
+时间核统计一节 + 末尾"全部时间核"两行汇总），键名对不上就贴候选键；外加 ① 的 json 和
+② 的 readiness 输出。拿到这三样我就能给出"买不买基准 / 买哪个"的定论。
+
+---
+
 ## 2026-07-24 (20) — GATE-0 判读：**顺序值 ≈0、帧多样性值 13 个点**；MSR-VTT 就此失去时序指标资格；SSv2-MC 是缺数据
 
 **Diagnosis:** (16) 的任务 B 跑完了 MSR-VTT 四个扰动，结论**非常干净**，完整表格已落
