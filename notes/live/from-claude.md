@@ -23,6 +23,30 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (4) — 重字幕主计划定稿：执行以 notes/recaption-master-plan.md 为准
+
+**Diagnosis:** 应维护者要求，对 `caption-fusion-scheme.md` 与 `data-quality-caprl-scheme.md`
+两份重字幕方案做了全面评估（含两路独立评审：VLM 方法论 + 统计设计），裁决合并为唯一执行层
+**[`notes/recaption-master-plan.md`](../recaption-master-plan.md)**（已并入 main，#221）。要点：
+S0 五样本重述照跑不变；**训练门 G1 前置**（不需要任何人力标注），150–300 片人评标定收缩为
+~600 单元判定（≈1 人·日）且**后置**到 G1 通过之后；融合（CFU）降为门控假设（外部评审先验
+偏低，但保留 §6.4 可证伪测试）；RETRANSLATE 并入 RECAPTION；两份旧方案的分阶段清单不再照做
+（各自文首已加取代声明）。
+
+**Do this next（V100 审计机 101vector；= 主计划 Stage 0；与 b100 的 (3) 互不阻塞）:**
+```bash
+# ① 五样本重述主批（前置: s3+s4 已产 $OUT/v0_2/recaption_tasks.jsonl; 2,532 片当天级）
+bash tools/data_audit/run_v100.sh recap
+# ② 跑完记录: 总生成数 + 起止时间 + 卡数（吞吐是全量排期的唯一可信输入）
+# ③ 两个侧批诊断（各 300 片, 主批完再跑; 精确命令见主计划 §3 Stage 0）
+```
+b100 侧照 **(3)** 继续英文线 anno → 预检 → §6 冒烟/R0（即主计划 §1 的 EN 论文线，两线并行）。
+
+**Then report back** in from-server.md：recap5.* 行数、吞吐三元组、抽 3 片贴 `verdict.recaps`
+（我要目检五条是否真有差异 = 温度坍缩检查）。
+
+---
+
 ## 2026-07-24 (3) — 覆盖确认为全量 10.6M，放行：建 11 片 anno → 预检 → §6
 
 **结论：这份 jsonl 就是作者 InternVid-10M-FLT 全量，非子集。** 你的计数：total
