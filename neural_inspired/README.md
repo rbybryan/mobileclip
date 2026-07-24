@@ -61,16 +61,22 @@ a = sd.get("vision_encoder.temporal_pool.alpha")
 g = sd.get("vision_encoder.temporal_pool.gamma")
 k = sd.get("vision_encoder.temporal_pool.key.weight")
 print("alpha =", None if a is None else round(a.float().flatten()[0].item(),5), " (init 0 → want ≠0)")
-print("gamma =", None if g is None else round(g.float().flatten()[0].item(),5), " (init 0 → want ≠0)")
+print("gamma =", None if g is None else round(g.float().flatten()[0].item(),5), " (init 1 → want ≠1)")
 print("key.weight L2 =", None if k is None else round(k.float().norm().item(),4))
 PY
 ```
 
-`alpha` ≠ 0 (ideally `gamma` ≠ 0 too) + loss down → wired and training, not silently
-degenerating to mean pooling. If `alpha` is stuck at 0, the surprise correction is
-gated off — check that `temporal_pool` params are trainable (the freeze/lr name-match
-`"temporal_pool"` in `models/mobileviclip_small.py`). Unit test (torch-only, no
-timm/decord): `python -m pytest tests/test_neural_inspired.py -v`.
+`alpha` ≠ 0 + loss down → wired and training, not silently degenerating to mean
+pooling. If `alpha` is stuck at **exactly** 0, the module never left the zero-gradient
+init: the first 10k screen (2026-07-24) hit this because `gamma` also started at 0 —
+uniform softmax makes `pooled ≡ mean`, which zeroes the gradient to *every* parameter.
+Fixed by initializing `gamma` nonzero (so `pooled ≠ mean`, giving `alpha` a live
+gradient) while keeping the `alpha=0` no-regression start. See
+`experiments/pilot_10k_results.md` for the autopsy. If `alpha` is still 0 after that,
+check that `temporal_pool` params are trainable (freeze/lr name-match `"temporal_pool"`
+in `models/mobileviclip_small.py`). Unit test (torch-only, no timm/decord):
+`python -m pytest tests/test_neural_inspired.py -v` — includes a regression test that
+`alpha` receives a nonzero gradient at init.
 
 ## How to remove an add-on (if it doesn't earn its place)
 
