@@ -23,6 +23,47 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (18) — (13) 任务 C 判读:全过,1.6/U2 关闭,Fig-1 v1 数据到手;⚠️ recap 抽样启动是空跑
+
+**判定:任务 C ✅,(13) 三个任务全部收官。**
+
+四组 `ret_test_emb` 读数(官方权重,MSR-VTT 1K,fp32,middle 采样):
+
+| T | t2v R@1 | v2t R@1 | r_mean |
+|---|--------|--------|--------|
+| 2 | 35.7 | 35.8 | 55.42 |
+| 4 | 39.6 | 39.2 | 60.03 |
+| 8 | 40.8 | 42.5 | 61.55 |
+| 16 | 42.2 | 43.1 | 62.25 |
+
+三个关键读数:
+
+1. **锚点核验通过(最重要)**:T=8 的 DSL 口径 t2v R@1 = **42.5**,与 B0 锁定值
+   42.50 完全一致。T=8 走的是 2.1 插值 identity 路径 ⇒ **2.1 的 11 处动态化改动
+   对官方权重零回归**,这是继本地 CPU 逐位单测之后的服务器 GPU 级证据。
+2. **T=16 免训练反超 T=8**(emb r_mean +0.7,DSL t2v +0.8):`temporal_embedding`
+   从 8 插值升采样到 16(2.1 的 resize 路径首次在官方权重上实跑)不仅没坏,还白拿
+   增益——直接支持 T 无关设计与弹性推理叙事。
+3. **T=2 gap = C2 的靶子**:相对 T=8 掉 6.1 r_mean(t2v R@1 −5.1);退化平滑无
+   断崖,8× 帧数差距只有 ~6.9 r_mean。这条曲线就是论文 **Fig-1 v1**(该失配曲线
+   在视频-文本模型上未见发表),绘图在 Claude 侧做,服务器无需再动。
+
+结果已落 `experiments/ROADMAP.md` 1.6(含表)+ 状态速览;原始 JSON 在服务器
+`experiments/evals/b0_multiT/msrvtt_T{2,4,8,16}/eval_res.json`,**别删**。
+
+**⚠️ 顺带发现:recap 抽样那次启动是空跑。** 粘贴时说明文字连命令一起进了 shell,
+真正的 `head -n 50 <队列> > sample.jsonl` 没有执行(就是报 `head: command not found`
+那行,但重定向仍创建了**空的** sample.jsonl),于是 `[input] sample.jsonl （0 片）`,
+8 个 shard 秒退,什么也没算。重跑三步:① 单独执行 head 那行,`<队列>` 换成 (14)
+里写的实际队列文件;② `wc -l sample.jsonl` 确认 =50;③ 再
+`RECAP_INPUT=sample.jsonl bash tools/data_audit/run_v100.sh recap`。续跑按 video
+去重,不会重复计费已算过的片。
+
+**V100 队列剩余**:(16) 的 GATE-0 任务 A/B(优先,阻塞时序类改动)→ recap 抽样
+修正重跑 → per-T BN 漂移诊断(用 r3e ckpt,`experiments/per_t_bn.py`,不急)。
+
+---
+
 ## 2026-07-24 (17) — (13) 任务 A/B 判读:全过,C2 转 ✅;一个观察项;只差 (13) 任务 C 回报
 
 > **编号提醒**:本块判读的是 **(13) 的任务 A/B/C**(pytest / r3e 冒烟 / 多 T 曲线)。
