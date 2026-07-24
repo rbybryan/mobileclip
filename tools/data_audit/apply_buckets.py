@@ -100,7 +100,9 @@ def main():
 
     better = {}
     if args.verdicts:
-        for line in open(args.verdicts, encoding="utf-8"):
+        # glob 一致：verdicts 在 V100 上是分片的 s2_verdicts.0..7.jsonl，
+        # 传 glob 而非单文件（与 --merged 同用 iglob_lines）
+        for line in iglob_lines(args.verdicts):
             try:
                 r = json.loads(line)
             except json.JSONDecodeError:

@@ -21,6 +21,7 @@
 #   bash tools/data_audit/run_v100.sh gran-check   # ⑨b 粒度结果分析 + n_info=0 归因 -> gran_health.md
 #   bash tools/data_audit/run_v100.sh s2-merge     # ⑧c 合并 better_zh 三候选为一条密字幕（纯文本）
 #   bash tools/data_audit/run_v100.sh merge-review # ⑧d 融合可视化人审（视频+候选+融合稿离线包，同 better_zh）
+#   bash tools/data_audit/run_v100.sh s4-merged    # ⑧e 落地：融合稿当主字幕写进 v0.2 训练 JSON
 #   JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge  # ⑥ 云端裁判（可选，需 API key）
 #   bash tools/data_audit/run_v100.sh judge-agree # ⑥b 一致率+Cohen's κ（可对外来裁判文件独立重算）
 #   bash tools/data_audit/run_v100.sh xling-check # ⑥c 裁决 xling 阈值（s3 前必做）
@@ -462,6 +463,24 @@ merge-review)
   echo "  本地：   scp vca1@10.235.31.101:~/bundle_merge.tgz . && tar xzf bundle_merge.tgz"
   echo "           浏览器打开 bundle_merge/index.html —— 视频/候选/融合稿/按钮同屏，进度自动保存"
   echo "  填完点「导出 TSV」，传回服务器统计门： bash $0 review-score $OUT/review_merge.tsv"
+  ;;
+# --------------- ⑧e 落地 v0.2：融合稿(merged_zh)当主字幕写进训练 JSON
+s4-merged)
+  need_data
+  ls "$OUT"/s2_merged.*.jsonl >/dev/null 2>&1 || \
+    { echo "缺 $OUT/s2_merged.*.jsonl（先跑: bash $0 s2-merge）"; exit 1; }
+  [ -f "$OUT/buckets.jsonl" ] || { echo "缺 $OUT/buckets.jsonl（先跑: bash $0 s3）"; exit 1; }
+  mkdir -p "$OUT/v0_2"
+  python3 tools/data_audit/apply_buckets.py \
+    --input "$DATA" --buckets "$OUT/buckets.jsonl" --verdicts "$OUT/s2_verdicts.*.jsonl" \
+    --merged "$OUT/s2_merged.*.jsonl" \
+    --out-data "$OUT/v0_2/internvid_zh_v0_2.jsonl" \
+    --out-retranslate "$OUT/v0_2/retranslate_tasks.jsonl" \
+    --out-recaption "$OUT/v0_2/recaption_tasks.jsonl" \
+    --out-drop "$OUT/v0_2/dropped.jsonl"
+  echo "== v0.2 训练 JSON 已写到 $OUT/v0_2/internvid_zh_v0_2.jsonl =="
+  echo "   融合稿(merged_zh)当主字幕，原字幕/候选保留为 captions 视图；"
+  echo "   下一步是 §6.3 消融（融合 vs best-single vs uniform-K），在训练机上做。"
   ;;
 # ------------------------------- ⑨b 粒度重判结果分析 + n_info=0 归因
 gran-check)
