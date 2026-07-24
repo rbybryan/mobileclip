@@ -24,6 +24,17 @@ class TemporalSurprisePool(nn.Module):
     pooling contract used by the vision encoder: input ``[B, T, C]`` per-frame
     embeddings, output ``[B, C]``.
 
+    **Gradient-flow requirement — why ``gamma`` starts nonzero.** ``alpha``'s own
+    gradient is ``dL/d(out) . (pooled - mean)``. If ``gamma`` also started at 0,
+    the softmax would be uniform, ``pooled`` would *equal* ``mean``, so
+    ``(pooled - mean) == 0`` and **every** parameter's gradient (``alpha``,
+    ``gamma``, ``key``) would be exactly 0 — the init is a zero-gradient fixed
+    point and the module can never leave mean pooling (verified by autograd; see
+    ``experiments/pilot_10k_results.md``). Initializing ``gamma`` to a nonzero
+    value makes ``pooled != mean`` at init, giving ``alpha`` a live gradient so
+    the gate can open. Crucially this keeps the no-regression start intact:
+    ``alpha=0`` still forces ``output == mean`` at step 0 regardless of ``gamma``.
+
     "Did it train?" tell (for the V100/10k plumbing screen): ``alpha`` leaves 0
     (primary gate), and ``gamma`` / ``key`` leave their init — i.e. the module
     actually started weighting frames by surprise instead of averaging them.
@@ -33,9 +44,12 @@ class TemporalSurprisePool(nn.Module):
         super().__init__()
         # Learned "error space": which feature directions count toward surprise.
         self.key = nn.Linear(dim, dim, bias=False)
-        # Surprise sharpness. 0 -> uniform frame weights (== mean) at init.
-        self.gamma = nn.Parameter(torch.zeros(1))
-        # Gate on the surprise correction. 0 -> output == mean at init.
+        # Surprise sharpness. MUST be nonzero: gamma=0 makes the weights uniform,
+        # which zeroes the gradient to *every* parameter (see class docstring).
+        # gamma>0 up-weights high-surprise frames (the predictive-coding prior).
+        self.gamma = nn.Parameter(torch.ones(1))
+        # Gate on the surprise correction. 0 -> output == mean at init (no
+        # regression); its gradient is live because gamma!=0 makes pooled!=mean.
         self.alpha = nn.Parameter(torch.zeros(1))
         self.eps = eps
 

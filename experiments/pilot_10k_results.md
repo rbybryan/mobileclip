@@ -116,3 +116,77 @@ PY
 
 相关：`experiments/README.md` §2b（试点 runbook）、§4（R0→R1 全量 A/B）、
 `experiments/ROADMAP.md` 1.3 / 3.2、`experiments/SETUP_B100.md`（H100 runbook）。
+
+---
+
+# 脑启发 add-on 试点 · `TemporalSurprisePool`（2026-07-24）
+
+`pilot_10k_surprise`(只把 r0 的 `temporal_pooling="mean"` 换成 `"surprise"`,
+损失/lr/数据全同 r0:softmax VTC、`use_sigmoid_loss=False`、`different_lr` 关、全 1e-5)
+在 8×V100 跑完冒烟(`debug True`,4 iter/epoch)+ 正跑(10 epoch × 17 batch)。
+
+## 现象:动力学与 r0 **逐点重合**
+
+| | ep0 avg `loss_vtc` | ep9 avg | ep9 `ret_test` r_mean(DSL) |
+|---|---|---|---|
+| r0(mean 池化) | 1.01 | 0.27 | 93.20 |
+| surprise 池化 | 1.03 | 0.28 | 93.50 |
+
+链路层面**通过**:8 卡 DeepSpeed 正常初始化、`temporal_pool.{alpha,gamma,key}` 出现在
+优化器参数组(lr 1e-5)、损失单调下降、无 NaN、无跳变。检索 93.5 vs 93.2 在 ~1.3pp
+二项 SE + BN running-stats 混淆之内,**不可据此排序**(两级实验:10k 只做链路冒烟)。
+
+## 但这条重合是**报警**,不是好消息:模块「死」在 init
+
+判据是 `alpha` 必须离开 0(见 `neural_inspired/README.md` 与 `pilot_10k_surprise.py`)。
+动力学与 r0 逐点重合,恰恰是 **surprise 模块从没参与计算**的症状。用 autograd 在 init
+处核实(`TemporalSurprisePool(dim).forward` + 反传,见提交里的回归测试):
+
+| init | init 处 output==mean(不退化) | `alpha` 梯度 | `gamma` 梯度 | `key` 梯度 |
+|---|---|---|---|---|
+| **`gamma=0, alpha=0`(原实现)** | 是 | **0** | **0** | **0** |
+| `gamma=1, alpha=0`(修复) | 是 | **2.0e-3** | 0(次步起 ≠0) | 0(次步起 ≠0) |
+
+**根因**:`alpha` 自己的梯度是 `dL/d(out)·(pooled−mean)`。原实现 `gamma` 也从 0 起 ⇒
+`softmax(0)` 均匀 ⇒ `pooled ≡ mean` ⇒ `(pooled−mean)=0` ⇒ **`alpha/gamma/key` 三者
+梯度全为 0**。init 是个**零梯度不动点**,AdamW 对零梯度不更新(`alpha`、`gamma` 又都
+`wd=0`),模块永远停在 mean 池化——所以它和 r0 逐位一样。预期 ckpt 读数:
+`alpha=0.0`、`gamma=0.0`、`key≈init`(仅 `key` 有 `wd=0.2`,170 步权重衰减 ~0.03%)。
+
+> 对比 `TemporalAttentionPool`(`mean + proj(out)`,`proj` 零初始化)为何没死:它零初始化的是
+> **输出投影**,而被投影的 `out`(注意力输出)在 init 非零 ⇒ `dL/dproj = dL/d(out)·outᵀ ≠ 0`,
+> 门能开(判据三实测 `proj` L2 从 0 练到 0.18)。surprise 是用**标量 alpha 乘 (pooled−mean)**,
+> 而 `pooled−mean` 自己在 init 就是 0——双零门,连 alpha 自己的梯度都被掐断。
+
+**为何必须现在修**:H100 的 A/B 臂 `nA1_surprisepool` 用的是同一个模块。不修的话它会
+**静默地拿 mean-vs-mean 做对照**,然后得出「惊奇池化没用」——一个把这条脑启发方向
+错误枪毙的假阴性。
+
+## 修复(本提交)
+
+- `neural_inspired/temporal_surprise_pool.py`:`gamma` 由 `torch.zeros(1)` 改为
+  `torch.ones(1)`。`pooled ≠ mean` 于是给 `alpha` 一个活梯度;**`alpha=0` 不变**,所以
+  init 处 `output == mean` 的严格不退化起步**照旧**(与 `gamma` 取值无关)。
+- `tests/test_neural_inspired.py`:加回归测试
+  `test_temporal_surprise_pool_gradient_flows_at_init` —— 同时断言 init 处
+  ①`output==mean`(不退化)且 ②`alpha.grad ≠ 0`(门能开)。torch-only,`4 passed`。
+  这条测试会在 `gamma=0` 的老实现上失败,正是能拦住本 bug 的那道闸。
+
+## 待办(服务器侧,修复后重跑确认)
+
+```bash
+git pull origin main
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_surprise.py 8   # 重跑
+python - <<'PY'                                                                # 读 ckpt 确认门开了
+import torch
+f = "experiments/runs/pilot_10k_surprise/ckpt_09.pth/mp_rank_00_model_states.pt"
+sd = torch.load(f, map_location="cpu"); sd = sd.get("module", sd)
+a = sd.get("vision_encoder.temporal_pool.alpha")
+g = sd.get("vision_encoder.temporal_pool.gamma")
+print("alpha =", None if a is None else round(a.float().flatten()[0].item(),5), " (init 0 → 判据 ≠0)")
+print("gamma =", None if g is None else round(g.float().flatten()[0].item(),5), " (init 1 → 应移动)")
+PY
+```
+
+修复前那次的 ckpt 若还在,读出来应是 `alpha=0.0 / gamma=0.0`(死模块的实证)。
+修复后重跑应看到 `alpha` 离开 0——那才是链路判据真正通过。
