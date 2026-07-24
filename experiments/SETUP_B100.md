@@ -41,8 +41,10 @@
 
 - [x] §0 隧道/代理 —— 已验证可用（clone / push 都走通过）
 - [x] §1 项目 —— git 隔离（`.gitenv`）与 PAT 凭据已就绪；`rby/mobileclip` 已 clone
-- [x] §2 环境 —— conda `mvc_env310`（py3.10）已建好；`check_readiness --decode` 能跑、
-      decord 能解码，说明栈可用（sm_90 由 §6 冒烟的首个 torchrun 最终确认）
+- [x] §2 环境 —— **改用系统 torch 2.5.1+cu124（已确认含 `sm_90`）+ 私有 user-site**；
+      `mvc_env310` 提示符虽在，但 `python` 实际指向 `/usr/bin/python`，不再修它。
+      余下只差补几个纯 python 小包（`source experiments/env_b100.sh` +
+      `python experiments/check_imports.py`，已知缺 `termcolor`）
 - [x] §3 权重 —— `mobileclip_s2.pt`(398MB) / `mobileviclip_small.pt`(74MB) /
       `mobileclip_s0.pt`(216MB) 均 `[OK ]`
 - [x] §4 数据 —— **走了方案 C**（zyc 合并 jsonl 的 `abs_path`+`caption` 生成 11 片 anno，
@@ -117,6 +119,49 @@ torch 构建的 arch 列表里没有本机的 SM。**修法同一套**——装�
 `sm_90` 的 torch，再靠 `torch.cuda.get_arch_list()` 验证后才开跑。方向：H100 要
 **更新**的构建，不是 cu117——但没 Blackwell 那么苛刻，任一 **cu118 及以上的 torch 2.x**
 wheel 都带 sm_90（cu118 里就有；cu124 对 Hopper 更快，作稳妥起点）。
+
+### ✅ 现行方案（2026-07-24 实测定案）：**沿用系统 torch + 私有 user-site**
+
+三条实测结论，把这一节从"重建环境"改成"别重建"：
+
+1. `/usr/bin/python` 的 torch 是 **2.5.1+cu124**，`get_arch_list()` **含 `sm_90`** ——
+   上面那条 Hopper 顾虑在这台机器上**本来就不成立**（仓库钉的 1.13.1+cu117 从没被装上）。
+2. deepspeed / transformers / decord / open_clip 这些重依赖系统里都有：2026-07-24 的冒烟
+   日志里 deepspeed 已起、`models` 也 import 成功，peft 与 open_clip 两关都过了。
+3. 但 **b100 是共用 root 账号**，`/usr/local/lib/python3.10/dist-packages` 是 wky / zyc
+   共用的。往里 `pip install <包>==<版本>` 会把别人在用的 transformers / numpy / timm
+   **降级**——事故级操作。**已经装进去的就到此为止，别再往系统里装。**
+
+于是：**不重建 torch，缺的小包装进自己的 user-site**。每次开新 shell 先 source 一次：
+
+```bash
+cd /workspace/mount/b100_zaip_data/rby/mobileclip
+source experiments/env_b100.sh          # 只设 PYTHONUSERBASE / PYTHONPATH / MVC_*，不装任何东西
+python experiments/check_imports.py     # 一次列全缺哪些包，并打印可直接复制的 pip 命令
+```
+
+`check_imports.py` 把整条 pretrain import 链上的第三方模块逐个试一遍，**一次报全**
+（不用再一轮崩一个包）。按它末尾给出的命令补装，**只用这一种形式**：
+
+```bash
+python -m pip install --user --no-deps <包名...>
+```
+
+- `--user` + `PYTHONUSERBASE` → 落到 `rby/pyuser/`，不碰共用系统目录；user-site 在
+  `sys.path` 里**优先于**系统 site-packages，所以补的包只对 source 过 `env_b100.sh`
+  的 shell 生效，对别人无影响。
+- `--no-deps` → 不让 pip 顺手升/降级 torch / transformers / numpy。
+- 装完重跑 `check_imports.py`，直到打印"全部 [OK]"再进 §6。
+
+> 已知第一批缺失：**`termcolor`**（2026-07-24 的 2 卡冒烟崩在 `utils/logger.py:14`）。
+> 另注意 **`openai-clip` ≠ `open_clip_torch`**：前者模块名是 `clip`，后者才是仓库
+> `import open_clip` 要的那个（见 `TROUBLESHOOTING.md` 同名节）。
+>
+> `PYTHONUSERBASE` 必须在**启动训练前**导出：`run_pretrain.sh` 用
+> `python -m torch.distributed.run` 拉起子进程，子进程继承环境变量；脚本开头会把
+> `python` 和 `userbase` 都打出来，看到 `userbase : <未设置>` 就是忘了 source。
+
+### 备选：自建 conda 环境（**仅当**系统 torch 不可用时才走这条）
 
 **⚠️ 别用 `python -m venv`（2026-07-23 实测翻车）**：miniforge 的 python 是 3.12，
 venv 建出来**没有自带 pip**——shell 里的 `pip` 于是落到共用 conda base，torch 等全装进
@@ -448,20 +493,24 @@ batch_size=64/卡、lr=1e-5、deepspeed stage-1。
 > （常态档：排序臂各 1 epoch 等步，R0 + 胜者跑满 3 epoch）。
 
 ```bash
-# 0) 首光冒烟：先用 DDP+AMP（绕开 deepspeed 构建）+ bf16 + debug，几十步自停，
+# 0) 每个新 shell 都先 source 一次环境（§2 现行方案），并确认依赖齐了：
+source experiments/env_b100.sh
+python experiments/check_imports.py     # 必须打印“全部 [OK]”，否则先按它给的命令补包
+
+# 1) 首光冒烟：先用 DDP+AMP（绕开 deepspeed 构建）+ bf16 + debug，几十步自停，
 #    只验证 arch/数据/前反向通了。冒烟用 2 卡更快（仍在前 4 张之内）：
 CUDA_VISIBLE_DEVICES=0,1 bash experiments/run_pretrain.sh \
     experiments/configs/r0_baseline.py 2 \
     use_bf16 True bf16 True deepspeed.enable False debug True
 
-# 1) 真 R0（全量基线；bf16；前 4 张卡；后台挂多天，掉隧道也不影响）
+# 2) 真 R0（全量基线；bf16；前 4 张卡；后台挂多天，掉隧道也不影响）
 mkdir -p experiments/runs   # nohup 重定向要先有这个目录
 CUDA_VISIBLE_DEVICES=0,1,2,3 nohup bash experiments/run_pretrain.sh \
     experiments/configs/r0_baseline.py 4 \
     use_bf16 True bf16 True > experiments/runs/r0_baseline.log 2>&1 &
 tail -f experiments/runs/r0_baseline.log     # 头几百步看 loss 是否正常下降
 
-# 2) R1 三臂（同数据、同步数、同 bf16、同 4 卡/256 batch —— 只换被测组件）
+# 3) R1 三臂（同数据、同步数、同 bf16、同 4 卡/256 batch —— 只换被测组件）
 for cfg in r1a_sigmoid r1b_attnpool r1_both; do
   CUDA_VISIBLE_DEVICES=0,1,2,3 bash experiments/run_pretrain.sh \
       experiments/configs/$cfg.py 4 use_bf16 True bf16 True
