@@ -16,6 +16,7 @@ from models import *
 from tasks_clip.retrieval_utils import evaluation_wrapper
 from tasks_clip.shared_utils import get_media_types, setup_model
 from utils.basic_utils import MetricLogger, SmoothedValue, setup_seed
+from utils.elastic_t import choose_step_t, subsample_frame_indices
 from utils.config_utils import setup_main
 from utils.distributed import get_rank, is_main_process
 from utils.logger import log_dict_to_wandb, setup_wandb
@@ -74,8 +75,26 @@ def train(
     # dtype 就绕开了这个雷;非半精度时它是 float32,下面的 .to() 即为空操作。
     param_dtype = next(model_without_ddp.parameters()).dtype
 
+    # --- C2 弹性 T(ROADMAP 2.1;默认关)---
+    # config.elastic_t = dict(enable=True, choices=[2,4,8,16]) 时启用:数据侧按
+    # num_frames(建议 16)解码母序列,这里每个 step 用 (seed, global_step) 决定性
+    # 地选一个 T 并均匀子采样 ⇒ 所有 rank 同 T(模块级帧数上下文的要求),教师/
+    # 复现可按同一 (seed, step) 重建帧下标(审核修正 9)。开关关闭时零改动。
+    elastic_cfg = config.get("elastic_t", None) or {}
+    elastic_on = bool(elastic_cfg.get("enable", False))
+    if elastic_on:
+        elastic_choices = list(elastic_cfg.get("choices", [2, 4, 8, 16]))
+        elastic_seed = int(config.get("seed", 42))
+        metric_logger.add_meter("elastic_t", SmoothedValue(window=100, fmt="{value:.0f}"))
+        logger.info(f"elastic_t 启用:choices={elastic_choices},seed={elastic_seed}")
+
     iterator = metric_logger.log_every(train_loader, log_freq, header)
     for i, (media_type, (image, text, idx)) in enumerate(iterator):
+        if elastic_on and image.dim() == 5:
+            t_step = choose_step_t(elastic_choices, elastic_seed, global_step)
+            if t_step != image.shape[1]:
+                image = image[:, subsample_frame_indices(image.shape[1], t_step)]
+            metric_logger.update(elastic_t=float(t_step))
         # 模型已被 shared_utils 整体转成 fp16/bf16,输入却还是 fp32——原本靠下面那个
         # autocast 兜住。但 DeepSpeed 的 engine.forward 会**显式关掉**外层
         # torch.autocast(deepspeed/runtime/torch_autocast.py 的 autocast_if_enabled:

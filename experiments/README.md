@@ -75,6 +75,10 @@ export MVC_ANNO_DIR=/path/to/anno_downstream   # 标注 json 根目录
 # 单测:sigmoid 损失默认行为不变 + 注意力池化零初始化 == mean
 python -m pytest tests/test_optimization_components.py -v
 
+# 单测:C2 T 无关化(ROADMAP 2.1)——T=8 与旧硬编码路径逐位一致、任意 T 前向、
+# temporal_embedding 插值、弹性 T 采样器、per-T BN 工具(纯 CPU 可跑,~4 分钟)
+python -m pytest tests/test_t_agnostic.py -v
+
 # 短训冒烟(单卡、debug 模式几十步自动停,验证数据/模型/损失全链路):
 bash experiments/run_pretrain.sh experiments/configs/r0_baseline.py 1 debug True
 bash experiments/run_pretrain.sh experiments/configs/r1_both.py    1 debug True
@@ -101,10 +105,10 @@ H100 之前都该先在这里过一遍——但只测得了**实现,不是效果
 |---|---|---|
 | C3 注意力池化(`temporal_pool`) | ✅ 完整 plumbing:zero-init==mean 单测、建模、梯度、稳定性 | 已在 r1 跑过 |
 | C3 sigmoid 多正例损失 | ✅ 建模、可学 t/b 离开初值、稳定性 | 已在 r1 跑过 |
-| C2 T 无关化(动态 T / `temporal_embedding` 插值 / 随机 T) | ✅ 验收=「T=8 路径与旧代码逐位一致」单测(纯 CPU 也行)+ 随机 T 冒烟 | ROADMAP 2.1 |
+| C2 T 无关化(动态 T / `temporal_embedding` 插值 / 随机 T) | ✅ **代码已落地(2026-07-24)**:单测 `tests/test_t_agnostic.py` 18 项全过(T=8 逐位一致 ✓);V100 随机 T 冒烟:`bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r3e.py 8 debug True` | ROADMAP 2.1;开关 `elastic_t=dict(enable,choices)`,默认关=零改动 |
 | **C3 `caption_idx` 多正例掩码** | ⚠️ **10k 上测不了**:全库仅 1 对共享字幕,掩码触发不了。要 plumbing 测得自造「字幕故意重复」的小合成集,否则等 H100 全量 | 见下方 07-21 共享字幕说明 |
 | C1 教师蒸馏(DR) | ✅ 但测的是**成本不是效果**:10k 上试点教师每 clip 耗时/存储,定 L vs 1B | ROADMAP 2.2 |
-| **C2 per-T BN 漂移诊断 + 校准**(U3) | ✅ 纯 plumbing:同一 ckpt 分别以纯 T=2 / 纯 T=16 前向若干 batch,量化各 BN 层 running_mean/var 偏移;训后 per-T 校准脚本(只前向刷 buffer)跑通。CPU/单卡即可 | `notes/plan-review-upgrades.md` U3;随机 T 训练的 BN 统计混淆正是 10k 排序禁令的原因之一,这里只测机械正确性 |
+| **C2 per-T BN 漂移诊断 + 校准**(U3) | ✅ 工具已落地:`experiments/per_t_bn.py`(snapshot / reset+recalibrate / drift report / per-T bank),单测在 `tests/test_t_agnostic.py`;对真 ckpt 的诊断随 r3e/R3 试点跑(用法见该文件 docstring,CPU/单卡即可) | `notes/plan-review-upgrades.md` U3;随机 T 训练的 BN 统计混淆正是 10k 排序禁令的原因之一,这里只测机械正确性 |
 
 **V100 硬件红线**(决定改动**能不能跑起来**,与选型无关):必须用带 `sm_70` 的
 cu118 torch(否则第一个 `barrier()` 全崩,见 §2b 第 3 步预检);**无 bf16、无
