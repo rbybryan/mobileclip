@@ -149,6 +149,58 @@ bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r3e.py 8 debug Tr
 
 ---
 
+## 2026-07-24 (7) — 8 张卡都满了：先做**不需要 GPU** 的验证，再按 PID 甄别占卡进程
+
+**Diagnosis：卡满不挡事。** 上次崩在 `tasks_clip/pretrain.py:15` 的 `from models import *`
+——**纯 import 阶段、纯 CPU**。所以 #229 那两处修复（解释器 + peft 惰性导入）**现在就能验，
+一张卡都不用**。等卡是等冒烟，不是等验证。
+
+**① 先验修复（不碰 GPU，现在就做）：**
+```bash
+git pull origin main
+which python
+python -c "import sys,torch; print(sys.executable, torch.__version__, torch.cuda.get_arch_list())"
+#   ^ 只读 torch 的构建属性，不分配显存、不需要空闲卡。
+#     python 必须在 .../rby/mvc_env310/bin/ 下；arch 列表必须含 sm_90。
+#     若报 No module named 'torch' => 环境里根本没装 torch，回 §2（这也解释了上次为何跑成系统解释器）
+PYTHONPATH=. python -c "import models; print('models import OK -- peft 惰性导入生效')"
+#   ^ 这正是上次崩掉的那一行，纯 CPU。能过 = peft 已彻底离开训练 import 链
+```
+这两条过了，就说明 #229 修对了，剩下的**只差 GPU 排队**。
+
+**② 甄别占卡的是谁——只看，不杀：**
+```bash
+nvidia-smi --query-compute-apps=pid,used_memory --format=csv
+# 共用 root 账号下 ps 的 user 全是 root，**用 cwd 区分归属**：
+for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | cut -d, -f1); do
+  echo "== PID $p"; ps -o pid,etime,cmd -p "$p" --no-headers
+  ls -l /proc/"$p"/cwd 2>/dev/null | sed 's/.*-> //'
+done
+```
+判读：
+- cwd 在 **`rby/mobileclip`** → 是**你自己的**（上次崩溃/nohup 的残留），确认 `ps` 里
+  确实是 `pretrain.py` 后可 `kill <PID>` 回收；
+- cwd 在 **`rby/MobileViCLIP`**（中文线 wky）或 **`zyc/...`** → **别人的，别碰**。
+- ⚠️ 重申 §0：共用账号，**只准按 PID kill，禁止 `pkill -f`/`killall`**——中文线跑的是
+  同一个 `tasks_clip/pretrain.py`，模式匹配会误杀别人。
+
+**③ 卡空出来再冒烟——不必等齐 4 张，1 张就能冒烟：**
+```bash
+CUDA_VISIBLE_DEVICES=<某张空闲卡号> bash experiments/run_pretrain.sh \
+    experiments/configs/r0_baseline.py 1 \
+    use_bf16 True bf16 True deepspeed.enable False debug True
+```
+冒烟只为验证 arch/数据/前反向通不通，1 卡足够、也最容易插空。**真 R0 才需要前 4 张齐**
+（等步纪律要求 4 卡/batch 256，见 §6；别为了赶进度用 3 卡跑 R0，那会毁掉 A/B 可比性）。
+
+**Then report back**：① 的两行输出（解释器路径 + arch 含不含 sm_90；`import models` 过没过）、
+② 占卡进程的 cwd 归属（判断要不要等别人）、③ 有空闲卡后冒烟的结果。
+
+> 若 8 张卡长期被别人占满，那是**排期问题不是技术问题**——需要你跟 wky/zyc 或维护者协调
+> 时间窗；Claude 这边没法代劳。
+
+---
+
 ## 2026-07-24 (6) — 冒烟崩了：跑成了系统解释器 + peft 被白白 import。两处已修，先杀掉 R0
 
 **Diagnosis：不是 sm_90 的问题，是两个故障叠在一起。**
