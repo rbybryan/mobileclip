@@ -23,6 +23,62 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (7) — 脑启发试点 `TemporalSurprisePool`：重跑已完成，但判据数还没读出来（V100，一条命令）
+
+**Diagnosis:** `pilot_10k_surprise` 重跑正常收尾（40:52，ep0 1.03→ep9 0.28，无 NaN，
+retrieval r_mean 最好 93.33@ep7）——**链路层面全绿**。但**训练日志读不出判据**：
+试点的通过条件是 `alpha ≠ 0`（模块真的离开了 mean pooling），而这个数只存在 ckpt 里，
+日志从头到尾不打印。
+
+注意别被"曲线和 r0 一模一样"误导：**修复生效时曲线本来就该和 r0 一样**。`alpha` 从 0 起步，
+每步梯度才 ~2e-3，170 步 × lr 1e-5 只能挪动极小量 → `output ≈ mean` → retrieval 自然不动。
+所以"曲线相同"同时兼容【修复生效】和【没 pull 到修复】两种情况，**只有读 ckpt 能区分**。
+
+背景：#220 修掉的是 `gamma=0 且 alpha=0` 这个**零梯度不动点**（softmax(0) 均匀 →
+`pooled≡mean` → `(pooled−mean)=0` → alpha/gamma/key 三者梯度全为 0，模块永远醒不过来）。
+修法是 `gamma` 初值 0→1，`alpha` 仍为 0 所以**零回退起点分毫不变**。
+
+**V100（101vector）· Do this next（repo 根；纯 CPU 读盘，几秒，不占卡）：**
+
+```bash
+git pull origin main
+
+# ckpt_09.pth 是 DeepSpeed ZeRO-1 的“目录”不是文件，权重在 module 键下
+python - <<'PY'
+import torch
+p  = "experiments/runs/pilot_10k_surprise/ckpt_09.pth/mp_rank_00_model_states.pt"
+sd = torch.load(p, map_location="cpu")["module"]
+b  = "vision_encoder.temporal_pool."
+print("alpha         =", sd[b+"alpha"].float().tolist())
+print("gamma         =", sd[b+"gamma"].float().tolist())
+print("key.weight L2 =", sd[b+"key.weight"].float().norm().item())
+PY
+```
+
+**读到的两个数怎么判（`gamma` 判「修复在不在」，`alpha` 判「模块动没动」）：**
+
+| `gamma` | `alpha` | 结论 |
+|---|---|---|
+| ≈ **1.0**（略微偏离） | **≠ 0** | ✅ 修复已生效且模块活着——链路判据**真正通过**，可以放行 H100 的 `nA1_surprisepool` A/B |
+| ≈ 1.0 | **恰好 0** | ⚠️ 修复在但 alpha 没动——是新问题，把三个数贴回来我查 |
+| **恰好 0.0** | 恰好 0.0 | ❌ 跑的还是旧代码（没 pull 到 #220）。执行下面的补跑 |
+
+**只有第三行才需要补跑**（约 41 分钟，8 卡）：
+
+```bash
+git pull origin main
+python -c "import neural_inspired,inspect,re;s=inspect.getsource(neural_inspired.TemporalSurprisePool.__init__);print('gamma init OK' if 'ones' in s else 'STILL OLD CODE')"
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_surprise.py 8
+# 跑完再执行上面那段读 ckpt 的 python
+```
+
+**优先级：低于 recap 主线（(4)/(5)）**，读 ckpt 那条几秒钟随时可插；补跑只在 GPU 空档做。
+
+**Then report back** 在 from-server.md：把 `alpha` / `gamma` / `key.weight L2` 三个数原样贴回来。
+我会据此把结论写进 `experiments/pilot_10k_results.md`（现在那节还挂着"待服务器重跑确认"）。
+
+---
+
 ## 2026-07-24 (6) — C2 弹性 T 代码已合入（#222）：V100 三件事（插空档），b100 零影响照跑
 
 **Diagnosis:** ROADMAP 2.1 落地：模型里全部 11 处 `reshape(8,...)` 硬编码已动态化，
@@ -63,8 +119,10 @@ bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r3e.py 8 debug Tr
 （`ret_test_emb` 口径贴原文即可）——这就是 Fig-1 的第一版数据 + C2 难度标定；
 ③ r3e 是否自停干净、日志 `elastic_t` 是否在 2/4/8/16 间跳、有无 OOM/NaN。
 
-> 备注：handoff 分支上另有一个「07-24 (5) 主计划升 v1.1」块（与本文件下方的
-> §5-放行块撞号，两个 (5) 都有效,以标题区分;v1.1 对服务器的指示 = Stage 0 照 (4) 跑）。
+> 备注：下方 (4)/(5) 各有**两块**（b100 数据线与重字幕线并行推进导致撞号）——
+> 均有效，以标题区分；v1.1 块对服务器的指示 = Stage 0 照「重字幕主计划定稿」(4) 跑。
+
+---
 
 ---
 
@@ -101,6 +159,51 @@ R1 三臂要与 R0 同 batch/卡数/bf16/deepspeed 开关，才是等步对照�
 
 ---
 
+---
+
+## 2026-07-24 (5) — 主计划升 v1.1：全自动验收、零重人力标注、附全流程图（#223 已并入）
+
+**Diagnosis:** 三路专家终审（自动评测设计 × 统计效度 × 可行性）后，
+[`notes/recaption-master-plan.md`](../recaption-master-plan.md) 升 **v1.1**。对服务器操作的
+影响：**Stage 0 的命令一字不变**（照 (4) 跑即可）；变化都在 G1 之后——原 ~600 判定的人力
+k\* 标定与 300 片人评盲评**全部撤销**，改为 Panel-V 自动验真面板（InternVL2.5-8B +
+GroundingDINO + OCR，全栈无 Qwen，§5.4）与视图级验真臂 C_v；G1 主臂改为零工具风险的句切
+A′；G2 种子自适应（期望省 ~60% 训练算力）；§5.1 的「V100 跑 300k×5 ≈7 天」系错误估计已
+撤销（实为 25–118 天），**H100 空档成为 Stage 3 硬前置**。全计划人力只剩 ≤75 分钟的
+无约束力抽查。§3 顶部新增 mermaid 全流程图（GitHub 上看渲染版）。
+
+**Do this next:** 与 (4) 相同——V100 跑 `run_v100.sh recap` + 两个侧批；b100 照 (3) 继续。
+另外（可选、CPU、随时）：预下载 `hfl/minirbt-h288`、`sentence-transformers/LaBSE`，
+D11 探针不再等 b100。
+
+---
+
+---
+
+## 2026-07-24 (4) — 重字幕主计划定稿：执行以 notes/recaption-master-plan.md 为准
+
+**Diagnosis:** 应维护者要求，对 `caption-fusion-scheme.md` 与 `data-quality-caprl-scheme.md`
+两份重字幕方案做了全面评估（含两路独立评审：VLM 方法论 + 统计设计），裁决合并为唯一执行层
+**[`notes/recaption-master-plan.md`](../recaption-master-plan.md)**（已并入 main，#221）。要点：
+S0 五样本重述照跑不变；**训练门 G1 前置**（不需要任何人力标注），150–300 片人评标定收缩为
+~600 单元判定（≈1 人·日）且**后置**到 G1 通过之后；融合（CFU）降为门控假设（外部评审先验
+偏低，但保留 §6.4 可证伪测试）；RETRANSLATE 并入 RECAPTION；两份旧方案的分阶段清单不再照做
+（各自文首已加取代声明）。
+
+**Do this next（V100 审计机 101vector；= 主计划 Stage 0；与 b100 的 (3) 互不阻塞）:**
+```bash
+# ① 五样本重述主批（前置: s3+s4 已产 $OUT/v0_2/recaption_tasks.jsonl; 2,532 片当天级）
+bash tools/data_audit/run_v100.sh recap
+# ② 跑完记录: 总生成数 + 起止时间 + 卡数（吞吐是全量排期的唯一可信输入）
+# ③ 两个侧批诊断（各 300 片, 主批完再跑; 精确命令见主计划 §3 Stage 0）
+```
+b100 侧照 **(3)** 继续英文线 anno → 预检 → §6 冒烟/R0（即主计划 §1 的 EN 论文线，两线并行）。
+
+**Then report back** in from-server.md：recap5.* 行数、吞吐三元组、抽 3 片贴 `verdict.recaps`
+（我要目检五条是否真有差异 = 温度坍缩检查）。
+
+---
+
 ## 2026-07-24 (4) — anno 已建好；就差软链让预检的 data_root 目录存在
 
 **Diagnosis:** 11 片 anno 全建成了（计数完全对：1–10 各 100 万、11 是 647458）。预检那
@@ -125,6 +228,8 @@ python experiments/check_readiness.py --decode 2>&1 | grep -E "internvid_v"
 **顺带（§3，R0 之前必须）**：`checkpoints/mobileclip_s2.pt` 还缺，预检也标了。R0–R3 底座
 必需——按 §3 用 gdown 下好它，否则 §6 起不来。评测基准那 7 个 anno 缺失（msrvtt/didemo…）
 只影响 B0 评测，不挡 R0–R3 预训练，先不用管。
+
+---
 
 ---
 
