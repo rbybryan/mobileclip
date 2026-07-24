@@ -93,6 +93,19 @@ has left 0 (received gradient). Extend `tests/test_optimization_components.py`: 
 keeping if it **≥ attn on aggregated R-Sum** at matched steps — otherwise the attention pool
 already captures the temporal saliency and A1 is a weaker special case. Cut if not ≥ attn.
 
+**Novelty status (pinned 2026-07-24 — A1 is NOT a contribution).** Every ingredient is
+prior art: weighted frame pooling = the attention-pooling family (our own C3 attn pool,
+X-Pool, CLIP4Clip seqTransf); "far-from-the-gist frames matter" scoring = novelty /
+representativeness scores in video summarization (centroid-distance keyframing, DR-DSN's
+representativeness reward) and **Itti & Baldi's Bayesian surprise saliency (2005/2009)** —
+the citation a reviewer will reach for first; the predictive-coding story (Rao & Ballard;
+PredNet) is borrowed motivation, not mechanism novelty; the zero-init gate is standard
+(ReZero/LayerScale). What is ours is only this specific parameterization inside a mobile
+video CLIP. **Paper ceiling:** if it wins the T1 A/B — one ablation row + one sentence
+("a predictive-coding-inspired pooling variant"), citing the lineage above; if it ties or
+loses — remove per the kill criterion. It never enters the contribution list (paper-plan
+C1–C4 does not include it, by design).
+
 ### A2 · Graded temporal receptive windows (N4, free ablation)
 
 **Idea.** Every RepMixer's temporal branch is a depthwise `Conv1d(k=3)` over time
