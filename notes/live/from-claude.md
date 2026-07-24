@@ -64,13 +64,32 @@ chmod 600 "$RBY/.git-credentials"
 
 ②③ 用 `git config --file` 而不是 `>>` 追加，所以**重复跑不会写重**（同键覆盖）。
 
-**自检**（第一条应打印出 helper 指向 `rby/`，第二条应全程不问密码）：
+**自检**（**新开一个 shell、不要 source 任何东西**；第一条应打印 helper 指向
+`rby/.gitconfig-cred`，第二条应全程不问密码）：
 
 ```bash
-source "$RBY/.gitenv"          # 这文件若还没建，见 TROUBLESHOOTING.md 同节
-cd "$RBY/MobileViCLIP" && git config --show-origin --get credential.helper
+cd /workspace/mount/b100_zaip_data/rby/MobileViCLIP
+git config --show-origin --get credential.helper
 git pull origin main
 ```
+
+**要不要每次登录都 `source .gitenv`？——做了 ③ 就不用。** 身份和凭据靠 `$HOME/.gitconfig`
+里那行 `includeIf` 自动加载，登录后直接用。**唯一的例外是 `safe.directory`**：git 判断
+「可疑的仓库所有权」时读的是 *early / protected config*，那个时刻仓库还没被认出来，
+`gitdir:` 条件无从匹配，所以**放在 conditional include 里的 `safe.directory` 不生效**
+（Curta 实测：`git config --get-all safe.directory` **看得见**这个值，但同一个仓库照样报
+`detected dubious ownership`；`source .gitenv` 后就正常）。所以：
+
+- 从没见过 `dubious ownership` 报错（b100 上大家都是 root、文件也归 root）→ **完全不用 source**。
+- 见过 → 二选一：每个 shell 先 `source "$RBY/.gitenv"`，**或**把这一行直接写进共用
+  `$HOME/.gitconfig`（只是路径，不含 token，一次即可、之后永久免 source）：
+
+  ```bash
+  git config --global --add safe.directory "$RBY/MobileViCLIP"
+  ```
+
+`.gitenv` 里另一半 `GIT_CONFIG_SYSTEM=/dev/null`（屏蔽 `/etc/gitconfig` 里别人塞的东西）
+同理只在 source 后生效；除非系统配置里有 helper/代理来捣乱，一般不用管。
 
 **几个坑：**
 
