@@ -126,8 +126,15 @@ N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
 - 每片一行：`en_source | zh_translated | recap_1..5(⟨SigLIP 分⟩) | A−保留(top-3 重述号) |
   A′句切视图 | ✓过验真视图[gloss] | ·未验(保守留) | ✗被滤视图[gdino/ocr] | 坍缩旗标`——
   这就是主计划 G2 三臂（A_llm/A−/C_v）的样本级预览。
+- **模型依赖（V100 盒子现状即可跑，无需任何新 LLM）**：全链**唯一的 LLM = Qwen3-VL-8B**
+  （`$S2_MODEL`，本地 `ckpts/Qwen3-VL-8B-Instruct` 优先）——重述用 temp0.9 采样制造投票方差、
+  派生用 temp0 贪心保证闭集确定性，两处用法刻意不同。其余全是非 LLM 小模型：SigLIP2 打分
+  （s1 轮已缓存）、GroundingDINO-base（~700MB，经 hf-mirror）、RapidOCR（pip 走已配的
+  aliyun 镜像）。
 - 验真档 v0 = GroundingDINO(按 en_gloss) + RapidOCR(引号文字模糊匹配 ≥0.7)；
   **InternVL 二审档属 Stage 2-6，后补**——当前不可判的视图标 `unverified` 并保守保留。
+  **纪律红线：绝不能把 Qwen3-VL-8B 当验真器用**（Qwen 验 Qwen 抓不住系统性幻觉，
+  fusion 方案 §3.5 / 审计结论 8'）；验真器装不上就让视图保持 `unverified`，不要找 LLM 替补。
 - 复跑安全：重述/验真都按 video 续跑去重；打分文件每次重建。
 
 ## 快速上手（A100/H100 等 Ampere+ 机器，vLLM 服务方式）

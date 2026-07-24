@@ -554,6 +554,8 @@ pipeline-sample)
   SAMPLE="$OUT/v0_2/pipeline_sample.jsonl"
   head -n "$N_SAMPLE" "$QUEUE" > "$SAMPLE"
   echo "== ⓪ 样本 = 队列前 $N_SAMPLE 片 -> $SAMPLE =="
+  echo "[model] 全链唯一 LLM = $S2_MODEL（① 重述 temp0.9 采样 / ② 派生 temp0 贪心；"
+  echo "        ③ SigLIP2 打分与 ⑤ GDINO/OCR 验真均为非 LLM 小模型，SigLIP 已在 s1 轮缓存）"
 
   echo "== ① S0 五样本重述（复用 recap 子命令: 8 卡后台 + 按 video 续跑去重）=="
   RECAP_INPUT="$SAMPLE" bash "$0" recap
@@ -620,12 +622,13 @@ PY
   python tools/data_audit/recap_diag.py --recaps "$OUT/pipe_recaps.jsonl" \
     --out-perclip "$OUT/pipe_diag.jsonl" | tee "$OUT/pipe_diag.txt"
 
-  echo "== ⑤ Panel-V v0 验真（GDINO fp32 + RapidOCR；不可用会降级为 unverified 不阻塞）=="
+  echo "== ⑤ Panel-V v0 验真（GDINO fp32 + RapidOCR；均非 LLM；不可用会降级为 unverified 不阻塞）=="
   CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/fuse_verify.py \
     --views "$OUT/pipe_views.*.jsonl" --video-root "$CLIPS" \
     --output "$OUT/pipe_verified.jsonl" \
     --verifiers "${PIPE_VERIFIERS:-gdino,ocr}" \
-    ${GDINO_MODEL:+--gdino-model "$GDINO_MODEL"}
+    ${GDINO_MODEL:+--gdino-model "$GDINO_MODEL"} \
+    || echo "[warn] 验真档整体失败——全部视图按 unverified 保守保留，TSV 照常生成（勿用 Qwen 自验替代：计划 §3.5 纪律）"
 
   echo "== ⑥ 全景 TSV =="
   python tools/data_audit/make_pipeline_tsv.py --tasks "$SAMPLE" \
