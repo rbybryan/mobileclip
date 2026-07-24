@@ -23,6 +23,34 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (26) — 目检改成 better_zh 同款评审包：index.html + 视频 + 打分单选（取代 (24) 的单文件 HTML）
+
+**Diagnosis:** 应维护者要求，pipeline 目检改用与 better_zh/merge 抽检完全同款的离线评审包
+（`make_review_bundle.py`，本次给它加了「重述/视图」块的渲染与 `pipeline` 判读提示）。
+`pipeline-sample` 第 ⑥⑦ 步现在自动产 `review_pipeline.tsv` → `bundle_pipeline/`
+（index.html + videos/ + README.txt）：每片一卡 = **视频播放器 | en 源 | 黄色旧译 |
+重述 1–5（⟨SigLIP 分⟩、★A− 徽标）| A′ 视图 | 绿✓/灰·/红✗ 视图块** + 两道判读单选
+（重述质量、被滤视图判读）+ 备注，进度存浏览器、填完可导出 TSV。
+
+**Do this next（101vector）：**
+```bash
+git pull origin main
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample   # 续跑秒过, 只补打分/表/包
+tar czf outputs/audit_10k/pipeline.tgz -C outputs/audit_10k bundle_pipeline
+```
+**本地机器**取回并打开：
+```bash
+scp rby@101vector:~/mobileclip/outputs/audit_10k/pipeline.tgz . && tar xzf pipeline.tgz
+# Windows 双击 bundle_pipeline/index.html；macOS: open …；Linux: xdg-open …
+```
+页头会显示「视频 X/50」——若是 0/50 说明打包时没找到视频（报回来我查路径），个别放不了
+多半是 HEVC 编码换 Firefox（README.txt 有说明）。
+
+**Then report back**：页头视频计数、你点过 10 片后对「重述 vs 旧译」的总体判感、
+红✗ 视图看着是真幻觉还是误杀（那两道单选填了导出 TSV 传回更好）。
+
+---
+
 ## 2026-07-24 (25) — MSR-VTT 视频"全部缺失"：软链接错了一层（我的文档写错了）
 
 **Diagnosis:** anno 本身完全没问题，是**我上一版 §4b 步骤 3 写错了**。
