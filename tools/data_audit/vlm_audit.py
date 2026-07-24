@@ -219,6 +219,25 @@ RECAP_PROMPT = """你是一个严谨的视频画面描述助手。下面是从�
 6. 覆盖以下方面（只写真实可见的）：主体（人/物的外观、服装、颜色等特征）、主体的动作及其先后、场景与背景环境、屏幕上的文字。如果某一方面在画面中不存在，就完全不要提它。
 7. 输出一段连贯、信息密集的中文，不要分点、不要标题、不要开场白或结束语，只输出这段描述本身。"""
 
+# --mode derive: per-recap S7-style view derivation (master plan D5 A_llm).
+# Text-only (the dense recap is the sole evidence; showing frames again would
+# let the deriver inject NEW details, breaking the closed-set rule). gloss =
+# detectable English noun phrases per view -- the GroundingDINO query handle
+# (master plan D8: en_gloss rides the derivation call, not S1).
+DERIVE_KEYS = {"views"}
+DERIVE_PROMPT = """你会看到一段视频的中文稠密描述。请把它改写成 2-3 条互补的中文检索短句，并给每条短句配英文检测标签。
+
+规则：
+1. 每条短句不超过 28 个字，语法完整、可独立成句，不用"他/她/它/这"开头。
+2. 2-3 条合起来覆盖原描述的主要信息，彼此侧重不同（如：主体+动作 / 场景环境 / 画面文字），不要互相复述。
+3. 只能使用原描述里已有的信息，不得新增任何细节；原描述里用引号“”照抄的画面文字，短句中原样保留。
+4. gloss：该短句里能在画面中被检测到的具体名词的英文（小写，1-4 个），如 ["man", "kitchen", "knife"]；抽象概念、动词、顺序词不要放。
+5. 只输出一个 JSON 对象，不要任何解释或多余文字，格式：
+{{"views": [{{"text": "短句一", "gloss": ["...", "..."]}}, {{"text": "短句二", "gloss": ["..."]}}]}}
+
+原描述：
+{dense}"""
+
 
 def resolve_video_path(video_root, rec, video):
     """First existing of:
