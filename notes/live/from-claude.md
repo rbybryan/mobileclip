@@ -23,6 +23,26 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (14) — pipeline-sample 缺队列已修：先跑 s3(0.3)+新 s4 两条秒级命令（#243）
+
+**Diagnosis:** 你贴的报错是对的——`v0_2/recaption_tasks.jsonl` 从没在本机落地过，而旧的落地
+命令 `s4-merged` 硬性依赖 better_zh 融合稿（`s2_merged.*`，主计划 v1.1 已存档弃用）。
+#243 已加不依赖融合稿的 **`s4`** 落地命令，并把报错文案换成自救指令。另外盘上现存的
+`buckets.jsonl` 可能是审计结论 15 里**作废的 0.8 版**（RECAPTION 空桶），所以 s3 要带
+`TARGET_PRECISION=0.3` 重跑一次保险（秒级、幂等覆盖）。
+
+**Do this next（101vector，接着你刚才的终端；①② 均为 CPU 秒级）：**
+```bash
+git pull origin main    # 拿到新的 s4 子命令（#243）
+TARGET_PRECISION=0.3 bash tools/data_audit/run_v100.sh s3   # ① 重算分桶（0.3 版才有效）
+bash tools/data_audit/run_v100.sh s4                        # ② 落地队列, 预期打印 ~2,5xx 片
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample   # ③ 原命令重跑
+```
+③ 的回报格式照 (10)：`pipe_diag.txt` 全文 + TSV 任挑 3 行 + 起止时间。
+（此条也补进 (13) 的待办总汇语境：pipeline-sample 任务前多了 ①② 两个前置。）
+
+---
+
 ## 2026-07-24 (13) — V100 待办命令总汇（三个任务按环境变量分组；更正 (12) 一处错误）
 
 **Diagnosis / 更正：** (12) 说「② 评测集不吃 `MVC_DATA_DIR`」**是错的**——
