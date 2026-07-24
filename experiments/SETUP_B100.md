@@ -406,6 +406,14 @@ python experiments/check_readiness.py --decode  # 再抽一条真解码，确认
 - ⚠️ **预检不查 caption**：它只验证 `video` 字段和文件在不在。若 anno 是 jsonl、
   或 `caption` 是 list/`captions` 键，11 个分片照样全 `[OK ]`，但 torchrun 一起就崩。
   这一层必须在 **§4 的「caption 格式核对」**里先转好——见上一节。
+- ⚠️ **预检也不查 torch**：`check_readiness.py` 只 import `decord` 和 `configs.data`，
+  **从不 import torch**。所以 11 个 `[OK ]` 只证明**数据**接对了，**不证明环境能训**
+  （b100 2026-07-24 就是全绿之后冒烟才发现跑的是系统解释器）。torch/sm_90 请单独验：
+
+  ```bash
+  which python && python -c "import sys,torch; print(sys.executable, torch.__version__, torch.cuda.get_arch_list())"
+  # python 必须在 .../rby/mvc_env310/bin/ 下；arch 列表必须含 sm_90
+  ```
 
 再跑一遍 §2 的 arch 自检确认这个 shell 的 torch 没被后续 pip 换掉。
 

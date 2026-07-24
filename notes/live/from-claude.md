@@ -126,6 +126,53 @@ bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r3e.py 8 debug Tr
 
 ---
 
+## 2026-07-24 (6) — 冒烟崩了：跑成了系统解释器 + peft 被白白 import。两处已修，先杀掉 R0
+
+**Diagnosis：不是 sm_90 的问题，是两个故障叠在一起。**
+
+**(a) 主因——整个训练没在你的 conda 环境里跑。** 报错路径是
+`/usr/local/lib/python3.10/dist-packages/...`，binary 是 `/usr/bin/python3`，torchrun 是
+`/usr/local/bin/torchrun`。`run_pretrain.sh` 从前调用**裸 `torchrun`**，按 `PATH` 解析时命中
+了系统的 `/usr/local/bin/torchrun`（shebang → `/usr/bin/python3`），**绕开了 `mvc_env310`**。
+→ 已把启动器改成 `python -m torch.distributed.run`，并打印 `python : <路径>`。
+
+**(b) `peft` 纯属被捎带。** `backbones/internvideo2/__init__.py` 第 4 行急切
+`from .internvideo2_clip_text import LLaMA, Tokenizer` → `import peft`。但 MobileViCLIP
+两个塔**从不用 `LLaMA`/`Tokenizer`**，全仓库也只有那一个文件依赖 peft。
+→ 已改为**惰性导入**（PEP 562 `__getattr__`），训练路径**完全不碰 peft**，peft 装没装、
+什么版本都不再影响预训练。（这条是把 b100 中文线早就做过的通用增强移植进 fork。）
+
+**另外**：`check_readiness.py` **从不 import torch**（只 import decord + configs.data），
+所以 §5 全绿只证明数据接对了，**不证明环境能训**——这次就是这么被骗过去的。已在 §5 加警示。
+
+**Do this next：**
+```bash
+# 0) 先杀掉那个 4 卡 R0——它会以同样方式崩，别让它占着卡
+pkill -f "tasks_clip/pretrain.py" || true
+sleep 2; nvidia-smi        # 确认前 4 张卡已释放
+
+# 1) 拉修复
+git pull origin main
+
+# 2) 核实解释器与 sm_90（这一步才是真正的 §2 自检，之前一直没验过）
+which python
+python -c "import sys,torch; print(sys.executable, torch.__version__, torch.cuda.get_arch_list())"
+#   python 必须在 /workspace/mount/b100_zaip_data/rby/mvc_env310/bin/ 下
+#   arch 列表必须含 sm_90；若报 No module named 'torch' → 环境里压根没装 torch，回 §2 装
+python -c "import torch; print(torch.zeros(1).cuda())"   # 应打印 tensor([0.], device='cuda:0')
+
+# 3) 重跑 2 卡冒烟（现在应打印 python : .../mvc_env310/bin/python）
+CUDA_VISIBLE_DEVICES=0,1 bash experiments/run_pretrain.sh \
+    experiments/configs/r0_baseline.py 2 \
+    use_bf16 True bf16 True deepspeed.enable False debug True
+```
+
+**Then report back**：② 的三行输出（解释器路径 / torch 版本 / arch 列表含不含 sm_90），
+以及 ③ 冒烟是否跑起来。冒烟过了我再放行 4 卡 R0。
+**先别急着重开 R0**——这次务必等冒烟绿了再挂后台。
+
+---
+
 ## 2026-07-24 (5) — §5 全绿，放行 §6：先 2 卡冒烟（顺带确认 sm_90）→ 再 R0 四卡
 
 **结论：数据/权重全部就绪，R0–R3 解锁。** 预检 11 个 `internvid_v*` 全 `[OK ]`（抽查
