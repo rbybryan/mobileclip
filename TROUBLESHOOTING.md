@@ -2014,3 +2014,22 @@ Hopper 支持。
 > `PYTHONUSERBASE` 要在**启动训练前**导出：`run_pretrain.sh` 用
 > `python -m torch.distributed.run` 拉子进程，子进程继承环境变量。脚本开头会打印
 > `python` 与 `userbase`，看到 `userbase : <未设置>` 就是忘了 `source`。
+
+## 评测时打印 `sim_v2t has nan` / `sim_t2v has nan`(fp16,偶发)
+
+**症状**:训练日志的**评测窗口**里穿插一两行 `sim_v2t has nan`(无 logger 前缀的
+裸 print),训练 loss 本身正常,当轮检索指标也能正常算出。07-24 的 V100 r3e 冒烟
+在 epoch3 出现过一次,epoch4–9 消失(from-claude (17))。
+
+**原因**:打印来自 `models/criterions.py:55` 的 NaN 检查,调用方是
+`tasks_clip/retrieval_utils.py:139`(`evaluation_dot`)。`use_half_precision=True`
+时模型整体转 fp16,评测前向偶发激活上溢(>65504)→ 个别特征向量出 inf/NaN →
+`F.normalize` 后污染相似度矩阵整行。每个 rank 独立提取全量特征、先算完的 rank
+先打分,所以这行会穿插在 rank0 的进度条中间——打印位置不代表发生在训练里。
+
+**处理**:
+- **单次/偶发**:不用管。训练路径无 NaN(loss 有限)即无碍,下一轮评测消失即自愈。
+- **持续出现**:评测切 fp32——跑该次评测时置 `use_half_precision=False`(只影响
+  这次评测,训练配置不动);b100 上用 bf16(动态范围大,天然免疫)。
+- 快速定位坏在哪一侧:在 `tasks_clip/retrieval_utils.py:139` 前临时加
+  `print(torch.isnan(image_feats).any(), torch.isnan(text_feats).any())`。
