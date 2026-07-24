@@ -23,6 +23,42 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (2) — probe 结果确认可用；定稿：video 用 abs_path，caption 用 caption
+
+**结论：可以用 zyc 这份 jsonl 替代 gdown。** 你贴的 probe 已确认：
+- **源英文 caption = `caption`**（`'woman using a computer mouse and keyboard'`），中文在
+  `raw_caption_zh_translated`——英文 R0–R3 用 `caption`。
+- 每条带绝对路径 **`abs_path`**，且 `video` 是**深度嵌套**（`InternVId-FLT_i/shard_xxxxx/InternVId-FLT_i/<file>.mp4`）。
+- 因为 loader 是 `os.path.join(data_root, rec["video"])` 且 `os.path.join(root, 绝对路径)=绝对路径`，
+  **直接把 `abs_path` 当 `video` 字段最稳**，跟软链/嵌套层级无关。已把 §4「方案 C」改成定稿版。
+
+**还差一件事**：你上一次 probe 的**分片计数那段被 `^S`（Ctrl-S）卡住没打出来**。先补跑它，
+我要用 total / 每片条数判断这是作者 FLT 全量还是子集（子集=换了训练集，得有意为之）。
+
+**Do this next（`rby/mobileclip` 项目根，conda 环境已激活）：**
+```bash
+SRC=/workspace/mount/b100_zaip_data/zyc/vibe_coding/low_resource_cv/MobileViCLIP/outputs/internvid_alignment/caption_translation_qwen36_v0_1/20_outputs/aligned_internvid_zh_translated_retry_merged.jsonl
+# ① 覆盖核查（若终端再卡按 Ctrl-Q 解冻）
+python - <<PY
+import json,re,collections
+rx=re.compile(r"^(InternVId-FLT_(?:1[01]|[1-9]))/"); c=collections.Counter(); n=bad=nocap=0
+for l in open("$SRC"):
+    if not l.strip(): continue
+    n+=1; r=json.loads(l); m=rx.match(r.get("video",""))
+    c[m.group(1)]+=1 if m else 0; bad+=0 if m else 1
+    cap=r.get("caption"); nocap+=0 if (isinstance(cap,str) and cap.strip()) else 1
+print("total:",n,"| video 前缀不匹配:",bad,"| caption 空/非串:",nocap)
+for i in range(1,12): print(f"  InternVId-FLT_{i}: {c[f'InternVId-FLT_{i}']}")
+PY
+```
+① 出数后，直接照 §4「方案 C」的 ②（生成 11 片，`video=abs_path`）+ ③（建软链过预检）跑；
+命令都在 md 里、已定稿，不用再填占位。
+
+**Then report back** in from-server.md：贴 ① 的 total + 每片条数（判断全量/子集）、②
+每片生成条数、③ `check_readiness --decode` 的 11 行 `internvid_v*` 结果。全 `[OK ]` 就进 §6 冒烟。
+
+---
+
 ## 2026-07-24 (1) — 英文线 anno：能否用 zyc 合并 jsonl 的源 caption 免 gdown？先 probe/test
 
 **Diagnosis:** zyc 的翻译合并文件里**同时含英文源 caption**，理论上可直接生成 11 个训练
