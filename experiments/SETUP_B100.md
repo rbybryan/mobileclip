@@ -356,15 +356,24 @@ print("skipped:",skip)
 PY
 ```
 
-**③ 建软链（只为过预检的目录存在检查）+ 预检：**
+**③ 建软链（只为过预检的「data_root 目录存在」这关）+ 预检：**
+
+`video` 已是 `abs_path`（绝对路径），训练时**根本不经过 data_root**；但 `check_readiness`
+仍会 `os.path.isdir(data_root)`，data_root 缺失就报 `[·· ]`。所以只需让默认
+`data/video_sample/InternVId-FLT_i` 这 11 个目录**存在**即可——软链到真实分片目录最省事，
+**不用 export `MVC_DATA_DIR`**（用默认 `data`）：
 
 ```bash
-# 软链见 §4「情况 A」：把 $WORK/data/video_sample/InternVId-FLT_i 指到 $FULL/InternVId-FLT_i
-#   （$FULL=/workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT；注意根是 InternVid、
-#    分片是 InternVId-FLT_i，大小写别写反——以 abs_path 的真实路径为准）
-# 然后 export MVC_DATA_DIR="$WORK/data" 已在情况 A 里做过。
-python experiments/check_readiness.py --decode   # 11 个 internvid_v* 全 [OK ]（含真解码）才进 §6
+FULL=/workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT   # abs_path 的根：InternVid(小写 vid)
+mkdir -p data/video_sample
+for i in $(seq 1 11); do ln -sfn "$FULL/InternVId-FLT_$i" "data/video_sample/InternVId-FLT_$i"; done
+ls -ld data/video_sample/InternVId-FLT_*/    # 11 条软链，各解析到真实分片目录(InternVId-FLT_i 大写)
+python experiments/check_readiness.py --decode   # 11 个 internvid_v* 全 [OK ](含真解码)才进 §6
 ```
+
+> 若某片仍报 `data_root 缺失`，是 `$FULL/InternVId-FLT_i` 这个目录名的大小写没对上
+> （根 `InternVid` vs 分片 `InternVId-FLT_i`，别写反）；报 `抽查…全部缺失` 才是 abs_path
+> 指的 mp4 真不在盘上。
 
 > 走了方案 C 就**不用** §4 上面那段 gdown（`1grbR39K...`）。`MVC_ANNO_DIR` 保持默认
 > `anno_downstream`。生成的就是 `{"video"(=abs_path),"caption":str}` JSON 数组，天然满足

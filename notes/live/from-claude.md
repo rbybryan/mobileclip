@@ -23,6 +23,33 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (4) — anno 已建好；就差软链让预检的 data_root 目录存在
+
+**Diagnosis:** 11 片 anno 全建成了（计数完全对：1–10 各 100 万、11 是 647458）。预检那
+11 行报的是 `data_root 缺失: data/video_sample/InternVId-FLT_i`——你**跳过了 ③ 建软链**，
+且 `MVC_DATA_DIR` 是默认 `data`，所以那些目录还不存在。**这一步只是让目录存在**：`video`
+是 `abs_path`，训练根本不走 data_root，只是 `check_readiness` 要 `isdir(data_root)`。
+
+**Do this next（就在 `rby/mobileclip` 根，不用 export MVC_DATA_DIR）：**
+```bash
+FULL=/workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT   # abs_path 的根：InternVid(小写)
+mkdir -p data/video_sample
+for i in $(seq 1 11); do ln -sfn "$FULL/InternVId-FLT_$i" "data/video_sample/InternVId-FLT_$i"; done
+ls -ld data/video_sample/InternVId-FLT_*/     # 应 11 条软链，各解析到真实分片目录
+python experiments/check_readiness.py --decode 2>&1 | grep -E "internvid_v"
+```
+
+**Then report back**：那 11 行现在是不是 `[OK ]`。
+- 若还 `data_root 缺失` → `$FULL/InternVId-FLT_i` 目录名大小写没对上（根 `InternVid`、分片
+  `InternVId-FLT_i`，用 `ls $FULL` 核对真实名字再改软链 target）。
+- 若变成 `抽查…全部缺失` → abs_path 指的 mp4 真不在盘上（拿一条 abs_path `ls -l` 验证）。
+
+**顺带（§3，R0 之前必须）**：`checkpoints/mobileclip_s2.pt` 还缺，预检也标了。R0–R3 底座
+必需——按 §3 用 gdown 下好它，否则 §6 起不来。评测基准那 7 个 anno 缺失（msrvtt/didemo…）
+只影响 B0 评测，不挡 R0–R3 预训练，先不用管。
+
+---
+
 ## 2026-07-24 (3) — 覆盖确认为全量 10.6M，放行：建 11 片 anno → 预检 → §6
 
 **结论：这份 jsonl 就是作者 InternVid-10M-FLT 全量，非子集。** 你的计数：total
