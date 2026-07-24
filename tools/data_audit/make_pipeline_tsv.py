@@ -22,6 +22,7 @@ utf-8-sig + tabs -> opens directly in Excel/WPS.
 import argparse
 import glob
 import json
+import os
 import re
 import sys
 
@@ -85,7 +86,18 @@ def main():
     ap.add_argument("--top-k", type=int, default=3, help="A- keeps top-k recaps")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--output", required=True)
+    ap.add_argument("--sheet-output", default=None,
+                    help="also write a review sheet for make_review_bundle.py "
+                         "(better_zh-style index.html bundle); needs --video-root")
+    ap.add_argument("--video-root", default=None,
+                    help="resolve video_path for the review sheet")
     args = ap.parse_args()
+
+    resolve = None
+    if args.sheet_output:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from vlm_audit import resolve_video_path  # noqa: E402
+        resolve = resolve_video_path
 
     recaps = load_jsonl(args.recaps)
     if not recaps:
@@ -100,6 +112,13 @@ def main():
               *[f"recap_{i + 1}" for i in range(5)], "A_minus_keep",
               "views_A_prime", "views_pass", "views_unverified", "views_fail",
               "jaccard_med", "ident_pairs", "flags"]
+
+    SHEET_Q = ["重述质量[重述更好/差不多/旧译更好]",
+               "被滤视图判读[真幻觉/误杀/无被滤]", "note"]
+    sheet_hdr = (["video", "video_path", "旗标", "A−保留", "英文en", "原zh"]
+                 + [f"重述{i + 1}" for i in range(5)]
+                 + ["A′视图", "✓视图", "·视图", "✗视图"] + SHEET_Q)
+    sheet_rows = []
 
     n_rows = 0
     with open(args.output, "w", encoding="utf-8-sig", newline="") as fout:
@@ -163,9 +182,33 @@ def main():
                    str(drec.get("n_identical_pairs", "")),
                    "|".join(flags)]
             fout.write("\t".join(row) + "\n")
+            if args.sheet_output:
+                kept = {k for k in keep.split(",") if k}
+                recap_cells = []
+                for k in range(5):
+                    c = cap_cols[k]
+                    if c and str(k + 1) in kept:
+                        c += " ★A−"
+                    recap_cells.append(c)
+                sheet_rows.append(
+                    [flat(vid),
+                     resolve(args.video_root or "", task, vid) if resolve else "",
+                     "|".join(flags), keep,
+                     flat(task.get("en")),
+                     flat(task.get("zh_old") or task.get("zh")),
+                     *recap_cells,
+                     SEP.join((aprime.get(vid, {}).get("views")) or []),
+                     passes, unv, fails] + [""] * len(SHEET_Q))
             n_rows += 1
             if args.limit and n_rows >= args.limit:
                 break
+    if args.sheet_output and sheet_rows:
+        with open(args.sheet_output, "w", encoding="utf-8-sig", newline="") as f:
+            f.write("\t".join(sheet_hdr) + "\n")
+            for r in sheet_rows:
+                f.write("\t".join(r) + "\n")
+        print(f"[sheet] {len(sheet_rows)} rows -> {args.sheet_output} "
+              f"(feed to make_review_bundle.py)")
     print(f"[done] {n_rows} rows -> {args.output}")
     print("列: video|理由|en源|zh译|5重述(⟨SigLIP分⟩)|A−保留|A′句切|"
           "✓过验真|·未验|✗被滤[验真器]|多样性|旗标")

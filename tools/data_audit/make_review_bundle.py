@@ -62,6 +62,8 @@ PAGE = """<!doctype html>
  .orig{background:#fffdf2;border-color:#f0e6c0}
  .fused{background:#f0fff4;border-color:#a9dcb9}
  .fused .lbl{color:#1a7f37;font-weight:600}
+ .filt{background:#fdf0f0;border-color:#e6b0b0}
+ .filt .lbl{color:#a12;font-weight:600}
  .q{margin-top:10px;padding-top:10px;border-top:1px dashed var(--bd)}
  .q .name{font-weight:600;margin-right:8px}
  label.opt{display:inline-block;margin:3px 6px 3px 0;padding:4px 12px;border:1px solid var(--bd);
@@ -102,9 +104,10 @@ addEventListener("keydown",e=>{if(e.key==="n"&&!/INPUT|TEXTAREA/.test(e.target.t
 const app=document.getElementById("app");
 ROWS.forEach((r,i)=>{
   const d=document.createElement("div");d.className="card";d.id="c"+i;
-  const caps=COLS.filter(c=>/^(原zh|候选\\d|英文en|融合稿)$/.test(c)&&r[c])
-    .map(c=>`<div class="cap ${c==="原zh"?"orig":c==="融合稿"?"fused":""}"><span class="lbl">${c}</span>${r[c]}</div>`).join("");
-  const other=COLS.filter(c=>!/^(原zh|候选\\d|英文en|融合稿|video|video_path)$/.test(c)&&r[c])
+  const CAPRE=/^(原zh|候选\\d|英文en|融合稿|重述\\d|A′视图|✓视图|·视图|✗视图)$/;
+  const caps=COLS.filter(c=>CAPRE.test(c)&&r[c])
+    .map(c=>`<div class="cap ${c==="原zh"?"orig":(c==="融合稿"||c[0]==="✓")?"fused":c[0]==="✗"?"filt":""}"><span class="lbl">${c}</span>${r[c]}</div>`).join("");
+  const other=COLS.filter(c=>!CAPRE.test(c)&&!/^(video|video_path)$/.test(c)&&r[c])
     .map(c=>`${c}=<b>${r[c]}</b>`).join(" · ");
   const qs=QS.map(q=>q.opts.length
     ? `<div class="q"><span class="name">${q.name}</span>`+q.opts.map(o=>
@@ -150,6 +153,11 @@ HINTS = {
     "merge": "对着画面看 <b>3 条候选</b> 和绿色的 <b>融合稿</b>："
              "<b>幻觉</b>=融合稿说了任何一条候选都没提、且画面里也没有的东西（y=有，最要紧）；"
              "<b>更全</b>=融合稿比其中写得最好的那一条候选含更多<b>真实</b>细节（y=更全）。",
+    "pipeline": "对着画面比较黄色的<b>原zh（旧译）</b>与 <b>5 条重述</b>（⟨⟩内是 SigLIP 分，"
+                "★A− 是选择臂保留的）：<b>重述质量</b>=重述整体是否比旧译更全且真实（这是"
+                "整个重字幕方案成立与否的直接证据）；红色 <b>✗视图</b> 是被验真器过滤的——"
+                "判断它是<b>真幻觉</b>（滤对了）还是<b>误杀</b>（画面里其实有）；"
+                "绿色 ✓ 已过验真、灰 · 未验保守保留。",
 }
 
 
