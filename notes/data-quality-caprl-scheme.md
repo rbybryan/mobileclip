@@ -1,5 +1,12 @@
 # 训练数据质量升级方案：CapRL++ 引导的「强化视频-文本数据」配方 for MobileViCLIP
 
+> ⚠️ **重字幕（Pillar B / §4 / §7-P0）的执行层已被
+> [`recaption-master-plan.md`](recaption-master-plan.md) 取代（2026-07-24）**：两条训练线的
+> 字幕器分开钉（zh=Qwen3-VL 直出、EN=CapRL-Video-4B 归 paper-plan U7）、P0 改为
+> 300k 子集→G1 门→全量的阶梯。Pillar A（过滤）与 Pillar C/D（tags/硬负/教师嵌入/KD）的
+> 所有权在 `paper-plan.md` §7 / `plan-review-upgrades.md` U7/U9。本文的 §4.4（32-token
+> 降维）、§6.3（冻结塔梯度流分析）、§8（护栏）仍是设计依据，继续有效。
+
 > 目标：在**不改动模型结构、不引入任何推理期开销**的前提下，用「更好的数据」把
 > MobileViCLIP 的零样本视频检索/分类和**时序理解**能力顶上去。方案对齐 2025–2026
 > 主流「蒸馏即数据 / 强化数据」路线（MobileCLIP2 DFNDR、HQ-CLIP、CapRL++、ReSpec），
