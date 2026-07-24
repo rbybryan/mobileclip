@@ -23,6 +23,40 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (24) — pipeline-sample 首跑判读：链路 ✅、多样性 ✅；SigLIP 路径 bug 已修（#265），重跑补两列
+
+**判读（好消息为主）：** 50 片全链跑通。**温度坍缩红旗未触发**——片内成对 3-gram Jaccard
+中位数 0.226、完全相同对 0/50，五条重述有真方差，投票信号活着（主计划 §7 第一行担心的
+失效模式不存在）。OCR 档已经在干活（9 条含引号文字的视图被滤，TSV 的 ✗ 列可直接目检
+这 9 条是真幻觉还是花体字漏检）。验真档缺 GDINO 时保守保留 97%，符合设计。
+重述吞吐实测 ≈ 250 样本/5.5 分钟/8 卡 → 全桶 2,532×5 ≈ **4–5 小时**（§5.1 表可更新）。
+
+**两个问题与修法：**
+1. **步③ SigLIP 打分 0/50**（`ERROR opening .../videos/videos/...` 双重前缀）——
+   `score_alignment` 解析器缺 `vlm_audit` 的前缀回退，**#265 已修**；TSV 的 `⟨SigLIP分⟩`
+   与 `A_minus_keep` 两列因此为空，重跑即补。见 `TROUBLESHOOTING.md` 新条目。
+2. **hf-mirror 当时连不上** → MiniRBT tokenizer 落到 30 字符预算（可接受）、GDINO 未加载
+   （gloss 检查全部 unverified）。网络恢复后预下载这两个小件即可补上。
+
+**Do this next（101vector）：**
+```bash
+git pull origin main
+# ① 重跑（重述/派生/验真按 video 续跑秒过；只重算打分 + TSV，几分钟）
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+# ② 网络通时预下载两个非 LLM 小件（GDINO ~700MB + MiniRBT ~50MB）：
+HF_ENDPOINT=https://hf-mirror.com python -c "from huggingface_hub import snapshot_download as d; d('IDEA-Research/grounding-dino-base'); d('hfl/minirbt-h288')"
+# ③ 下载成功后补 GDINO 验真档（必须先删验真缓存让它重验）：
+rm -f outputs/audit_10k/pipe_verified.jsonl
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+```
+② 若 mirror 持续不通就跳过（TSV 除 gloss 验真列外全部可用），报回来我给替代下载路线。
+
+**Then report back**：重跑后 TSV 任挑 3 行贴 `en_source / zh_translated / recap_1(含⟨分⟩) /
+A_minus_keep / views_fail` 五列 + `pipe_diag.txt` 全文；顺带说一句那 9 条 ✗ 视图看着像
+真幻觉还是 OCR 漏检。
+
+---
+
 ## 2026-07-24 (23) — 探盘范围收窄：只在 `video_datasets/` 里找，别扫整个挂载点
 
 **Diagnosis:** 维护者要求：**找数据集只在
