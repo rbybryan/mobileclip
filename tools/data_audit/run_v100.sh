@@ -19,6 +19,7 @@
 #   bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/review_better_zh.tsv
 #   bash tools/data_audit/run_v100.sh s2-gran      # ⑨ 粒度计数式重判（验证 dense=0 是不是标签塌缩）
 #   bash tools/data_audit/run_v100.sh gran-check   # ⑨b 粒度结果分析 + n_info=0 归因 -> gran_health.md
+#   bash tools/data_audit/run_v100.sh s4           # ⑧e′ 落地(无融合稿依赖版): 分桶→v0.2 数据+任务队列(主计划 v1.1 路线)
 #   bash tools/data_audit/run_v100.sh s2-merge     # ⑧c 合并 better_zh 三候选为一条密字幕（纯文本）
 #   bash tools/data_audit/run_v100.sh merge-review # ⑧d 融合可视化人审（视频+候选+融合稿离线包，同 better_zh）
 #   bash tools/data_audit/run_v100.sh s4-merged    # ⑧e 落地：融合稿当主字幕写进 v0.2 训练 JSON
@@ -476,10 +477,32 @@ merge-review)
   echo "  填完点「导出 TSV」，传回服务器统计门： bash $0 review-score $OUT/review_merge.tsv"
   ;;
 # --------------- ⑧e 落地 v0.2：融合稿(merged_zh)当主字幕写进训练 JSON
+# --------- ⑧e′ 落地（无融合稿依赖版；主计划 v1.1 D12: better_zh 已存档）
+# 与 s4-merged 的唯一区别 = 不传 --merged（主字幕退回清洗后的原 zh）。
+# 产物里 pipeline/recap 真正需要的是 v0_2/recaption_tasks.jsonl 任务队列；
+# v0.2 训练数据的最终形态由重述视图给（主计划 §4），此处 out-data 仅为中间产物。
+s4)
+  need_data
+  [ -f "$OUT/buckets.jsonl" ] || { echo "缺 $OUT/buckets.jsonl —— 先跑（秒级，注意用 0.3，
+  默认 0.8 在 19.6% 基准率下不可达、会产出作废的空 RECAPTION 桶——audit 结论 11/15）：
+  TARGET_PRECISION=0.3 bash $0 s3"; exit 1; }
+  mkdir -p "$OUT/v0_2"
+  S4_ARGS=(--input "$DATA" --buckets "$OUT/buckets.jsonl"
+           --out-data "$OUT/v0_2/internvid_zh_v0_2.jsonl"
+           --out-retranslate "$OUT/v0_2/retranslate_tasks.jsonl"
+           --out-recaption "$OUT/v0_2/recaption_tasks.jsonl"
+           --out-drop "$OUT/v0_2/dropped.jsonl")
+  ls "$OUT"/s2_verdicts.*.jsonl >/dev/null 2>&1 && \
+    S4_ARGS+=(--verdicts "$OUT/s2_verdicts.*.jsonl")
+  python3 tools/data_audit/apply_buckets.py "${S4_ARGS[@]}"
+  echo "== 队列已写出: $OUT/v0_2/recaption_tasks.jsonl（$(wc -l < "$OUT/v0_2/recaption_tasks.jsonl") 片）=="
+  echo "下一步: N_SAMPLE=50 bash $0 pipeline-sample   # 或直接 bash $0 recap 放全桶"
+  ;;
 s4-merged)
   need_data
   ls "$OUT"/s2_merged.*.jsonl >/dev/null 2>&1 || \
-    { echo "缺 $OUT/s2_merged.*.jsonl（先跑: bash $0 s2-merge）"; exit 1; }
+    { echo "缺 $OUT/s2_merged.*.jsonl（先跑: bash $0 s2-merge；
+  若只是要 recaption_tasks.jsonl 队列，用无融合稿依赖的: bash $0 s4）"; exit 1; }
   [ -f "$OUT/buckets.jsonl" ] || { echo "缺 $OUT/buckets.jsonl（先跑: bash $0 s3）"; exit 1; }
   mkdir -p "$OUT/v0_2"
   python3 tools/data_audit/apply_buckets.py \
@@ -550,7 +573,10 @@ pipeline-sample)
   need_clips; need_py
   N_SAMPLE=${N_SAMPLE:-50}; PIPE_GPU=${PIPE_GPU:-0}
   QUEUE=${RECAP_INPUT:-$OUT/v0_2/recaption_tasks.jsonl}
-  [ -f "$QUEUE" ] || { echo "缺队列 $QUEUE（先跑 s3 + s4-merged）"; exit 1; }
+  [ -f "$QUEUE" ] || { echo "缺队列 $QUEUE —— 两条命令补齐（均为 CPU 秒级）：
+  TARGET_PRECISION=0.3 bash $0 s3   # 重算分桶（0.8 版作废——audit 结论 15；重跑保险）
+  bash $0 s4                        # 落地任务队列（无 better_zh 融合稿依赖版）
+然后重跑: N_SAMPLE=50 bash $0 pipeline-sample"; exit 1; }
   SAMPLE="$OUT/v0_2/pipeline_sample.jsonl"
   head -n "$N_SAMPLE" "$QUEUE" > "$SAMPLE"
   echo "== ⓪ 样本 = 队列前 $N_SAMPLE 片 -> $SAMPLE =="
