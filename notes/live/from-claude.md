@@ -23,6 +23,115 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (16) — GATE-0 时间维容量审计：两个任务（秒级静态 + 8 次评测），做任何时序改动之前先跑（#246）
+
+**Diagnosis:** 脑启发第二轮已合入（#246，`notes/neural-inspired-round2.md`）。它证了四条
+**已数值验证**的结构事实，其中三条直接改写待办优先级：
+
+- **F1** 均值池化头**无条件**时间盲——集合的均值对任意重排都不变（对任何轨迹都成立，不只
+  直线）。所以模型全部的时序敏感性只能来自 backbone（stage 1–3 的时间卷积 + stage 4 的
+  `temporal_embedding`），而且必须以「所有帧共享的 clip 级信号」形式写进**每一帧**，才能在
+  平均之后幸存。
+- **F2** **加性**位置编码被均值**精确抹掉**，只有**乘性**绑定能幸存。而 stage 4 恰恰是加性的
+  （`x = x + resize_temporal_embedding(...)`，`mobileviclip_small.py:1105`）⇒ 它对池化后嵌入的
+  顺序敏感性贡献**恰好为零**（只能经由下游非线性间接起作用）。
+- **F4** 检索损失在帧残差子空间上**恰好平坦** ⇒ 帧塌缩是**免费**方向，「对比损失能防塌缩」在
+  这里是**假的**（它只钉住均值）；straightening / 潜在预测 / 时间去相关这类轨迹辅助损失
+  一阶无效。
+
+外加一条：现有评测套件很可能**测不出**时序（单帧偏置；纯图像模型 BLIP 的 MSR-VTT 零样本
+R@1 已高于我们锁定的 42.50）。所以在动手改任何时序结构之前，先把「**模型到底有没有编码
+时间方向 + 我们的基准能不能测出来**」这两件事测掉。两个任务**都不训练**。
+
+**Do this next（101vector；优先级仍低于 recap 主线，插空档跑）：**
+
+**任务 A · 静态审计（不用 GPU、不用数据、秒级；b100 上也能跑）**
+
+```bash
+cd ~/mobileclip && git pull origin main
+python experiments/temporal_capacity_audit.py --self-test          # 先自检，应打印 self-test 通过
+python experiments/temporal_capacity_audit.py ./checkpoints/mobileviclip_small.pt
+```
+
+判读：时间卷积核**反对称分量占比**中位数 < 0.05 ⇒ 核近似对称 ⇒ 对时间反转基本不敏感；
+**DC/AC** 中位数 > 0.95 ⇒ 近似纯低通 ⇒ 帧间残差被抹平。两者同时成立 ⇒ 模型几乎不编码时间
+方向。另外看 `temporal_embedding` 的范数——它是**零初始化**的，若训练后仍≈0，stage 4 那条
+通路对帧顺序就是等变的。
+
+> ⚠️ 这个脚本在**合成** checkpoint 上端到端验过，但**没在真权重上跑过**（我这边没有权重）。
+> 训练态 checkpoint 里时间分支还没融合成 `reparam_conv_1d`，若默认键名对不上，脚本会把找到的
+> 候选键**打印出来**——把那段输出原样贴回来即可，我按真实键名调（或给你一条先 reparam 再存
+> 一份推理态权重的命令）。
+
+**任务 B · 动态审计（评测 ⇒ 要 `unset`，与 (13) 任务 C 同一套 `run_eval.sh`）**
+
+```bash
+unset MVC_DATA_DIR
+python experiments/check_readiness.py            # msrvtt / ssv2_mc 应为 [OK ]
+
+for DS in msrvtt ssv2_mc; do
+  for P in none shuffle reverse freeze; do
+    echo "===== $DS / perturb=$P ====="
+    MVC_FRAME_PERTURB=$P CUDA_VISIBLE_DEVICES=0 \
+      bash experiments/run_eval.sh small $DS \
+        ./checkpoints/mobileviclip_small.pt \
+        experiments/evals/gate0/${DS}_${P}
+  done
+done
+```
+
+汇总成表（主口径 = `ret_test_emb/` 原始余弦）：
+
+```bash
+python - <<'PY'
+import json, glob, os
+rows = {}
+for p in sorted(glob.glob("experiments/evals/gate0/*/eval_res.json")):
+    ds, perturb = os.path.basename(os.path.dirname(p)).rsplit("_", 1)
+    rows.setdefault(ds, {})[perturb] = json.load(open(p))
+for ds, d in rows.items():
+    print(f"\n=== {ds} ===")
+    for perturb in ("none", "shuffle", "reverse", "freeze"):
+        if perturb in d:
+            print(f"  {perturb:8s} {json.dumps(d[perturb], ensure_ascii=False)[:300]}")
+PY
+```
+
+三个扰动的含义：`shuffle` = 随机置换 8 帧（按样本 index 确定性设种，可复现）测总的时序敏感度；
+`reverse` = 时间反转，专测「时间之箭」；`freeze` = 全换成中间帧，测多帧信息一共值多少。
+**`none` 是干净基线，必须跑**——它同时验证「不设环境变量 = 与原路径逐位一致」。
+
+> ⏱️ **时间紧就先跑 4 个**：`msrvtt/none`、`msrvtt/reverse`、`ssv2_mc/none`、`ssv2_mc/reverse`。
+> `reverse` 是最锐利的探针，这 4 个数就足以做判读。
+>
+> ⚠️ `MVC_FRAME_PERTURB` **只在审计评测时设，绝不要在训练时打开**。打开时日志会出现一行
+> `帧顺序正在被人为扰动（GATE-0 审计模式）` 的 warning —— 训练日志里出现这行就是配置错了。
+
+**判读（决定后面投哪条线，`notes/neural-inspired-round2.md` §2c）：**
+
+| 结果 | 含义 | 接下来 |
+|---|---|---|
+| MSR-VTT 与 SSv2-MC **都**几乎不变 | 模型时间盲**且**基准测不出来 | 时序线只留 R2（可恢复顺序的读出头），且必须补 RTime 才测得到；其余时序想法全砍 |
+| MSR-VTT 不变、**SSv2-MC 掉** | 模型有顺序信息，是**基准**的问题 | 推进 R2 + 补 RTime/Vinoground，按 Pareto 汇报 |
+| MSR-VTT 也明显掉 | 与 F1 预期不符 | 先别改，把数贴回来重新推导 |
+
+无论哪种结果都是一张论文图（在**我们自己的模型**上测出的「可测性上界」，与 1.6 多 T 曲线同一格）。
+
+**顺带两条已落库的修正（不用你操作，知道即可）：**
+- `criterion.loss_weight` 只是**日志开关**，不进损失——`tasks_clip/pretrain.py` 对 forward
+  返回的 loss dict 做**无权求和**，权重从未参与。以后加辅助损失必须在 `forward` 内部自己乘。
+  已写进 `TROUBLESHOOTING.md`。
+- A1 惊奇池化比第一轮所述更弱：重加权一个**集合**仍然是时间盲的，它只能利用**外观**显著性
+  （压低糊帧/无信息帧），永远拿不到时序顺序。与 main 上已钉的「A1 不是贡献」一致。
+
+**Then report back**（from-server.md）：
+① 任务 A 的**完整 stdout**（两段：`temporal_embedding` 那节 + 时间核统计那节，包括最后的
+「全部时间核」两行汇总）；若报「未找到」就把它打印的候选键列表贴回来。
+② 任务 B 的汇总表输出（或至少 4 个 `reverse`/`none` 组合的 `ret_test_emb` 原文）。
+③ 跑之前确认一句：`git pull origin main` 后 `experiments/temporal_capacity_audit.py` 在不在。
+
+---
+
 ## 2026-07-24 (15) — 冒烟只差几个小包；但**别再往共用系统 site-packages 里装**
 
 **Diagnosis:** 2 卡冒烟的这次崩溃其实是**进展**——deepspeed 已经起来、`models` 也

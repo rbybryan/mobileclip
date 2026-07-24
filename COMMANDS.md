@@ -207,19 +207,42 @@ python experiments/temporal_capacity_audit.py checkpoints/mobileviclip_small.pt
 
 在 **MSR-VTT(外观向)与 SSv2-MC(时序向)两边都要跑**,和干净基线对比:
 
+⚠️ 这是**评测**,按 README §3.0 的**双根规则**必须先 `unset MVC_DATA_DIR`(训练/试点 shell
+才 export;混用会把仓库 `data/` 下已下好的评测集重定向到不存在的路径,详见
+`notes/live/from-claude.md` (13))。走既有的 `experiments/run_eval.sh` 包装
+——它会按基准自动选任务入口(**`ssv2_mc` 走 `retrieval_mc.py`,其余走 `retrieval.py`**),
+并把结果写进各自的 `eval_res.json`:
+
 ```bash
-export PYTHONPATH=${PYTHONPATH}:.
-export CUDA_VISIBLE_DEVICES=0
-CFG=scripts/evaluation/clip/zero_shot/mobileviclip_small
+unset MVC_DATA_DIR
+python experiments/check_readiness.py            # msrvtt / ssv2_mc 应为 [OK ]
 
 for DS in msrvtt ssv2_mc; do
   for P in none shuffle reverse freeze; do
     echo "===== $DS / perturb=$P ====="
-    MVC_FRAME_PERTURB=$P torchrun --nproc_per_node=1 \
-        --master_port=$((10000 + RANDOM % 20000)) \
-        tasks_clip/retrieval.py $CFG/config_${DS}.py
+    MVC_FRAME_PERTURB=$P CUDA_VISIBLE_DEVICES=0 \
+      bash experiments/run_eval.sh small $DS \
+        ./checkpoints/mobileviclip_small.pt \
+        experiments/evals/gate0/${DS}_${P}
   done
 done
+```
+
+汇总成一张表(主口径 = `ret_test_emb/` 原始余弦;`ret_test/` 是 DSL 口径):
+
+```bash
+python - <<'PY'
+import json, glob, os
+rows = {}
+for p in sorted(glob.glob("experiments/evals/gate0/*/eval_res.json")):
+    ds, perturb = os.path.basename(os.path.dirname(p)).rsplit("_", 1)
+    rows.setdefault(ds, {})[perturb] = json.load(open(p))
+for ds, d in rows.items():
+    print(f"\n=== {ds} ===")
+    for perturb in ("none", "shuffle", "reverse", "freeze"):
+        if perturb in d:
+            print(f"  {perturb:8s} {json.dumps(d[perturb], ensure_ascii=False)[:300]}")
+PY
 ```
 
 > ⚠️ `MVC_FRAME_PERTURB` **只在审计评测时设置,绝不要在训练时打开**。打开时日志会打印
