@@ -24,6 +24,7 @@
 #   bash tools/data_audit/run_v100.sh s4-merged    # ⑧e 落地：融合稿当主字幕写进 v0.2 训练 JSON
 #   bash tools/data_audit/run_v100.sh recap        # ⑧f RECAPTION 桶前端：每片五样本独立重述（融合方案 S0）
 #   bash tools/data_audit/run_v100.sh recap-tsv    # ⑧g 重述检验 TSV：源caption/翻译/5重述/A′视图 并排目检（CPU 秒级）
+#   bash tools/data_audit/run_v100.sh pipeline-sample # ⑧h 完整优化流水线小样本端到端：重述→派生→打分→验真→全景 TSV（单卡 ~1h）
 #   JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge  # ⑥ 云端裁判（可选，需 API key）
 #   bash tools/data_audit/run_v100.sh judge-agree # ⑥b 一致率+Cohen's κ（可对外来裁判文件独立重算）
 #   bash tools/data_audit/run_v100.sh xling-check # ⑥c 裁决 xling 阈值（s3 前必做）
@@ -540,6 +541,103 @@ recap-tsv)
   echo "产物: $OUT/recap_inspect.tsv （scp 回本地打开；utf-8-sig, 制表符分隔）"
   echo "目检要点: ①五条重述是否真有差异(COLLAPSE 列) ②重述是否明显好于 zh_translated"
   echo "         ③views_A_prime 是否成句、无半截话（这就是 G1 要喂给训练的形态）"
+  ;;
+# --------------------- ⑧h 完整优化流水线小样本端到端（主计划全链条样本验证）
+# 重述(S0) → A′句切 + 诊断 → A_llm 派生(D5) → SigLIP 打分(A− 选择) →
+# Panel-V v0 验真(GDINO+OCR, C_v) → 全景 TSV。除重述外全部单卡前台顺序执行。
+# 旋钮: N_SAMPLE=50  PIPE_GPU=0  PIPE_VERIFIERS=gdino,ocr  GDINO_MODEL=...
+pipeline-sample)
+  need_clips; need_py
+  N_SAMPLE=${N_SAMPLE:-50}; PIPE_GPU=${PIPE_GPU:-0}
+  QUEUE=${RECAP_INPUT:-$OUT/v0_2/recaption_tasks.jsonl}
+  [ -f "$QUEUE" ] || { echo "缺队列 $QUEUE（先跑 s3 + s4-merged）"; exit 1; }
+  SAMPLE="$OUT/v0_2/pipeline_sample.jsonl"
+  head -n "$N_SAMPLE" "$QUEUE" > "$SAMPLE"
+  echo "== ⓪ 样本 = 队列前 $N_SAMPLE 片 -> $SAMPLE =="
+
+  echo "== ① S0 五样本重述（复用 recap 子命令: 8 卡后台 + 按 video 续跑去重）=="
+  RECAP_INPUT="$SAMPLE" bash "$0" recap
+  echo "   等待覆盖 $N_SAMPLE 片（每 30s 查一次；已跑过的片秒过）..."
+  for _ in $(seq 1 240); do
+    COV=$(python - "$SAMPLE" "$OUT" <<'PY'
+import glob, json, sys
+want = {json.loads(l)["video"] for l in open(sys.argv[1]) if l.strip()}
+have = set()
+for p in glob.glob(f"{sys.argv[2]}/recap5.*.jsonl"):
+    for l in open(p, encoding="utf-8"):
+        try: have.add(json.loads(l)["video"])
+        except Exception: pass
+print(len(want & have))
+PY
+)
+    echo "   recap 覆盖: $COV/$N_SAMPLE"
+    [ "$COV" -ge "$N_SAMPLE" ] && break
+    sleep 30
+  done
+
+  echo "== ②′ 样本重述子集 -> $OUT/pipe_recaps.jsonl =="
+  python - "$SAMPLE" "$OUT" <<'PY'
+import glob, json, sys
+want = {json.loads(l)["video"] for l in open(sys.argv[1]) if l.strip()}
+seen = set()
+with open(f"{sys.argv[2]}/pipe_recaps.jsonl", "w", encoding="utf-8") as fo:
+    for p in sorted(glob.glob(f"{sys.argv[2]}/recap5.*.jsonl")):
+        for l in open(p, encoding="utf-8"):
+            try: r = json.loads(l)
+            except Exception: continue
+            v = r.get("video")
+            if v in want and v not in seen and (r.get("verdict") or {}).get("recaps"):
+                seen.add(v); fo.write(json.dumps(r, ensure_ascii=False) + "\n")
+print(f"pipe_recaps: {len(seen)} clips")
+PY
+
+  echo "== ② A_llm 派生（D5: 每条重述 2-3 条短视图 + en_gloss；文本-only, GPU$PIPE_GPU 前台）=="
+  CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
+    --input "$OUT/pipe_recaps.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
+    --mode derive --max-new-tokens 320 --num-shards 1 --shard-id 0 \
+    --output "$OUT/pipe_views.{shard}.jsonl"
+
+  echo "== ③ SigLIP 逐重述打分（A− 选择依据；tag=recap_i 回联）=="
+  python - "$OUT" <<'PY'
+import json, sys
+out = sys.argv[1]
+with open(f"{out}/pipe_recap_texts.jsonl", "w", encoding="utf-8") as fo:
+    for l in open(f"{out}/pipe_recaps.jsonl", encoding="utf-8"):
+        r = json.loads(l)
+        for i, c in enumerate((r.get("verdict") or {}).get("recaps") or []):
+            fo.write(json.dumps({"video": r["video"], "zh": c,
+                                 "tag": f"recap_{i+1}"}, ensure_ascii=False) + "\n")
+PY
+  rm -f "$OUT/pipe_scores.0.jsonl"
+  CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/score_alignment.py \
+    --input "$OUT/pipe_recap_texts.jsonl" --video-root "$CLIPS" \
+    --output "$OUT/pipe_scores.{shard}.jsonl" --frames 4 --batch-clips 8 \
+    --xlingual-model ''
+
+  echo "== ④ A′ 句切 + 多样性诊断 =="
+  python tools/data_audit/split_views.py --recaps "$OUT/pipe_recaps.jsonl" \
+    --output "$OUT/pipe_aprime.jsonl"
+  python tools/data_audit/recap_diag.py --recaps "$OUT/pipe_recaps.jsonl" \
+    --out-perclip "$OUT/pipe_diag.jsonl" | tee "$OUT/pipe_diag.txt"
+
+  echo "== ⑤ Panel-V v0 验真（GDINO fp32 + RapidOCR；不可用会降级为 unverified 不阻塞）=="
+  CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/fuse_verify.py \
+    --views "$OUT/pipe_views.*.jsonl" --video-root "$CLIPS" \
+    --output "$OUT/pipe_verified.jsonl" \
+    --verifiers "${PIPE_VERIFIERS:-gdino,ocr}" \
+    ${GDINO_MODEL:+--gdino-model "$GDINO_MODEL"}
+
+  echo "== ⑥ 全景 TSV =="
+  python tools/data_audit/make_pipeline_tsv.py --tasks "$SAMPLE" \
+    --recaps "$OUT/pipe_recaps.jsonl" --scores "$OUT/pipe_scores.*.jsonl" \
+    --aprime "$OUT/pipe_aprime.jsonl" --verified "$OUT/pipe_verified.jsonl" \
+    --derived "$OUT/pipe_views.*.jsonl" --diag "$OUT/pipe_diag.jsonl" \
+    --output "$OUT/recap_pipeline.tsv"
+  echo ""
+  echo "✅ 产物: $OUT/recap_pipeline.tsv （utf-8-sig；scp 回本地 Excel/WPS 打开）"
+  echo "   每片一行: en源caption | zh翻译 | 5重述(⟨SigLIP分⟩) | A−保留 | A′句切 |"
+  echo "             ✓过验真视图 | ·未验(保守留) | ✗被滤视图[gdino/ocr] | 坍缩旗标"
+  echo "   诊断摘要: $OUT/pipe_diag.txt"
   ;;
 # ------------------------------- ⑨b 粒度重判结果分析 + n_info=0 归因
 gran-check)

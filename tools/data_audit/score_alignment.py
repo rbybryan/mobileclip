@@ -215,6 +215,8 @@ def main():
             batch[i][f"sig_{lang}_max"] = round(float(s.max()), 4)
         for i, rec in enumerate(batch):
             out = {"video": rec["video"]}
+            if rec.get("tag") is not None:   # passthrough for per-caption scoring
+                out["tag"] = rec["tag"]      # (e.g. tag=recap_3 in pipeline-sample)
             for k in ("sig_zh_mean", "sig_zh_max", "sig_en_mean", "sig_en_max", "error"):
                 if k in rec:
                     out[k] = rec[k]
