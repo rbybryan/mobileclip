@@ -22,7 +22,8 @@
 >   工作区 `/workspace/mount/b100_zaip_data/rby/`。
 > - **⚠️ rby/ 下有两个并排的项目目录，别搞混**（2026-07-23 起）：
 >   - `rby/MobileViCLIP` —— **中文 NebulaCV 线**（上游 MCG-NJU 的 clone + 本地改动，
->     与 wky 协作；改动记录见 `notes/b100-local-changes.md`）。**本手册不管它，别动。**
+>     与 wky 协作；改动记录 + 中文标注源 caption 路径见 `notes/b100-local-changes.md`）。
+>     **本手册不管它，别动。**
 >   - `rby/mobileclip` —— **本 fork（英文原版模型改进线）**，R0–R3 全量预训练都在这里跑。
 >     本手册下文的「项目根」都指它。
 
