@@ -23,6 +23,39 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (5) — §5 全绿，放行 §6：先 2 卡冒烟（顺带确认 sm_90）→ 再 R0 四卡
+
+**结论：数据/权重全部就绪，R0–R3 解锁。** 预检 11 个 `internvid_v*` 全 `[OK ]`（抽查
+20/20 在、真解码 OK），三个权重都在（`mobileclip_s2.pt` 398MB 等），预检末尾也标了
+`[可跑] R0–R3 全量预训练(§4)`。§2–§5 我已在 `SETUP_B100.md` 进度清单里勾掉。
+
+**Do this next（`rby/mobileclip` 根；先 `nvidia-smi` 确认前 4 张卡空闲——本机共享）：**
+```bash
+# 0) 首光冒烟：2 卡 + DDP+AMP + bf16 + debug，几十步自停。这一步同时最终确认 torch 有
+#    Hopper(sm_90) 内核——若这里 CUDA kernel 报错，就是 §2 的 torch 没带 sm_90，回去换 cu12x。
+CUDA_VISIBLE_DEVICES=0,1 bash experiments/run_pretrain.sh \
+    experiments/configs/r0_baseline.py 2 \
+    use_bf16 True bf16 True deepspeed.enable False debug True
+```
+冒烟通了（跑完几十步没崩、loss 有数）再起真 R0：
+```bash
+# 1) 真 R0：4 卡、bf16、后台 nohup（掉隧道不影响），batch=64×4=256
+mkdir -p experiments/runs
+CUDA_VISIBLE_DEVICES=0,1,2,3 nohup bash experiments/run_pretrain.sh \
+    experiments/configs/r0_baseline.py 4 \
+    use_bf16 True bf16 True > experiments/runs/r0_baseline.log 2>&1 &
+tail -f experiments/runs/r0_baseline.log     # 头几百步看 loss 是否正常下降/发散/NaN
+```
+
+**纪律**：默认只用前 4 张卡（后 4 张留别人）；`<num_gpus>` 绝不能省（省了默认 8）；
+R1 三臂要与 R0 同 batch/卡数/bf16/deepspeed 开关，才是等步对照（§6）。真跑装了
+`deepspeed>=0.14` 后可去掉 `deepspeed.enable False`，但**一旦一臂用 deepspeed，所有臂都用**。
+
+**Then report back**：冒烟是否通过（有没有 sm_90/CUDA 报错）、R0 头几百步的 loss 走势
++ 一个 epoch 的墙钟估算、显存占用（`nvidia-smi` 峰值，判断 bs 还能不能上调）。
+
+---
+
 ## 2026-07-24 (4) — anno 已建好；就差软链让预检的 data_root 目录存在
 
 **Diagnosis:** 11 片 anno 全建成了（计数完全对：1–10 各 100 万、11 是 647458）。预检那

@@ -31,20 +31,22 @@
 
 ## ✅ 进度标记（Claude 依据 `from-server.md` 回报维护，服务器不用改这段）
 
-截至 **2026-07-23**：
+截至 **2026-07-24**：
 
 - [x] §0 隧道/代理 —— 已验证可用（clone / push 都走通过）
-- [x] §1 项目 —— git 隔离（`.gitenv`）与 PAT 凭据已就绪；`rby/mobileclip` 的 clone
-      指令已发（`notes/live/from-claude.md`「2026-07-23 (5)」）
-- [ ] **§2 环境 + arch 自检 ⟵ 从这里继续**。2026-07-23 第一次尝试翻车（venv 无 pip
-      → 包全进共用 conda base + py3.12 编不出 tokenizers）：先按
-      `notes/live/from-claude.md`「2026-07-23 (6)」**清理 base**，再按 §2 新配方
-      （conda python=3.10）重装
-- [ ] §3 权重 `checkpoints/mobileclip_s2.pt`（gdown，需代理）
-- [ ] §4 探盘 + 软链 + `export MVC_DATA_DIR`
-- [ ] §5 `check_readiness.py` 预检（11 个 `[OK ]` + 权重在位，才算解锁）
-- [ ] §6 冒烟（2 卡 debug）→ R0 真跑（4 卡）→ R1 三臂
+- [x] §1 项目 —— git 隔离（`.gitenv`）与 PAT 凭据已就绪；`rby/mobileclip` 已 clone
+- [x] §2 环境 —— conda `mvc_env310`（py3.10）已建好；`check_readiness --decode` 能跑、
+      decord 能解码，说明栈可用（sm_90 由 §6 冒烟的首个 torchrun 最终确认）
+- [x] §3 权重 —— `mobileclip_s2.pt`(398MB) / `mobileviclip_small.pt`(74MB) /
+      `mobileclip_s0.pt`(216MB) 均 `[OK ]`
+- [x] §4 数据 —— **走了方案 C**（zyc 合并 jsonl 的 `abs_path`+`caption` 生成 11 片 anno，
+      全量 10,647,458 条）+ 软链 `data/video_sample/InternVId-FLT_i`
+- [x] §5 预检 —— 11 个 `internvid_v*` 全 `[OK ]`（抽查 20/20 在、真解码 OK）；权重齐
+- [ ] **§6 冒烟（2 卡 debug）→ R0 真跑（4 卡）→ R1 三臂 ⟵ 从这里继续**
 - [ ] §8 每完成一节回报一次（贴 `from-server.md`），Claude 据此更新本清单
+
+> 评测基准 anno（msrvtt/didemo/anet/k400/ucf101/hmdb51/ssv2_mc）与 `internvid_zh_10k_pilot`
+> 仍缺——只影响 B0 评测 / 10k 试点，**不挡 R0–R3 预训练**，需要时再单独下。
 
 ---
 
