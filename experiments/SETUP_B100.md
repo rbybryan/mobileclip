@@ -23,6 +23,13 @@
 >   正确姿势：记下自己启动时打印的 PID（`nohup ... &` 后那行 `[1] <PID>`），
 >   用 `ps -p <PID> -o pid,etime,cmd` 确认还活着、用 `ls -l /proc/<PID>/cwd` 确认是自己的
 >   目录，再 `kill <PID>`。同理 `nvidia-smi` 里别人的进程一律不要碰。
+> - **⚠️ 找数据集只准在 `/workspace/mount/b100_zaip_data/video_datasets/` 里找**（维护者
+>   2026-07-24 明确要求）。**不要**对 `/workspace/mount/b100_zaip_data`、
+>   `/workspace/mount/b100_zaip_data*` 这种整挂载点跑 `find` —— 那底下是别人的工作目录
+>   （wky / zyc / model_zoo / …），既是在翻别人的东西，几百万文件也会把机器拖慢。
+>   本文所有探盘命令都先 `VD=/workspace/mount/b100_zaip_data/video_datasets` 再限定
+>   `find "$VD" -maxdepth N`。**唯一例外**是预训练数据 `b100_zaip_data_luan/InternVid-10M-FLT`
+>   这个已知的确切路径（§4）——那是直接 `ls` 一个具体目录，不是全盘搜索。
 > - 入口/联网与 `SETUP_H100.md` §0 相同（`root@10.55.84.132 -p 31103`）。
 >   全量视频在 `/workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT/`；
 >   工作区 `/workspace/mount/b100_zaip_data/rby/`。
@@ -258,8 +265,10 @@ ls -la "$FULL"
 find "$FULL" -maxdepth 2 -type d | head -40
 # 每个子目录里有多少 mp4：
 for d in "$FULL"/*/; do printf '%6s  %s\n' "$(find "$d" -maxdepth 1 -name '*.mp4' 2>/dev/null | wc -l)" "$d"; done
-# 训练 anno json 在不在盘上（可能要单独下）：
-find "$FULL" /workspace/mount/b100_zaip_data* -maxdepth 4 -name 'InternVid-10M-flt_*.json' 2>/dev/null | head
+# 训练 anno json 在不在盘上（可能要单独下）。
+# ⚠️ 只在这两个**确切目录**里找，不要 find 整个 /workspace/mount/b100_zaip_data*（§0 规则）：
+find "$FULL" /workspace/mount/b100_zaip_data/video_datasets/vd-foundation___InternVid-10M-FLT \
+     -maxdepth 4 -name 'InternVid-10M-flt_*.json' 2>/dev/null | head
 ```
 
 **再软链**成配置期望的布局（把盘上真实名字对到期望名字，避开大小写/层级问题）。
@@ -474,7 +483,11 @@ video_datasets/MSR-VTT/
 | `hmdb51_act_test` | `hmdb51_act_test.json` | `hmdb51/videos_test` | ❓ 列表里没看到 |
 | `ssv2_mc_val` | `ssv2_mc_val.json` | `ssv2/20bn-something-something-v2` | ❓ 列表里没看到 |
 
-### 步骤 1 — 全盘探一次（零成本，先搞清楚有什么）
+### 步骤 1 — 探一次（零成本，先搞清楚有什么）
+
+> ⚠️ **搜索范围只限 `$VD`（= `video_datasets/`）**，这是 §0 的标准规则：不要对
+> `/workspace/mount/b100_zaip_data` 整个挂载点跑 `find`，那底下是别人的工作目录。
+> 下面每条命令都带 `"$VD"` 和 `-maxdepth`，照抄即可。
 
 ```bash
 VD=/workspace/mount/b100_zaip_data/video_datasets

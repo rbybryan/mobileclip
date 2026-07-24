@@ -1060,8 +1060,11 @@ python -c "import transformers, accelerate, torch; print(transformers.__version_
 > ```bash
 > ssh -p 31179 root@10.55.87.68 \
 >   'ls /workspace/mount/b100_zaip_data/model_zoo/ | head -50
->    find /workspace/mount/b100_zaip_data -maxdepth 4 -iname "*InternVL*" 2>/dev/null | head'
+>    find /workspace/mount/b100_zaip_data/model_zoo -maxdepth 3 -iname "*InternVL*" 2>/dev/null | head'
 > ```
+>
+> ⚠️ 只在 `model_zoo/` 里找。**别对 `/workspace/mount/b100_zaip_data` 整个挂载点跑
+> `find`**——那底下是别人的工作目录，翻别人的东西而且很慢（b100 §0 标准规则）。
 >
 > 找到且 101vector 连得到该机 → `rsync -avP` 走内网约 100 MB/s，
 > **76GB 十几分钟**，比任何外网通道快一到两个数量级。

@@ -23,6 +23,32 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (23) — 探盘范围收窄：只在 `video_datasets/` 里找，别扫整个挂载点
+
+**Diagnosis:** 维护者要求：**找数据集只在
+`/workspace/mount/b100_zaip_data/video_datasets/` 之内**。已把这条写成 SETUP_B100 §0 的
+标准规则（和"杀进程只按 PID"并列），并改掉仓库里两条会越界的命令：
+
+| 位置 | 原来 | 现在 |
+|---|---|---|
+| `SETUP_B100.md` §4 | `find "$FULL" /workspace/mount/b100_zaip_data* -maxdepth 4 …` | 只在 `$FULL` 和 `video_datasets/vd-foundation___InternVid-10M-FLT` 两个**确切目录**里找 |
+| `tools/data_audit/SETUP_V100.md` | `find /workspace/mount/b100_zaip_data -maxdepth 4 -iname "*InternVL*"` | 只在 `model_zoo/` 里找 |
+
+**(22) 的 §4b 探盘命令本来就已经限定在 `$VD` 内**（`for d in "$VD"/*/` 和
+`find "$VD" -maxdepth 4`），无需改动，照原样跑即可 —— 现在只是多了一行显式提醒。
+
+理由有两条，都不是形式主义：整挂载点底下是**别人的工作目录**（wky / zyc / model_zoo），
+既不该翻，几百万文件的 `find` 也会实打实拖慢这台共用机器。
+
+**顺带一个观察**：`video_datasets/` 里有个 `vd-foundation___InternVid-10M-FLT/` —— 和 §4
+现在用的 `b100_zaip_data_luan/InternVid-10M-FLT` 可能是同一份数据的另一个副本。**§4 已经
+全绿，不要去动它**；只是万一将来 `_luan` 那份出问题，这里有个备选，顺手记一笔。
+
+**Do this next：** 没有新命令。`git pull` 拿到收窄后的文档，然后**继续 (22) 的步骤 1
+三段探盘**（那三条本来就是合规的）。真正的关键路径仍是 **(19) 的 2 卡冒烟**。
+
+---
+
 ## 2026-07-24 (22) — 评测数据**本机就有**：MSR-VTT 自带现成的 `msrvtt_1k_test.json`，别再 gdown
 
 **Diagnosis:** 你贴的目录是个大发现。`/workspace/mount/b100_zaip_data/video_datasets/`
