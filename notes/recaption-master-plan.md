@@ -147,7 +147,8 @@ LoRA 也不涨 → 才是数据/任务本身无头寸。不做这步就下结论
 | 两条训练线 | **zh 线**：NebulaCV-CLIP-24M（FastViT-MCI0 + MiniRBT-H288 中文文本塔，冻结、仅 MLP 投影可训，max_txt 32），InternVid-zh 11 分片，b100 与 wky/zyc 协作；**EN 线**：MobileViCLIP 复现+论文（CVPR'27，R0–R3，4×H100） | `b100-local-changes.md`、`paper-plan.md` |
 | 审计定论 | 粒度粗 93.6% / 质量差 19.6% / 翻译差 3.6% / RECAPTION 桶 25.3% / RETRANSLATE 并入 RECAPTION（结论 13）| `audit-10k-findings.md` |
 | 已实现 | S0 五样本重述全链：`RECAP_PROMPT` + `vlm_audit_hf.py --mode recap`（N=5、temp 0.9、帧抖动）+ `run_v100.sh recap`（8 卡分发、可续跑）；输入队列 `$OUT/v0_2/recaption_tasks.jsonl`（`apply_buckets --out-recaption` 产物） | #215/#216 |
-| 未实现 | `split_views.py`（句切）、`recap_diag.py`（诊断）、`fuse_captions.py`（per-recap 派生 + 分解冒烟；S3–S7 仅 pass-2）、`fuse_verify.py`（= Panel-V 视图级验真，§5.4）、中转压测 | Stage 2 清单 |
+| 已实现（2026-07-24 晚补） | `split_views.py`（A′ 句切+单测）、`recap_diag.py`（坍缩诊断+侧批对照）、`make_recap_tsv.py` + `run_v100.sh recap-tsv`（抽样全流程 TSV 目检，见 `tools/data_audit/README.md`） | Stage 2-1/2/目检 |
+| 未实现 | `fuse_captions.py`（per-recap 派生 + 分解冒烟；S3–S7 仅 pass-2）、`fuse_verify.py`（= Panel-V 视图级验真，§5.4）、中转压测、D11 探针脚本 | Stage 2 清单 |
 | 消费端 | `pt_dataset.py` uniform 模式**只读 `captions` 列表**；原字幕想当视图必须显式放进列表。⚠️ `min_caption_length` 按 `split()` 数词——**中文无空格恒为 1**，zh 配置必须 ≤1，否则静默全滤 | `pt_dataset.py:173-201` |
 | 算力 | 101vector 8×V100（HF 后端、审计/试点）；b100 8×H100（论文线默认前 4 卡；vLLM 可用；**优先级=EN 论文线**，zh 大批量用空档并先打招呼） | `SETUP_B100.md`、`plan-review-upgrades.md` U6 |
 | EN 线接口 | C1 需每片 ≥2 条合成短字幕（CapRL-Video-4B，10M ≈ 3–6 天 @4×H100，vLLM） | `plan-review-upgrades.md` §3.6、U7-3 |
@@ -241,12 +242,18 @@ CUDA_VISIBLE_DEVICES=1 python tools/data_audit/vlm_audit_hf.py \
   --num-shards 1 --shard-id 0 --output "$OUT/recap5_t03.{shard}.jsonl"
 ```
 
+**建议先抽样后全量**（工具已就绪，`tools/data_audit/README.md`「重述抽样检验」节）：
+`head -n 50` 队列 → `RECAP_INPUT=… recap`（几分钟）→ `recap-tsv` → 目检
+`recap_inspect.tsv`（**源caption(en) / 翻译源caption(zh) / 5 条重述 / A′ 句切视图**并排
++ COLLAPSE 旗）。抽样与全量共用输出文件、按 video 去重续跑，零浪费。
+
 **产出与验收**：
 - `recap5.{0..7}.jsonl` 覆盖 ≥95% 队列 + 两个侧批产物就位；
-- **温度坍缩检查**（recap_diag，Stage 2 工具就绪前先人工抽 20 片）：五条重述需有实质差异；
+- **温度坍缩检查**（`recap-tsv` 自动跑 recap_diag）：五条重述需有实质差异；
   预登记红旗 = 成对字符 3-gram Jaccard 中位数 > 0.8（≈五条近乎雷同）→ 升 temp / 查抖动；
-- 三探针（D11，b100 侧）结果记入本文件附录；
-- 30 片 `make_review_bundle` 快速目检（不打分、只看重述是否像样）。
+  侧批到位后用 `recap_diag.py --compare` 出对照摘要；
+- 三探针（D11，101vector CPU 即可）结果记入本文件附录；
+- TSV 目检 ~20 分钟（无约束力，D14）：重述是否明显好于旧翻译、A′ 视图是否成句。
 
 ### Stage 1 — zh v0.1 基线（b100，已在途）→ **G0**
 
