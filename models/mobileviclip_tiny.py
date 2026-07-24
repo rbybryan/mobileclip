@@ -25,6 +25,14 @@ from .backbones.internvideo2.mobileclip.modules.image.replknet import ReparamLar
 
 from .backbones.internvideo2.pos_embed import get_3d_sincos_pos_embed,get_1d_sincos_pos_embed
 
+# C2 · T 无关化(ROADMAP 2.1):与 Small 共用同一份帧数上下文与插值助手,
+# 说明见 mobileviclip_small.py 顶部注释。
+from .mobileviclip_small import (
+    set_num_frames,
+    get_num_frames,
+    resize_temporal_embedding,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -397,7 +405,8 @@ class MHSA(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
 
-        x = x.reshape(8,int(x.shape[0]/8),x.shape[1],x.shape[2],x.shape[3]) 
+        t_frames = get_num_frames()  # C2:动态 T(旧代码硬编码 8)
+        x = x.reshape(t_frames,int(x.shape[0]/t_frames),x.shape[1],x.shape[2],x.shape[3])
         shape = x.shape
         T, B, C, H, W = shape
         x = x.permute(1,2,0,3,4) #B,C,T,W,H
@@ -585,8 +594,9 @@ class RepMixer(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        t_frames = get_num_frames()  # C2:动态 T(旧代码硬编码 8)
         if hasattr(self, "reparam_conv"): #x:TB,C,H,W
-            x = x.reshape(8,int(x.shape[0]/8),x.shape[1],x.shape[2],x.shape[3])
+            x = x.reshape(t_frames,int(x.shape[0]/t_frames),x.shape[1],x.shape[2],x.shape[3])
             t,b,c,h,w = x.shape
             x = x.permute(1,3,4,2,0) #b,h,w,c,t
             x = x.reshape(b*h*w,c,t) #b*h*w,c,t
@@ -596,7 +606,7 @@ class RepMixer(nn.Module):
             return x
         else:
             if self.use_layer_scale:
-                x = x.reshape(8,int(x.shape[0]/8),x.shape[1],x.shape[2],x.shape[3]) #t,b,c,h,w
+                x = x.reshape(t_frames,int(x.shape[0]/t_frames),x.shape[1],x.shape[2],x.shape[3]) #t,b,c,h,w
                 t,b,c,h,w = x.shape
                 x = x.permute(1,3,4,2,0) #b,h,w,c,t
                 x = x.reshape(b*h*w,c,t) #b*h*w,c,t
@@ -1018,12 +1028,13 @@ class AttentionBlock(nn.Module):
 
     def forward(self, x): #TB,C,H,W
 
-        x = x.reshape(8,int(x.shape[0]/8),x.shape[1],x.shape[2],x.shape[3])
+        t_frames = get_num_frames()  # C2:动态 T(旧代码硬编码 8)
+        x = x.reshape(t_frames,int(x.shape[0]/t_frames),x.shape[1],x.shape[2],x.shape[3])
         t,b,c,h,w = x.shape
         x = x.permute(1,3,4,2,0) #b,h,w,c,t
         x = x.reshape(b*h*w,c,t) #b*h*w,c,t
 
-        x = x + self.temporal_embedding
+        x = x + resize_temporal_embedding(self.temporal_embedding, t)
 
         x = x.reshape(b,h,w,c,t).permute(4,0,3,1,2).reshape(t*b,c,h,w)
 
@@ -1290,8 +1301,9 @@ class FastViT(nn.Module):
         return x
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x.permute(2,0,1,3,4) 
+        x = x.permute(2,0,1,3,4)
         T,B,_,H,W=x.shape
+        set_num_frames(T)  # C2:向所有时序算子广播当前帧数(ROADMAP 2.1)
         x = x.reshape(T*B,3,H,W)
         x_temp = self.forward_embeddings(x)
         x_temp = self.forward_tokens(x_temp)

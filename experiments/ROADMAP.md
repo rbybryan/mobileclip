@@ -52,8 +52,8 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 1.3 10k 试点(✅ 已关闭) | `experiments/README.md` §2b 全套(anno 生成、`export MVC_DATA_DIR`、r0/r1、pytest);结论见 `pilot_10k_results.md`(#199) |
 | 1.4 B0 锁基线 | `experiments/README.md` §3.0 预检 → §3.2 路径对上 → §3.3 跑 B0 + `collect_results.py`;已锁数字在 §3.4 |
 | 1.5 导出冒烟(U1) | 任务与验收:`notes/plan-review-upgrades.md` U1。**具体脚本待写**——落地时命令按约定补进 `COMMANDS.md` |
-| 1.6 B0 多 T 曲线(U2) | 任务与验收:`notes/plan-review-upgrades.md` U2;**命令待 2.1 代码落地后补** |
-| 2.1 C2 T 无关化 | 验收单测命令 `README.md` §2(pytest);per-T BN 诊断行 `README.md` §2b 矩阵;设计准绳 `notes/paper-plan-zh.md` §七.3 |
+| 1.6 B0 多 T 曲线(U2) | 任务与验收:`notes/plan-review-upgrades.md` U2;2.1 已落地 ⇒ 用既有零样本 eval 脚本对官方权重覆盖 `num_frames_test <T>`(T∈{2,4,8,16})即可,模型侧自动插值 |
+| 2.1 C2 T 无关化(✅ 代码落地) | 单测 `python -m pytest tests/test_t_agnostic.py -v`(README §2);V100 冒烟命令见本文件 2.1;per-T BN 工具 `experiments/per_t_bn.py`;设计准绳 `paper-plan-zh.md` §七.3 |
 | 2.2 R2 教师管线 | 设计决策清单:本文件 2.2 + `paper-plan-zh.md` §六.9 + 评审 U7;**提取脚本待写** |
 | 2.4/2.5 A1/A2/B1(#197) | `notes/neural-inspired-implementation.md` Tier A(配置模板 + 单测)/ Tier B(B1 接线与三臂);配置文件待创建 |
 | 3.1 H100 全量数据审查 | `tools/data_audit/SETUP_H100.md` §0 环境 → §1 冒烟 → §2 S0 → §3 S1 → §4 S2 → §5 S3 |
@@ -98,12 +98,17 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 
 ## 第二线:代码开发(不依赖数据,随时推进)
 
-- [ ] **2.1 C2 T 无关化**(R3/R3b 前置):动态 T 替换三处 `reshape(8,...)`
-      硬编码、`temporal_embedding` 插值、随机 T 采样器。
-      验收:T=8 路径与旧代码**逐位一致**的单测;**外加 per-T BN 漂移诊断
-      (U3,README §2b 矩阵有行)**——同一 ckpt 纯 T=2 vs 纯 T=16 各前向
-      若干 batch,量化 BN running stats 偏移;并附训后 per-T BN 校准脚本
-      (纯前向刷新 buffer,4 套,MB 级)。
+- [x] **2.1 C2 T 无关化** —— ✅ 2026-07-24 代码落地(R3/R3b 前置解除):
+      动态 T(帧数上下文 `set/get_num_frames`,small/tiny 共 11 处硬编码全替)、
+      `temporal_embedding` 线性插值(t==8 原样返回)、随机 T 采样器
+      (`utils/elastic_t.py`,(seed,step) 决定性 ⇒ 跨 rank 同 T)、训练开关
+      `elastic_t=dict(enable,choices)`(`tasks_clip/pretrain.py`,默认关=零改动)、
+      per-T BN 诊断/校准工具(`experiments/per_t_bn.py`,U3)。
+      **验收已过**:`tests/test_t_agnostic.py` 18 项全过(本地 CPU)——含
+      T=8 与旧代码**逐位一致**(MHSA/RepMixer 训练+reparam/AttentionBlock)。
+      **余项(服务器)**:V100 随机 T 冒烟
+      `bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r3e.py 8 debug True`;
+      真 ckpt 的 BN 漂移诊断随 r3e 跑(per_t_bn.py docstring)。
 - [ ] **2.2 R2 教师管线**(1.2 的报告出来后设计更准):InternVideo2
       embedding 离线提取脚本,先在 10k 上试点实测每 clip 耗时/存储,
       同时敲定审核修正 9 的三个设计细节(教师维度投影、帧索引记录、
@@ -138,7 +143,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 10k 试点配置 | ✅ | PR #67 |
 | 10k 试点跑通(链路 go/no-go) | ✅ | 三条判据全过(exp(ls)=10.48≠10·lb=−9.76≠−10·proj 从零练到 L2=0.18),见 `pilot_10k_results.md` |
 | B0 基线锁定 | ✅ | MSR-VTT t2v R@1=42.50 对上论文,见 README §3.4(msrvtt/hmdb51/ucf101/k400) |
-| C2 T 无关化 | ⬜ | ← 第二线 2.1(验收含 per-T BN 诊断,U3) |
+| C2 T 无关化 | 🟡 | 代码+单测 ✅ 2026-07-24(18 项全过,T=8 逐位一致);V100 r3e 冒烟待跑 → 过后转 ✅ |
 | R2 教师管线 | ⬜ | ← 第二线 2.2(含 U7/U9 设计项) |
 | 全量数据(H100 真 A/B + 终训) | ⬜ | ← 第三线;`SETUP_B100.md` 就绪,`from-server.md` 尚无回报=未起跑 |
 | 计划评审 + 文献网扫(U1–U10) | ✅ | `notes/plan-review-upgrades.md`;C2 按 FluxViT 收窄、导出冒烟=1.5、多 T 曲线=1.6 |
