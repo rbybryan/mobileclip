@@ -23,6 +23,7 @@
 #   bash tools/data_audit/run_v100.sh merge-review # ⑧d 融合可视化人审（视频+候选+融合稿离线包，同 better_zh）
 #   bash tools/data_audit/run_v100.sh s4-merged    # ⑧e 落地：融合稿当主字幕写进 v0.2 训练 JSON
 #   bash tools/data_audit/run_v100.sh recap        # ⑧f RECAPTION 桶前端：每片五样本独立重述（融合方案 S0）
+#   bash tools/data_audit/run_v100.sh recap-tsv    # ⑧g 重述检验 TSV：源caption/翻译/5重述/A′视图 并排目检（CPU 秒级）
 #   JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge  # ⑥ 云端裁判（可选，需 API key）
 #   bash tools/data_audit/run_v100.sh judge-agree # ⑥b 一致率+Cohen's κ（可对外来裁判文件独立重算）
 #   bash tools/data_audit/run_v100.sh xling-check # ⑥c 裁决 xling 阈值（s3 前必做）
@@ -516,8 +517,29 @@ recap)
     echo "shard $i -> GPU$i (log: $OUT/recap_shard$i.log)"
   done
   echo "已后台启动（可续跑）。每片跑 $N_RECAP 次生成+解码，比单次 s2 慢约 ${N_RECAP}×。进度: bash $0 status"
-  echo "诊断：温度过低会让 N 条几乎雷同、投票失效——跑完抽查 recap5.*.jsonl 的 verdict.recaps 是否真有差异。"
-  echo "下一步：融合 S1–S7 在 tools/fuse_captions.py（待实现，见 notes/caption-fusion-scheme.md §6.1）。"
+  echo "诊断：温度过低会让 N 条几乎雷同、投票失效——跑完（或抽样跑完）执行: bash $0 recap-tsv"
+  echo "抽样跑法：head -n 50 队列 > sample.jsonl; RECAP_INPUT=sample.jsonl bash $0 recap"
+  echo "  （输出仍进 \$OUT/recap5.*.jsonl，之后全量跑会自动跳过这 50 片——续跑逻辑按 video 去重）"
+  ;;
+# ------------------------- ⑧g 重述检验 TSV（CPU 秒级；主计划 Stage 0 目检）
+recap-tsv)
+  ls "$OUT"/recap5.*.jsonl >/dev/null 2>&1 || { echo "没有 $OUT/recap5.*.jsonl——先跑: bash $0 recap
+  （抽样即可: head -n 50 \$OUT/v0_2/recaption_tasks.jsonl > \$OUT/v0_2/recap_sample.jsonl;
+    RECAP_INPUT=\$OUT/v0_2/recap_sample.jsonl bash $0 recap）"; exit 1; }
+  RECAP_INPUT=${RECAP_INPUT:-$OUT/v0_2/recaption_tasks.jsonl}
+  echo "== ① A′ 句切视图（tokenizer 不可达会自动落到 30 字符预算，不阻塞）=="
+  python tools/data_audit/split_views.py --recaps "$OUT/recap5.*.jsonl" \
+    --output "$OUT/recap_views.jsonl"
+  echo "== ② 多样性/坍缩诊断（预登记红旗: 片内中位 3-gram Jaccard > 0.8）=="
+  python tools/data_audit/recap_diag.py --recaps "$OUT/recap5.*.jsonl" \
+    --out-perclip "$OUT/recap_diag.jsonl" | tee "$OUT/recap_diag.txt"
+  echo "== ③ 检验 TSV（源caption vs 翻译 vs 5 重述 vs A′ 视图，Excel/WPS 直接打开）=="
+  python tools/data_audit/make_recap_tsv.py --tasks "$RECAP_INPUT" \
+    --recaps "$OUT/recap5.*.jsonl" --views "$OUT/recap_views.jsonl" \
+    --diag "$OUT/recap_diag.jsonl" --output "$OUT/recap_inspect.tsv"
+  echo "产物: $OUT/recap_inspect.tsv （scp 回本地打开；utf-8-sig, 制表符分隔）"
+  echo "目检要点: ①五条重述是否真有差异(COLLAPSE 列) ②重述是否明显好于 zh_translated"
+  echo "         ③views_A_prime 是否成句、无半截话（这就是 G1 要喂给训练的形态）"
   ;;
 # ------------------------------- ⑨b 粒度重判结果分析 + n_info=0 归因
 gran-check)

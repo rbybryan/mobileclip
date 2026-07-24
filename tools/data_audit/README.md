@@ -85,6 +85,30 @@ bash tools/data_audit/run_v100.sh s3         # 诊断报告 report.md + buckets.
 16GB 的 V100 需 `export S2_MODEL=Qwen/Qwen3-VL-4B-Instruct`。
 若 fp16 输出乱码/NaN（罕见的 bf16→fp16 溢出），改用 4B 模型加 `--dtype fp32`。
 
+## 重述抽样检验：50 片全流程 → TSV 目检（主计划 Stage 0，V100 单机可完成）
+
+在花大算力之前，用 RECAPTION 桶头部 50 片把「重述 → 诊断 → A′ 句切视图」整条链跑通，
+产出一张 **源caption(en) / 翻译源caption(zh) / 5 条重述 / A′ 视图** 并排的 TSV 供目检：
+
+```bash
+source ~/audit_env/bin/activate
+# ① 抽样队列（前置: s3+s4 已产 recaption_tasks.jsonl；50 片 × 5 重述 ≈ 8 卡几分钟）
+head -n 50 outputs/audit_10k/v0_2/recaption_tasks.jsonl > outputs/audit_10k/v0_2/recap_sample.jsonl
+RECAP_INPUT=outputs/audit_10k/v0_2/recap_sample.jsonl bash tools/data_audit/run_v100.sh recap
+bash tools/data_audit/run_v100.sh status        # 等 recap 行到 50/50（或看 recap_shard*.log）
+# ② 句切 + 诊断 + TSV（CPU 秒级）
+bash tools/data_audit/run_v100.sh recap-tsv
+# ③ scp outputs/audit_10k/recap_inspect.tsv 回本地，Excel/WPS 直接打开（utf-8-sig）
+```
+
+- 输出进 `$OUT/recap5.*.jsonl`，与全量跑同名——**续跑按 video 去重**，抽样的 50 片不会重算；
+  之后直接 `bash run_v100.sh recap`（不带 RECAP_INPUT）即无缝转全量。
+- TSV 列：`video | 分桶理由 | en_source | zh_translated | recap_1..5 | A′视图 |
+  jaccard_med | ident_pairs | COLLAPSE 旗`。目检三问：五条重述有差异吗（COLLAPSE 列）？
+  重述比旧翻译明显更全吗？A′ 视图成句、无半截话吗？
+- 工具：`split_views.py`（A′ 规则，MiniRBT tokenizer 计 32 token，离线自动落 30 字符预算）·
+  `recap_diag.py`（坍缩红旗 + `--compare` 侧批对照）· `make_recap_tsv.py`（汇总表）。
+
 ## 快速上手（A100/H100 等 Ampere+ 机器，vLLM 服务方式）
 
 ```bash
