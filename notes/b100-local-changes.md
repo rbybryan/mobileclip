@@ -26,6 +26,36 @@ NebulaCV-CLIP-24M（中文：FastViT-MCI0 视觉塔 + MiniRBT-H288 中文文本�
 `wky_b100/cache/hfhub`），即这是与 wky 协作的中文训练线，与本 fork 的
 InternVid-10M-FLT 英文 R0–R3 计划（`experiments/SETUP_B100.md`）**平行、互不冲突**。
 
+## 中文线数据准备：源 caption 文件路径（2026-07-24 补记）
+
+`preprocess/prepare_internvid_chinese_annotations.py` 的 `--source` 就是翻译管线
+（qwen36 v0.1）产出的**合并 jsonl**——一份文件里同时含**原始源 caption**和
+`raw_caption_zh_translated`（原文与译文放在一起，无需再单独取源文本）。b100 上的
+权威绝对路径：
+
+```
+/workspace/mount/b100_zaip_data/zyc/vibe_coding/low_resource_cv/MobileViCLIP/outputs/internvid_alignment/caption_translation_qwen36_v0_1/20_outputs/aligned_internvid_zh_translated_retry_merged.jsonl
+```
+
+> 注意此文件在 **zyc** 的工作区（`zyc/vibe_coding/...`），不是 wky 的目录；
+> 它是翻译+重试的合并结果，是分片生成的输入。
+
+据此重跑 11 个分片（`--manual-reviews` 的人审文件路径仍待 wky/zyc 确认，占位）：
+
+```bash
+cd /workspace/mount/b100_zaip_data/rby/MobileViCLIP   # 中文线所在目录（上游 clone + 快照）
+PYTHONPATH=. python preprocess/prepare_internvid_chinese_annotations.py \
+  --source /workspace/mount/b100_zaip_data/zyc/vibe_coding/low_resource_cv/MobileViCLIP/outputs/internvid_alignment/caption_translation_qwen36_v0_1/20_outputs/aligned_internvid_zh_translated_retry_merged.jsonl \
+  --manual-reviews /path/to/manual_review_annotations.jsonl \
+  --output-dir /workspace/mount/b100_zaip_data/wky_b100/project/video-text-dataset/internvid-cap-zh \
+  --uncertain-policy drop
+```
+
+脚本默认用 `raw_caption_zh_translated`，人审“通过/修改后通过”用
+`corrected_translation` 覆盖，“不确定/拒绝”不进训练；输出即
+`docs/nebulacv_chinese_training.md`（快照分支 `server/b100-local-opts`）里
+`ANNO_DIR` 所指的 11 个 `InternVId-FLT_{1..11}.json`。
+
 ## 修改的已有文件（8 个）
 
 | 文件 | 改动 | 性质 |
