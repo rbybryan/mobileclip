@@ -147,8 +147,8 @@ LoRA 也不涨 → 才是数据/任务本身无头寸。不做这步就下结论
 | 两条训练线 | **zh 线**：NebulaCV-CLIP-24M（FastViT-MCI0 + MiniRBT-H288 中文文本塔，冻结、仅 MLP 投影可训，max_txt 32），InternVid-zh 11 分片，b100 与 wky/zyc 协作；**EN 线**：MobileViCLIP 复现+论文（CVPR'27，R0–R3，4×H100） | `b100-local-changes.md`、`paper-plan.md` |
 | 审计定论 | 粒度粗 93.6% / 质量差 19.6% / 翻译差 3.6% / RECAPTION 桶 25.3% / RETRANSLATE 并入 RECAPTION（结论 13）| `audit-10k-findings.md` |
 | 已实现 | S0 五样本重述全链：`RECAP_PROMPT` + `vlm_audit_hf.py --mode recap`（N=5、temp 0.9、帧抖动）+ `run_v100.sh recap`（8 卡分发、可续跑）；输入队列 `$OUT/v0_2/recaption_tasks.jsonl`（`apply_buckets --out-recaption` 产物） | #215/#216 |
-| 已实现（2026-07-24 晚补） | `split_views.py`（A′ 句切+单测）、`recap_diag.py`（坍缩诊断+侧批对照）、`make_recap_tsv.py` + `run_v100.sh recap-tsv`（抽样全流程 TSV 目检，见 `tools/data_audit/README.md`） | Stage 2-1/2/目检 |
-| 未实现 | `fuse_captions.py`（per-recap 派生 + 分解冒烟；S3–S7 仅 pass-2）、`fuse_verify.py`（= Panel-V 视图级验真，§5.4）、中转压测、D11 探针脚本 | Stage 2 清单 |
+| 已实现（2026-07-24 晚补） | `split_views.py`（A′ 句切+单测）、`recap_diag.py`（坍缩诊断+侧批对照）、`make_recap_tsv.py`/`recap-tsv`；**全链条样本档**：`--mode derive`（A_llm 派生+en_gloss）、`score_alignment --tag` 透传（A− 选择）、`fuse_verify.py` v0（Panel-V 检测器档：GDINO fp32 + RapidOCR，缺件自动降级）、`make_pipeline_tsv.py` + `run_v100.sh pipeline-sample`（50 片端到端 ~1h，全景 TSV） | Stage 2-1/2/5/6 样本档；`tools/data_audit/README.md` |
+| 未实现 | Panel-V **VLM 二审档**（InternVL2.5-8B venv + 路由/升级/噪声自校准，§5.4 完整版）、`fuse_captions.py --mode decompose`（S1–S2 冒烟；S3–S7 仅 pass-2）、中转压测、D11 探针脚本、300k 生产档编排 | Stage 2 清单剩余 |
 | 消费端 | `pt_dataset.py` uniform 模式**只读 `captions` 列表**；原字幕想当视图必须显式放进列表。⚠️ `min_caption_length` 按 `split()` 数词——**中文无空格恒为 1**，zh 配置必须 ≤1，否则静默全滤 | `pt_dataset.py:173-201` |
 | 算力 | 101vector 8×V100（HF 后端、审计/试点）；b100 8×H100（论文线默认前 4 卡；vLLM 可用；**优先级=EN 论文线**，zh 大批量用空档并先打招呼） | `SETUP_B100.md`、`plan-review-upgrades.md` U6 |
 | EN 线接口 | C1 需每片 ≥2 条合成短字幕（CapRL-Video-4B，10M ≈ 3–6 天 @4×H100，vLLM） | `plan-review-upgrades.md` §3.6、U7-3 |

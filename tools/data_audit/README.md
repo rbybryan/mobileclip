@@ -109,6 +109,27 @@ bash tools/data_audit/run_v100.sh recap-tsv
 - 工具：`split_views.py`（A′ 规则，MiniRBT tokenizer 计 32 token，离线自动落 30 字符预算）·
   `recap_diag.py`（坍缩红旗 + `--compare` 侧批对照）· `make_recap_tsv.py`（汇总表）。
 
+### 完整优化流水线小样本端到端（`pipeline-sample`，主计划全链条）
+
+上面只覆盖 S0→A′。要把**整条 caption 优化方案**（重述 → A_llm 派生 → SigLIP 打分/A− 选择 →
+Panel-V v0 验真过滤 → C_v）在小样本上端到端跑通并出全景 TSV：
+
+```bash
+source ~/audit_env/bin/activate
+pip install rapidocr-onnxruntime onnxruntime   # 可选：OCR 验真档；装不上会自动降级
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+# 产物: outputs/audit_10k/recap_pipeline.tsv
+```
+
+- 单卡前台顺序执行（重述段自动复用 8 卡 recap 并等待），50 片全程 **~1 小时**；
+  首次会经 hf-mirror 下载 GroundingDINO-base（~700MB, fp32）。
+- 每片一行：`en_source | zh_translated | recap_1..5(⟨SigLIP 分⟩) | A−保留(top-3 重述号) |
+  A′句切视图 | ✓过验真视图[gloss] | ·未验(保守留) | ✗被滤视图[gdino/ocr] | 坍缩旗标`——
+  这就是主计划 G2 三臂（A_llm/A−/C_v）的样本级预览。
+- 验真档 v0 = GroundingDINO(按 en_gloss) + RapidOCR(引号文字模糊匹配 ≥0.7)；
+  **InternVL 二审档属 Stage 2-6，后补**——当前不可判的视图标 `unverified` 并保守保留。
+- 复跑安全：重述/验真都按 video 续跑去重；打分文件每次重建。
+
 ## 快速上手（A100/H100 等 Ampere+ 机器，vLLM 服务方式）
 
 ```bash

@@ -35,10 +35,10 @@ import torch
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from vlm_audit import (GRAN_KEYS, GRAN_PROMPT, MERGE_KEYS,  # noqa: E402
-                       MERGE_PROMPT, PROMPT, RECAP_PROMPT, TRANS_KEYS,
-                       TRANS_PROMPT, VERDICT_KEYS, extract_json,
-                       resolve_video_path)
+from vlm_audit import (DERIVE_KEYS, DERIVE_PROMPT, GRAN_KEYS,  # noqa: E402
+                       GRAN_PROMPT, MERGE_KEYS, MERGE_PROMPT, PROMPT,
+                       RECAP_PROMPT, TRANS_KEYS, TRANS_PROMPT, VERDICT_KEYS,
+                       extract_json, resolve_video_path)
 
 
 def sample_frames_pil(path, num_frames, max_side, phase=0.5):
@@ -138,11 +138,14 @@ def main():
                          "different frames. --no-frame-jitter isolates decoding "
                          "variance for the temperature ablation (§6.4).")
     ap.add_argument("--mode", default="full",
-                    choices=["full", "trans", "gran", "merge", "recap"],
+                    choices=["full", "trans", "gran", "merge", "recap", "derive"],
                     help="'full' = combined video rubric (default). 'recap' = write "
                          "N independent Chinese captions FROM the frames (RECAPTION "
                          "bucket front-end for the fusion scheme; RECAP_PROMPT, "
-                         "temperature + frame jitter, no en/zh shown). 'trans' = "
+                         "temperature + frame jitter, no en/zh shown). 'derive' = "
+                         "text-only per-recap view derivation (A_llm, master plan "
+                         "D5): input = recap5 jsonl, one call per recap, outputs "
+                         "verdict.views = [{text, gloss, src_recap}]. 'trans' = "
                          "text-only translation re-judgement: no video is read "
                          "and no frames are shown, so trans_score cannot anchor "
                          "on the video-alignment judgement (see vlm_audit.py "
@@ -226,6 +229,48 @@ def main():
                         if cap:
                             recaps.append(cap)
                     out["verdict"] = {"recaps": recaps, "n_samples": len(recaps)}
+                elif args.mode == "derive":
+                    # A_llm per-recap view derivation (master plan D5/D8): one
+                    # text-only call per recap; the dense recap is the sole
+                    # evidence (closed set -- frames withheld on purpose so the
+                    # deriver cannot add new details). Reuses the cached VLM as
+                    # a text LLM: no extra weights needed on the box.
+                    recaps = [c for c in ((rec.get("verdict") or {}).get("recaps")
+                                          or []) if isinstance(c, str) and c.strip()]
+                    views = []
+                    for i, cap in enumerate(recaps):
+                        prompt = DERIVE_PROMPT.format(dense=cap)
+                        obj = None
+                        try:
+                            text = generate(model, processor, [], prompt,
+                                            args.max_new_tokens)
+                            obj = extract_json(text, DERIVE_KEYS)
+                        except (ValueError, torch.cuda.OutOfMemoryError) as ex:
+                            if isinstance(ex, torch.cuda.OutOfMemoryError):
+                                torch.cuda.empty_cache()
+                            try:  # one retry with mild sampling
+                                text = generate(model, processor, [], prompt,
+                                                args.max_new_tokens,
+                                                temperature=0.3)
+                                obj = extract_json(text, DERIVE_KEYS)
+                            except Exception:  # noqa: BLE001
+                                obj = None
+                        for v in (obj or {}).get("views") or []:
+                            if isinstance(v, dict) and isinstance(v.get("text"),
+                                                                  str) \
+                                    and v["text"].strip():
+                                gloss = [g.strip().lower()
+                                         for g in (v.get("gloss") or [])
+                                         if isinstance(g, str) and g.strip()]
+                                views.append({"text": v["text"].strip(),
+                                              "gloss": gloss, "src_recap": i})
+                    seen, uniq = set(), []
+                    for v in views:
+                        if v["text"] not in seen:
+                            seen.add(v["text"])
+                            uniq.append(v)
+                    out["verdict"] = {"views": uniq, "n_views": len(uniq),
+                                      "n_recaps": len(recaps)}
                 elif args.mode == "merge":
                     # 合并 better_zh 的多条候选（在 s2_verdicts 里）为一条。纯文本。
                     cands = [c for c in ((rec.get("verdict") or {}).get("better_zh")
@@ -261,7 +306,7 @@ def main():
                     prompt = PROMPT.format(n_frames=args.frames,
                                            en=(rec.get("en") or "(无)"),
                                            zh=(rec.get("zh") or "(空)"))
-                if args.mode != "recap":  # recap already produced its verdict above
+                if args.mode not in ("recap", "derive"):  # these built their verdict above
                     try:
                         text = generate(model, processor, frames, prompt,
                                         args.max_new_tokens)
