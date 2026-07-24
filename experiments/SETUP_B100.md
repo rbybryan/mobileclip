@@ -233,6 +233,63 @@ mkdir -p anno_downstream/InternVid
 # MVC_ANNO_DIR 用默认 anno_downstream 即可，不用 export。
 ```
 
+### ⚠️ anno 的 caption 格式必须先核对（§5 预检查不到这一层）
+
+loader 对 `internvid_v*` 的读法（`dataset/pt_dataset.py`）有三条硬要求，盘上 anno
+**必须**满足，否则不是崩就是训歪：
+
+1. **是 JSON 数组，不是 jsonl**：loader 只 `json.load(f)`。若盘上是**逐行 jsonl**
+   （中文线那套翻译产物就是 jsonl），`json.load` 直接解析失败 → 必须先转成数组。
+2. **每条 `caption` 是纯字符串**：`internvid_v*` 配了 `jump_filter=True` 且**没有**
+   `caption_augmentation`，取值路径就是 `anno[i]["caption"]` 再 `pre_text()`——要求 `str`。
+   若 `caption` 是 **list**、或字段名叫 **`captions`**、或整条是别的嵌套结构，
+   会在 `pre_caption` 抛 `NotImplementedError`（list 还会先 `.split()` 报错）。
+3. **`video` 是相对 data_root 的 `.mp4` 路径**（拼到 `video_sample/InternVId-FLT_{i}/` 下）。
+
+> **`check_readiness.py`（§5）只查 `video` 字段和文件在不在，从不看 `caption` 的类型。**
+> 所以 11 个分片全 `[OK ]` ≠ caption 格式对——格式不对会等到 torchrun 起来才崩。
+> **源 caption 格式与上面假设不一致时（已知会变），先在这里转好再进 §5。**
+
+**先探 caption 格式**（把路径换成探盘找到的真实 anno）：
+
+```bash
+python - <<'PY'
+import json
+p="anno_downstream/InternVid/InternVid-10M-flt_1.json"
+try:
+    d=json.load(open(p))                       # 报错=不是 json 数组(多半是 jsonl)，需转
+    assert isinstance(d,list), type(d)
+    r=d[0]; print("keys:",list(r.keys()))
+    print("video:",repr(r.get("video"))[:120])
+    c=r.get("caption", r.get("captions"))
+    print("caption type:",type(c).__name__,"| sample:",repr(c)[:200])
+except Exception as e:
+    print("NOT a json-array of {video,caption:str}:",repr(e))
+PY
+```
+
+**若格式不符，转成 loader 要的 `{"video","caption":str}` JSON 数组**（按上一步 head
+看到的真实结构改取值那两行）：
+
+```bash
+python - <<'PY'
+import json
+src="<盘上真实 anno>"; dst="anno_downstream/InternVid/InternVid-10M-flt_1.json"
+def load(s):
+    try: return json.load(open(s))             # json 数组
+    except json.JSONDecodeError:               # jsonl 回退
+        return [json.loads(l) for l in open(s) if l.strip()]
+out=[]
+for r in load(src):
+    vid=r["video"]                             # 确认相对 InternVId-FLT_i/ 的 .mp4
+    cap=r.get("caption", r.get("captions"))
+    if isinstance(cap,list): cap=cap[0]        # 多 caption 取一条(或按需改)
+    out.append({"video":vid,"caption":str(cap)})
+json.dump(out, open(dst,"w"), ensure_ascii=False)
+print(len(out),"records ->",dst)
+PY
+```
+
 > 若探盘发现 `$FULL` 布局本就是 `.../video_sample/InternVId-FLT_{i}`，那连软链都免了，
 > 直接 `export MVC_DATA_DIR=<那个 video_sample 的父目录>`。软链方案只是为了对付命名不一致。
 
@@ -254,6 +311,9 @@ python experiments/check_readiness.py --decode  # 再抽一条真解码，确认
 - `[·· ] internvid_vN  ... 抽查 N 条视频全部缺失` → 目录在、但 anno 里的 `video`
   字段拼出来的文件不在（层级/命名不符）。
 - 全部 `[OK ]` 且 `checkpoints/mobileclip_s2.pt` 在，才算「R0–R3 全量预训练」解锁。
+- ⚠️ **预检不查 caption**：它只验证 `video` 字段和文件在不在。若 anno 是 jsonl、
+  或 `caption` 是 list/`captions` 键，11 个分片照样全 `[OK ]`，但 torchrun 一起就崩。
+  这一层必须在 **§4 的「caption 格式核对」**里先转好——见上一节。
 
 再跑一遍 §2 的 arch 自检确认这个 shell 的 torch 没被后续 pip 换掉。
 
