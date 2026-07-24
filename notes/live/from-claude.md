@@ -23,6 +23,88 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (6) — C2 弹性 T 代码已合入（#222）：V100 三件事（插空档），b100 零影响照跑
+
+**Diagnosis:** ROADMAP 2.1 落地：模型里全部 11 处 `reshape(8,...)` 硬编码已动态化，
+`temporal_embedding` 自动插值，弹性 T 训练开关 `elastic_t` **默认关闭 = 基线路径逐位
+不变**（18 项单测已在 CPU 全过，含 T=8 与旧代码逐位一致）。**对 (5) 的 b100 冒烟→R0
+完全零影响，照跑，勿改任何参数。** 新解锁三件事，都在 V100（101vector），且
+**优先级全部低于 recap 主线（(4)/(5)），只插 GPU 空档**。
+
+**V100 · Do this next（repo 根，先 `git pull origin main`）：**
+
+```bash
+# ① 单测（纯 CPU、~4 分钟、跑一次即可；预期 18 passed）：
+python -m pytest tests/test_t_agnostic.py -v
+
+# ② 1.6 · B0 官方权重多 T 退化曲线 = 论文 Fig-1 第一版（单卡、每个 T 几分钟、纯评测）
+#    T=8 那组应对上 §3.4 的锚点（DSL t2v R@1≈42.5），作为链路自检：
+for T in 2 4 8 16; do
+  CUDA_VISIBLE_DEVICES=0 bash experiments/run_eval.sh small msrvtt \
+      ./checkpoints/mobileviclip_small.pt \
+      experiments/evals/b0_multiT/msrvtt_T${T} \
+      num_frames ${T} num_frames_test ${T}
+done
+# 看数（论文主口径 = ret_test_emb/ 原始余弦；ret_test/ 是 DSL 对齐口径）：
+python - <<'PY'
+import json, glob
+for p in sorted(glob.glob("experiments/evals/b0_multiT/msrvtt_T*/eval_res.json")):
+    print(p.split("/")[-2], json.dumps(json.load(open(p)), ensure_ascii=False)[:400])
+PY
+
+# ③ r3e · 弹性 T 链路冒烟（README §2b 矩阵 C2 行；8 卡但 debug 几十步自停）：
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r3e.py 8 debug True
+```
+
+**b100:** 无新动作——照 (5) 跑。R0 起跑后若想顺手验环境（CPU、不占卡）：
+`python -m pytest tests/test_t_agnostic.py -v`。
+
+**Then report back**（from-server.md）：① 是否 `18 passed`；② 四个 T 的 t2v/v2t R@1
+（`ret_test_emb` 口径贴原文即可）——这就是 Fig-1 的第一版数据 + C2 难度标定；
+③ r3e 是否自停干净、日志 `elastic_t` 是否在 2/4/8/16 间跳、有无 OOM/NaN。
+
+> 备注：handoff 分支上另有一个「07-24 (5) 主计划升 v1.1」块（与本文件下方的
+> §5-放行块撞号，两个 (5) 都有效,以标题区分;v1.1 对服务器的指示 = Stage 0 照 (4) 跑）。
+
+---
+
+---
+
+## 2026-07-24 (5) — §5 全绿，放行 §6：先 2 卡冒烟（顺带确认 sm_90）→ 再 R0 四卡
+
+**结论：数据/权重全部就绪，R0–R3 解锁。** 预检 11 个 `internvid_v*` 全 `[OK ]`（抽查
+20/20 在、真解码 OK），三个权重都在（`mobileclip_s2.pt` 398MB 等），预检末尾也标了
+`[可跑] R0–R3 全量预训练(§4)`。§2–§5 我已在 `SETUP_B100.md` 进度清单里勾掉。
+
+**Do this next（`rby/mobileclip` 根；先 `nvidia-smi` 确认前 4 张卡空闲——本机共享）：**
+```bash
+# 0) 首光冒烟：2 卡 + DDP+AMP + bf16 + debug，几十步自停。这一步同时最终确认 torch 有
+#    Hopper(sm_90) 内核——若这里 CUDA kernel 报错，就是 §2 的 torch 没带 sm_90，回去换 cu12x。
+CUDA_VISIBLE_DEVICES=0,1 bash experiments/run_pretrain.sh \
+    experiments/configs/r0_baseline.py 2 \
+    use_bf16 True bf16 True deepspeed.enable False debug True
+```
+冒烟通了（跑完几十步没崩、loss 有数）再起真 R0：
+```bash
+# 1) 真 R0：4 卡、bf16、后台 nohup（掉隧道不影响），batch=64×4=256
+mkdir -p experiments/runs
+CUDA_VISIBLE_DEVICES=0,1,2,3 nohup bash experiments/run_pretrain.sh \
+    experiments/configs/r0_baseline.py 4 \
+    use_bf16 True bf16 True > experiments/runs/r0_baseline.log 2>&1 &
+tail -f experiments/runs/r0_baseline.log     # 头几百步看 loss 是否正常下降/发散/NaN
+```
+
+**纪律**：默认只用前 4 张卡（后 4 张留别人）；`<num_gpus>` 绝不能省（省了默认 8）；
+R1 三臂要与 R0 同 batch/卡数/bf16/deepspeed 开关，才是等步对照（§6）。真跑装了
+`deepspeed>=0.14` 后可去掉 `deepspeed.enable False`，但**一旦一臂用 deepspeed，所有臂都用**。
+
+**Then report back**：冒烟是否通过（有没有 sm_90/CUDA 报错）、R0 头几百步的 loss 走势
++ 一个 epoch 的墙钟估算、显存占用（`nvidia-smi` 峰值，判断 bs 还能不能上调）。
+
+---
+
+---
+
 ## 2026-07-24 (5) — 主计划升 v1.1：全自动验收、零重人力标注、附全流程图（#223 已并入）
 
 **Diagnosis:** 三路专家终审（自动评测设计 × 统计效度 × 可行性）后，
@@ -37,6 +119,8 @@ A′；G2 种子自适应（期望省 ~60% 训练算力）；§5.1 的「V100 �
 **Do this next:** 与 (4) 相同——V100 跑 `run_v100.sh recap` + 两个侧批；b100 照 (3) 继续。
 另外（可选、CPU、随时）：预下载 `hfl/minirbt-h288`、`sentence-transformers/LaBSE`，
 D11 探针不再等 b100。
+
+---
 
 ---
 
@@ -61,6 +145,35 @@ b100 侧照 **(3)** 继续英文线 anno → 预检 → §6 冒烟/R0（即主�
 
 **Then report back** in from-server.md：recap5.* 行数、吞吐三元组、抽 3 片贴 `verdict.recaps`
 （我要目检五条是否真有差异 = 温度坍缩检查）。
+
+---
+
+## 2026-07-24 (4) — anno 已建好；就差软链让预检的 data_root 目录存在
+
+**Diagnosis:** 11 片 anno 全建成了（计数完全对：1–10 各 100 万、11 是 647458）。预检那
+11 行报的是 `data_root 缺失: data/video_sample/InternVId-FLT_i`——你**跳过了 ③ 建软链**，
+且 `MVC_DATA_DIR` 是默认 `data`，所以那些目录还不存在。**这一步只是让目录存在**：`video`
+是 `abs_path`，训练根本不走 data_root，只是 `check_readiness` 要 `isdir(data_root)`。
+
+**Do this next（就在 `rby/mobileclip` 根，不用 export MVC_DATA_DIR）：**
+```bash
+FULL=/workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT   # abs_path 的根：InternVid(小写)
+mkdir -p data/video_sample
+for i in $(seq 1 11); do ln -sfn "$FULL/InternVId-FLT_$i" "data/video_sample/InternVId-FLT_$i"; done
+ls -ld data/video_sample/InternVId-FLT_*/     # 应 11 条软链，各解析到真实分片目录
+python experiments/check_readiness.py --decode 2>&1 | grep -E "internvid_v"
+```
+
+**Then report back**：那 11 行现在是不是 `[OK ]`。
+- 若还 `data_root 缺失` → `$FULL/InternVId-FLT_i` 目录名大小写没对上（根 `InternVid`、分片
+  `InternVId-FLT_i`，用 `ls $FULL` 核对真实名字再改软链 target）。
+- 若变成 `抽查…全部缺失` → abs_path 指的 mp4 真不在盘上（拿一条 abs_path `ls -l` 验证）。
+
+**顺带（§3，R0 之前必须）**：`checkpoints/mobileclip_s2.pt` 还缺，预检也标了。R0–R3 底座
+必需——按 §3 用 gdown 下好它，否则 §6 起不来。评测基准那 7 个 anno 缺失（msrvtt/didemo…）
+只影响 B0 评测，不挡 R0–R3 预训练，先不用管。
+
+---
 
 ---
 
