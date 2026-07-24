@@ -38,6 +38,12 @@ import sys
 import torch
 
 
+# 训练态 checkpoint 的回退键:MobileOneBlock_1d 里的 k=3 分支。
+# 它是等效核里**唯一**的反对称来源(证明见 audit() 的回退提示),所以不做
+# reparameterize 也能判定"是否恰好时间反转盲"。
+TRAIN_STATE_KERNEL_KEY = "mixer_1d.rbr_conv.0.conv"
+
+
 # --------------------------------------------------------------------------
 # 诊断量(纯函数,--self-test 覆盖)
 # --------------------------------------------------------------------------
@@ -111,11 +117,26 @@ def audit(sd: dict, kernel_key: str, embed_key: str) -> None:
         per_pos = v.reshape(-1, v.shape[-1]).norm(dim=0)
         rel_spread = (per_pos.std() / per_pos.mean().clamp_min(1e-12)
                       if per_pos.mean() > 0 else torch.tensor(0.0))
+        # 时间反转下的反对称占比:E 沿 T 翻转后与自身比。
+        # ≈0 ⇒ E 沿时间是"回文"的 ⇒ **原则上就无法编码方向**(只能编码"离两端多远")。
+        flat = v.reshape(-1, v.shape[-1])
+        rev_asym = ((flat - torch.flip(flat, dims=[-1])).norm()
+                    / (2 * flat.norm().clamp_min(1e-12)))
         print(f"  {k}  shape={tuple(v.shape)}")
         print(f"      ||E||   = {v.norm():.6f}   (零初始化;≈0 ⇒ 训练从未使用)")
         print(f"      逐位置范数 = {[round(float(x), 4) for x in per_pos]}")
         print(f"      位置间相对离散度 = {float(rel_spread):.4f}"
               "   (≈0 ⇒ 各帧位置无区分 ⇒ 对帧顺序等变)")
+        print(f"      **时间反转反对称占比** = {float(rev_asym):.4f}"
+              "   (≈0 ⇒ 沿时间回文 ⇒ 原则上编码不了方向)")
+
+    if emb:
+        print()
+        print("  ⚠️ 提醒(round-2 F2):stage-4 的 temporal_embedding 是**加性**的"
+              "(`x = x + resize_temporal_embedding(...)`)。")
+        print("     加性位置编码会被均值池化**精确抹掉** —— 它只能经由下游非线性间接影响"
+              "池化后的嵌入。")
+        print("     所以「E 非零」**不等于**「模型有顺序敏感性」;要看行为侧的 GATE-0 动态审计。")
 
     # ---- 2. 时间卷积核 ----
     print()
@@ -124,22 +145,37 @@ def audit(sd: dict, kernel_key: str, embed_key: str) -> None:
     print("=" * 72)
     kernels = {k: v for k, v in tensors.items()
                if kernel_key in k and k.endswith("weight") and v.dim() >= 2}
+
+    upper_bound_mode = False
     if not kernels:
-        print(f"  [未找到] 没有键包含 '{kernel_key}' 且以 'weight' 结尾。")
-        cand = sorted(k for k in tensors
-                      if ("_1d" in k or "temporal" in k) and k.endswith("weight"))
-        if cand:
-            print("  候选(含 '_1d' / 'temporal' 的权重键),用 --kernel-key 指定:")
-            for k in cand[:25]:
-                print(f"    {k}   shape={tuple(tensors[k].shape)}")
-            if len(cand) > 25:
-                print(f"    ... 另有 {len(cand) - 25} 个")
-        print()
-        print("  注:训练态 checkpoint 里时间分支尚未 reparameterize,等效核是")
-        print("      id_tensor + layer_scale_1d*(mixer_1d - norm_1d) 的融合结果。")
-        print("      若只找到 mixer_1d/norm_1d 的分支权重,请先把模型 build 起来")
-        print("      调用 reparameterize() 后再存一份推理态权重,再跑本脚本。")
-        return
+        print(f"  [未找到] 没有键包含 '{kernel_key}' 且以 'weight' 结尾"
+              " —— 这是**训练态** checkpoint(时间分支还没融合)。")
+        # 自动回退:训练态下 k=3 分支是**唯一**能带来反对称的项,见下面的证明。
+        fb = TRAIN_STATE_KERNEL_KEY
+        kernels = {k: v for k, v in tensors.items()
+                   if fb in k and k.endswith("weight") and v.dim() >= 2}
+        if not kernels:
+            cand = sorted(k for k in tensors
+                          if ("_1d" in k or "temporal" in k) and k.endswith("weight"))
+            if cand:
+                print("  候选(含 '_1d' / 'temporal' 的权重键),用 --kernel-key 指定:")
+                for k in cand[:25]:
+                    print(f"    {k}   shape={tuple(tensors[k].shape)}")
+                if len(cand) > 25:
+                    print(f"    ... 另有 {len(cand) - 25} 个")
+            return
+        upper_bound_mode = True
+        print(f"  → 自动回退到 k=3 分支 '{fb}'({len(kernels)} 个),理由(可验证的恒等式):")
+        print("      等效核 w = id_tensor + λ·(mixer_1d − norm_1d),其中")
+        print("        · id_tensor  = 中心 delta          ⇒ 对称 ⇒ 反对称贡献 **恰好 0**")
+        print("        · norm_1d    = 仅 BN ⇒ 缩放后的 delta ⇒ 对称 ⇒ 反对称贡献 **恰好 0**")
+        print("        · rbr_scale  = k=1 ⇒ 只占中心抽头      ⇒ 对称 ⇒ 反对称贡献 **恰好 0**")
+        print("        · rbr_conv   = k=3 ⇒ **唯一**的反对称来源")
+        print("      ⇒ antisym(等效核) = λ·(逐通道 BN 缩放)·antisym(k=3 分支)")
+        print("      ⇒ **k=3 分支对称 ⟺ 等效核恰好对称 ⟺ 恰好时间反转盲**(无需 reparameterize)")
+        print("      ⚠️ 下面的**反对称占比是上界**:融合后 id_tensor 会往分母加对称质量,"
+              "真实占比只会更小。")
+        print("      ⚠️ 本模式下 **DC/AC 没有意义**(等效核的 DC 主要来自 id_tensor),只读反对称占比。")
 
     all_asym, all_dc = [], []
     for k, v in sorted(kernels.items()):
@@ -158,12 +194,28 @@ def audit(sd: dict, kernel_key: str, embed_key: str) -> None:
         print("-" * 72)
         A = torch.cat([x.flatten() for x in all_asym])
         D = torch.cat([x.flatten() for x in all_dc])
-        print(f"  全部时间核 反对称度: {_stats(A)}")
-        print(f"  全部时间核 DC/AC   : {_stats(D)}")
-        print("-" * 72)
-        print("  判读:反对称度中位数 <0.05 ⇒ 时间核近似对称 ⇒ 对时间反转基本不敏感;")
-        print("        DC/AC 中位数 >0.95 ⇒ 近似纯低通 ⇒ 帧间残差被抹平。")
-        print("        两者同时成立 ⇒ 模型几乎不编码时间方向,RTime-Binary 预期≈50%。")
+        med = float(A.median())
+        if upper_bound_mode:
+            print(f"  全部 k=3 分支 反对称占比(**上界**): {_stats(A)}")
+            print("-" * 72)
+            print(f"  判读(上界 = {med:.4f}):")
+            if med < 0.05:
+                print("    < 0.05 ⇒ k=3 分支近似对称 ⇒ **等效核也近似对称**"
+                      "(其余项恰好对称)")
+                print("    ⇒ **stage 1-3 的时间卷积基本编码不了时间方向**。")
+                print("    ⇒ 与 GATE-0 行为侧结果(打乱 8 帧不掉分)一致;RTime-Binary 预期接近 50%。")
+            else:
+                print("    ≥ 0.05 ⇒ k=3 分支带明显反对称分量 ⇒ 模型**参数层面确实编码了方向**。")
+                print("    ⇒ 那么 GATE-0 的『打乱不掉分』就是**基准测不出**,而非模型没有信息")
+                print("    ⇒ 值得为顺序敏感基准付代价(notes/order-sensitive-eval.md §3 判读表)。")
+                print("    注:这是上界,融合后真实占比更小;要精确值需 reparameterize 后重跑。")
+        else:
+            print(f"  全部时间核 反对称度: {_stats(A)}")
+            print(f"  全部时间核 DC/AC   : {_stats(D)}")
+            print("-" * 72)
+            print("  判读:反对称度中位数 <0.05 ⇒ 时间核近似对称 ⇒ 对时间反转基本不敏感;")
+            print("        DC/AC 中位数 >0.95 ⇒ 近似纯低通 ⇒ 帧间残差被抹平。")
+            print("        两者同时成立 ⇒ 模型几乎不编码时间方向,RTime-Binary 预期≈50%。")
 
 
 def _self_test() -> None:
