@@ -23,6 +23,9 @@ import sys
 REQUIRED = {
     "torch": None,
     "torchvision": None,
+    # dataset/av_utils.py 顶层 import torchaudio，`import dataset.video_utils` 会连带触发，
+    # 所以哪怕只跑纯视频的预训练也躲不掉。缺了要**装版本对齐 torch 的那一版**（见下方提示）。
+    "torchaudio": None,
     "numpy": None,
     "yaml": "PyYAML",
     "PIL": "pillow",
@@ -87,6 +90,20 @@ def main() -> int:
         print()
         print("    python -m pip install --user --no-deps " + " ".join(sorted(missing)))
         print()
+        if "torchaudio" in missing or "torchvision" in missing:
+            tv = ""
+            try:
+                import torch
+
+                tv = torch.__version__.split("+")[0]
+            except Exception:  # noqa: BLE001
+                pass
+            print("⚠️ torchvision / torchaudio 必须与 torch **版本对齐**，不能装最新版：")
+            if tv:
+                print(f"   本机 torch {tv} ⇒ 装同号的 torchaudio=={tv}（torchvision 见官方对应表）；")
+            print("   b100 是 cu124，加 --index-url https://download.pytorch.org/whl/cu124；")
+            print("   `--no-deps` 只挡住 pip 换 torch，挡不住你自己挑错版本 —— 装完务必回来重跑本脚本。")
+            print()
         print("装完重跑本脚本，直到这里不再打印命令。")
     elif repo_bad:
         print("第三方依赖齐了，但仓库模块仍失败——看上面 [失败] 行的真实异常，")
