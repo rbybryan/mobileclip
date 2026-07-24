@@ -145,11 +145,13 @@
 - 4B 模型达 72B/235B 质量 → 标注 3M 片在**单机多卡**可行，成本可控；
 - **时序定位 MCQ 直接对症 MobileViCLIP 的顺序盲**——这是本方案最独特的一环（见 §5）。
 
-> **候选融合（补充件）**：Pillar B0 每片产出 K 条**互补**候选后、切成训练视图**之前**，可插入
-> 一步「并集-验证-整合」把它们融合成一条更全、且验收过幻觉的字幕，再按 §4.4 降维。
-> 该算子（union→verify→consolidate，基于 OwlCap/CCCaption/CapRL/Scene-Graph-Consolidation）
-> 单列于 [`notes/caption-fusion-scheme.md`](caption-fusion-scheme.md)。**是否比直接 uniform-K 更好，
-> 是其 §6.3 的可证伪消融**，不预设结论。
+> **重述-融合（补充件）**：对 RECAPTION 桶的低质片，[`notes/caption-fusion-scheme.md`](caption-fusion-scheme.md)
+> 用**自己的前端**——同一提示对同片**独立采样 5 条稠密重述**（非分面候选）——再做「并集-验证-整合」融合成
+> 一条更全、且验收过幻觉的字幕，按 §4.4 降维成 K 条训练视图。**关键点**：跨样本一致性（support 投票）要成立，
+> 多条字幕必须是**独立冗余观测**（自一致性，SelfCheckGPT 式），故前端刻意**不分面**——分面会摧毁投票信号
+> （见该文 §0.1 对旧 better_zh 方案自相矛盾的修正）。算子基于 SelfCheckGPT/FActScore/OwlCap/Scene-Graph-Consolidation；
+> 信任门阈值 k\* 经视频接地人评**标定**（偏精确），系统性幻觉靠**异质验真器**（GroundingDINO/OCR/二号 VLM）兜。
+> **是否比直接 uniform-K 更好，是其 §6.4 的可证伪消融**，不预设结论。
 
 ### 4.4 一级约束：`max_txt_l = 32`，密集字幕必须「降维」进训练（v2 新增）
 
