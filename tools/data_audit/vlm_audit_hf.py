@@ -27,6 +27,7 @@ Deps: torch, transformers>=4.57 (Qwen3-VL), decord, pillow, numpy.
 import argparse
 import json
 import os
+import re
 import sys
 
 import numpy as np
@@ -35,11 +36,12 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vlm_audit import (GRAN_KEYS, GRAN_PROMPT, MERGE_KEYS,  # noqa: E402
-                       MERGE_PROMPT, PROMPT, TRANS_KEYS, TRANS_PROMPT,
-                       VERDICT_KEYS, extract_json, resolve_video_path)
+                       MERGE_PROMPT, PROMPT, RECAP_PROMPT, TRANS_KEYS,
+                       TRANS_PROMPT, VERDICT_KEYS, extract_json,
+                       resolve_video_path)
 
 
-def sample_frames_pil(path, num_frames, max_side):
+def sample_frames_pil(path, num_frames, max_side, phase=0.5):
     import decord
     vr = decord.VideoReader(path, num_threads=2)
     n = len(vr)
@@ -47,7 +49,13 @@ def sample_frames_pil(path, num_frames, max_side):
         raise RuntimeError("empty video")
     # TSN-style segment centers: InternVid clips are shot-cut, so the first/last
     # frames are often transitions/black frames — never sample the boundaries.
-    idx = ((np.arange(num_frames) + 0.5) / num_frames * n).astype(int)
+    # `phase` is the within-segment offset (0.5 = centre). --mode recap sweeps it
+    # per sample (frame jitter) so each of the N independent captions sees a
+    # slightly different 8-frame view: a unit surviving across DIFFERENT visual
+    # evidence is more robustly grounded than one that merely survives decoding
+    # noise on a fixed frame set (notes/caption-fusion-scheme.md §1.1-3).
+    idx = np.clip(((np.arange(num_frames) + phase) / num_frames * n).astype(int),
+                  0, n - 1)
     frames = vr.get_batch(idx).asnumpy()
     out = []
     for fr in frames:
@@ -58,8 +66,24 @@ def sample_frames_pil(path, num_frames, max_side):
     return out
 
 
+_THINK_RE = re.compile(r"<think>.*?</think>", re.S)
+_RECAP_STRIP = "\"'“”「」《》 \t\r\n"
+
+
+def clean_caption(text):
+    """A recap generation is a plain caption, not JSON: drop any <think> block
+    (Qwen3.x thinking can leak through the HF chat template) and surrounding
+    quotes/whitespace, and collapse newlines so one caption is one line."""
+    t = _THINK_RE.sub("", text).strip(_RECAP_STRIP)
+    t = re.sub(r"\s*\n+\s*", "，", t)
+    # a line already ending in punctuation + the newline-comma would double up
+    t = re.sub(r"[，,。.；;]*，[，,]*", "，", t)
+    return t.strip(_RECAP_STRIP)
+
+
 @torch.no_grad()
-def generate(model, processor, frames, prompt, max_new_tokens, temperature=0.0):
+def generate(model, processor, frames, prompt, max_new_tokens,
+             temperature=0.0, top_p=None):
     # frames may be empty (--mode trans): the message is then pure text, which
     # the same chat template handles -- no vision tower call at all.
     content = [{"type": "image", "image": im} for im in frames]
@@ -70,7 +94,8 @@ def generate(model, processor, frames, prompt, max_new_tokens, temperature=0.0):
         return_dict=True, return_tensors="pt").to(model.device)
     gen = model.generate(
         **inputs, max_new_tokens=max_new_tokens,
-        do_sample=temperature > 0, temperature=temperature or None)
+        do_sample=temperature > 0, temperature=temperature or None,
+        top_p=top_p if temperature > 0 else None)
     new_tokens = gen[:, inputs["input_ids"].shape[1]:]
     return processor.batch_decode(new_tokens, skip_special_tokens=True)[0]
 
@@ -95,8 +120,29 @@ def main():
     ap.add_argument("--num-shards", type=int, default=1)
     ap.add_argument("--shard-id", type=int, default=0)
     ap.add_argument("--limit", type=int, default=0, help="max records for this shard")
-    ap.add_argument("--mode", default="full", choices=["full", "trans", "gran", "merge"],
-                    help="'full' = combined video rubric (default). 'trans' = "
+    ap.add_argument("--n-captions", type=int, default=5,
+                    help="[--mode recap] independent captions per clip (default 5; "
+                         ">=5 keeps the support vote meaningful, see fusion scheme "
+                         "§1.1/§6.3). Don't go below 5.")
+    ap.add_argument("--temperature", type=float, default=0.9,
+                    help="[--mode recap] sampling temperature (default 0.9). Must be "
+                         "high enough to produce real variance: at low temp the N "
+                         "captions collapse to near-identical text and the agreement "
+                         "signal becomes vacuous (fusion scheme §1.1-2).")
+    ap.add_argument("--top-p", type=float, default=0.9,
+                    help="[--mode recap] nucleus sampling top_p (default 0.9)")
+    ap.add_argument("--no-frame-jitter", action="store_true",
+                    help="[--mode recap] reuse the SAME 8 frames for every sample "
+                         "(centre phase); by default each sample jitters the "
+                         "within-segment phase so variance also comes from seeing "
+                         "different frames. --no-frame-jitter isolates decoding "
+                         "variance for the temperature ablation (§6.4).")
+    ap.add_argument("--mode", default="full",
+                    choices=["full", "trans", "gran", "merge", "recap"],
+                    help="'full' = combined video rubric (default). 'recap' = write "
+                         "N independent Chinese captions FROM the frames (RECAPTION "
+                         "bucket front-end for the fusion scheme; RECAP_PROMPT, "
+                         "temperature + frame jitter, no en/zh shown). 'trans' = "
                          "text-only translation re-judgement: no video is read "
                          "and no frames are shown, so trans_score cannot anchor "
                          "on the video-alignment judgement (see vlm_audit.py "
@@ -153,7 +199,34 @@ def main():
             out = {"video": rec["video"], "stratum": rec.get("stratum"),
                    "s1": rec.get("s1"), "s0_flags": rec.get("s0_flags")}
             try:
-                if args.mode == "merge":
+                if args.mode == "recap":
+                    # N independent captions FROM the frames. Each sample jitters
+                    # the frame phase so variance comes from BOTH decoding and
+                    # different views; no en/zh is shown (RECAP_PROMPT has no
+                    # placeholders). Plain-text out, so no extract_json below.
+                    path = resolve_video_path(args.video_root, rec, rec["video"])
+                    recaps = []
+                    for s in range(args.n_captions):
+                        phase = (0.5 if args.no_frame_jitter
+                                 else (s + 0.5) / args.n_captions)
+                        frames = sample_frames_pil(path, args.frames,
+                                                   args.max_side, phase=phase)
+                        try:
+                            text = generate(model, processor, frames, RECAP_PROMPT,
+                                            args.max_new_tokens,
+                                            temperature=args.temperature,
+                                            top_p=args.top_p)
+                        except torch.cuda.OutOfMemoryError:
+                            torch.cuda.empty_cache()
+                            text = generate(model, processor, frames, RECAP_PROMPT,
+                                            args.max_new_tokens,
+                                            temperature=args.temperature,
+                                            top_p=args.top_p)
+                        cap = clean_caption(text)
+                        if cap:
+                            recaps.append(cap)
+                    out["verdict"] = {"recaps": recaps, "n_samples": len(recaps)}
+                elif args.mode == "merge":
                     # 合并 better_zh 的多条候选（在 s2_verdicts 里）为一条。纯文本。
                     cands = [c for c in ((rec.get("verdict") or {}).get("better_zh")
                                          or rec.get("better_zh") or [])
@@ -188,17 +261,18 @@ def main():
                     prompt = PROMPT.format(n_frames=args.frames,
                                            en=(rec.get("en") or "(无)"),
                                            zh=(rec.get("zh") or "(空)"))
-                try:
-                    text = generate(model, processor, frames, prompt,
-                                    args.max_new_tokens)
-                    out["verdict"] = extract_json(text, keys)
-                except (ValueError, torch.cuda.OutOfMemoryError) as ex:
-                    if isinstance(ex, torch.cuda.OutOfMemoryError):
-                        torch.cuda.empty_cache()
-                    # one retry with mild sampling shakes off malformed JSON
-                    text = generate(model, processor, frames, prompt,
-                                    args.max_new_tokens, temperature=0.3)
-                    out["verdict"] = extract_json(text, keys)
+                if args.mode != "recap":  # recap already produced its verdict above
+                    try:
+                        text = generate(model, processor, frames, prompt,
+                                        args.max_new_tokens)
+                        out["verdict"] = extract_json(text, keys)
+                    except (ValueError, torch.cuda.OutOfMemoryError) as ex:
+                        if isinstance(ex, torch.cuda.OutOfMemoryError):
+                            torch.cuda.empty_cache()
+                        # one retry with mild sampling shakes off malformed JSON
+                        text = generate(model, processor, frames, prompt,
+                                        args.max_new_tokens, temperature=0.3)
+                        out["verdict"] = extract_json(text, keys)
             except Exception as ex:  # noqa: BLE001 - keep the shard running
                 msg = f"{type(ex).__name__}: {str(ex)[:120]}"
                 if "decode" in msg.lower() or "Video" in type(ex).__name__ \

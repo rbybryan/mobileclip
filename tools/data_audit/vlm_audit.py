@@ -184,6 +184,41 @@ MERGE_PROMPT = """你是中文视频字幕编辑。下面是针对**同一个视
 
 MERGE_KEYS = {"merged_zh"}
 
+# ---------------------------------------------------------------------------
+# Five-sample recaption prompt (--mode recap in vlm_audit_hf.py).
+#
+# WHY THIS EXISTS. The RECAPTION bucket needs a caption written FROM the frames,
+# not translated from the broken English source. The fusion scheme
+# (notes/caption-fusion-scheme.md) then decomposes several such captions into
+# atomic units and trusts a unit by cross-sample AGREEMENT (support voting).
+# That voting is a self-consistency estimator (SelfCheckGPT, arXiv 2303.08896):
+# it is only valid if the captions are INDEPENDENT samples of the SAME content.
+# So this prompt is deliberately NOT faceted (unlike better_zh in PROMPT, whose
+# candidates cover different facets by design and therefore cannot be voted on):
+# every call asks for the same comprehensive description, and the front-end runs
+# it N times independently at temperature with per-sample frame jitter. Diversity
+# is meant to come from sampling variance, not from steering each sample to a
+# different facet -- that is what keeps the support count meaningful.
+#
+# The rules encode the guardrails the design doc calls for: visible-only / no
+# off-frame speculation (systematic-hallucination surface), event-order wording
+# with NO timestamps (the model sees 8 frames, has no timecodes), verbatim-or-omit
+# for on-screen text (OCR is a VLM weak spot -- forbid "completing" partial text),
+# and graceful degradation to vague quantifiers instead of confident wrong counts.
+# Single dense paragraph so the N outputs are homogeneous for downstream
+# atomic-unit decomposition and cross-sample alignment.
+RECAP_PROMPT = """你是一个严谨的视频画面描述助手。下面是从同一段视频中按时间先后均匀抽取的若干帧画面。
+请把这些画面综合成一段用于训练的中文描述，尽可能覆盖所有真实可见的信息，同时绝不编造。
+
+严格遵守以下规则：
+1. 只描述画面中清晰可见的内容。看不清、不确定、被遮挡或需要推测的内容一律省略，不要猜测。
+2. 不要描述画面之外的信息：不要推断拍摄地点、时间、人物身份、情绪动机、事件的前因后果，也不要脑补画面外正在发生的事。
+3. 按动作在画面中出现的先后顺序来叙述，用“先”“接着”“随后”“最后”等词表示顺序。禁止出现帧号、秒数、时间戳或“第几张图/第几帧/视频/画面/图片”这类元描述词。
+4. 屏幕上的文字（字幕、标题、标牌、水印等）：只有当文字清晰可辨时，才用中文引号“”原样照抄；不要翻译、不要补全、不要猜测残缺的文字；无法辨认时直接不提这段文字。
+5. 数量：只有在数量很少且能明确数清时才给出具体数字；否则用“几”“一些”“一群”“许多”等模糊量词，绝不编造精确数目。
+6. 覆盖以下方面（只写真实可见的）：主体（人/物的外观、服装、颜色等特征）、主体的动作及其先后、场景与背景环境、屏幕上的文字。如果某一方面在画面中不存在，就完全不要提它。
+7. 输出一段连贯、信息密集的中文，不要分点、不要标题、不要开场白或结束语，只输出这段描述本身。"""
+
 
 def resolve_video_path(video_root, rec, video):
     """First existing of:
