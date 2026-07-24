@@ -1726,8 +1726,50 @@ source /workspace/mount/b100_zaip_data/rby/.gitenv
 ```
 
 之后 `git config --global …`（`safe.directory`、`user.name/email`、代理等）都只写进
-`rby/.gitconfig`，其他使用者完全看不到。凭据同理：优先把 token 写在仓库自己的
-remote URL（`.git/config`，本就在 rby/ 内），别用会落到 `$HOME` 的 credential helper。
+`rby/.gitconfig`，其他使用者完全看不到。
+
+**凭据（每次 `git pull` 都要密码）** — 不要用默认的 `credential.helper store`：它会把
+token 写进 `$HOME/.git-credentials`，正好落在共用的 root 家目录里。改成把 helper 和
+token 都锁进 `rby/`，并用 `includeIf gitdir:` 门控，使它**只对 `rby/` 下的仓库生效**：
+
+```bash
+RBY=$(cd /workspace/mount/b100_zaip_data/rby && pwd -P)   # 取真实路径，软链已解析
+
+# ① 身份 + 凭据 helper：单独一个文件，只放 rby/ 内
+cat > "$RBY/.gitconfig-cred" <<EOF
+[user]
+    name = rbybryan
+    email = br2566@columbia.edu
+[credential]
+    helper = store --file $RBY/.git-credentials
+EOF
+
+# ② source 过 .gitenv 的 shell 走这条
+git config --file "$RBY/.gitconfig" "includeIf.gitdir:$RBY/.path" "$RBY/.gitconfig-cred"
+
+# ③ 兜底：忘了 source .gitenv 时走共用 $HOME（只写路径，不含 token；可跳过）
+git config --file "$HOME/.gitconfig" "includeIf.gitdir:$RBY/.path" "$RBY/.gitconfig"
+
+# ④ 写 token（read -s，不进 shell history）
+read -rsp "GitHub PAT: " TOK; echo
+umask 077
+printf 'https://rbybryan:%s@github.com\n' "$TOK" > "$RBY/.git-credentials"
+unset TOK
+chmod 600 "$RBY/.git-credentials"
+```
+
+②③ 用 `git config --file`（同键覆盖），重复跑不会写重。自检：
+`git config --show-origin --get credential.helper` 应指向 `rby/.gitconfig-cred`，
+随后 `git pull origin main` 不再问密码。
+
+四点提醒：GitHub 已取消密码认证，"密码"处填 **PAT**；共用 root 下 `chmod 600` 给不了任何
+隔离（大家都是 root），所以请用 **只授权 `rbybryan/mobileclip` 的 fine-grained PAT**；
+`gitdir:` 末尾的 `/` 不能省（等价于 `rby/**`）；`credential.helper` 是**叠加**的，若共用
+`$HOME/.gitconfig` 里已有别人的全局 helper，会先轮到它 ——
+`git config --get-all --show-origin credential.helper` 查一下。
+
+另一条路（单仓库够用时）：把 token 直接写进该仓库 `.git/config` 的 remote URL —— 本就在
+`rby/` 内，天然隔离，但只管一个仓库，不像上面那样覆盖 `rby/` 下所有仓库。
 
 ---
 

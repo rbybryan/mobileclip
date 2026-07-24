@@ -23,6 +23,83 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (9) — b100 每次 `git pull` 都要密码：凭据只在 `rby/` 下生效，不落共用 `$HOME`
+
+**Diagnosis:** b100 的 root 账号多人共用。`TROUBLESHOOTING.md`「b100 上一切 git 命令都报
+`not a git repository`」一节已经把"全局"配置重定向进了 `rby/.gitconfig`（`.gitenv` 里的
+`GIT_CONFIG_GLOBAL`），但**凭据这一块一直没配**，所以每次 `git pull` 都问用户名/密码。
+顺带：GitHub 早就取消了密码认证，这里要填的"密码"是 **PAT**，不是账号密码。
+
+下面这套把凭据 helper 关进 `rby/` 自己的配置，并用 `includeIf gitdir:` **双重门控**：
+无论有没有 `source .gitenv`，都**只对 `rby/` 下的仓库生效**，`rby/` 外的仓库一律不受影响；
+token 文件也只落在 `rby/` 内，不进共用 `$HOME`。四种组合已在 Curta 上逐一验过（见文末表）。
+
+**Do this next（b100，任意目录）：**
+
+```bash
+RBY=$(cd /workspace/mount/b100_zaip_data/rby && pwd -P)   # 取真实路径，软链已解析
+
+# ① 身份 + 凭据 helper：单独一个文件，只放 rby/ 内
+cat > "$RBY/.gitconfig-cred" <<EOF
+[user]
+    name = rbybryan
+    email = br2566@columbia.edu
+[credential]
+    helper = store --file $RBY/.git-credentials
+EOF
+
+# ② rby/.gitconfig 里按 gitdir 门控（source 过 .gitenv 的 shell 走这条）
+git config --file "$RBY/.gitconfig" "includeIf.gitdir:$RBY/.path" "$RBY/.gitconfig-cred"
+
+# ③ 兜底：忘了 source .gitenv 时走共用 $HOME —— 只写一行路径，不含 token（可选，见下）
+git config --file "$HOME/.gitconfig" "includeIf.gitdir:$RBY/.path" "$RBY/.gitconfig"
+
+# ④ 写 token（read -s，不进 shell history）
+read -rsp "GitHub PAT: " TOK; echo
+umask 077
+printf 'https://rbybryan:%s@github.com\n' "$TOK" > "$RBY/.git-credentials"
+unset TOK
+chmod 600 "$RBY/.git-credentials"
+```
+
+②③ 用 `git config --file` 而不是 `>>` 追加，所以**重复跑不会写重**（同键覆盖）。
+
+**自检**（第一条应打印出 helper 指向 `rby/`，第二条应全程不问密码）：
+
+```bash
+source "$RBY/.gitenv"          # 这文件若还没建，见 TROUBLESHOOTING.md 同节
+cd "$RBY/MobileViCLIP" && git config --show-origin --get credential.helper
+git pull origin main
+```
+
+**几个坑：**
+
+- **共用 root 下 `chmod 600` 不提供任何隔离** —— 同账号的人都是 root，照样读得到
+  `.git-credentials`。所以请用 **fine-grained PAT、只授权 `rbybryan/mobileclip` 这一个仓库**，
+  别用带完整 `repo` scope 的经典 token。`upstream`（MCG-NJU）是公开仓库，本来就不需要凭据。
+- **`gitdir:` 末尾的 `/` 不能省** —— `gitdir:…/rby/` 等价于 `…/rby/**`（整棵子树）；
+  少了斜杠就只匹配 gitdir 恰好等于该路径的那一个仓库。
+- **`credential.helper` 是叠加的，不是覆盖的** —— 若共用 `$HOME/.gitconfig` 里已经有别人配的
+  全局 helper，它会**先**被问到，这里配的就轮不上。先查一下
+  `git config --get-all --show-origin credential.helper`，有多余的再处理。
+- **匹配的是 `.git` 目录、不是当前工作目录** —— 建在 `rby/` 外的 linked worktree 不会命中。
+- ③ 会往共用 `$HOME/.gitconfig` 写一行（**只有路径，没有 token**）。若坚持"什么都不落共用
+  `$HOME`"，**跳过 ③ 即可**，代价是每个 shell 都必须先 `source .gitenv`，否则又开始问密码。
+
+**Curta 上验过的四种组合**（`git config --get credential.helper`）：
+
+| 仓库位置 | 已 `source .gitenv` | 未 source |
+|---|---|---|
+| `rby/` 内 | ✅ 命中 | ✅ 命中（走 ③ 兜底） |
+| `rby/` 外 | ⬜ 无（正确） | ⬜ 无（正确） |
+
+固化版见 `TROUBLESHOOTING.md`「b100 上一切 git 命令都报 …」一节的**共用账号的隔离**小节。
+
+**Then report back** in from-server.md：自检那两条的输出 —— `--show-origin` 那行指向哪个文件，
+以及 `git pull origin main` 是不是全程没再问密码。
+
+---
+
 ## 2026-07-24 (8) — surprise 判据已读：✅ 通过，A1 试点结案；V100 只剩 (6) 三件事
 
 **Diagnosis:** 贴回的三个数命中 (7) 判据表**第一行**：`gamma=1.0`（#220 修复在位，
