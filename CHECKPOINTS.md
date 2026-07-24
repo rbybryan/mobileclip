@@ -57,6 +57,24 @@ data
 └── MSRVTT_Videos/               # MSR-VTT
 ```
 
+### b100: don't download — most of this is already on the box
+
+On the b100 server, `/workspace/mount/b100_zaip_data/video_datasets/` already holds a large
+collection of video datasets shared across users. Relevant to this repo:
+
+| repo expects (`configs/data.py`) | on b100 |
+|---|---|
+| `data/MSRVTT_Videos/` | `video_datasets/MSR-VTT/{TrainValVideo,TestVideo}/` |
+| `anno_downstream/msrvtt_1k_test.json` | `video_datasets/MSR-VTT/mobileviclip_annotations/msrvtt_1k_test.json` ← **already in repo format** |
+| `data/didemo/processed_videos/test` | `video_datasets/DiDeMo/`, `video_datasets/OpenDataLab___DiDeMo/` |
+| `data/anet_1.3_video_val_resize` | `video_datasets/ActivityNetDataset/` |
+| `data/kinetics_400_val_10s_320p` | `video_datasets/OpenMMLab___Kinetics-400/` |
+| `data/ucf101/videos`, `data/hmdb51/videos_test`, `data/ssv2/…` | not spotted — probe before downloading |
+
+Wire them with **symlinks** (the source dirs are shared and read-only in spirit — never copy or
+modify them). Probe + wiring commands: [`experiments/SETUP_B100.md` §4b](experiments/SETUP_B100.md).
+Pretraining data (InternVid-10M-FLT) is wired separately in §4.
+
 ## Downloading from Google Drive
 
 The folders above are Google Drive links. To pull them on a headless machine:

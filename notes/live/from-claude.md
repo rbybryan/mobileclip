@@ -23,6 +23,51 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (22) — 评测数据**本机就有**：MSR-VTT 自带现成的 `msrvtt_1k_test.json`，别再 gdown
+
+**Diagnosis:** 你贴的目录是个大发现。`/workspace/mount/b100_zaip_data/video_datasets/`
+里存着上百个视频数据集，而且 **`MSR-VTT/mobileviclip_annotations/` 里就有一个
+`msrvtt_1k_test.json`** —— 文件名和 `configs/data.py:48-52` 要的**一字不差**，说明有人
+（多半是同机的另一条线）已经按 MobileViCLIP 的格式备好了。旁边还有 `README.md` 和
+`status.json`，先读一眼能知道备到什么程度。
+
+同一目录下还能对上另外三个基准（DiDeMo / ActivityNet / Kinetics-400）；**UCF101、HMDB51、
+SSv2 在你贴的列表里没看到**（`ucf_crimes` 是另一个数据集，别认错）。这和 (20) 里
+"SSv2-MC 是缺数据"的结论一致。
+
+接线只用**软链**：源目录是多人共用的，只读着用，绝不复制、不改、不往里写。
+
+**Do this next（b100，仓库根；步骤 1 是零成本探盘，先只跑它）：**
+
+```bash
+cd /workspace/mount/b100_zaip_data/rby/mobileclip && git pull
+VD=/workspace/mount/b100_zaip_data/video_datasets
+
+# ① 还有哪些数据集也备好了 MobileViCLIP 格式的 anno（MSR-VTT 就是这么发现的）
+for d in "$VD"/*/; do [ -d "$d/mobileviclip_annotations" ] && echo "$d"; done
+
+# ② 仓库要的 7 个 anno 文件名，逐个在盘上找
+for f in msrvtt_1k_test.json didemo_ret_test.json anet_ret_val.json \
+         kinetics400_validate.json ucf101_act_test.json hmdb51_act_test.json ssv2_mc_val.json; do
+  printf '== %s\n' "$f"; find "$VD" -maxdepth 4 -name "$f" 2>/dev/null | head -3
+done
+
+# ③ 那个目录里的说明读一眼
+cat "$VD/MSR-VTT/mobileviclip_annotations/README.md"
+cat "$VD/MSR-VTT/mobileviclip_annotations/status.json"
+```
+
+拿到结果再走 **§4b 的步骤 2/3**（验 anno 格式 → 数 `TestVideo`/`TrainValVideo` 覆盖率 →
+软链 `anno_downstream/msrvtt_1k_test.json` + `data/MSRVTT_Videos/`）。命令都在
+`experiments/SETUP_B100.md` §4b 里，`CHECKPOINTS.md` 也加了一张"仓库期望 ↔ b100 实际路径"
+对照表。
+
+**⚠️ 优先级提醒：这一整节都不挡 R0–R3 预训练。** 预训练只吃 `internvid_all`（§4 早就全绿）。
+**当前的关键路径仍然是 (19) 的冒烟** —— `git pull` 后先确认 `import scripts` 指到仓库自身、
+再跑 2 卡冒烟。评测数据这条线可以等冒烟过了、R0 挂上去之后再慢慢接。
+
+**Then report back** in from-server.md：①②③ 三段输出。我据此判断哪几个基准能就地接线、
+哪几个真的要另外下（目前看至少 UCF101 / HMDB51 / SSv2 三个存疑）。
 ## 2026-07-24 (21) — 基准定 RTime，但**它不发视频**（已核实）；先跑那件不要钱的：静态审计
 
 **Diagnosis / 修正 (20)：** 你选 RTime，我去核了官方 repo —— 有一条 (20) 没说清、而且是**成本的全部**：

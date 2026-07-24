@@ -54,7 +54,10 @@
 - [ ] §8 每完成一节回报一次（贴 `from-server.md`），Claude 据此更新本清单
 
 > 评测基准 anno（msrvtt/didemo/anet/k400/ucf101/hmdb51/ssv2_mc）与 `internvid_zh_10k_pilot`
-> 仍缺——只影响 B0 评测 / 10k 试点，**不挡 R0–R3 预训练**，需要时再单独下。
+> 预检仍报缺——只影响 B0 评测 / 10k 试点，**不挡 R0–R3 预训练**。
+> **但先别急着下**：本机 `/workspace/mount/b100_zaip_data/video_datasets/` 里已经存着大批
+> 视频数据集，MSR-VTT 甚至自带现成的 `mobileviclip_annotations/msrvtt_1k_test.json`。
+> 探盘与接线步骤见 **§4b**。
 
 ---
 
@@ -435,6 +438,122 @@ python experiments/check_readiness.py --decode   # 11 个 internvid_v* 全 [OK ]
 
 > 若探盘发现 `$FULL` 布局本就是 `.../video_sample/InternVId-FLT_{i}`，那连软链都免了，
 > 直接 `export MVC_DATA_DIR=<那个 video_sample 的父目录>`。软链方案只是为了对付命名不一致。
+
+---
+
+## 4b. 评测基准数据：**本机 `video_datasets/` 里已经有**（B0 评测用，不挡 R0–R3）
+
+2026-07-24 探盘发现，b100 上 `/workspace/mount/b100_zaip_data/video_datasets/` 已经存着
+大批视频数据集，**其中 MSR-VTT 甚至带了一个现成的 `mobileviclip_annotations/` 目录**：
+
+```
+video_datasets/MSR-VTT/
+├── TrainValVideo/          # 训练+验证视频
+├── TestVideo/              # 测试视频
+├── annotation/             # 官方原始标注(test_videodatainfo.json 等)——不是仓库要的格式
+└── mobileviclip_annotations/
+    ├── msrvtt_1k_test.json      ← 仓库要的就是这个名字
+    ├── mobileviclip_ann_file.json
+    ├── README.md
+    └── status.json
+```
+
+**所以评测 anno 大概率不用再从 gdown 下**——先探盘确认，别直接假设。
+
+### 仓库对 7 个评测基准的期望路径（`configs/data.py:48-101`）
+
+`${MVC_ANNO_DIR}` 默认 `anno_downstream`，`${MVC_DATA_DIR}` 默认 `data`。
+
+| corpus | anno（`${MVC_ANNO_DIR}/…`） | 视频目录（`${MVC_DATA_DIR}/…`） | 盘上候选 |
+|---|---|---|---|
+| `msrvtt_1k_test` | `msrvtt_1k_test.json` | `MSRVTT_Videos` | ✅ `MSR-VTT/`（anno 已备好） |
+| `didemo_ret_test` | `didemo_ret_test.json` | `didemo/processed_videos/test` | `DiDeMo/`、`OpenDataLab___DiDeMo/` |
+| `anet_ret_val` | `anet_ret_val.json` | `anet_1.3_video_val_resize` | `ActivityNetDataset/` |
+| `k400_act_val` | `kinetics400_validate.json` | `kinetics_400_val_10s_320p` | `OpenMMLab___Kinetics-400/` |
+| `ucf101_act_test` | `ucf101_act_test.json` | `ucf101/videos` | ❓ 列表里没看到（`ucf_crimes` 是另一个数据集） |
+| `hmdb51_act_test` | `hmdb51_act_test.json` | `hmdb51/videos_test` | ❓ 列表里没看到 |
+| `ssv2_mc_val` | `ssv2_mc_val.json` | `ssv2/20bn-something-something-v2` | ❓ 列表里没看到 |
+
+### 步骤 1 — 全盘探一次（零成本，先搞清楚有什么）
+
+```bash
+VD=/workspace/mount/b100_zaip_data/video_datasets
+
+# ① 哪些数据集目录已经有人备好了 MobileViCLIP 格式的 anno（MSR-VTT 就是这么发现的）
+for d in "$VD"/*/; do [ -d "$d/mobileviclip_annotations" ] && echo "$d"; done
+
+# ② 仓库要的 7 个 anno 文件名，逐个在盘上找
+for f in msrvtt_1k_test.json didemo_ret_test.json anet_ret_val.json \
+         kinetics400_validate.json ucf101_act_test.json hmdb51_act_test.json ssv2_mc_val.json; do
+  printf '== %s\n' "$f"; find "$VD" -maxdepth 4 -name "$f" 2>/dev/null | head -3
+done
+
+# ③ MSR-VTT 那个目录里的说明先读一眼（是谁、为什么、下到什么程度）
+cat "$VD/MSR-VTT/mobileviclip_annotations/README.md"
+cat "$VD/MSR-VTT/mobileviclip_annotations/status.json"
+```
+
+### 步骤 2 — MSR-VTT：先验格式，再定视频目录
+
+**格式三条硬要求和 §4 一样**（JSON 数组 / `video` 字段 / `caption` 是字符串），
+`check_readiness.py` 查不到 caption 那一层，所以自己先看：
+
+```bash
+MSRVTT=/workspace/mount/b100_zaip_data/video_datasets/MSR-VTT
+python - <<PY
+import json, os
+p = os.path.join("$MSRVTT", "mobileviclip_annotations", "msrvtt_1k_test.json")
+d = json.load(open(p))
+print("type:", type(d).__name__, "| n:", len(d))
+print("keys:", sorted(d[0].keys()))
+print("first:", json.dumps(d[0], ensure_ascii=False)[:300])
+print("caption 类型:", type(d[0].get("caption")).__name__)
+PY
+```
+
+`video` 字段写的是文件名还是相对路径，决定视频目录怎么接。**1k 测试集的视频可能横跨
+`TestVideo/` 和 `TrainValVideo/` 两个目录**，所以先数覆盖率：
+
+```bash
+python - <<PY
+import json, os
+M = "$MSRVTT"
+d = json.load(open(os.path.join(M, "mobileviclip_annotations", "msrvtt_1k_test.json")))
+names = {os.path.basename(r["video"]) for r in d}
+print("anno 引用的唯一视频数:", len(names))
+for sub in ("TestVideo", "TrainValVideo"):
+    p = os.path.join(M, sub)
+    have = set(os.listdir(p)) if os.path.isdir(p) else set()
+    print(f"  {sub:14s} 目录内 {len(have):6d} 个文件，覆盖 {len(names & have)}/{len(names)}")
+PY
+```
+
+### 步骤 3 — 接线（软链，不复制、不动源目录）
+
+**两个目录都软链进去，覆盖率问题就直接消失了**（源目录只读，软链几千个文件是秒级的）：
+
+```bash
+cd /workspace/mount/b100_zaip_data/rby/mobileclip
+MSRVTT=/workspace/mount/b100_zaip_data/video_datasets/MSR-VTT
+
+mkdir -p anno_downstream data/MSRVTT_Videos
+ln -sfn "$MSRVTT/mobileviclip_annotations/msrvtt_1k_test.json" anno_downstream/msrvtt_1k_test.json
+for sub in TrainValVideo TestVideo; do
+  [ -d "$MSRVTT/$sub" ] && ln -sfn "$MSRVTT/$sub"/*.mp4 data/MSRVTT_Videos/
+done
+ls data/MSRVTT_Videos | wc -l     # 预期 ~10000（7010 train_val + 2990 test）
+```
+
+复验（只看 msrvtt 这一行）：
+
+```bash
+source experiments/env_b100.sh
+python experiments/check_readiness.py --decode 2>&1 | grep -i msrvtt
+```
+
+> 其余 6 个基准照同样三步走：**探盘 → 验 anno 格式 → 软链成期望路径**。步骤 1 的
+> ①② 先跑，结果贴回 `from-server.md`，缺哪几个再决定单独下哪几个。
+> **这一整节都不挡 R0–R3 预训练**——预训练只用 `internvid_all`（§4 已全绿）。
 
 ---
 
