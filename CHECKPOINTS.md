@@ -75,6 +75,13 @@ Wire them with **symlinks** (the source dirs are shared and read-only in spirit 
 modify them). Probe + wiring commands: [`experiments/SETUP_B100.md` §4b](experiments/SETUP_B100.md).
 Pretraining data (InternVid-10M-FLT) is wired separately in §4.
 
+> ⚠️ **Symlink at the level the anno expects.** Video paths are built as
+> `join(data_root, anno["video"])` and nothing ever takes a basename. MSR-VTT's `video` field is
+> `"TestVideo/video9770.mp4"` — a *relative path* — so the **subdirectories** get symlinked into
+> `data/MSRVTT_Videos/`; flattening the `.mp4` files there puts every path one level off and the
+> readiness check reports "抽查 N 条视频全部缺失". Check `anno[0]["video"]` before wiring each
+> benchmark. Details: `TROUBLESHOOTING.md` 「预检报"抽查 N 条视频全部缺失"」.
+
 ## Downloading from Google Drive
 
 The folders above are Google Drive links. To pull them on a headless machine:

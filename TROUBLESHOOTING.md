@@ -2103,3 +2103,72 @@ PY
 **Fix**：`score_alignment.py` 的解析器补上同一条后缀回退（与 `vlm_audit.py` 对齐）。
 `git pull` 后重跑 `pipeline-sample` 即可——重述/派生/验真按 video 续跑秒过，
 打分文件每次重建，全程只补打分与 TSV，几分钟。
+---
+
+## 预检报"抽查 N 条视频全部缺失"—— anno 的 `video` 带子目录，视频却被拍平软链了
+
+### Symptom
+
+`data_root` 目录明明在、视频也明明下好了（甚至软链出了 10000 个文件），预检却报：
+
+```
+[·· ] msrvtt   anno 1000 条,抽查 20 条视频全部缺失(检查 MVC_DATA_DIR / 目录层级)
+```
+
+2026-07-24 b100 的 MSR-VTT 就是这样：`data/MSRVTT_Videos/` 里躺着 10000 个 mp4 软链，
+一条都对不上。
+
+### Cause
+
+**仓库任何地方都不取 basename。** 视频路径只有一种拼法：
+
+```python
+join(data_root, anno[idx]["video"])      # dataset/utils.py:121，experiments/check_readiness.py 同款
+```
+
+MSR-VTT 的 anno 里 `video` 字段是 **`"TestVideo/video9770.mp4"`**——带子目录前缀。
+于是期望路径是 `data/MSRVTT_Videos/TestVideo/video9770.mp4`，
+而拍平软链给出的是 `data/MSRVTT_Videos/video9770.mp4`：**差了整整一层**。
+
+注意这跟上面「`data_root 缺失`」那节是**两回事**：那节是根找错了，这节是根对、层级错了。
+预检的两条信息也不同——一条说 `data_root 缺失`，一条说 `抽查 N 条全部缺失`。
+
+### Fix
+
+先看 anno 的 `video` 字段到底长什么样，再决定接法：
+
+```bash
+python - <<'PY'
+import json
+d = json.load(open("anno_downstream/msrvtt_1k_test.json"))
+print(d[0]["video"])       # "TestVideo/video9770.mp4" → 带子目录；"video9770.mp4" → 纯文件名
+PY
+```
+
+| `video` 字段 | 接法 |
+|---|---|
+| 纯文件名 | mp4 **拍平**软链进 `data_root/` |
+| 带子目录 | 把**子目录整个**软链进 `data_root/`，**不能拍平** |
+
+MSR-VTT（带子目录）的修法：
+
+```bash
+MSRVTT=/workspace/mount/b100_zaip_data/video_datasets/MSR-VTT
+# -type l 保证只删软链，真文件一个都碰不到
+find data/MSRVTT_Videos -maxdepth 1 -type l -name '*.mp4' -delete
+for sub in TestVideo TrainValVideo; do
+  [ -d "$MSRVTT/$sub" ] && ln -sfn "$MSRVTT/$sub" "data/MSRVTT_Videos/$sub"
+done
+python experiments/check_readiness.py --decode 2>&1 | grep -i msrvtt   # 期望 [OK ]
+```
+
+### 下次怎么一眼看出来
+
+`check_readiness.py` 已改成把**它试过的完整路径**打进报错里（2026-07-24）：
+
+```
+抽查 20 条视频全部缺失;试过的路径例如 data/MSRVTT_Videos/TestVideo/video9770.mp4 —— …
+```
+
+拿这条路径和 `ls` 出来的真实位置逐层比，差哪层补哪层。剩下 6 个评测基准接线时
+（`experiments/SETUP_B100.md` §4b）**先跑一遍这个字段检查**，别照抄 MSR-VTT 的接法。
