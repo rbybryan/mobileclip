@@ -226,6 +226,88 @@ bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r3e.py 8 debug Tr
 
 ---
 
+## 2026-07-24 (8) — 装错了包（`openai-clip` ≠ `open_clip_torch`）；且 `python` 根本不是 conda 环境
+
+**两个问题，第二个更要紧。**
+
+### (a) 包装错了：`openai-clip` 不是 `open_clip`
+
+它们是**两个不相干的项目**：
+
+| 你装的 | 仓库要的 |
+|---|---|
+| `openai-clip==1.0.1`（OpenAI CLIP）→ 提供模块 **`clip`** | **`open_clip_torch==2.20.0`**（LAION/mlfoundations）→ 提供模块 **`open_clip`** |
+
+`mobileclip/tokenizer.py` 第 7 行 `import open_clip`，要的是后者。装 `openai-clip` 再多次也
+补不上——模块名都不一样。仓库的规范装法（`scripts/setup_env.sh` Stage 6）：
+
+```bash
+python -m pip install --no-cache-dir --no-deps "open_clip_torch==2.20.0"
+```
+**`--no-deps` 是硬性要求**：它的 metadata 写了不带上界的 torch，pip 会顺手把 torch 升级掉。
+
+### (b) ⚠️ 你的 `python` 是 `/usr/bin/python`，**不是** `mvc_env310`
+
+你这条输出是实锤：
+```
+/usr/bin/python 2.5.1+cu124 ['sm_50',...,'sm_90']
+```
+提示符虽然亮着 `(mvc_env310)`，但 `sys.executable` 是 **`/usr/bin/python`**（系统解释器，
+包在共用的 `/usr/local/lib/python3.10/dist-packages`）。含义有三：
+
+1. **好消息**：系统 torch 是 **2.5.1+cu124 且 arch 含 `sm_90`**——Hopper 支持没问题，
+   之前担心的 sm_90 这一关实际上是过的。
+2. **坏消息**：你这一路 `pip install` 很可能**装进了共用的系统 site-packages**——这台是
+   **共用 root 账号**，等于在改 wky/zyc 也在用的环境。**先停手，别再往系统里装。**
+3. `run_pretrain.sh` 现在用 `python -m torch.distributed.run`，`python` 是谁就用谁——
+   所以必须先把 `python` 指对，否则改了启动器也没用。
+
+**先诊断环境到底怎么了：**
+```bash
+ENVP=/workspace/mount/b100_zaip_data/rby/mvc_env310
+echo "CONDA_PREFIX=$CONDA_PREFIX"
+which -a python python3 pip | head
+ls -l "$ENVP/bin/python" 2>&1          # 这个文件在不在？
+"$ENVP/bin/python" -V 2>&1              # 能不能跑？
+"$ENVP/bin/python" -c "import torch;print(torch.__version__, torch.cuda.get_arch_list())" 2>&1 | tail -1
+```
+
+**按结果二选一：**
+
+- **情况 1：`$ENVP/bin/python` 存在且里面有 torch** → 只是 PATH 没生效。
+  ```bash
+  export PATH="$ENVP/bin:$PATH"
+  which python && python -c "import sys;print(sys.executable)"   # 必须是 $ENVP/bin/python
+  python -m pip install --no-cache-dir --no-deps "open_clip_torch==2.20.0"
+  ```
+- **情况 2：`$ENVP/bin/python` 不存在，或里面没有 torch** → 那个 conda env 等于没建成。
+  **别再往系统里装**，最省事的隔离办法是**基于系统 py3.10 建带 `--system-site-packages`
+  的 venv**：直接继承那套已经能用的 torch 2.5.1+cu124(sm_90)，新装的包只落在自己目录，
+  既不用重下 torch，也不污染共用环境：
+  ```bash
+  VENV=/workspace/mount/b100_zaip_data/rby/mvc_venv310
+  /usr/bin/python -m venv --system-site-packages "$VENV"
+  ls -l "$VENV/bin/pip" || "$VENV/bin/python" -m ensurepip --upgrade   # 上次踩过 venv 没 pip 的坑
+  export PATH="$VENV/bin:$PATH"
+  which python pip && python -c "import sys;print(sys.executable)"
+  python -m pip install --no-cache-dir --no-deps "open_clip_torch==2.20.0"
+  ```
+
+**装完复验（仍然零 GPU）：**
+```bash
+cd /workspace/mount/b100_zaip_data/rby/mobileclip
+python -c "import sys,torch;print(sys.executable, torch.__version__, torch.cuda.get_arch_list())"
+PYTHONPATH=. python -c "import models; print('models import OK')"
+```
+
+**Then report back**：诊断那五行的输出（判断走情况 1 还是 2）、以及复验两行是否都过。
+`import models` 一过，就只剩等空闲卡冒烟了。
+
+> `openai-clip==1.0.1` 对本仓库没用（模块名是 `clip`，没人 import 它）。它多半也装进了
+> 共用系统环境；**不建议**再去系统里 uninstall（同样是动共用环境），留着不碍事即可。
+
+---
+
 ## 2026-07-24 (7) — 8 张卡都满了：先做**不需要 GPU** 的验证，再按 PID 甄别占卡进程
 
 **Diagnosis：卡满不挡事。** 上次崩在 `tasks_clip/pretrain.py:15` 的 `from models import *`

@@ -1864,3 +1864,33 @@ which python && python -c "import sys,torch; print(sys.executable, torch.__versi
 > ⚠️ **`check_readiness.py` 全绿不代表环境能训**：它只 import `decord` 和
 > `configs.data`，**从不 import torch**。§5 十一个 `[OK ]` 只证明数据接对了；
 > torch/sm_90 要靠 §2 的 arch 自检或 §6 首光冒烟才算验过。
+
+---
+
+## `ModuleNotFoundError: No module named 'open_clip'`——装成了 `openai-clip`
+
+**症状**：`import models` 崩在
+`models/backbones/internvideo2/mobileclip/tokenizer.py:7: import open_clip`，
+而你确信"CLIP 已经装了"（`pip install openai-clip==1.0.1`）。
+
+**Cause**：**这是两个完全不相干的项目，模块名都不一样**：
+
+| 包名 | 项目 | 提供的模块 |
+|------|------|-----------|
+| `openai-clip` | OpenAI CLIP | **`clip`** |
+| **`open_clip_torch`** | LAION / mlfoundations OpenCLIP | **`open_clip`** ← 仓库要的 |
+
+装 `openai-clip` 再多次也补不上 `import open_clip`。
+
+**Fix**（`scripts/setup_env.sh` Stage 6 的规范装法）：
+
+```bash
+python -m pip install --no-cache-dir --no-deps "open_clip_torch==2.20.0"
+```
+
+**`--no-deps` 不是可选项**：`open_clip_torch` 的 metadata 里 torch 没有上界，不加
+`--no-deps` 时 pip 会为"满足依赖"把 torch 升级掉（1.13.1 栈上会连带把
+torchvision/torchaudio 弄坏，报 `cannot import name '_cast_Long'`）。
+
+> 装之前先 `python -c "import sys;print(sys.executable)"` 确认装到的是**自己的**环境——
+> b100 是共用 root 账号，装进 `/usr/local/lib/python3.10/dist-packages` 会影响别人。
