@@ -269,31 +269,42 @@ grounding 验真的候选间**排。**保证融合永不使某片变差**。
 
 ## 6. 落地流水线 + 分阶段清单
 
-### 6.1 新增/改动文件
+### 6.1 文件
 ```
-tools/data_audit/vlm_audit.py       # 加 RECAP_PROMPT + --mode recap（五样本, 帧抖动, temp 可调）
-tools/data_audit/vlm_audit_hf.py    # 同上, V100 后端（已有 full/trans/gran/merge, 加 recap 分支）
-tools/fuse_captions.py     # S1–S7 主流程: 读五样本重述 JSON, 输出带 captions/fused_dense 的训练 JSON
-tools/fuse_verify.py       # S4 异质验真(GroundingDINO/OCR/二号 VLM) + S6 双向验收, 可独立跑做审计
+✅ 已实现 tools/data_audit/vlm_audit.py     # RECAP_PROMPT（稠密单段、非分面、含 OCR/计数/越界护栏）
+✅ 已实现 tools/data_audit/vlm_audit_hf.py  # --mode recap: N 次独立采样 + 帧相位抖动 + temp/top_p; 输出 verdict.recaps
+✅ 已实现 tools/data_audit/run_v100.sh      # recap 子命令: 8 卡分发 recaption_tasks 队列 -> recap5.{shard}.jsonl
+⬜ 待实现 tools/fuse_captions.py   # S1–S7 主流程: 读 recap5 的 verdict.recaps, 输出带 captions/fused_dense 的训练 JSON
+⬜ 待实现 tools/fuse_verify.py     # S4 异质验真(GroundingDINO/OCR/二号 VLM) + S6 双向验收, 可独立跑做审计
 ```
-`fuse_captions.py` 建议 CLI：
+
+**S0 五样本重述（已可跑）**——服务器一条命令即可（8 卡分发，可续跑）：
+```bash
+# 输入默认 = RECAPTION 桶队列 $OUT/v0_2/recaption_tasks.jsonl；也可 RECAP_INPUT=任意含 video 的 jsonl
+# 旋钮：N_RECAP(默认5, 不低于5) / RECAP_TEMP(默认0.9) / RECAP_MAX_TOKENS(默认512)
+bash tools/data_audit/run_v100.sh recap
+```
+底层等价（单分片；帧抖动**默认开**，`--no-frame-jitter` 仅为 §6.4 温度消融隔离解码方差用）：
+```bash
+CUDA_VISIBLE_DEVICES=0 python tools/data_audit/vlm_audit_hf.py \
+  --input recaption_tasks.jsonl --video-root $CLIPS \
+  --model Qwen/Qwen3-VL-8B-Instruct --mode recap \
+  --n-captions 5 --temperature 0.9 --top-p 0.9 \
+  --num-shards 8 --shard-id 0 --output "outputs/.../recap5.{shard}.jsonl"
+```
+产物每行：`{"video":..., "verdict":{"recaps":["c1".."c5"], "n_samples":5}}`。**诊断**：跑完抽查
+`verdict.recaps` 是否真有差异——若 N 条近乎雷同，说明温度过低、投票会失效（§1.1-2、§6.3-6）。
+
+**S1–S7 融合（待实现）** `fuse_captions.py` 建议 CLI：
 ```bash
 python tools/fuse_captions.py \
-  --in  recap5.jsonl \                  # 每片 5 条独立重述
+  --in  recap5.jsonl \                  # 读每行 verdict.recaps（N 条独立重述）
   --out internvid_fused.jsonl \
   --k 3 --tau 0.85 --k-star auto \      # auto=按 §6.3 标定曲线选; 或显式给整数
   --hallu-gate 0.10 \
   --verify heterogeneous \              # object=GroundingDINO / ocr=OCR / vlm2=二号VLM, 按类别路由
   --fallback best-single-clipscore \
   --frames-root data/frames             # 复用已抽帧, 不重抽
-```
-五样本重述本身（S0）：
-```bash
-CUDA_VISIBLE_DEVICES=0 python tools/data_audit/vlm_audit_hf.py \
-  --input recaption_tasks.jsonl --video-root $CLIPS \
-  --model Qwen/Qwen3-VL-8B-Instruct --mode recap \
-  --n-captions 5 --temperature 0.9 --frame-jitter \
-  --num-shards 8 --shard-id 0 --output "outputs/.../recap5.{shard}.jsonl"
 ```
 
 ### 6.2 分阶段（ROI 从高到低，均可提前止损；接在 caprl-scheme.md P0 之后）

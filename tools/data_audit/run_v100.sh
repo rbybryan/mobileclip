@@ -22,6 +22,7 @@
 #   bash tools/data_audit/run_v100.sh s2-merge     # ⑧c 合并 better_zh 三候选为一条密字幕（纯文本）
 #   bash tools/data_audit/run_v100.sh merge-review # ⑧d 融合可视化人审（视频+候选+融合稿离线包，同 better_zh）
 #   bash tools/data_audit/run_v100.sh s4-merged    # ⑧e 落地：融合稿当主字幕写进 v0.2 训练 JSON
+#   bash tools/data_audit/run_v100.sh recap        # ⑧f RECAPTION 桶前端：每片五样本独立重述（融合方案 S0）
 #   JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge  # ⑥ 云端裁判（可选，需 API key）
 #   bash tools/data_audit/run_v100.sh judge-agree # ⑥b 一致率+Cohen's κ（可对外来裁判文件独立重算）
 #   bash tools/data_audit/run_v100.sh xling-check # ⑥c 裁决 xling 阈值（s3 前必做）
@@ -94,6 +95,7 @@ s1_lines() { { cat "$OUT"/s1_scores.*.jsonl 2>/dev/null || true; } | wc -l; }
 s2_lines() { { cat "$OUT"/s2_verdicts.*.jsonl 2>/dev/null || true; } | wc -l; }
 trans_lines() { { cat "$OUT"/s2_trans.*.jsonl 2>/dev/null || true; } | wc -l; }
 merged_lines() { { cat "$OUT"/s2_merged.*.jsonl 2>/dev/null || true; } | wc -l; }
+recap_lines() { { cat "$OUT"/recap5.*.jsonl 2>/dev/null || true; } | wc -l; }
 
 case "${1:-}" in
 # ---------------------------------------------------------------- ① 冒烟
@@ -211,6 +213,13 @@ status)
     mg_alive=$(pgrep -fc "vlm_audit_hf.py.*--mode merge" || true)
     echo "---- S2-merge（候选融合 better_zh→1 条）: $(merged_lines) / $s2  存活进程: $mg_alive ----"
     echo "  （总行数达 $s2 即全部处理完；只有 ≥2 候选的片真调模型，<2 候选秒过。落地: bash $0 s4-merged）"
+  fi
+  if ls "$OUT"/recap5.*.jsonl >/dev/null 2>&1; then
+    rc_alive=$(pgrep -fc "vlm_audit_hf.py.*--mode recap" || true)
+    rc_in=${RECAP_INPUT:-$OUT/v0_2/recaption_tasks.jsonl}
+    rc_want=$( [ -f "$rc_in" ] && wc -l < "$rc_in" || echo '?')
+    echo "---- recap（五样本重述, 融合方案 S0）: $(recap_lines) 片 / $rc_want  存活进程: $rc_alive ----"
+    echo "  （每片 verdict.recaps 是 N 条独立重述；比单次 s2 慢约 N×——每片跑 N 次生成+解码）"
   fi
   echo "---- 各分片日志尾行 ----"
   tail -n 1 "$OUT"/s1_shard*.log "$OUT"/s2_shard*.log 2>/dev/null || true
@@ -481,6 +490,34 @@ s4-merged)
   echo "== v0.2 训练 JSON 已写到 $OUT/v0_2/internvid_zh_v0_2.jsonl =="
   echo "   融合稿(merged_zh)当主字幕，原字幕/候选保留为 captions 视图；"
   echo "   下一步是 §6.3 消融（融合 vs best-single vs uniform-K），在训练机上做。"
+  ;;
+# --------------- ⑧f RECAPTION 桶前端：每片五样本独立重述（融合方案 S0）
+recap)
+  need_clips; need_py
+  # 输入=RECAPTION 桶队列（apply_buckets 的 --out-recaption 产物）。任何含 video
+  # 字段的 jsonl 都行：RECAP_INPUT=xxx.jsonl bash $0 recap
+  RECAP_INPUT=${RECAP_INPUT:-$OUT/v0_2/recaption_tasks.jsonl}
+  [ -f "$RECAP_INPUT" ] || { echo "缺重述输入队列：$RECAP_INPUT
+  它是 apply_buckets 的 --out-recaption 产物（RECAPTION 桶）。先跑 s3 得 buckets，
+  再 s4-merged 落地即会写出 v0_2/recaption_tasks.jsonl；
+  或指向任意含 video 字段的 jsonl： RECAP_INPUT=xxx.jsonl bash $0 recap"; exit 1; }
+  N_RECAP=${N_RECAP:-5}; RECAP_TEMP=${RECAP_TEMP:-0.9}
+  echo "[model] S2_MODEL=$S2_MODEL"
+  echo "[recap] 每片 $N_RECAP 条独立重述, temp=$RECAP_TEMP, top_p=0.9, 帧抖动开, 看 $S2_FRAMES 帧"
+  echo "[input] $RECAP_INPUT （$(wc -l < "$RECAP_INPUT") 片）"
+  for i in $(seq 0 $((NGPU-1))); do
+    CUDA_VISIBLE_DEVICES=$i nohup python tools/data_audit/vlm_audit_hf.py \
+      --input "$RECAP_INPUT" --video-root "$CLIPS" --model "$S2_MODEL" \
+      --mode recap --n-captions "$N_RECAP" --temperature "$RECAP_TEMP" \
+      --frames "$S2_FRAMES" --num-shards "$NGPU" --shard-id "$i" \
+      --max-new-tokens "${RECAP_MAX_TOKENS:-512}" \
+      --output "$OUT/recap5.{shard}.jsonl" \
+      > "$OUT/recap_shard$i.log" 2>&1 &
+    echo "shard $i -> GPU$i (log: $OUT/recap_shard$i.log)"
+  done
+  echo "已后台启动（可续跑）。每片跑 $N_RECAP 次生成+解码，比单次 s2 慢约 ${N_RECAP}×。进度: bash $0 status"
+  echo "诊断：温度过低会让 N 条几乎雷同、投票失效——跑完抽查 recap5.*.jsonl 的 verdict.recaps 是否真有差异。"
+  echo "下一步：融合 S1–S7 在 tools/fuse_captions.py（待实现，见 notes/caption-fusion-scheme.md §6.1）。"
   ;;
 # ------------------------------- ⑨b 粒度重判结果分析 + n_info=0 归因
 gran-check)
