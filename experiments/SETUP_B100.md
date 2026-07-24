@@ -299,88 +299,75 @@ zyc 的翻译产物**同时含原始英文源 caption**，可以据此直接生�
 /workspace/mount/b100_zaip_data/zyc/vibe_coding/low_resource_cv/MobileViCLIP/outputs/internvid_alignment/caption_translation_qwen36_v0_1/20_outputs/aligned_internvid_zh_translated_retry_merged.jsonl
 ```
 
-**能不能用它替代下载？——满足两条即可，先 probe 核实：**
-① 记录里确有**英文源 caption 字段**（不是只有中文 `raw_caption_zh_translated`）；
-② `video` 前缀覆盖 `InternVId-FLT_1..11`，且其数量就是你要训的规模（**若远小于作者
-FLT 全量，则这是子集，等于换了训练集,要有意为之**）。英文 R0–R3 要的是**源英文 caption**，
-不是中文译文。
+**已 probe 探明（2026-07-24）——两条都成立，可以替代下载：**
+- **英文源 caption 字段 = `caption`**（样例 `'woman using a computer mouse and keyboard'`）；
+  中文译文在 `raw_caption_zh_translated`。英文 R0–R3 用 **`caption`**。
+- 每条还带绝对路径 **`abs_path`**（如
+  `…/b100_zaip_data_luan/InternVId-10M-FLT/InternVId-FLT_4/shard_00006/InternVId-FLT_4/<file>.mp4`），
+  以及一个**深度嵌套**的 `video` 字段（`InternVId-FLT_i/shard_xxxxx/InternVId-FLT_i/<file>.mp4`，
+  不是简单的 `分片/文件名`）。
+- ⚠️ **仍缺覆盖数据**：probe 的分片计数那段被终端 `^S` 卡住没打出来——**还需**跑下面
+  「① 覆盖核查」确认 total / 每片条数，判断是不是作者 FLT 全量还是子集（子集=换了训练集）。
 
-**① probe——找出源 caption 是哪个 key、看分片覆盖/条数：**
+**为什么用 `abs_path` 而不是拼相对路径**：loader 是
+`data_root_prefix + os.path.join(data_root, rec["video"])`，`data_root_prefix` 默认 `""`，
+而 `os.path.join(root, 绝对路径)` 直接返回该绝对路径。所以**把 `abs_path` 塞进 `video`
+字段**，路径就与 `MVC_DATA_DIR`/软链/那层 `shard_xxxxx` 嵌套**完全无关**，最稳。软链
+（§4 情况 A）仍要建，只为让 §5 `check_readiness` 的「data_root 目录存在」这关过。
+
+**① 覆盖核查（先补跑，被 `^S` 卡住的那段；若卡住按 `Ctrl-Q` 解冻）：**
 
 ```bash
 SRC=/workspace/mount/b100_zaip_data/zyc/vibe_coding/low_resource_cv/MobileViCLIP/outputs/internvid_alignment/caption_translation_qwen36_v0_1/20_outputs/aligned_internvid_zh_translated_retry_merged.jsonl
-# 1a) 首条所有 key + 样例（认出英文源 caption 的字段名）
-python - <<PY
-import json
-with open("$SRC") as f:
-    r=json.loads(next(l for l in f if l.strip()))
-print("keys:", list(r.keys()))
-for k,v in r.items():
-    print(f"  {k!r:34s} {type(v).__name__:6s} {repr(v)[:150]}")
-PY
-# 1b) 总条数 + 每个 FLT 分片各多少条（确认覆盖 1..11、是否子集）
 python - <<PY
 import json,re,collections
-rx=re.compile(r"^(InternVId-FLT_(?:1[01]|[1-9]))/"); c=collections.Counter(); n=bad=0
+rx=re.compile(r"^(InternVId-FLT_(?:1[01]|[1-9]))/"); c=collections.Counter(); n=bad=nocap=0
 for l in open("$SRC"):
     if not l.strip(): continue
-    n+=1; m=rx.match(json.loads(l).get("video",""))
-    c[m.group(1)]+=1 if m else 0
-    bad+=0 if m else 1
-print("total:",n,"| video 前缀不匹配:",bad)
+    n+=1; r=json.loads(l); m=rx.match(r.get("video",""))
+    c[m.group(1)]+=1 if m else 0; bad+=0 if m else 1
+    cap=r.get("caption"); nocap+=0 if (isinstance(cap,str) and cap.strip()) else 1
+print("total:",n,"| video 前缀不匹配:",bad,"| caption 空/非串:",nocap)
 for i in range(1,12): print(f"  InternVId-FLT_{i}: {c[f'InternVId-FLT_{i}']}")
 PY
 ```
 
-**② test——先只生成 shard 1 并用预检验证 video 路径解析对不对（关键：验证是否该剥前缀）：**
+**② 生成全部 11 片 anno（`video` 用 `abs_path`，`caption` 用 `caption`）：**
 
 ```bash
-CAPKEY=<把 1a 认定的英文源 caption 字段名填这里>   # 如 raw_caption / caption / caption_en
-STRIP=1     # data_root 已含分片；video 若带 InternVId-FLT_i/ 前缀就剥掉。若 ② 结果“全部缺失”改 0 重跑
 mkdir -p anno_downstream/InternVid
 python - <<PY
-import json
-src="$SRC"; capkey="$CAPKEY"; strip=int("$STRIP"); i=1; pref=f"InternVId-FLT_{i}/"; out=[]
+import json,re,collections,os
+src="$SRC"; rx=re.compile(r"^InternVId-FLT_(1[01]|[1-9])/")
+buckets=collections.defaultdict(list); skip=0
 for l in open(src):
     if not l.strip(): continue
-    r=json.loads(l); v=r.get("video","")
-    if not v.startswith(pref): continue
-    cap=r.get(capkey)
-    if isinstance(cap,list): cap=cap[0]
-    if not isinstance(cap,str) or not cap.strip(): continue
-    out.append({"video": v[len(pref):] if strip else v, "caption": cap.strip()})
-json.dump(out, open(f"anno_downstream/InternVid/InternVid-10M-flt_{i}.json","w"), ensure_ascii=False)
-print("shard 1 ->", len(out), "records")
+    r=json.loads(l); m=rx.match(r.get("video",""))
+    ap=r.get("abs_path"); cap=r.get("caption")
+    if not (m and isinstance(ap,str) and ap and isinstance(cap,str) and cap.strip()):
+        skip+=1; continue
+    buckets[int(m.group(1))].append({"video":ap,"caption":cap.strip()})
+os.makedirs("anno_downstream/InternVid",exist_ok=True)
+for i in range(1,12):
+    json.dump(buckets[i], open(f"anno_downstream/InternVid/InternVid-10M-flt_{i}.json","w"), ensure_ascii=False)
+    print(f"InternVId-FLT_{i} -> {len(buckets[i])}")
+print("skipped:",skip)
 PY
-# 用预检只看 internvid_v1：亮 [OK ] 说明 STRIP 猜对；“抽查…全部缺失”就把 STRIP 翻成 0 重来
-python experiments/check_readiness.py --decode 2>/dev/null | grep -E "internvid_v1 "
 ```
 
-**③ shard 1 过了 [OK ]，再一次性生成全部 11 片**（`CAPKEY`/`STRIP` 用 ② 验好的值）：
+**③ 建软链（只为过预检的目录存在检查）+ 预检：**
 
 ```bash
-python - <<PY
-import json
-src="$SRC"; capkey="$CAPKEY"; strip=int("$STRIP")
-for i in range(1,12):
-    pref=f"InternVId-FLT_{i}/"; out=[]
-    for l in open(src):
-        if not l.strip(): continue
-        r=json.loads(l); v=r.get("video","")
-        if not v.startswith(pref): continue
-        cap=r.get(capkey)
-        if isinstance(cap,list): cap=cap[0]
-        if not isinstance(cap,str) or not cap.strip(): continue
-        out.append({"video": v[len(pref):] if strip else v, "caption": cap.strip()})
-    json.dump(out, open(f"anno_downstream/InternVid/InternVid-10M-flt_{i}.json","w"), ensure_ascii=False)
-    print(f"InternVId-FLT_{i} -> {len(out)}")
-PY
-python experiments/check_readiness.py     # 11 个 internvid_v* 全 [OK ] 才进 §5/§6
+# 软链见 §4「情况 A」：把 $WORK/data/video_sample/InternVId-FLT_i 指到 $FULL/InternVId-FLT_i
+#   （$FULL=/workspace/mount/b100_zaip_data_luan/InternVId-10M-FLT，以 abs_path 的根为准）
+# 然后 export MVC_DATA_DIR="$WORK/data" 已在情况 A 里做过。
+python experiments/check_readiness.py --decode   # 11 个 internvid_v* 全 [OK ]（含真解码）才进 §6
 ```
 
 > 走了方案 C 就**不用** §4 上面那段 gdown（`1grbR39K...`）。`MVC_ANNO_DIR` 保持默认
-> `anno_downstream`。生成的就是 `{"video","caption":str}` JSON 数组，天然满足上面
-> 「caption 格式核对」的三条要求。
+> `anno_downstream`。生成的就是 `{"video"(=abs_path),"caption":str}` JSON 数组，天然满足
+> 上面「caption 格式核对」三条。**训练前务必先看 ① 的 total/每片计数**：若远小于作者 FLT
+> 全量，R0–R3 就是在子集上训，须有意为之（或从 gdown 补齐缺的分片）。
 
 > 若探盘发现 `$FULL` 布局本就是 `.../video_sample/InternVId-FLT_{i}`，那连软链都免了，
 > 直接 `export MVC_DATA_DIR=<那个 video_sample 的父目录>`。软链方案只是为了对付命名不一致。
