@@ -36,6 +36,42 @@ Gated by `alpha` (init 0 → mean pooling). It is the **brain-inspired twin of
 Configs: `experiments/configs/pilot_10k_surprise.py` (V100 plumbing screen, isolates
 the pool vs mean) and `experiments/configs/nA1_surprisepool.py` (full-data A/B arm).
 
+## Screening `TemporalSurprisePool` on V100 (10k plumbing go/no-go)
+
+The 10k pilot only checks that the add-on **wires up and trains** (not that it
+wins — that ranking is the H100 A/B, `nA1_surprisepool.py`). Run from repo root
+(`conda activate mobileviclip`; edit `CUDA_VISIBLE_DEVICES` inside the `.sh` if needed):
+
+```bash
+git pull origin main
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_surprise.py 8 debug True   # smoke
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_surprise.py 8               # real
+```
+
+**Pass = loss falls AND the pool trained off mean (`alpha` ≠ 0).** The ckpt is a
+DeepSpeed directory — weights are in `mp_rank_00_model_states.pt` under `module`
+(loading the dir directly raises `IsADirectoryError`):
+
+```bash
+python - <<'PY'
+import torch
+f = "experiments/runs/pilot_10k_surprise/ckpt_09.pth/mp_rank_00_model_states.pt"
+sd = torch.load(f, map_location="cpu"); sd = sd.get("module", sd)
+a = sd.get("vision_encoder.temporal_pool.alpha")
+g = sd.get("vision_encoder.temporal_pool.gamma")
+k = sd.get("vision_encoder.temporal_pool.key.weight")
+print("alpha =", None if a is None else round(a.float().flatten()[0].item(),5), " (init 0 → want ≠0)")
+print("gamma =", None if g is None else round(g.float().flatten()[0].item(),5), " (init 0 → want ≠0)")
+print("key.weight L2 =", None if k is None else round(k.float().norm().item(),4))
+PY
+```
+
+`alpha` ≠ 0 (ideally `gamma` ≠ 0 too) + loss down → wired and training, not silently
+degenerating to mean pooling. If `alpha` is stuck at 0, the surprise correction is
+gated off — check that `temporal_pool` params are trainable (the freeze/lr name-match
+`"temporal_pool"` in `models/mobileviclip_small.py`). Unit test (torch-only, no
+timm/decord): `python -m pytest tests/test_neural_inspired.py -v`.
+
 ## How to remove an add-on (if it doesn't earn its place)
 
 For `TemporalSurprisePool`:
