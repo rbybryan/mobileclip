@@ -43,6 +43,24 @@ import torch
 # reparameterize 也能判定"是否恰好时间反转盲"。
 TRAIN_STATE_KERNEL_KEY = "mixer_1d.rbr_conv.0.conv"
 
+# --------------------------------------------------------------------------
+# 随机零假设(2026-07-24 修正:**这些指标的 null 不是 0**)
+#
+# 这几个量都是**尺度不变的比值**,所以未经训练的随机核也会给出一个**不小的**数。
+# 拿"接近 0"当判据是错的 —— 必须和随机 null 比。以下数值由 2e5~5e5 次
+# 蒙特卡洛得到(高斯/均匀/不同方差都一致,见 --self-test):
+#
+#   3 抽头核 反对称占比  ‖w−flip w‖/(2‖w‖)      → null ≈ 0.500  (解析 ~1/√3 量级)
+#   3 抽头核 DC/AC      |Σw|/Σ|w|              → null ≈ 0.589
+#   T=8 向量 反转反对称                          → null ≈ 0.706  (解析 √2/2 = 0.7071)
+#
+# 判读一律用「**与 null 的偏离**」,不用「与 0 的距离」。
+# --------------------------------------------------------------------------
+NULL_ANTISYM_K3 = 0.500
+NULL_DCAC_K3 = 0.589
+NULL_REV_T8 = 0.706
+NULL_TOL = 0.05  # 偏离小于它就算"落在随机 null 上"
+
 
 # --------------------------------------------------------------------------
 # 诊断量(纯函数,--self-test 覆盖)
@@ -127,8 +145,11 @@ def audit(sd: dict, kernel_key: str, embed_key: str) -> None:
         print(f"      逐位置范数 = {[round(float(x), 4) for x in per_pos]}")
         print(f"      位置间相对离散度 = {float(rel_spread):.4f}"
               "   (≈0 ⇒ 各帧位置无区分 ⇒ 对帧顺序等变)")
+        _d = float(rev_asym) - NULL_REV_T8
         print(f"      **时间反转反对称占比** = {float(rev_asym):.4f}"
-              "   (≈0 ⇒ 沿时间回文 ⇒ 原则上编码不了方向)")
+              f"  (随机 null={NULL_REV_T8:.3f},偏离 {_d:+.4f})"
+              + ("  ⇒ 落在 null 上" if abs(_d) < NULL_TOL
+                 else ("  ⇒ 低于 null(偏回文)" if _d < 0 else "  ⇒ 高于 null")))
 
     if emb:
         print()
@@ -137,6 +158,33 @@ def audit(sd: dict, kernel_key: str, embed_key: str) -> None:
         print("     加性位置编码会被均值池化**精确抹掉** —— 它只能经由下游非线性间接影响"
               "池化后的嵌入。")
         print("     所以「E 非零」**不等于**「模型有顺序敏感性」;要看行为侧的 GATE-0 动态审计。")
+
+    # ---- 1.5 layer_scale_1d:整条时序支路的总闸门 ----
+    print()
+    print("=" * 72)
+    print("3. `layer_scale_1d` —— 时序支路的**总闸门**(比核的形状更根本)")
+    print("=" * 72)
+    print("  RepMixer 的时序分支是  x + layer_scale_1d * (mixer_1d(x) - norm_1d(x))")
+    print("  ⇒ layer_scale_1d 直接缩放**整条**时序贡献。它若很小,核长什么样都不重要。")
+    ls = {k: v for k, v in tensors.items() if k.endswith("layer_scale_1d")}
+    if not ls:
+        print("  [未找到] 没有以 'layer_scale_1d' 结尾的键。")
+    else:
+        allv = torch.cat([v.float().flatten() for v in ls.values()])
+        print(f"  共 {len(ls)} 个块,{allv.numel()} 个通道")
+        print(f"  |layer_scale_1d|: {_stats(allv.abs())}")
+        # 与同一 checkpoint 里的空间 layer_scale 对比,给一个"大小是否正常"的参照
+        ls2d = {k: v for k, v in tensors.items()
+                if k.endswith("layer_scale") and "token_mixer" in k}
+        if ls2d:
+            allv2 = torch.cat([v.float().flatten() for v in ls2d.values()])
+            print(f"  参照 —— 同层空间 |layer_scale|: {_stats(allv2.abs())}")
+            ratio = float(allv.abs().median() / allv2.abs().median().clamp_min(1e-12))
+            print(f"  **时序/空间 闸门比(中位数) = {ratio:.4f}**")
+            if ratio < 0.2:
+                print("    ⇒ 时序支路的闸门比空间支路**小一个量级以上** ⇒ 时序贡献被压得很低。")
+            else:
+                print("    ⇒ 两者同量级 ⇒ 时序支路并未被闸门压制。")
 
     # ---- 2. 时间卷积核 ----
     print()
@@ -195,20 +243,34 @@ def audit(sd: dict, kernel_key: str, embed_key: str) -> None:
         A = torch.cat([x.flatten() for x in all_asym])
         D = torch.cat([x.flatten() for x in all_dc])
         med = float(A.median())
+        dmed = float(D.median())
         if upper_bound_mode:
             print(f"  全部 k=3 分支 反对称占比(**上界**): {_stats(A)}")
+            print(f"  全部 k=3 分支 DC/AC              : {_stats(D)}")
             print("-" * 72)
-            print(f"  判读(上界 = {med:.4f}):")
-            if med < 0.05:
-                print("    < 0.05 ⇒ k=3 分支近似对称 ⇒ **等效核也近似对称**"
-                      "(其余项恰好对称)")
-                print("    ⇒ **stage 1-3 的时间卷积基本编码不了时间方向**。")
-                print("    ⇒ 与 GATE-0 行为侧结果(打乱 8 帧不掉分)一致;RTime-Binary 预期接近 50%。")
+            dev = med - NULL_ANTISYM_K3
+            print(f"  判读 —— **与随机 null 比,不与 0 比**")
+            print(f"    反对称占比 中位数 = {med:.4f} ,随机 null = {NULL_ANTISYM_K3:.3f}"
+                  f" ,偏离 = {dev:+.4f}")
+            print(f"    DC/AC      中位数 = {dmed:.4f} ,随机 null = {NULL_DCAC_K3:.3f}"
+                  f" ,偏离 = {dmed - NULL_DCAC_K3:+.4f}")
+            print()
+            if abs(dev) < NULL_TOL:
+                print("    ⇒ 反对称占比**落在随机 null 上** ——「对称/反对称」的划分与未训练的")
+                print("       随机核**无法区分**。⇒ **没有证据表明模型学到了时间方向选择性。**")
+                print("    ⇒ 与 GATE-0 行为侧(打乱 8 帧不掉分)**一致**。")
+                print("    ⇒ 决策:**先别买顺序敏感基准** —— 模型侧就没有方向信息,")
+                print("       R2 的前提成立,且 R2 可先用『反转敏感度』自测,不需要基准。")
+            elif dev >= NULL_TOL:
+                print("    ⇒ 显著**高于**随机 null ⇒ 确实学到了方向选择性。")
+                print("    ⇒ GATE-0 的零效应就是**基准测不出** ⇒ 值得买基准。")
             else:
-                print("    ≥ 0.05 ⇒ k=3 分支带明显反对称分量 ⇒ 模型**参数层面确实编码了方向**。")
-                print("    ⇒ 那么 GATE-0 的『打乱不掉分』就是**基准测不出**,而非模型没有信息")
-                print("    ⇒ 值得为顺序敏感基准付代价(notes/order-sensitive-eval.md §3 判读表)。")
-                print("    注:这是上界,融合后真实占比更小;要精确值需 reparameterize 后重跑。")
+                print("    ⇒ 显著**低于**随机 null ⇒ 学到的是**对称**(主动的时间反转盲)。")
+                print("    ⇒ 同样指向:模型不编码方向,先别买基准。")
+            print()
+            print("    ⚠️ 这是上界(融合后 id_tensor 往分母加对称质量,真实占比更小),")
+            print("       所以「落在 null 上」这个结论只会更强,不会更弱。")
+            print("    ⚠️ 别忘了看上面第 3 节的 layer_scale_1d —— 它才是整条时序支路的**总闸门**。")
         else:
             print(f"  全部时间核 反对称度: {_stats(A)}")
             print(f"  全部时间核 DC/AC   : {_stats(D)}")
@@ -242,6 +304,22 @@ def _self_test() -> None:
     w = cases["asym      [0,1,2]"]
     assert abs(float(kernel_asymmetry(w))
                - float(kernel_asymmetry(torch.flip(w, dims=[-1])))) < 1e-6
+    # 关键:蒙特卡洛核验"随机 null"三个常数 —— 这些指标的 null **不是 0**,
+    # 2026-07-24 曾因为拿 0 当 null 而给出过错误判读,故固化为自检。
+    print()
+    print("随机 null 核验(蒙特卡洛,这几个比值指标的 null 都远离 0):")
+    g = torch.Generator().manual_seed(0)
+    w = torch.randn(200000, 3, generator=g)
+    a_null = float(kernel_asymmetry(w).median())
+    d_null = float(kernel_dc_ac(w).median())
+    E = torch.randn(200000, 8, generator=g)
+    r_null = float(((E - torch.flip(E, dims=[-1])).norm(dim=-1)
+                    / (2 * E.norm(dim=-1))).median())
+    for nm, got, want in [("3抽头 反对称", a_null, NULL_ANTISYM_K3),
+                          ("3抽头 DC/AC ", d_null, NULL_DCAC_K3),
+                          ("T=8 反转对称", r_null, NULL_REV_T8)]:
+        print(f"  {nm}: 实测 null={got:.4f}  常数={want:.3f}  差={got-want:+.4f}")
+        assert abs(got - want) < 0.02, f"{nm} null 常数与蒙特卡洛不符"
     print("self-test 通过。")
 
 
