@@ -23,6 +23,114 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (14) — pipeline-sample 缺队列已修：先跑 s3(0.3)+新 s4 两条秒级命令（#243）
+
+**Diagnosis:** 你贴的报错是对的——`v0_2/recaption_tasks.jsonl` 从没在本机落地过，而旧的落地
+命令 `s4-merged` 硬性依赖 better_zh 融合稿（`s2_merged.*`，主计划 v1.1 已存档弃用）。
+#243 已加不依赖融合稿的 **`s4`** 落地命令，并把报错文案换成自救指令。另外盘上现存的
+`buckets.jsonl` 可能是审计结论 15 里**作废的 0.8 版**（RECAPTION 空桶），所以 s3 要带
+`TARGET_PRECISION=0.3` 重跑一次保险（秒级、幂等覆盖）。
+
+**Do this next（101vector，接着你刚才的终端；①② 均为 CPU 秒级）：**
+```bash
+git pull origin main    # 拿到新的 s4 子命令（#243）
+TARGET_PRECISION=0.3 bash tools/data_audit/run_v100.sh s3   # ① 重算分桶（0.3 版才有效）
+bash tools/data_audit/run_v100.sh s4                        # ② 落地队列, 预期打印 ~2,5xx 片
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample   # ③ 原命令重跑
+```
+③ 的回报格式照 (10)：`pipe_diag.txt` 全文 + TSV 任挑 3 行 + 起止时间。
+（此条也补进 (13) 的待办总汇语境：pipeline-sample 任务前多了 ①② 两个前置。）
+
+---
+
+## 2026-07-24 (13) — V100 待办命令总汇（三个任务按环境变量分组；更正 (12) 一处错误）
+
+**Diagnosis / 更正：** (12) 说「② 评测集不吃 `MVC_DATA_DIR`」**是错的**——
+`configs/data.py` 的 `__data()` 对**所有**语料生效，评测数据在仓库 `data/`
+（下载脚本写死的相对路径 + 软链），export 后会被重定向到
+`/home/vca1/datasets/…` 下不存在的路径。正确纪律 = README §3.0 的**双根规则**
+（2026-07-22 曾因混用把已下好的 HMDB51 误报为缺失）：
+**训练/试点 shell 要 `export`，评测 shell 要 `unset`，别在同一个 shell 里混。**
+下面把当前 V100 全部待办按此分组，直接照抄即可（优先级都低于 recap 主线，插空档）。
+
+**任务 A · C2 单测（与环境变量无关；纯 CPU ~4 分钟）：**
+
+```bash
+cd ~/mobileclip && git pull origin main
+python -m pytest tests/test_t_agnostic.py -v      # 预期 18 passed
+```
+
+**任务 B · r3e 弹性冒烟（试点语料 ⇒ 要 export；同一 shell 连着跑）：**
+
+```bash
+export MVC_DATA_DIR=/home/vca1/datasets
+python experiments/check_readiness.py             # internvid_zh_10k_pilot 应 [OK ]
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r3e.py 8 debug True
+# 判读三条：debug 自停干净；日志 elastic_t 在 2/4/8/16 间跳；无 OOM/NaN。
+# 全过 ⇒ C2 状态 🟡→✅（ROADMAP 2.1 关闭）。
+```
+
+**任务 C · B0 官方权重多 T 退化曲线 = 论文 Fig-1（评测数据 ⇒ 要 unset；换个 shell 或先 unset）：**
+
+```bash
+unset MVC_DATA_DIR
+python experiments/check_readiness.py             # msrvtt 应 [OK ]（§3.0 ① 口径）
+for T in 2 4 8 16; do
+  CUDA_VISIBLE_DEVICES=0 bash experiments/run_eval.sh small msrvtt \
+      ./checkpoints/mobileviclip_small.pt \
+      experiments/evals/b0_multiT/msrvtt_T${T} \
+      num_frames ${T} num_frames_test ${T}
+done
+# 看数（主口径 = ret_test_emb/ 原始余弦；T=8 的 DSL 口径 t2v R@1 应≈42.5 对上 §3.4 锚点）：
+python - <<'PY'
+import json, glob
+for p in sorted(glob.glob("experiments/evals/b0_multiT/msrvtt_T*/eval_res.json")):
+    print(p.split("/")[-2], json.dumps(json.load(open(p)), ensure_ascii=False)[:400])
+PY
+```
+
+**b100：** 无变化，照既有序列跑（#222 改动默认关闭，R0 不受影响）。
+
+**Then report back**（from-server.md）：A 的 pass 数；B 的判读三条 + 日志尾部几行；
+C 的四组 t2v/v2t R@1（`ret_test_emb` 贴原文）——C 的四个数就是 Fig-1 第一版 +
+C2 难度标定。
+
+---
+
+## 2026-07-24 (12) — r3e 冒烟崩溃已定位：新 shell 忘了 `export MVC_DATA_DIR`，一行修复重跑
+
+**Diagnosis:** 你贴的 r3e 全量崩溃**不是弹性 T 代码的问题**——崩在 dataloader 取
+第一个 batch 之前，模型一行没跑到。证据链：(a) **每一条**视频都 `No such file or
+directory`（不是零星坏文件）；(b) 尝试的是**相对路径** `data/internvid_zh_10k/videos/…`
+= `MVC_DATA_DIR` 未设时的默认值（`configs/data.py` 的 `internvid_zh_10k_pilot` 注释
+原文就写着 101vector 要 export）；(c) 报错末尾的提示语本身就指向了这个原因。
+r0/r1 当时能跑是因为那个 shell 照 §2b 第 2 步 export 过；这次是全新会话，环境变量
+不继承。TROUBLESHOOTING 已有该机制的完整条目（`data_root` 解析一节），不再重复。
+
+**V100 · Do this next（repo 根，同一个 shell 里连着跑）：**
+
+```bash
+# 1) 一行修复（README §2b 第 2 步原文；每个新 shell 都要）：
+export MVC_DATA_DIR=/home/vca1/datasets
+
+# 2) 10 秒自检（第 0 步；任何新 shell 开跑前都该先跑它，这次就能拦住）：
+python experiments/check_readiness.py     # internvid_zh_10k_pilot 应为 [OK ]
+
+# 3) 重跑 r3e 冒烟（debug 几十步自停）：
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r3e.py 8 debug True
+```
+
+**判读（(6)③ 的三条不变）：** 自停干净、日志里 `elastic_t` 在 2/4/8/16 间跳、
+无 OOM/NaN。三条都过 ⇒ C2 状态 🟡→✅（ROADMAP 2.1 关闭）。
+顺带：(6) 的 ①（`pytest tests/test_t_agnostic.py`，纯 CPU）与 ②（B0 多 T 曲线）
+仍待跑；~~② 用的评测集不吃这个环境变量~~ **此句有误，见 (13) 更正**：评测数据在
+仓库 `data/` 下，② 反而要 `unset MVC_DATA_DIR`（README §3.0 的双根纪律）。
+
+**Then report back**（from-server.md）：check_readiness 那行输出；r3e 尾部几行
+（有没有 `elastic_t` 数值在跳）；①② 的输出。
+
+---
+
 ## 2026-07-24 (11) — 确认：pipeline-sample 全链唯一 LLM = 本机 Qwen3-VL-8B（#235 加固）
 
 **Diagnosis:** 维护者确认 V100 上唯一 LLM 是 Qwen3-VL-8B。已逐环节核对并加固（#235）：
