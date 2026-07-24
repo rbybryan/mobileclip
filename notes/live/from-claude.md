@@ -23,6 +23,33 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (9) — 完整优化流水线可小样本端到端了：pipeline-sample 一条命令 → 全景 TSV（#233）
+
+**Diagnosis:** 维护者要的是**整条 caption 优化方案**的小样本测评，不只是重述段。缺口已补齐
+（#233 已并入 main）：`--mode derive`（每条重述派生 2–3 条短视图 + en_gloss，文本-only 闭集，
+复用已缓存的 Qwen3-VL 当文本 LLM，零新权重）、`score_alignment --tag` 逐重述 SigLIP 打分
+（A− top-3 选择）、`tools/fuse_verify.py` v0（Panel-V 检测器档：GroundingDINO fp32 按
+en_gloss 查 + RapidOCR 引号文字模糊匹配；装不上自动降级为 unverified 保守留、不阻塞）、
+`make_pipeline_tsv.py` 全景表。这等于把主计划 G2 三臂（A_llm / A− / C_v）在样本级预览了一遍。
+**取代 (8)「重述抽样检验」的命令**——pipeline-sample 是它的超集（recap-tsv 仍可作轻量档）。
+
+**Do this next（101vector；单卡前台全程 ~1h，含等 8 卡重述；可随时中断续跑）：**
+```bash
+source ~/audit_env/bin/activate
+pip install rapidocr-onnxruntime onnxruntime   # 可选 OCR 档；失败不阻塞
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+# 产物: outputs/audit_10k/recap_pipeline.tsv （utf-8-sig, Excel/WPS 直开）
+# 列: en源caption | zh翻译 | 5重述(⟨SigLIP分⟩) | A−保留 | A′句切 | ✓过验真 | ·未验 | ✗被滤[gdino/ocr] | 旗标
+```
+首次会经 hf-mirror 下载 GroundingDINO-base（~700MB）。
+
+**Then report back** in from-server.md：① `pipe_diag.txt` 全文；② TSV 任挑 3 行贴
+en_source / zh_translated / recap_1 / views_pass / views_fail 五列；③ 全程起止时间。
+我据此核：五条是否有差异、验真过滤率是否合理（fail 占比预期 5–20%，>40% 说明 gdino 阈值或
+gloss 质量有问题，我来调）。
+
+---
+
 ## 2026-07-24 (8) — surprise 判据已读：✅ 通过，A1 试点结案；V100 只剩 (6) 三件事
 
 **Diagnosis:** 贴回的三个数命中 (7) 判据表**第一行**：`gamma=1.0`（#220 修复在位，
