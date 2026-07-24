@@ -170,9 +170,18 @@ bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r3e.py 8 debug Tr
 
 **Do this next：**
 ```bash
-# 0) 先杀掉那个 4 卡 R0——它会以同样方式崩，别让它占着卡
-pkill -f "tasks_clip/pretrain.py" || true
-sleep 2; nvidia-smi        # 确认前 4 张卡已释放
+# 0) 处理那个 4 卡 R0。⚠️ 千万别 pkill -f "tasks_clip/pretrain.py"：
+#    这台是**共用 root 账号**，中文线(wky)跑的是**同一个** tasks_clip/pretrain.py，
+#    模式匹配会连别人的训练一起杀掉。只按 PID 处理自己的。
+#    它多半已经用同样的 ImportError 自己崩了 —— 先看，再决定要不要杀。
+tail -20 experiments/runs/r0_baseline.log     # 若结尾是 ImportError/ChildFailedError => 已死，跳过下面
+ps -p 1192760 -o pid,etime,cmd                # 1192760 = 你启动时打印的 "[1] 1192760"
+jobs -l                                       # 若还在这个 shell 里，能看到它
+
+# 只有在「确认还活着」且「确认是自己的」时才杀（先核对 cwd 是你的 repo）：
+#   ls -l /proc/1192760/cwd     # 应指向 /workspace/mount/b100_zaip_data/rby/mobileclip
+#   kill 1192760                # 按 PID，不要 pkill/killall
+nvidia-smi                                    # 看前 4 张卡是否已释放
 
 # 1) 拉修复
 git pull origin main
