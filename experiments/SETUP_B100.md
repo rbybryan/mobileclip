@@ -492,25 +492,49 @@ batch_size=64/卡、lr=1e-5、deepspeed stage-1。
 > **首日拿到单 epoch 墙钟后，按 `notes/plan-review-upgrades.md` U6 的预算阶梯排队**
 > （常态档：排序臂各 1 epoch 等步，R0 + 胜者跑满 3 epoch）。
 
+> 🚫 **下面三步分成三个代码块是刻意的——不要一次性整段粘贴。**
+> 2026-07-24 就出过事：整段贴进去后冒烟崩了，但**后面的 4 卡 R0 照样被拉起来**（`&`
+> 后台任务不吃 Ctrl-C），等于在共用机器上跑了一个没验证过的作业。**每一步跑完看结果，
+> 上一步不过就停在那里。**
+
+**步骤 0 — 每个新 shell 先做（零 GPU）：**
+
 ```bash
-# 0) 每个新 shell 都先 source 一次环境（§2 现行方案），并确认依赖齐了：
 source experiments/env_b100.sh
 python experiments/check_imports.py     # 必须打印“全部 [OK]”，否则先按它给的命令补包
+```
 
-# 1) 首光冒烟：先用 DDP+AMP（绕开 deepspeed 构建）+ bf16 + debug，几十步自停，
-#    只验证 arch/数据/前反向通了。冒烟用 2 卡更快（仍在前 4 张之内）：
+**步骤 1 — 首光冒烟**（DDP+AMP 绕开 deepspeed 构建，bf16 + debug，几十步自停，只验
+arch/数据/前反向；2 卡更快，仍在前 4 张之内）。**跑之前先 `nvidia-smi` 看 0、1 号卡空不空：**
+
+```bash
 CUDA_VISIBLE_DEVICES=0,1 bash experiments/run_pretrain.sh \
     experiments/configs/r0_baseline.py 2 \
     use_bf16 True bf16 True deepspeed.enable False debug True
+```
 
-# 2) 真 R0（全量基线；bf16；前 4 张卡；后台挂多天，掉隧道也不影响）
+> ⛔ **闸门：冒烟没跑到打印 loss，就不要执行步骤 2。** 崩了就贴日志回 `from-server.md`。
+
+**步骤 2 — 真 R0**（全量基线；bf16；前 4 张卡；后台挂多天，掉隧道也不影响）：
+
+```bash
 mkdir -p experiments/runs   # nohup 重定向要先有这个目录
 CUDA_VISIBLE_DEVICES=0,1,2,3 nohup bash experiments/run_pretrain.sh \
     experiments/configs/r0_baseline.py 4 \
     use_bf16 True bf16 True > experiments/runs/r0_baseline.log 2>&1 &
+echo "R0 PID = $!"            # 记下来：本机共用，之后要停只能按这个 PID 停
 tail -f experiments/runs/r0_baseline.log     # 头几百步看 loss 是否正常下降
+```
 
-# 3) R1 三臂（同数据、同步数、同 bf16、同 4 卡/256 batch —— 只换被测组件）
+> ⚠️ `tail -f` 是前台的，Ctrl-C 只停 `tail`，**不会停训练**。真要停训练：先
+> `ps -p <PID>` 确认还活着、`ls -l /proc/<PID>/cwd` 确认是 `rby/` 下的作业，再 `kill <PID>`。
+> **禁止 `pkill -f pretrain.py` / `killall`**——本机 root 账号共用，别人的中文线跑的是同一个
+> `tasks_clip/pretrain.py`（§0 标准规则）。
+
+**步骤 3 — R1 三臂**（同数据、同步数、同 bf16、同 4 卡/256 batch —— 只换被测组件）。
+**R0 至少确认 loss 在正常下降之后再排**：
+
+```bash
 for cfg in r1a_sigmoid r1b_attnpool r1_both; do
   CUDA_VISIBLE_DEVICES=0,1,2,3 bash experiments/run_pretrain.sh \
       experiments/configs/$cfg.py 4 use_bf16 True bf16 True
