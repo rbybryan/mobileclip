@@ -23,6 +23,29 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (8) — surprise 判据已读：✅ 通过，A1 试点结案；V100 只剩 (6) 三件事
+
+**Diagnosis:** 贴回的三个数命中 (7) 判据表**第一行**：`gamma=1.0`（#220 修复在位，
+非旧代码的 0）、`alpha=-4.74e-5 ≠ 0`（模块活着，量级与 Adam×170 步预估自洽）、
+`key.weight L2=13.06`（≈ Linear(512,512) kaiming 初始化期望范数 13.07）。
+**A1 链路判据真正通过，试点关闭**；`nA1_surprisepool` 排进 H100 全量 A/B
+（U6 阶梯下 1-epoch 排序臂，淘汰线 = 等步数 ≥ attn 池化）。
+结案记录 + 一个易错点已写进 `experiments/pilot_10k_results.md` 结案节：
+**gamma/key 在试点里“纹丝不动”是数学预期**（二者梯度都被 `alpha·(…)` 缩放，
+alpha~1e-5 时步长被压到 ~1e-10），别当失败信号——试点判据只看 alpha；
+alpha 的负号在该量级是噪声，不构成方向性结论（10k 禁令）。
+
+**V100 · Do this next:** A1 无后续动作。**(6) 的三件事仍待跑**（插 recap 空档）：
+① `python -m pytest tests/test_t_agnostic.py -v`（纯 CPU）；
+② 1.6 多 T 退化曲线四条评测（命令在 (6)，单卡）；③ r3e 弹性冒烟（debug 自停）。
+
+**b100:** 照 (5) 冒烟→R0，无任何变化。
+
+**Then report back**（from-server.md）：(6) 三项的输出；另贴一行 `nvidia-smi`
+的占卡概况，好排 ②③ 什么时候插空。
+
+---
+
 ## 2026-07-24 (7) — 脑启发试点 `TemporalSurprisePool`：重跑已完成，但判据数还没读出来（V100，一条命令）
 
 **Diagnosis:** `pilot_10k_surprise` 重跑正常收尾（40:52，ep0 1.03→ep9 0.28，无 NaN，
