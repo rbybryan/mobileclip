@@ -221,11 +221,19 @@ def main():
             views = (rec.get("verdict") or {}).get("views") or []
             out = {"video": vid, "views": [], "error": None}
             frames = ocr_blob = None
-            try:
-                path = resolve_video_path(args.video_root, rec, vid)
-                frames = sample_frames(path, args.frames, args.max_side)
-            except Exception as ex:  # noqa: BLE001 decode failure -> unverified
-                out["error"] = f"decode: {type(ex).__name__}: {str(ex)[:80]}"
+            # decode the video ONLY if a live verifier can actually check
+            # something in this clip; with no verifiers (or nothing checkable)
+            # every view is 'unverified' anyway and decoding is pure waste
+            checkable = any(
+                (gdino is not None and (v.get("gloss") or []))
+                or (ocr is not None and quoted_spans(v.get("text", "")))
+                for v in views)
+            if checkable:
+                try:
+                    path = resolve_video_path(args.video_root, rec, vid)
+                    frames = sample_frames(path, args.frames, args.max_side)
+                except Exception as ex:  # noqa: BLE001 decode fail -> unverified
+                    out["error"] = f"decode: {type(ex).__name__}: {str(ex)[:80]}"
             for v in views:
                 checks, failed, ran = {}, False, False
                 text, gloss = v.get("text", ""), v.get("gloss") or []
