@@ -600,8 +600,24 @@ PY
 )
     echo "   recap 覆盖: $COV/$N_SAMPLE"
     [ "$COV" -ge "$N_SAMPLE" ] && break
+    # 哨兵：分片进程全退了但覆盖不足 = 启动即崩（最常见: 卡被其他任务占, 加载 OOM）
+    rc_alive=$(pgrep -fc "vlm_audit_hf.py.*--mode recap" || true)
+    if [ "${rc_alive:-0}" -eq 0 ] && [ "$COV" -lt "$N_SAMPLE" ]; then
+      echo "❌ 重述分片已全部退出但覆盖只有 $COV/$N_SAMPLE。定位:"
+      echo "   tail -n 30 $OUT/recap_shard*.log   # 多半是 CUDA OOM(卡被占)或路径错"
+      echo "   nvidia-smi                          # 看哪几张卡空闲"
+      echo "   单卡兜底(空闲卡 X 上顺序跑完样本, ~30-40min):"
+      echo "   CUDA_VISIBLE_DEVICES=X python tools/data_audit/vlm_audit_hf.py \\"
+      echo "     --input $SAMPLE --video-root $CLIPS --model $S2_MODEL --mode recap \\"
+      echo "     --n-captions 5 --temperature 0.9 --frames $S2_FRAMES --max-new-tokens 512 \\"
+      echo "     --num-shards 1 --shard-id 0 --output '$OUT/recap5.{shard}.jsonl'"
+      echo "   之后重跑本命令即可续走后续步骤。"
+      exit 1
+    fi
     sleep 30
   done
+  # 循环打满仍不足 → 明确失败，不带着空数据往下跑
+  [ "${COV:-0}" -ge "$N_SAMPLE" ] || { echo "❌ 等待超时: 覆盖 $COV/$N_SAMPLE。看 $OUT/recap_shard*.log 后重跑本命令续走。"; exit 1; }
 
   echo "== ②′ 样本重述子集 -> $OUT/pipe_recaps.jsonl =="
   python - "$SAMPLE" "$OUT" <<'PY'
