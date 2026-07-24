@@ -23,6 +23,31 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (8) — 重述抽样检验已可跑：50 片全流程 → TSV（源caption/翻译/5重述/A′视图 并排）
+
+**Diagnosis:** 主计划 Stage 0 的抽样检验链已实现并入 main（#227）：`split_views.py`
+（A′ 句切，MiniRBT 32-token 预算，离线自动落 30 字符）、`recap_diag.py`（坍缩红旗 +
+侧批对照）、`make_recap_tsv.py` + `run_v100.sh recap-tsv`。**先抽 50 片把整条链跑通、
+出 TSV 目检，再决定放全量**——抽样输出与全量共用 `recap5.*.jsonl`、按 video 去重续跑，
+50 片不会重算。TSV 自带 `en_source`（源 caption）与 `zh_translated`（翻译源 caption）
+对比列（队列文件 `recaption_tasks.jsonl` 本就携带 en/zh_old）。
+
+**Do this next（101vector；≈10 分钟 GPU + 秒级 CPU；与 (7) 的 V100 三件事不冲突，可排后）：**
+```bash
+source ~/audit_env/bin/activate
+head -n 50 outputs/audit_10k/v0_2/recaption_tasks.jsonl > outputs/audit_10k/v0_2/recap_sample.jsonl
+RECAP_INPUT=outputs/audit_10k/v0_2/recap_sample.jsonl bash tools/data_audit/run_v100.sh recap
+bash tools/data_audit/run_v100.sh status     # 等 recap 行到 50/50
+bash tools/data_audit/run_v100.sh recap-tsv  # 产 outputs/audit_10k/recap_inspect.tsv
+```
+
+**Then report back** in from-server.md：① recap_diag 摘要（`recap_diag.txt` 全文贴回，
+含坍缩红旗行）；② TSV 里任挑 3 行贴回（en_source / zh_translated / recap_1 / views 四列）；
+③ 50 片的起止时间（吞吐三元组，填主计划 §5.1）。目检若五条雷同（COLLAPSE 多）→ 先停，
+等我调 temp 再放全量。
+
+---
+
 ## 2026-07-24 (7) — 脑启发试点 `TemporalSurprisePool`：重跑已完成，但判据数还没读出来（V100，一条命令）
 
 **Diagnosis:** `pilot_10k_surprise` 重跑正常收尾（40:52，ep0 1.03→ep9 0.28，无 NaN，
