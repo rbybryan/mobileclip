@@ -23,6 +23,62 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (7) — 脑启发试点 `TemporalSurprisePool`：重跑已完成，但判据数还没读出来（V100，一条命令）
+
+**Diagnosis:** `pilot_10k_surprise` 重跑正常收尾（40:52，ep0 1.03→ep9 0.28，无 NaN，
+retrieval r_mean 最好 93.33@ep7）——**链路层面全绿**。但**训练日志读不出判据**：
+试点的通过条件是 `alpha ≠ 0`（模块真的离开了 mean pooling），而这个数只存在 ckpt 里，
+日志从头到尾不打印。
+
+注意别被"曲线和 r0 一模一样"误导：**修复生效时曲线本来就该和 r0 一样**。`alpha` 从 0 起步，
+每步梯度才 ~2e-3，170 步 × lr 1e-5 只能挪动极小量 → `output ≈ mean` → retrieval 自然不动。
+所以"曲线相同"同时兼容【修复生效】和【没 pull 到修复】两种情况，**只有读 ckpt 能区分**。
+
+背景：#220 修掉的是 `gamma=0 且 alpha=0` 这个**零梯度不动点**（softmax(0) 均匀 →
+`pooled≡mean` → `(pooled−mean)=0` → alpha/gamma/key 三者梯度全为 0，模块永远醒不过来）。
+修法是 `gamma` 初值 0→1，`alpha` 仍为 0 所以**零回退起点分毫不变**。
+
+**V100（101vector）· Do this next（repo 根；纯 CPU 读盘，几秒，不占卡）：**
+
+```bash
+git pull origin main
+
+# ckpt_09.pth 是 DeepSpeed ZeRO-1 的“目录”不是文件，权重在 module 键下
+python - <<'PY'
+import torch
+p  = "experiments/runs/pilot_10k_surprise/ckpt_09.pth/mp_rank_00_model_states.pt"
+sd = torch.load(p, map_location="cpu")["module"]
+b  = "vision_encoder.temporal_pool."
+print("alpha         =", sd[b+"alpha"].float().tolist())
+print("gamma         =", sd[b+"gamma"].float().tolist())
+print("key.weight L2 =", sd[b+"key.weight"].float().norm().item())
+PY
+```
+
+**读到的两个数怎么判（`gamma` 判「修复在不在」，`alpha` 判「模块动没动」）：**
+
+| `gamma` | `alpha` | 结论 |
+|---|---|---|
+| ≈ **1.0**（略微偏离） | **≠ 0** | ✅ 修复已生效且模块活着——链路判据**真正通过**，可以放行 H100 的 `nA1_surprisepool` A/B |
+| ≈ 1.0 | **恰好 0** | ⚠️ 修复在但 alpha 没动——是新问题，把三个数贴回来我查 |
+| **恰好 0.0** | 恰好 0.0 | ❌ 跑的还是旧代码（没 pull 到 #220）。执行下面的补跑 |
+
+**只有第三行才需要补跑**（约 41 分钟，8 卡）：
+
+```bash
+git pull origin main
+python -c "import neural_inspired,inspect,re;s=inspect.getsource(neural_inspired.TemporalSurprisePool.__init__);print('gamma init OK' if 'ones' in s else 'STILL OLD CODE')"
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_surprise.py 8
+# 跑完再执行上面那段读 ckpt 的 python
+```
+
+**优先级：低于 recap 主线（(4)/(5)）**，读 ckpt 那条几秒钟随时可插；补跑只在 GPU 空档做。
+
+**Then report back** 在 from-server.md：把 `alpha` / `gamma` / `key.weight L2` 三个数原样贴回来。
+我会据此把结论写进 `experiments/pilot_10k_results.md`（现在那节还挂着"待服务器重跑确认"）。
+
+---
+
 ## 2026-07-24 (6) — C2 弹性 T 代码已合入（#222）：V100 三件事（插空档），b100 零影响照跑
 
 **Diagnosis:** ROADMAP 2.1 落地：模型里全部 11 处 `reshape(8,...)` 硬编码已动态化，
