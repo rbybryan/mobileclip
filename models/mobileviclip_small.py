@@ -28,6 +28,45 @@ from .backbones.internvideo2.pos_embed import get_3d_sincos_pos_embed,get_1d_sin
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# C2 · T 无关化(ROADMAP 2.1)—— 运行期帧数上下文
+#
+# 视频张量在塔内被展平成 (T*B, C, H, W)(T 在外维),时序算子无法从形状反推 T,
+# 旧代码因此把 T=8 写死在各处 reshape 里。现在:FastViT.forward 在展平前从输入
+# 形状读出 T 并调用 set_num_frames(T);MHSA / RepMixer / AttentionBlock 通过
+# get_num_frames() 取回。默认值 8 与旧行为逐位一致(任何不经 FastViT.forward
+# 的直调路径拿到的仍是 8)。
+#
+# 约束:上下文是模块级单值 ⇒ 同一进程内一次只支持一个「当前 T」。训练侧由随机 T
+# 采样器保证「每个 step 单一 T」(utils/elastic_t.py);gradient checkpointing 的
+# backward 重算发生在同一 step 内,读到的仍是该 step 的 T。
+# =============================================================================
+_NUM_FRAMES = 8
+
+
+def set_num_frames(t: int) -> None:
+    """由塔入口(FastViT.forward)按输入形状设置当前帧数 T。"""
+    global _NUM_FRAMES
+    _NUM_FRAMES = int(t)
+
+
+def get_num_frames() -> int:
+    """时序算子读取当前帧数 T(默认 8 = 旧硬编码行为)。"""
+    return _NUM_FRAMES
+
+
+def resize_temporal_embedding(emb: torch.Tensor, t: int) -> torch.Tensor:
+    """把 (1, C, T0) 的 temporal_embedding 沿时间轴线性插值到 (1, C, t)。
+
+    t == T0 时**原样返回**(T=8 路径逐位等价旧代码);否则
+    F.interpolate(mode="linear", align_corners=True)——首末帧位置保持原值,
+    中间线性。
+    """
+    if t == emb.shape[-1]:
+        return emb
+    return nn.functional.interpolate(emb, size=t, mode="linear", align_corners=True)
+
+
 class MobileViCLIP_Small(nn.Module):
     def __init__(self, config, tokenizer=None, is_pretrain=True):
         super().__init__()
@@ -421,7 +460,8 @@ class MHSA(nn.Module):
 
         # return x
 
-        x = x.reshape(8,int(x.shape[0]/8),x.shape[1],x.shape[2],x.shape[3]) 
+        t_frames = get_num_frames()  # C2:动态 T(旧代码硬编码 8)
+        x = x.reshape(t_frames,int(x.shape[0]/t_frames),x.shape[1],x.shape[2],x.shape[3])
         shape = x.shape
         T, B, C, H, W = shape
         x = x.permute(1,2,0,3,4) #B,C,T,W,H
@@ -619,9 +659,10 @@ class RepMixer(nn.Module):
         #     else:
         #         x = x + self.mixer(x) - self.norm(x)
         #     return x
+        t_frames = get_num_frames()  # C2:动态 T(旧代码硬编码 8)
         if hasattr(self, "reparam_conv"): #x:TB,C,H,W
             # x = self.reparam_conv(x)
-            x = x.reshape(8,int(x.shape[0]/8),x.shape[1],x.shape[2],x.shape[3])
+            x = x.reshape(t_frames,int(x.shape[0]/t_frames),x.shape[1],x.shape[2],x.shape[3])
             t,b,c,h,w = x.shape
             x = x.permute(1,3,4,2,0) #b,h,w,c,t
             x = x.reshape(b*h*w,c,t) #b*h*w,c,t
@@ -634,7 +675,7 @@ class RepMixer(nn.Module):
             if self.use_layer_scale:
                 # print("1 x.shape:",x.shape) #torch.Size([512, 64, 64, 64])
                 # print("2 x.shape:",x.shape) #torch.Size([512, 64, 64, 64])
-                x = x.reshape(8,int(x.shape[0]/8),x.shape[1],x.shape[2],x.shape[3]) #t,b,c,h,w
+                x = x.reshape(t_frames,int(x.shape[0]/t_frames),x.shape[1],x.shape[2],x.shape[3]) #t,b,c,h,w
                 t,b,c,h,w = x.shape
                 x = x.permute(1,3,4,2,0) #b,h,w,c,t
                 x = x.reshape(b*h*w,c,t) #b*h*w,c,t
@@ -1055,12 +1096,13 @@ class AttentionBlock(nn.Module):
         self.temporal_embedding = nn.Parameter(torch.zeros(1, 640, 8))
 
     def forward(self, x):
-        x = x.reshape(8,int(x.shape[0]/8),x.shape[1],x.shape[2],x.shape[3])
+        t_frames = get_num_frames()  # C2:动态 T(旧代码硬编码 8)
+        x = x.reshape(t_frames,int(x.shape[0]/t_frames),x.shape[1],x.shape[2],x.shape[3])
         t,b,c,h,w = x.shape
         x = x.permute(1,3,4,2,0) #b,h,w,c,t
         x = x.reshape(b*h*w,c,t) #b*h*w,c,t
 
-        x = x + self.temporal_embedding
+        x = x + resize_temporal_embedding(self.temporal_embedding, t)
 
         x = x.reshape(b,h,w,c,t).permute(4,0,3,1,2).reshape(t*b,c,h,w)
 
@@ -1323,8 +1365,9 @@ class FastViT(nn.Module):
         return x
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x.permute(2,0,1,3,4) 
+        x = x.permute(2,0,1,3,4)
         T,B,_,H,W=x.shape
+        set_num_frames(T)  # C2:向所有时序算子广播当前帧数(ROADMAP 2.1)
         #尝试直接将bs和T混在一块
         x = x.reshape(T*B,3,H,W)
         x_temp = self.forward_embeddings(x)
