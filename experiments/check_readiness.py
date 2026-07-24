@@ -70,7 +70,7 @@ def check_corpus(name, entry, sample_n, decode):
     if not os.path.isdir(root):
         return dict(name=name, ready=False, detail=f"anno {n} 条,但 data_root 缺失: {root}")
     checked = missing = 0
-    first_ok = None
+    first_ok = first_missing = None
     for rec in recs[:sample_n]:
         p = media_path(rec, root)
         if p is None:
@@ -80,11 +80,17 @@ def check_corpus(name, entry, sample_n, decode):
             first_ok = first_ok or p
         else:
             missing += 1
+            first_missing = first_missing or p
     if checked == 0:
         return dict(name=name, ready=False, detail=f"anno {n} 条,但记录里没有 video/image 字段")
     if missing == checked:
+        # 一定要把**试过的完整路径**打出来:全缺最常见的死因是 anno 的 video 字段带
+        # 子目录前缀(如 "TestVideo/xxx.mp4"),而视频被拍平软链到了 data_root 根下,
+        # 于是 join() 出来的路径多了一层。只说"检查目录层级"看不出是哪一层错了。
         return dict(name=name, ready=False,
-                    detail=f"anno {n} 条,抽查 {checked} 条视频全部缺失(检查 MVC_DATA_DIR / 目录层级)")
+                    detail=f"anno {n} 条,抽查 {checked} 条视频全部缺失;"
+                           f"试过的路径例如 {first_missing} —— 把它和盘上实际位置比一下,"
+                           "差在哪一层就补/去哪一层(anno 的 video 字段是相对 data_root 的)")
     detail = f"anno {n} 条;抽查 {checked} 条,缺失 {missing}"
     if decode and first_ok:
         try:

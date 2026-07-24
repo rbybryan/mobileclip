@@ -508,7 +508,8 @@ cat "$VD/MSR-VTT/mobileviclip_annotations/status.json"
 
 ### 步骤 2 — MSR-VTT：先验格式，再定视频目录
 
-**格式三条硬要求和 §4 一样**（JSON 数组 / `video` 字段 / `caption` 是字符串），
+要看的是两条：**JSON 数组**、有 **`video`** 字段。`caption` **字符串或字符串列表都行**
+——评测的 retrieval dataset 两种都吃（`dataset/ret_dataset.py:323`，list 走多 caption 分支）。
 `check_readiness.py` 查不到 caption 那一层，所以自己先看：
 
 ```bash
@@ -524,8 +525,13 @@ print("caption 类型:", type(d[0].get("caption")).__name__)
 PY
 ```
 
-`video` 字段写的是文件名还是相对路径，决定视频目录怎么接。**1k 测试集的视频可能横跨
-`TestVideo/` 和 `TrainValVideo/` 两个目录**，所以先数覆盖率：
+`video` 字段写的是文件名还是相对路径，**决定步骤 3 怎么接**（别跳过这一条）。
+2026-07-24 实测结果：`type: list | n: 1000`、`keys: ['caption','video']`、
+`{"video": "TestVideo/video9770.mp4", "caption": ["a person is connecting …"]}`
+—— **带子目录前缀**，`caption` 是列表。
+
+**1k 测试集的视频可能横跨 `TestVideo/` 和 `TrainValVideo/` 两个目录**，所以先数覆盖率
+（实测：`TestVideo` 2990 个文件覆盖 1000/1000，`TrainValVideo` 7010 个覆盖 0）：
 
 ```bash
 python - <<PY
@@ -543,7 +549,17 @@ PY
 
 ### 步骤 3 — 接线（软链，不复制、不动源目录）
 
-**两个目录都软链进去，覆盖率问题就直接消失了**（源目录只读，软链几千个文件是秒级的）：
+⚠️ **接线的唯一判据：`join(data_root, anno的video字段)` 必须落在真文件上。**
+仓库两处都是这么拼的（`dataset/utils.py:121`、`check_readiness.py`），**没有任何地方
+取 basename**。所以步骤 2 打出来的 `video` 字段长什么样，直接决定这一步怎么接：
+
+| `video` 字段形如 | 接法 |
+|---|---|
+| `video9770.mp4`（纯文件名） | 把 mp4 **拍平**软链进 `data/MSRVTT_Videos/` |
+| `TestVideo/video9770.mp4`（带子目录） | 把**子目录整个**软链进去，**不能拍平** |
+
+**MSR-VTT 属于后者**（2026-07-24 服务器实测：`{"video": "TestVideo/video9770.mp4", …}`，
+且 `TestVideo/` 已覆盖 1000/1000，`TrainValVideo/` 覆盖 0）：
 
 ```bash
 cd /workspace/mount/b100_zaip_data/rby/mobileclip
@@ -551,10 +567,17 @@ MSRVTT=/workspace/mount/b100_zaip_data/video_datasets/MSR-VTT
 
 mkdir -p anno_downstream data/MSRVTT_Videos
 ln -sfn "$MSRVTT/mobileviclip_annotations/msrvtt_1k_test.json" anno_downstream/msrvtt_1k_test.json
-for sub in TrainValVideo TestVideo; do
-  [ -d "$MSRVTT/$sub" ] && ln -sfn "$MSRVTT/$sub"/*.mp4 data/MSRVTT_Videos/
+
+# 若之前按旧文档拍平软链过，先清掉：-type l 保证只删软链，真文件一个都碰不到
+find data/MSRVTT_Videos -maxdepth 1 -type l -name '*.mp4' -delete
+
+# 子目录整个软链（两个都接上，anno 换成别的划分也不用再动）
+for sub in TestVideo TrainValVideo; do
+  [ -d "$MSRVTT/$sub" ] && ln -sfn "$MSRVTT/$sub" "data/MSRVTT_Videos/$sub"
 done
-ls data/MSRVTT_Videos | wc -l     # 预期 ~10000（7010 train_val + 2990 test）
+
+ls -l data/MSRVTT_Videos/                       # 只剩 TestVideo、TrainValVideo 两条软链
+ls -l data/MSRVTT_Videos/TestVideo/video9770.mp4  # 必须能列出来
 ```
 
 复验（只看 msrvtt 这一行）：
@@ -564,8 +587,15 @@ source experiments/env_b100.sh
 python experiments/check_readiness.py --decode 2>&1 | grep -i msrvtt
 ```
 
+预期 `[OK ] msrvtt   anno 1000 条;抽查 20 条,缺失 0;试解码 OK(N 帧)`。
+若仍报"全部缺失"，新版脚本会把**它试过的完整路径**打出来——拿那条路径和
+`ls` 出来的真实位置逐层比，差哪层补哪层。
+
 > 其余 6 个基准照同样三步走：**探盘 → 验 anno 格式 → 软链成期望路径**。步骤 1 的
 > ①② 先跑，结果贴回 `from-server.md`，缺哪几个再决定单独下哪几个。
+> **每个基准都要单独跑一次步骤 2 的字段检查**——`video` 是纯文件名还是带子目录，各家
+> anno 不一样，别照抄 MSR-VTT 的接法（这个坑记在 `TROUBLESHOOTING.md`
+> 「预检报"抽查 N 条视频全部缺失"」一节）。
 > **这一整节都不挡 R0–R3 预训练**——预训练只用 `internvid_all`（§4 已全绿）。
 
 ---
