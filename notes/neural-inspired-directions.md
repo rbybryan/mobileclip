@@ -20,6 +20,16 @@ is to slot brain-inspired mechanisms **into the existing plan**, not to open a p
 configs, tests, and kill criteria, sequenced into `experiments/ROADMAP.md` 第二线 — is in
 `notes/neural-inspired-implementation.md`.
 
+> ⚠️ **Partly superseded by [`notes/neural-inspired-round2.md`](neural-inspired-round2.md)
+> (2026-07-24).** Round 2 proves four structural facts about this architecture that change
+> several conclusions here: the mean-pool head is **unconditionally** order-blind (F1);
+> **additive** positional codes — including our stage-4 `temporal_embedding` — are exactly
+> annihilated by it (F2); the retrieval loss is **exactly flat** in the frame-residual
+> subspace, so trajectory/slowness-style auxiliary losses are first-order incapable of
+> moving retrieval and frame-collapse is a *free* direction (F4). It also argues our current
+> benchmark suite cannot measure temporal ideas at all, and adds a mandatory **zero-training
+> gate (GATE-0)** before any further temporal work. Read round 2 §0 and §6 first.
+
 Anchored to code checked 2026-07-23 (`models/mobileviclip_tiny.py`, `_small.py` is the
 same code at larger width; re-locate by symbol if lines drift).
 

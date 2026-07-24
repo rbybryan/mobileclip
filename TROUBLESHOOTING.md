@@ -1907,3 +1907,58 @@ torchvision/torchaudio 弄坏，报 `cannot import name '_cast_Long'`）。
 
 > 装之前先 `python -c "import sys;print(sys.executable)"` 确认装到的是**自己的**环境——
 > b100 是共用 root 账号，装进 `/usr/local/lib/python3.10/dist-packages` 会影响别人。
+
+## `criterion.loss_weight` 是**日志开关**,不是损失权重 —— 改它不影响优化
+
+**Symptom.** 在实验配置里写 `criterion["loss_weight"].update(dict(kd_geo=0.5))`,
+期望新增的辅助损失按 0.5 加权。实际:权重取任何非零值,**优化行为完全相同**;
+只有 `0` 与"非 0"有区别(而且区别只体现在日志里多/少一行 meter)。
+
+**Cause.** 两处配合导致权重被丢弃。`tasks_clip/pretrain.py:48` 只用
+`loss_weight` 的**键**来建 metric meter:
+
+```python
+loss_names = ["loss_" + k for k, v in config.criterion.loss_weight.items() if v != 0]
+```
+
+而真正的总损失是 `model.forward` 返回字典的**无权求和**(`:94-95`):
+
+```python
+loss_dict = model(image, text_input, idx=idx)
+loss = sum(loss_dict.values())          # ← 权重从未参与
+```
+
+`MobileViCLIP_Small.forward`(`models/mobileviclip_small.py:153-155`)返回
+`dict(loss_vtc=loss_vtc)`,自身也没有乘任何权重。所以 `vtc=1.0` 恰好"正确"
+只是因为 1.0 是恒等元。
+
+**Fix.** 新增辅助损失时,**在 `forward` 内部自己乘权重**,例如:
+
+```python
+w = self.config.criterion.loss_weight
+out = dict(loss_vtc=loss_vtc)
+if w.get("kd_geo", 0):
+    out["loss_kd_geo"] = w["kd_geo"] * self.geo_loss(...)   # ← 权重在这里生效
+return out
+```
+
+同时保持"权重为 0 时**提前返回**、完全不执行该分支"——不要写
+`loss + 0.0 * aux`:乘 0 仍会执行算子,可能改变 fp16 归约顺序(破坏与基线的逐位
+一致),辅助分支里若有 dropout 还会消耗 RNG 状态。
+
+**影响范围.** `notes/neural-inspired-implementation.md` 的 B1 geometry-KD 方案里
+`criterion["loss_weight"].update(dict(kd_cos=1.0, kd_geo=1.0))` 就踩了这个坑
+(1.0 恰好无害,但一旦想调权重就会静默失效)。已在
+`notes/neural-inspired-round2.md` §5 P2 记录。**上游代码,此处未改动。**
+
+## 大负例池 + `temp=1/100` 在 fp16 下会溢出(设计期预警,尚未实测)
+
+**Symptom(预期).** 给对比损失加上几万条缓存负例后,DeepSpeed 频繁 skip step、
+loss scale 一路退避,或直接出 `inf`/`nan`。
+
+**Cause.** `temp = 1/100` 意味着 logit 尺度是 **100**。`[512, 65536]` 的 logit
+矩阵在 fp16 下,`exp(logit)` 在池子还没用满时就会越过 fp16 上限(65504)。
+
+**Fix.** logit 矩阵与 log-softmax 一律在 **fp32** 中计算并显式减最大值;把
+matmul 沿负例维**分块**;每步记录 `max|logit|` 与 DeepSpeed 的 skipped-step 计数。
+详见 `notes/neural-inspired-round2.md` §3 R1。

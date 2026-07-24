@@ -9,6 +9,16 @@ criteria.** It is written to be run from the server (durable-markdown convention
 §0`) and to slot into the existing code-dev line of `experiments/ROADMAP.md` (第二线) — not
 to open a parallel schedule.
 
+> ⚠️ **Read [`notes/neural-inspired-round2.md`](neural-inspired-round2.md) (2026-07-24) before
+> executing anything here.** Round 2 corrects three items in this file:
+> **(1)** A1 surprise pooling is weaker than claimed — *any* reweighting of a set stays
+> order-blind (round 2 F1/F2), so A1 can only exploit appearance saliency, never temporal order;
+> **(2)** B1's config sketch sets `criterion["loss_weight"]`, which by round 2 §5 P2 **does
+> nothing to the optimization** — `tasks_clip/pretrain.py:94-95` sums the loss dict unweighted
+> and `loss_weight` only builds logging meters, so the weight must be applied inside `forward`;
+> **(3)** a mandatory zero-training gate (**GATE-0**, round 2 §2) now precedes all temporal work,
+> because our benchmark suite may not be able to measure these ideas at all.
+
 Two hard constraints are inherited from the repo and govern every plan below:
 
 - **C-machine (two-level validation, `ROADMAP.md` / `README.md`).** V100 + 10k pilot does

@@ -178,6 +178,63 @@ torchrun --nproc_per_node=1 --master_port=$((10000 + RANDOM % 20000)) \
     scripts/evaluation/clip/zero_shot/mobileviclip_tiny/config_msrvtt.py
 ```
 
+### 3.1 GATE-0 — 时间维容量审计(零训练;做任何时序改动之前先跑)
+
+回答"这个模型到底有没有编码时间方向,以及我们的基准能不能测出来"。
+背景、判读表与后续决策见 [`notes/neural-inspired-round2.md`](notes/neural-inspired-round2.md) §2。
+
+**(a) 静态审计 —— 只读 checkpoint,不用 GPU、不用数据、几秒钟出结果**
+
+```bash
+python experiments/temporal_capacity_audit.py --self-test        # 先自检(不需要权重)
+python experiments/temporal_capacity_audit.py checkpoints/mobileviclip_small.pt
+```
+
+判读:时间卷积核**反对称分量占比**中位数 < 0.05 ⇒ 核近似对称 ⇒ 对时间反转基本不敏感;
+**DC/AC** 中位数 > 0.95 ⇒ 近似纯低通 ⇒ 帧间残差被抹平。两者同时成立 ⇒ 模型几乎不编码
+时间方向,预测 RTime-Binary ≈ 50%。若默认键名对不上,脚本会把找到的候选键打印出来,
+按提示传 `--kernel-key`。
+
+**(b) 动态审计 —— 评测期帧扰动(纯评测,不训练)**
+
+由环境变量 `MVC_FRAME_PERTURB` 控制,**默认不设 = 原样基线路径(逐位一致)**:
+
+| 取值 | 含义 | 测什么 |
+|------|------|--------|
+| `shuffle` | 随机置换 8 帧(按样本 index 确定性设种) | 模型总的时序敏感度 |
+| `reverse` | 时间反转 | 专测"时间之箭" |
+| `freeze` | 全部换成中间帧 | 多帧信息一共值多少 |
+
+在 **MSR-VTT(外观向)与 SSv2-MC(时序向)两边都要跑**,和干净基线对比:
+
+```bash
+export PYTHONPATH=${PYTHONPATH}:.
+export CUDA_VISIBLE_DEVICES=0
+CFG=scripts/evaluation/clip/zero_shot/mobileviclip_small
+
+for DS in msrvtt ssv2_mc; do
+  for P in none shuffle reverse freeze; do
+    echo "===== $DS / perturb=$P ====="
+    MVC_FRAME_PERTURB=$P torchrun --nproc_per_node=1 \
+        --master_port=$((10000 + RANDOM % 20000)) \
+        tasks_clip/retrieval.py $CFG/config_${DS}.py
+  done
+done
+```
+
+> ⚠️ `MVC_FRAME_PERTURB` **只在审计评测时设置,绝不要在训练时打开**。打开时日志会打印
+> 一行 `帧顺序正在被人为扰动(GATE-0 审计模式)` 的 warning —— 训练日志里出现这行就是配置错了。
+
+判读(`notes/neural-inspired-round2.md` §2c):
+
+- MSR-VTT 与 SSv2-MC **都**几乎不变 ⇒ 模型时间盲**且**基准测不出来 ⇒ 只有 R2(可恢复顺序的
+  读出头)值得投,且必须上 RTime 才能测;
+- MSR-VTT 不变、**SSv2-MC 掉** ⇒ 模型有顺序信息,是**基准**的问题 ⇒ 推进 R2,补 RTime/Vinoground,
+  按 Pareto 结果汇报。
+
+无论哪个结果都是一张论文图(在自己的模型上测出的"可测性上界",与 ROADMAP 1.6 的多 T 退化
+曲线同一格)。
+
 ---
 
 ## 4. Training (pretraining)
