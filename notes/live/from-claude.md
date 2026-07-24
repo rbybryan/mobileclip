@@ -23,6 +23,44 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (11) — 确认：pipeline-sample 全链唯一 LLM = 本机 Qwen3-VL-8B（#235 加固）
+
+**Diagnosis:** 维护者确认 V100 上唯一 LLM 是 Qwen3-VL-8B。已逐环节核对并加固（#235）：
+① 重述与派生都走 `$S2_MODEL`（本地 `ckpts/Qwen3-VL-8B-Instruct` 优先）——重述 temp0.9 采样
+（制造投票方差）、派生 temp0 贪心（闭集确定性），启动横幅会打印这行确认；② SigLIP2 打分是
+非 LLM 嵌入模型且 s1 轮已缓存；③ GDINO/RapidOCR 是非 LLM 可选件，装不上自动降级为
+unverified 且不再白解码视频、也不会阻塞 TSV；④ **红线**：验真器缺了就让视图保持
+unverified，**绝不用 Qwen 自验**（§3.5 纪律）。(10) 的命令不变，直接跑即可。
+
+---
+
+## 2026-07-24 (10) — 完整优化流水线可小样本端到端了：pipeline-sample 一条命令 → 全景 TSV（#233）
+
+**Diagnosis:** 维护者要的是**整条 caption 优化方案**的小样本测评，不只是重述段。缺口已补齐
+（#233 已并入 main）：`--mode derive`（每条重述派生 2–3 条短视图 + en_gloss，文本-only 闭集，
+复用已缓存的 Qwen3-VL 当文本 LLM，零新权重）、`score_alignment --tag` 逐重述 SigLIP 打分
+（A− top-3 选择）、`tools/fuse_verify.py` v0（Panel-V 检测器档：GroundingDINO fp32 按
+en_gloss 查 + RapidOCR 引号文字模糊匹配；装不上自动降级为 unverified 保守留、不阻塞）、
+`make_pipeline_tsv.py` 全景表。这等于把主计划 G2 三臂（A_llm / A− / C_v）在样本级预览了一遍。
+**取代 (8)「重述抽样检验」的命令**——pipeline-sample 是它的超集（recap-tsv 仍可作轻量档）。
+
+**Do this next（101vector；单卡前台全程 ~1h，含等 8 卡重述；可随时中断续跑）：**
+```bash
+source ~/audit_env/bin/activate
+pip install rapidocr-onnxruntime onnxruntime   # 可选 OCR 档；失败不阻塞
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+# 产物: outputs/audit_10k/recap_pipeline.tsv （utf-8-sig, Excel/WPS 直开）
+# 列: en源caption | zh翻译 | 5重述(⟨SigLIP分⟩) | A−保留 | A′句切 | ✓过验真 | ·未验 | ✗被滤[gdino/ocr] | 旗标
+```
+首次会经 hf-mirror 下载 GroundingDINO-base（~700MB）。
+
+**Then report back** in from-server.md：① `pipe_diag.txt` 全文；② TSV 任挑 3 行贴
+en_source / zh_translated / recap_1 / views_pass / views_fail 五列；③ 全程起止时间。
+我据此核：五条是否有差异、验真过滤率是否合理（fail 占比预期 5–20%，>40% 说明 gdino 阈值或
+gloss 质量有问题，我来调）。
+
+---
+
 ## 2026-07-24 (9) — b100 每次 `git pull` 都要密码：凭据只在 `rby/` 下生效，不落共用 `$HOME`
 
 **Diagnosis:** b100 的 root 账号多人共用。`TROUBLESHOOTING.md`「b100 上一切 git 命令都报
@@ -139,6 +177,33 @@ alpha 的负号在该量级是噪声，不构成方向性结论（10k 禁令）�
 
 **Then report back**（from-server.md）：(6) 三项的输出；另贴一行 `nvidia-smi`
 的占卡概况，好排 ②③ 什么时候插空。
+
+---
+
+## 2026-07-24 (8) — 重述抽样检验已可跑：50 片全流程 → TSV（源caption/翻译/5重述/A′视图 并排）
+
+**Diagnosis:** 主计划 Stage 0 的抽样检验链已实现并入 main（#227）：`split_views.py`
+（A′ 句切，MiniRBT 32-token 预算，离线自动落 30 字符）、`recap_diag.py`（坍缩红旗 +
+侧批对照）、`make_recap_tsv.py` + `run_v100.sh recap-tsv`。**先抽 50 片把整条链跑通、
+出 TSV 目检，再决定放全量**——抽样输出与全量共用 `recap5.*.jsonl`、按 video 去重续跑，
+50 片不会重算。TSV 自带 `en_source`（源 caption）与 `zh_translated`（翻译源 caption）
+对比列（队列文件 `recaption_tasks.jsonl` 本就携带 en/zh_old）。
+
+**Do this next（101vector；≈10 分钟 GPU + 秒级 CPU；与 (7) 的 V100 三件事不冲突，可排后）：**
+```bash
+source ~/audit_env/bin/activate
+head -n 50 outputs/audit_10k/v0_2/recaption_tasks.jsonl > outputs/audit_10k/v0_2/recap_sample.jsonl
+RECAP_INPUT=outputs/audit_10k/v0_2/recap_sample.jsonl bash tools/data_audit/run_v100.sh recap
+bash tools/data_audit/run_v100.sh status     # 等 recap 行到 50/50
+bash tools/data_audit/run_v100.sh recap-tsv  # 产 outputs/audit_10k/recap_inspect.tsv
+```
+
+**Then report back** in from-server.md：① recap_diag 摘要（`recap_diag.txt` 全文贴回，
+含坍缩红旗行）；② TSV 里任挑 3 行贴回（en_source / zh_translated / recap_1 / views 四列）；
+③ 50 片的起止时间（吞吐三元组，填主计划 §5.1）。目检若五条雷同（COLLAPSE 多）→ 先停，
+等我调 temp 再放全量。
+
+---
 
 ---
 
