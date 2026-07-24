@@ -23,6 +23,23 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (5) — 主计划升 v1.1：全自动验收、零重人力标注、附全流程图（#223 已并入）
+
+**Diagnosis:** 三路专家终审（自动评测设计 × 统计效度 × 可行性）后，
+[`notes/recaption-master-plan.md`](../recaption-master-plan.md) 升 **v1.1**。对服务器操作的
+影响：**Stage 0 的命令一字不变**（照 (4) 跑即可）；变化都在 G1 之后——原 ~600 判定的人力
+k\* 标定与 300 片人评盲评**全部撤销**，改为 Panel-V 自动验真面板（InternVL2.5-8B +
+GroundingDINO + OCR，全栈无 Qwen，§5.4）与视图级验真臂 C_v；G1 主臂改为零工具风险的句切
+A′；G2 种子自适应（期望省 ~60% 训练算力）；§5.1 的「V100 跑 300k×5 ≈7 天」系错误估计已
+撤销（实为 25–118 天），**H100 空档成为 Stage 3 硬前置**。全计划人力只剩 ≤75 分钟的
+无约束力抽查。§3 顶部新增 mermaid 全流程图（GitHub 上看渲染版）。
+
+**Do this next:** 与 (4) 相同——V100 跑 `run_v100.sh recap` + 两个侧批；b100 照 (3) 继续。
+另外（可选、CPU、随时）：预下载 `hfl/minirbt-h288`、`sentence-transformers/LaBSE`，
+D11 探针不再等 b100。
+
+---
+
 ## 2026-07-24 (4) — 重字幕主计划定稿：执行以 notes/recaption-master-plan.md 为准
 
 **Diagnosis:** 应维护者要求，对 `caption-fusion-scheme.md` 与 `data-quality-caprl-scheme.md`
