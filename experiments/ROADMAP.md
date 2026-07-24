@@ -120,9 +120,12 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       per-T BN 诊断/校准工具(`experiments/per_t_bn.py`,U3)。
       **验收已过**:`tests/test_t_agnostic.py` 18 项全过(本地 CPU)——含
       T=8 与旧代码**逐位一致**(MHSA/RepMixer 训练+reparam/AttentionBlock)。
-      **余项(服务器)**:V100 随机 T 冒烟
-      `bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r3e.py 8 debug True`;
-      真 ckpt 的 BN 漂移诊断随 r3e 跑(per_t_bn.py docstring)。
+      **服务器验收已过(07-24,from-claude (17))**:V100 pytest 18 项全过;
+      r3e 8 卡随机 T 冒烟三判据全过——自停干净(10 epoch,best epoch 9)/
+      elastic_t 四值全出现且 50 步 T 序列与本地复算**逐位一致**(均值 7.8≈理论 7.5)/
+      loss 全程有限,T=16 峰值显存 23.3GB(V100 32GB 内)⇒ **C2 链路 ✅**。
+      观察项:epoch3 评测一次性 `sim has nan`(fp16 评测侧上溢,非训练发散,
+      见 TROUBLESHOOTING 末节);真 ckpt 的 BN 漂移诊断(per_t_bn.py)待跑。
 - [ ] **2.2 R2 教师管线**(1.2 的报告出来后设计更准):InternVideo2
       embedding 离线提取脚本,先在 10k 上试点实测每 clip 耗时/存储,
       同时敲定审核修正 9 的三个设计细节(教师维度投影、帧索引记录、
@@ -174,7 +177,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 10k 试点配置 | ✅ | PR #67 |
 | 10k 试点跑通(链路 go/no-go) | ✅ | 三条判据全过(exp(ls)=10.48≠10·lb=−9.76≠−10·proj 从零练到 L2=0.18),见 `pilot_10k_results.md` |
 | B0 基线锁定 | ✅ | MSR-VTT t2v R@1=42.50 对上论文,见 README §3.4(msrvtt/hmdb51/ucf101/k400) |
-| C2 T 无关化 | 🟡 | 代码+单测 ✅ 2026-07-24(#222,18 项全过,T=8 逐位一致);V100 r3e 冒烟待跑 → 过后转 ✅ |
+| C2 T 无关化 | ✅ | 代码+单测+V100 冒烟全过 07-24(#222 + r3e 三判据,T 序列服务器↔本地逐位一致,from-claude (17));真 A/B 与终训在 H100 全量;BN 漂移诊断待跑 |
 | A1 惊奇池化(#197 Tier A) | 🟡 | **10k 链路 ✅ 07-24 实测结案**(#220 修复后 alpha=-4.7e-5≠0、gamma=1 在位,见 `pilot_10k_results.md` 结案节);排队 H100 1-epoch 排序臂(≥ attn 池化才保留) |
 | 重字幕主计划(zh Stage 0) | 🟡 | v1.1(#223,全自动验收 Panel-V);V100 `run_v100.sh recap` 命令已交接(from-claude 07-24 (4)/(5)) |
 | R2 教师管线 | ⬜ | ← 第二线 2.2(含 U7/U9 设计项) |
@@ -187,6 +190,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 
 ## 进展日志(实时,倒序;每个会话在此加一行,格式:日期:事件(出处))
 
+- 2026-07-24:**C2 V100 验收全过 → 转 ✅**:pytest 18 项 + r3e 8 卡冒烟三判据全过,50 步 T 序列服务器↔本地逐位一致;观察项 fp16 评测偶发 sim NaN 记入 TROUBLESHOOTING 末节(from-claude (17));B0 多 T 曲线(任务 C)服务器跑动中
 - 2026-07-24:**脑启发第二轮合入**(`notes/neural-inspired-round2.md`):四条已数值验证的结构事实
   (F1 均值池化**无条件**时间盲 / F2 **加性**位置编码被精确抹掉——直接命中 stage-4 的
   `temporal_embedding` / F3 一阶项的最小二乘解 ≡ approximate rank pooling / F4 检索损失在帧残差
