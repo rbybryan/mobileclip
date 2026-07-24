@@ -23,6 +23,38 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (16) — 任务 A/B 判读:全过,C2 转 ✅;一个观察项;只差任务 C 回报
+
+**判定:**
+
+- **任务 A ✅** —— `pytest tests/test_t_agnostic.py` 18 passed,与本地一致。
+- **任务 B ✅(三判据全过)→ C2 状态 🟡→✅(V100 链路层面)**
+  1. **自停干净**:debug 每 epoch 5 步 ×10 epoch,`Training time 0:19:28`,
+     best epoch 9,ckpt 落盘,退出只有 NCCL destroy 的良性 warning。
+  2. **elastic_t 正常跳变**:{2,4,8,16} 全部出现;日志 10 个 epoch 的 T 序列
+     已与本地 `choose_step_t(choices, seed=42, step)` 复算逐位比对,
+     **50 步全一致**(含用 epoch 均值反推的每轮第 5 步)——跨 rank 决定性
+     采样器端到端验证通过;均值 7.8 ≈ 理论 E[T]=7.5。
+  3. **无 OOM、训练 loss 全程有限**:1.09→0.37 平滑下降;首个 T=16 步显存
+     12.2GB→23.3GB 后稳定(V100 32GB 内,余量约 8GB)。
+  - 附带验证:T=16 步在 gradient checkpointing 重算下正常(帧上下文按步单值
+    ⇒ 重算同 T,设计如预期);评测恒用 `num_frames_test=8`,不随训练 T 漂移。
+
+**观察项(不阻塞,已记 TROUBLESHOOTING 末节):** epoch3 评测窗口打印过一次
+`sim_v2t has nan / sim_t2v has nan`。出处 `models/criterions.py:55`,调用方
+`tasks_clip/retrieval_utils.py:139`(evaluation_dot)——**评测侧** fp16 特征提取
+偶发上溢(每个 rank 独立提全量特征,先算完的 rank 先打分,所以裸 print 穿插在
+rank0 进度条中间;不是训练路径)。训练 loss 从未 NaN,epoch4–9 评测再未出现,
+当轮指标仍正常(r_mean 87.4)。b100 走 bf16 天然免疫;**仅当 V100 后续评测持续
+出现**才处理(该次评测置 `use_half_precision=False` 即可),单次出现不用管。
+
+**接下来:** 只差**任务 C**回报——命令仍按 (13)(记得 `unset MVC_DATA_DIR` 的
+干净 shell),要的是 T=2/4/8/16 四组 `ret_test_emb` 的 t2v/v2t R@1,那就是
+Fig-1 v1 的数据。r3e 的 ckpt 已在 `experiments/runs/pilot_10k_r3e/`,之后可
+顺手跑 per-T BN 漂移诊断(`experiments/per_t_bn.py` docstring),不急。
+
+---
+
 ## 2026-07-24 (15) — 冒烟只差几个小包；但**别再往共用系统 site-packages 里装**
 
 **Diagnosis:** 2 卡冒烟的这次崩溃其实是**进展**——deepspeed 已经起来、`models` 也
