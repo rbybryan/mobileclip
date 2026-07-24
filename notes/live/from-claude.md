@@ -23,6 +23,29 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (8) — surprise 判据已读：✅ 通过，A1 试点结案；V100 只剩 (6) 三件事
+
+**Diagnosis:** 贴回的三个数命中 (7) 判据表**第一行**：`gamma=1.0`（#220 修复在位，
+非旧代码的 0）、`alpha=-4.74e-5 ≠ 0`（模块活着，量级与 Adam×170 步预估自洽）、
+`key.weight L2=13.06`（≈ Linear(512,512) kaiming 初始化期望范数 13.07）。
+**A1 链路判据真正通过，试点关闭**；`nA1_surprisepool` 排进 H100 全量 A/B
+（U6 阶梯下 1-epoch 排序臂，淘汰线 = 等步数 ≥ attn 池化）。
+结案记录 + 一个易错点已写进 `experiments/pilot_10k_results.md` 结案节：
+**gamma/key 在试点里“纹丝不动”是数学预期**（二者梯度都被 `alpha·(…)` 缩放，
+alpha~1e-5 时步长被压到 ~1e-10），别当失败信号——试点判据只看 alpha；
+alpha 的负号在该量级是噪声，不构成方向性结论（10k 禁令）。
+
+**V100 · Do this next:** A1 无后续动作。**(6) 的三件事仍待跑**（插 recap 空档）：
+① `python -m pytest tests/test_t_agnostic.py -v`（纯 CPU）；
+② 1.6 多 T 退化曲线四条评测（命令在 (6)，单卡）；③ r3e 弹性冒烟（debug 自停）。
+
+**b100:** 照 (5) 冒烟→R0，无任何变化。
+
+**Then report back**（from-server.md）：(6) 三项的输出；另贴一行 `nvidia-smi`
+的占卡概况，好排 ②③ 什么时候插空。
+
+---
+
 ## 2026-07-24 (8) — 重述抽样检验已可跑：50 片全流程 → TSV（源caption/翻译/5重述/A′视图 并排）
 
 **Diagnosis:** 主计划 Stage 0 的抽样检验链已实现并入 main（#227）：`split_views.py`
@@ -45,6 +68,8 @@ bash tools/data_audit/run_v100.sh recap-tsv  # 产 outputs/audit_10k/recap_inspe
 含坍缩红旗行）；② TSV 里任挑 3 行贴回（en_source / zh_translated / recap_1 / views 四列）；
 ③ 50 片的起止时间（吞吐三元组，填主计划 §5.1）。目检若五条雷同（COLLAPSE 多）→ 先停，
 等我调 temp 再放全量。
+
+---
 
 ---
 
@@ -148,6 +173,53 @@ bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r3e.py 8 debug Tr
 > 均有效，以标题区分；v1.1 块对服务器的指示 = Stage 0 照「重字幕主计划定稿」(4) 跑。
 
 ---
+
+---
+
+## 2026-07-24 (6) — 冒烟崩了：跑成了系统解释器 + peft 被白白 import。两处已修，先杀掉 R0
+
+**Diagnosis：不是 sm_90 的问题，是两个故障叠在一起。**
+
+**(a) 主因——整个训练没在你的 conda 环境里跑。** 报错路径是
+`/usr/local/lib/python3.10/dist-packages/...`，binary 是 `/usr/bin/python3`，torchrun 是
+`/usr/local/bin/torchrun`。`run_pretrain.sh` 从前调用**裸 `torchrun`**，按 `PATH` 解析时命中
+了系统的 `/usr/local/bin/torchrun`（shebang → `/usr/bin/python3`），**绕开了 `mvc_env310`**。
+→ 已把启动器改成 `python -m torch.distributed.run`，并打印 `python : <路径>`。
+
+**(b) `peft` 纯属被捎带。** `backbones/internvideo2/__init__.py` 第 4 行急切
+`from .internvideo2_clip_text import LLaMA, Tokenizer` → `import peft`。但 MobileViCLIP
+两个塔**从不用 `LLaMA`/`Tokenizer`**，全仓库也只有那一个文件依赖 peft。
+→ 已改为**惰性导入**（PEP 562 `__getattr__`），训练路径**完全不碰 peft**，peft 装没装、
+什么版本都不再影响预训练。（这条是把 b100 中文线早就做过的通用增强移植进 fork。）
+
+**另外**：`check_readiness.py` **从不 import torch**（只 import decord + configs.data），
+所以 §5 全绿只证明数据接对了，**不证明环境能训**——这次就是这么被骗过去的。已在 §5 加警示。
+
+**Do this next：**
+```bash
+# 0) 先杀掉那个 4 卡 R0——它会以同样方式崩，别让它占着卡
+pkill -f "tasks_clip/pretrain.py" || true
+sleep 2; nvidia-smi        # 确认前 4 张卡已释放
+
+# 1) 拉修复
+git pull origin main
+
+# 2) 核实解释器与 sm_90（这一步才是真正的 §2 自检，之前一直没验过）
+which python
+python -c "import sys,torch; print(sys.executable, torch.__version__, torch.cuda.get_arch_list())"
+#   python 必须在 /workspace/mount/b100_zaip_data/rby/mvc_env310/bin/ 下
+#   arch 列表必须含 sm_90；若报 No module named 'torch' → 环境里压根没装 torch，回 §2 装
+python -c "import torch; print(torch.zeros(1).cuda())"   # 应打印 tensor([0.], device='cuda:0')
+
+# 3) 重跑 2 卡冒烟（现在应打印 python : .../mvc_env310/bin/python）
+CUDA_VISIBLE_DEVICES=0,1 bash experiments/run_pretrain.sh \
+    experiments/configs/r0_baseline.py 2 \
+    use_bf16 True bf16 True deepspeed.enable False debug True
+```
+
+**Then report back**：② 的三行输出（解释器路径 / torch 版本 / arch 列表含不含 sm_90），
+以及 ③ 冒烟是否跑起来。冒烟过了我再放行 4 卡 R0。
+**先别急着重开 R0**——这次务必等冒烟绿了再挂后台。
 
 ---
 

@@ -1776,3 +1776,49 @@ which python && which pip    # 都必须在 .../rby/mvc_env310/bin/ 下，否则
 
 通用教训：**装第一个包之前先 `which python && which pip`**；两者不在同一个环境
 就别装。`(env) (base)` 提示符叠加 = python/pip 可能已分家。
+
+---
+
+## 冒烟 import 崩在 peft / `cannot import name 'Cache' from 'transformers'`（且路径是 `/usr/local/lib`）
+
+**症状**（b100 2026-07-24 首光冒烟）：conda 环境 `mvc_env310` 明明是激活的，
+`bash experiments/run_pretrain.sh ... 2 ... debug True` 却报：
+
+```
+File "/usr/local/lib/python3.10/dist-packages/peft/peft_model.py", line 37, in <module>
+    from transformers import Cache, DynamicCache, EncoderDecoderCache, PreTrainedModel
+ImportError: cannot import name 'Cache' from 'transformers' (/usr/local/lib/python3.10/dist-packages/transformers/__init__.py)
+...
+failed (exitcode: 1) local_rank: 0 ... of binary: /usr/bin/python3
+```
+
+**这里其实是两个独立故障叠在一起，别只治后半截：**
+
+**(a) 跑错解释器（主因）。** 注意路径是 `/usr/local/lib/python3.10/dist-packages`、
+binary 是 `/usr/bin/python3`、torchrun 是 `/usr/local/bin/torchrun`——**整个训练根本没
+在你激活的 conda 环境里跑**。原因：`run_pretrain.sh` 从前调用**裸 `torchrun`**，它按
+`PATH` 解析；机器上装了系统级 torch 时会命中 `/usr/local/bin/torchrun`，其 shebang 指向
+`/usr/bin/python3`，于是绕开 conda 环境。
+**Fix：**已把启动器改成 `python -m torch.distributed.run`（保证用当前 `python`），并会
+打印 `python : <路径>`。**起跑前自己也核一遍：**
+
+```bash
+which python && python -c "import sys,torch; print(sys.executable, torch.__version__, torch.cuda.get_arch_list())"
+# python 必须在 .../rby/mvc_env310/bin/ 下；arch 列表必须含 sm_90（H100）
+```
+
+**(b) `peft` 被无谓地 import 进来。** 调用链是
+`models/__init__.py` → `mobileviclip_tiny` → `backbones/internvideo2/__init__.py`
+**第 4 行 `from .internvideo2_clip_text import LLaMA, Tokenizer`** → `import peft`。
+但 MobileViCLIP 两个塔**从不使用 `LLaMA`/`Tokenizer`**，全仓库也只有
+`internvideo2_clip_text.py` 依赖 `peft`——纯属被 `__init__.py` 的**急切导入**捎带进来。
+装了 `peft>=0.8` 而 `transformers` 钉在 4.28.1（无 `Cache`）就炸；环境里干脆没装 peft
+则报 `ModuleNotFoundError: No module named 'peft'`。
+**Fix：**`backbones/internvideo2/__init__.py` 已改为**惰性导入**（PEP 562 模块级
+`__getattr__`）：`InternVideo2`/`TextTransformer`/`ClipTokenizer` 照常拿到，
+`LLaMA`/`Tokenizer` 只在**真被访问时**才导入 `internvideo2_clip_text`。于是训练路径
+**完全不碰 peft**，`peft` 装没装、装的什么版本都不再影响预训练。
+
+> ⚠️ **`check_readiness.py` 全绿不代表环境能训**：它只 import `decord` 和
+> `configs.data`，**从不 import torch**。§5 十一个 `[OK ]` 只证明数据接对了；
+> torch/sm_90 要靠 §2 的 arch 自检或 §6 首光冒烟才算验过。
