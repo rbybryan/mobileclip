@@ -1,6 +1,6 @@
 # ROADMAP — 当前该做什么(总入口,随进度勾选更新)
 
-**日期:** 2026-07-20
+**日期:** 2026-07-24(**实时进展看文末「进展日志」+「状态速览」**,每个会话更新)
 **分工:** 战略层(为什么/判据)看 `notes/paper-plan-zh.md`;每条命令看
 `experiments/README.md`;本文件回答"现在轮到哪一步"。
 **第 0 步(任何时候)**:`python experiments/check_readiness.py`
@@ -57,7 +57,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 2.2 R2 教师管线 | 设计决策清单:本文件 2.2 + `paper-plan-zh.md` §六.9 + 评审 U7;**提取脚本待写** |
 | 2.4/2.5 A1/A2/B1(#197) | `notes/neural-inspired-implementation.md` Tier A(配置模板 + 单测)/ Tier B(B1 接线与三臂);配置文件待创建 |
 | 3.1 H100 全量数据审查 | `tools/data_audit/SETUP_H100.md` §0 环境 → §1 冒烟 → §2 S0 → §3 S1 → §4 S2 → §5 S3 |
-| 3.2 R0→R1 全量起跑 | `experiments/SETUP_B100.md`(**文件顶部有进度标记清单,当前位置=§2 环境**):§0 联网 → §1 项目/.gitenv → §2 环境 + arch 自检 → §3 权重 → §4 数据接线 → §5 预检 → **§6 冒烟 / R0 / R1 启动命令**(batch 建议同节)→ §7 两个坑 → §8 交回;预算阶梯 = 评审 U6 |
+| 3.2 R0→R1 全量起跑 | `experiments/SETUP_B100.md`(**文件顶部有进度标记清单,当前位置=§6 冒烟→R0**,§0–§5 已全绿):**§6 冒烟 / R0 / R1 启动命令**已随 `from-claude.md`「07-24 (5) §5 全绿」交接 → §7 两个坑 → §8 交回;预算阶梯 = 评审 U6 |
 | 汇总与判据 | `experiments/README.md` §5 汇总对比、§6 判据 |
 | 环境/评测/git 备查 | `COMMANDS.md` §1 环境、§3 零样本评测、§4 训练、§5 git、§6 handoff |
 
@@ -70,9 +70,11 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       弱网断点续传配方:`tools/data_audit/SETUP_V100.md` §0、
       `docs/internvid-download-zh.md`。已有的测试集放好后用
       `check_readiness.py` 确认识别。
-- [ ] **1.2 数据审查流水线**(GPU ~3–4h,产出 10k 诊断报告):
-      `bash tools/data_audit/run_v100.sh smoke → s0 → s1 → s2-sample → s2 → s3`。
-      报告决定 R2 的真实/合成字幕配比。
+- [x] **1.2 数据审查流水线** —— ✅ 2026-07-22 完成 S0–S3(10k 自动化审查):
+      正式报告 `docs/internvid-zh-audit-report.md`,台账
+      `tools/data_audit/DATA_ISSUES.md`,统计细节 `notes/audit-10k-findings.md`。
+      后续 s4-merged 重字幕落地走 `notes/recaption-master-plan.md`
+      (v1.1,#223;V100 Stage 0 命令见 from-claude「07-24 (4)」)。
 - [x] **1.3 10k 试点**(README §2b,GPU 空档)—— ✅ 2026-07-23 关闭:
       `make_pilot_anno.py`(记下共享字幕比例)→ `export MVC_DATA_DIR` →
       `pilot_10k_r0` 冒烟 + 正跑 → `pilot_10k_r1`;
@@ -122,10 +124,13 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 
 ## 第三线:全量数据(外部依赖,主时钟)
 
-- [ ] **3.1** 10M InternVid 到位 + H100 机全量审查(`SETUP_H100.md`)。
-- [ ] **3.2** 到位当天:`export MVC_DATA_DIR/MVC_ANNO_DIR` → R0 起跑 →
-      **首日实测单 epoch wall-clock**,校准 Wk4–6 排期
-      (超预算裁剪顺序 R0 > R2 > R3 > R3b > R1)。
+- [ ] **3.1** 10M InternVid 到位(✅ 07-24 确认:b100 本地 jsonl 即全量
+      **10,647,458** 条,免下载,from-claude「07-24 (3)」)+ H100 机全量审查
+      (`SETUP_H100.md`,未跑;**不阻塞 R0**,可与训练并行排)。
+- [ ] **3.2** 🟡 **进行中**:§4 anno/软链 + §5 预检已全绿(11 片 `[OK ]` + 权重
+      在位,#225),冒烟→R0 命令已交接(from-claude「07-24 (5) §5 全绿」)。
+      等首光回报 → R0 起跑 → **首日实测单 epoch wall-clock**,据此触发
+      U6 预算阶梯(超预算裁剪顺序 R0 > R2 > R3 > R3b > R1)。
 
 ## 汇合点 → 主战役(paper-plan §四)
 
@@ -143,8 +148,21 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 10k 试点配置 | ✅ | PR #67 |
 | 10k 试点跑通(链路 go/no-go) | ✅ | 三条判据全过(exp(ls)=10.48≠10·lb=−9.76≠−10·proj 从零练到 L2=0.18),见 `pilot_10k_results.md` |
 | B0 基线锁定 | ✅ | MSR-VTT t2v R@1=42.50 对上论文,见 README §3.4(msrvtt/hmdb51/ucf101/k400) |
-| C2 T 无关化 | 🟡 | 代码+单测 ✅ 2026-07-24(18 项全过,T=8 逐位一致);V100 r3e 冒烟待跑 → 过后转 ✅ |
+| C2 T 无关化 | 🟡 | 代码+单测 ✅ 2026-07-24(#222,18 项全过,T=8 逐位一致);V100 r3e 冒烟待跑 → 过后转 ✅ |
+| A1 惊奇池化(#197 Tier A) | 🟡 | 代码合入(#205,默认关);10k 链路测与全量 A/B 待排 |
+| 重字幕主计划(zh Stage 0) | 🟡 | v1.1(#223,全自动验收 Panel-V);V100 `run_v100.sh recap` 命令已交接(from-claude 07-24 (4)/(5)) |
 | R2 教师管线 | ⬜ | ← 第二线 2.2(含 U7/U9 设计项) |
-| 全量数据(H100 真 A/B + 终训) | ⬜ | ← 第三线;`SETUP_B100.md` 就绪,`from-server.md` 尚无回报=未起跑 |
+| 全量数据(H100 真 A/B + 终训) | 🟡 | b100 §0–§5 全绿(#225):数据=全量 10.6M 确认、11 片预检 `[OK ]`、权重在位;§6 冒烟→R0 命令已交接,等首光回报 |
 | 计划评审 + 文献网扫(U1–U10) | ✅ | `notes/plan-review-upgrades.md`;C2 按 FluxViT 收窄、导出冒烟=1.5、多 T 曲线=1.6 |
 | 导出冒烟(U1) | ⬜ | ← 第一线 1.5,零权重即可,决定 P9 触发 |
+| B0 多 T 曲线(U2/1.6) | ⬜ | 2.1 已落地 ⇒ 解锁;逐 T 评测命令见 from-claude「07-24 (6)」 |
+
+## 进展日志(实时,倒序;每个会话在此加一行,格式:日期:事件(出处))
+
+- 2026-07-24:b100 §2–§5 全绿(env/权重/anno/预检),**§6 冒烟→R0 命令交接**(#225,from-claude (5));主时钟起跑在即
+- 2026-07-24:**C2 T 无关化代码合入**(#222):11 处 T=8 硬编码动态化 + 弹性 T 采样器 + per-T BN 工具 + r3e 冒烟配置;18 项单测全过 ⇒ R3/R3b 前置解除、1.6 解锁
+- 2026-07-24:重字幕主计划升 **v1.1**(#223 + handoff live):Panel-V 全自动验收、撤人力标定;Stage 0 命令不变;V100 recap 命令交接(from-claude (4))
+- 2026-07-24:确认 b100 本地 jsonl = **全量 10.6M** InternVid-10M-FLT(非子集),免 gdown(from-claude (3));zh 源字幕路径钉死(#213)
+- 2026-07-23:**10k 试点三判据全过,1.3 关闭**(#199);计划评审 U1–U10 + C2 按 FluxViT 收窄(#200);命令位置索引(#204);A1 惊奇池化代码合入(#205);b100 §0–§1 就绪(#201)
+- 2026-07-22:**B0 基线锁定**(MSR-VTT t2v R@1=42.50 对上论文,4 基准);10k 数据审查 S0–S3 完成(`docs/internvid-zh-audit-report.md`)
+- 2026-07-20 及以前:计划文档四份、实验框架/组件开关/卫生修复(#64)、10k 试点配置(#67)

@@ -23,6 +23,51 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (6) — C2 弹性 T 代码已合入（#222）：V100 三件事（插空档），b100 零影响照跑
+
+**Diagnosis:** ROADMAP 2.1 落地：模型里全部 11 处 `reshape(8,...)` 硬编码已动态化，
+`temporal_embedding` 自动插值，弹性 T 训练开关 `elastic_t` **默认关闭 = 基线路径逐位
+不变**（18 项单测已在 CPU 全过，含 T=8 与旧代码逐位一致）。**对 (5) 的 b100 冒烟→R0
+完全零影响，照跑，勿改任何参数。** 新解锁三件事，都在 V100（101vector），且
+**优先级全部低于 recap 主线（(4)/(5)），只插 GPU 空档**。
+
+**V100 · Do this next（repo 根，先 `git pull origin main`）：**
+
+```bash
+# ① 单测（纯 CPU、~4 分钟、跑一次即可；预期 18 passed）：
+python -m pytest tests/test_t_agnostic.py -v
+
+# ② 1.6 · B0 官方权重多 T 退化曲线 = 论文 Fig-1 第一版（单卡、每个 T 几分钟、纯评测）
+#    T=8 那组应对上 §3.4 的锚点（DSL t2v R@1≈42.5），作为链路自检：
+for T in 2 4 8 16; do
+  CUDA_VISIBLE_DEVICES=0 bash experiments/run_eval.sh small msrvtt \
+      ./checkpoints/mobileviclip_small.pt \
+      experiments/evals/b0_multiT/msrvtt_T${T} \
+      num_frames ${T} num_frames_test ${T}
+done
+# 看数（论文主口径 = ret_test_emb/ 原始余弦；ret_test/ 是 DSL 对齐口径）：
+python - <<'PY'
+import json, glob
+for p in sorted(glob.glob("experiments/evals/b0_multiT/msrvtt_T*/eval_res.json")):
+    print(p.split("/")[-2], json.dumps(json.load(open(p)), ensure_ascii=False)[:400])
+PY
+
+# ③ r3e · 弹性 T 链路冒烟（README §2b 矩阵 C2 行；8 卡但 debug 几十步自停）：
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r3e.py 8 debug True
+```
+
+**b100:** 无新动作——照 (5) 跑。R0 起跑后若想顺手验环境（CPU、不占卡）：
+`python -m pytest tests/test_t_agnostic.py -v`。
+
+**Then report back**（from-server.md）：① 是否 `18 passed`；② 四个 T 的 t2v/v2t R@1
+（`ret_test_emb` 口径贴原文即可）——这就是 Fig-1 的第一版数据 + C2 难度标定；
+③ r3e 是否自停干净、日志 `elastic_t` 是否在 2/4/8/16 间跳、有无 OOM/NaN。
+
+> 备注：handoff 分支上另有一个「07-24 (5) 主计划升 v1.1」块（与本文件下方的
+> §5-放行块撞号，两个 (5) 都有效,以标题区分;v1.1 对服务器的指示 = Stage 0 照 (4) 跑）。
+
+---
+
 ## 2026-07-24 (5) — §5 全绿，放行 §6：先 2 卡冒烟（顺带确认 sm_90）→ 再 R0 四卡
 
 **结论：数据/权重全部就绪，R0–R3 解锁。** 预检 11 个 `internvid_v*` 全 `[OK ]`（抽查
