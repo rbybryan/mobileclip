@@ -12,6 +12,55 @@ from .av_utils import lazy_load_s3video
 logger = logging.getLogger(__name__)
 
 
+# --------------------------------------------------------------------------
+# GATE-0 时间维容量审计:评测期的帧扰动开关(默认关闭 = 逐位等价基线)
+#
+# 只由环境变量 MVC_FRAME_PERTURB 打开,取值:
+#   shuffle  随机置换 T 帧(按 index 确定性设种,可复现)
+#   reverse  时间反转
+#   freeze   全部替换成中间帧(单帧上界探针)
+# 未设置 / 设为 none 时函数**原样返回同一个对象**,不做任何算子。
+#
+# ⚠️ 只在审计评测时设置,**绝不要在训练时打开**。
+# 背景与判读见 notes/neural-inspired-round2.md §2。
+# --------------------------------------------------------------------------
+_PERTURB_WARNED = False
+
+
+def maybe_perturb_frames(frames, index=0):
+    """帧扰动(默认 no-op)。frames: [T, C, H, W]。"""
+    mode = os.environ.get("MVC_FRAME_PERTURB", "").strip().lower()
+    if not mode or mode == "none":
+        return frames
+
+    global _PERTURB_WARNED
+    if not _PERTURB_WARNED:
+        logger.warning(
+            "MVC_FRAME_PERTURB=%s —— 帧顺序正在被人为扰动(GATE-0 审计模式)。"
+            "训练时绝不应出现这一行。", mode
+        )
+        _PERTURB_WARNED = True
+
+    import torch
+
+    T = frames.shape[0]
+    if mode == "reverse":
+        return torch.flip(frames, dims=[0])
+    if mode == "freeze":
+        return frames[T // 2].unsqueeze(0).repeat(
+            T, *([1] * (frames.dim() - 1))
+        )
+    if mode == "shuffle":
+        # 按样本 index 确定性设种,保证复跑得到同一置换
+        g = torch.Generator().manual_seed(
+            int(os.environ.get("MVC_FRAME_PERTURB_SEED", 0)) * 1000003 + int(index)
+        )
+        return frames[torch.randperm(T, generator=g)]
+    raise ValueError(
+        f"未知的 MVC_FRAME_PERTURB={mode!r};可选 shuffle / reverse / freeze / none"
+    )
+
+
 class BaseDataset(Dataset):
     """Base class that implements the image and video loading methods"""
 
@@ -107,5 +156,7 @@ class BaseDataset(Dataset):
 
         # NOTE shared aug for video frames
         frames = self.transform(frames)
+        # GATE-0 审计开关;未设 MVC_FRAME_PERTURB 时是纯 no-op(返回同一对象)
+        frames = maybe_perturb_frames(frames, index)
         return frames, index
 

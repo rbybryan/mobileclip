@@ -97,6 +97,18 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       `mobileviclip_small.pt` 在 T∈{2,4,8,16} 下评 MSR-VTT
       (`temporal_embedding` 插值、BN 原样)→ 论文 Fig-1 动机图 +
       标定 C2 要跨越的 gap。该失配曲线在视频-文本模型上未见发表(评审 §3.3)。
+- [ ] **1.7 GATE-0 时间维容量审计(零训练,现在就能跑;命令见 `COMMANDS.md` §3.1)**
+      —— **任何时序类改动之前的强制闸门**,判读与后续决策见
+      [`notes/neural-inspired-round2.md`](../notes/neural-inspired-round2.md) §2。
+      (a) 静态:`python experiments/temporal_capacity_audit.py checkpoints/mobileviclip_small.pt`
+      —— 时间卷积核反对称占比 / DC-AC 比 + `temporal_embedding` 范数,只读权重,秒级;
+      (b) 动态:`MVC_FRAME_PERTURB={shuffle,reverse,freeze}` 在 **MSR-VTT + SSv2-MC**
+      上各跑一遍(默认不设 = 逐位一致基线);
+      (c) 评测集补 **RTime(尤其 RTime-Binary)** 与 SSv2-template —— 现有套件测不出时序
+      (单帧偏置:图像模型 BLIP 的 MSR-VTT 零样本 R@1 已高于我们锁定的 42.50);
+      (d) **基线换种子重跑一次全量** → 拿到噪声地板(§1.1:±1.5~3 R-Sum,现有
+      "+0.3 R-Sum" 判据很可能欠功效)。
+      **产出**:无论结果如何都是一张"可测性上界"论文图(与 1.6 同一格)。
 
 ## 第二线:代码开发(不依赖数据,随时推进)
 
@@ -121,6 +133,20 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       并入同一消融表(U9)。
 - [ ] **2.3(条件项)** H5 评测分片(大基准评测前)、P1 torch 升级
       (仅当显存/速度真卡住)。
+- [ ] **2.4 R1 精确文本负例库**(`notes/neural-inspired-round2.md` §3 R1;**不依赖 GATE-0,
+      期望收益最高**):文本塔冻结 ⇒ 投影前特征全程恒定 ⇒ 缓存后每步用**当前**投影重算,
+      负例库**数学上精确、零陈旧**(无需动量编码器)。全局 batch 512 距 SigLIP 饱和点约
+      30–60×,是目前最大的未开采杠杆。顺带一并定:**温度**(固定 1/100 偏锐,最优值随负例
+      数移动)与 **sigmoid 损失**(已实现,`r1a_sigmoid.py`)。
+      ⚠️ fp16 溢出坑见 `TROUBLESHOOTING.md`;**提前检查**:banked 负例占 softmax 质量 <5%
+      ⇒ 库是惰性的,直接砍。
+- [ ] **2.5 P1 逐帧轨迹外露 + R2 可恢复顺序的读出头**(§3 R2、§5 P1):
+      `FastViT.forward:1377` 造出 `[T,B,C]`、`:1384` 只返回池化后的 `[B,C]`,损失层根本看不到
+      —— 这一处一次性改动解锁 R2/R3 全家。R2 消融梯子:`mean / additive / slope / phase`,
+      其中 **additive 按 F2 预测应当无增益**(这是判据本身)。
+      主指标 **RTime-Binary**(时间反转不变 ⇒ 恰好 50.0%,零假设已知),MSR-VTT 作预注册的
+      不退化检查。**T1 披露**:一阶项的最小二乘解 ≡ approximate rank pooling(Bilen *CVPR* 2016),
+      `α_t = 84·w_t`,精确恒等,必须自己先讲。
 
 ## 第三线:全量数据(外部依赖,主时钟)
 
@@ -156,9 +182,19 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 计划评审 + 文献网扫(U1–U10) | ✅ | `notes/plan-review-upgrades.md`;C2 按 FluxViT 收窄、导出冒烟=1.5、多 T 曲线=1.6 |
 | 导出冒烟(U1) | ⬜ | ← 第一线 1.5,零权重即可,决定 P9 触发 |
 | B0 多 T 曲线(U2/1.6) | ⬜ | 2.1 已落地 ⇒ 解锁;逐 T 评测命令见 from-claude「07-24 (6)」 |
+| **GATE-0 时间维容量审计** | ⬜ | ← 第一线 1.7,**零训练**,阻塞一切时序类改动;`notes/neural-inspired-round2.md` §2 |
+| 脑启发第二轮(F1–F4 + R1/R2/R3) | ✅ | `notes/neural-inspired-round2.md`;四份独立评审收敛,含对第一轮 A1/B1 的修正 |
 
 ## 进展日志(实时,倒序;每个会话在此加一行,格式:日期:事件(出处))
 
+- 2026-07-24:**脑启发第二轮合入**(`notes/neural-inspired-round2.md`):四条已数值验证的结构事实
+  (F1 均值池化**无条件**时间盲 / F2 **加性**位置编码被精确抹掉——直接命中 stage-4 的
+  `temporal_embedding` / F3 一阶项的最小二乘解 ≡ approximate rank pooling / F4 检索损失在帧残差
+  子空间上**恰好平坦**⇒ 帧塌缩免费、轨迹类辅助损失一阶无效);新增 **GATE-0 零训练闸门**
+  (`experiments/temporal_capacity_audit.py` + `MVC_FRAME_PERTURB`,命令见 `COMMANDS.md` §3.1);
+  提出 R1 精确文本负例库 / R2 可恢复顺序读出头 / R3 曲率仅测量。
+  **顺带修正**:`criterion.loss_weight` 只是日志开关、不进损失(B1 配置会静默失效);A1 比第一轮
+  所述更弱(重加权集合仍时间盲)
 - 2026-07-24:**A1 惊奇池化 10k 链路结案 ✅**(服务器实测 alpha=-4.7e-5 离零、gamma=1 修复在位)——`nA1` 进 H100 A/B 队列(from-claude (8))
 - 2026-07-24:b100 §2–§5 全绿(env/权重/anno/预检),**§6 冒烟→R0 命令交接**(#225,from-claude (5));主时钟起跑在即
 - 2026-07-24:**C2 T 无关化代码合入**(#222):11 处 T=8 硬编码动态化 + 弹性 T 采样器 + per-T BN 工具 + r3e 冒烟配置;18 项单测全过 ⇒ R3/R3b 前置解除、1.6 解锁
