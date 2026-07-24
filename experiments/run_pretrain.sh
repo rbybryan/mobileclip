@@ -32,6 +32,7 @@ echo "MVC_DATA_DIR=${MVC_DATA_DIR:-data} MVC_ANNO_DIR=${MVC_ANNO_DIR:-anno_downs
 # 于是整个训练在**系统解释器**里跑，绕开已激活的 conda/venv 环境（b100 2026-07-24
 # 就是这么崩的）。`python -m` 保证用的就是当前 `python`。
 echo "python    : $(command -v python)"
+echo "userbase  : ${PYTHONUSERBASE:-<未设置>}"   # b100 需先 source experiments/env_b100.sh
 python -m torch.distributed.run \
          --nnodes=1 \
          --nproc_per_node="${NUM_GPUS}" \
