@@ -306,8 +306,9 @@ zyc 的翻译产物**同时含原始英文源 caption**，可以据此直接生�
   `…/b100_zaip_data_luan/InternVId-10M-FLT/InternVId-FLT_4/shard_00006/InternVId-FLT_4/<file>.mp4`），
   以及一个**深度嵌套**的 `video` 字段（`InternVId-FLT_i/shard_xxxxx/InternVId-FLT_i/<file>.mp4`，
   不是简单的 `分片/文件名`）。
-- ⚠️ **仍缺覆盖数据**：probe 的分片计数那段被终端 `^S` 卡住没打出来——**还需**跑下面
-  「① 覆盖核查」确认 total / 每片条数，判断是不是作者 FLT 全量还是子集（子集=换了训练集）。
+- ✅ **覆盖已确认为全量（2026-07-24）**：total **10,647,458** 条，`video` 前缀 **0** 不匹配；
+  分片 FLT_1..10 **各 1,000,000**、FLT_11 **647,458**——即作者 InternVid-10M-FLT 全量，
+  **非子集**，可直接替代 gdown。下面「① 覆盖核查」留作复核。
 
 **为什么用 `abs_path` 而不是拼相对路径**：loader 是
 `data_root_prefix + os.path.join(data_root, rec["video"])`，`data_root_prefix` 默认 `""`，
@@ -359,15 +360,16 @@ PY
 
 ```bash
 # 软链见 §4「情况 A」：把 $WORK/data/video_sample/InternVId-FLT_i 指到 $FULL/InternVId-FLT_i
-#   （$FULL=/workspace/mount/b100_zaip_data_luan/InternVId-10M-FLT，以 abs_path 的根为准）
+#   （$FULL=/workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT；注意根是 InternVid、
+#    分片是 InternVId-FLT_i，大小写别写反——以 abs_path 的真实路径为准）
 # 然后 export MVC_DATA_DIR="$WORK/data" 已在情况 A 里做过。
 python experiments/check_readiness.py --decode   # 11 个 internvid_v* 全 [OK ]（含真解码）才进 §6
 ```
 
 > 走了方案 C 就**不用** §4 上面那段 gdown（`1grbR39K...`）。`MVC_ANNO_DIR` 保持默认
 > `anno_downstream`。生成的就是 `{"video"(=abs_path),"caption":str}` JSON 数组，天然满足
-> 上面「caption 格式核对」三条。**训练前务必先看 ① 的 total/每片计数**：若远小于作者 FLT
-> 全量，R0–R3 就是在子集上训，须有意为之（或从 gdown 补齐缺的分片）。
+> 上面「caption 格式核对」三条。覆盖已确认为**作者 FLT 全量 10,647,458 条（非子集）**，
+> 直接建 11 片、跑预检即可，无需再从 gdown 补齐。
 
 > 若探盘发现 `$FULL` 布局本就是 `.../video_sample/InternVId-FLT_{i}`，那连软链都免了，
 > 直接 `export MVC_DATA_DIR=<那个 video_sample 的父目录>`。软链方案只是为了对付命名不一致。

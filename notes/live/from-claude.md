@@ -23,6 +23,24 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (3) — 覆盖确认为全量 10.6M，放行：建 11 片 anno → 预检 → §6
+
+**结论：这份 jsonl 就是作者 InternVid-10M-FLT 全量，非子集。** 你的计数：total
+**10,647,458**、`video` 前缀 0 不匹配、FLT_1..10 各 100 万、FLT_11 64.7 万。可直接替代 gdown。
+
+**Do this next（`rby/mobileclip` 根，接着方案 C 往下）：**
+1. 照 §4「方案 C ②」建 11 片 anno（`video=abs_path`、`caption=caption`）。
+2. 照 §4「方案 C ③」建软链——`$FULL=/workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT`
+   （**根是 `InternVid`，分片是 `InternVId-FLT_i`，大小写别写反**，以 abs_path 为准），
+   `export MVC_DATA_DIR="$WORK/data"`，再 `python experiments/check_readiness.py --decode`。
+3. 11 个 `internvid_v*` 全 `[OK ]`（含真解码）后，进 §6：先 2 卡冒烟，再 R0 4 卡。
+
+**Then report back**：② 每片生成条数（应对上上面的计数）、③ 预检 11 行、§6 冒烟头几百步
+loss 走势。若某片 `data_root 缺失` 就是软链没对上 `$FULL/InternVId-FLT_i`；若 `全部缺失`
+则是软链目标层级不对（abs_path 已是绝对路径，通常不该出现）。
+
+---
+
 ## 2026-07-24 (2) — probe 结果确认可用；定稿：video 用 abs_path，caption 用 caption
 
 **结论：可以用 zyc 这份 jsonl 替代 gdown。** 你贴的 probe 已确认：
