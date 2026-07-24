@@ -23,6 +23,41 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (1) — 英文线 anno：能否用 zyc 合并 jsonl 的源 caption 免 gdown？先 probe/test
+
+**Diagnosis:** zyc 的翻译合并文件里**同时含英文源 caption**，理论上可直接生成 11 个训练
+anno，省掉 §4 的 gdown。但两件事我这边看不到、必须你在 b100 上 probe 确认：**(a)** 源英文
+caption 是哪个 key；**(b)** `video` 前缀是否覆盖 `InternVId-FLT_1..11`、条数是不是你要的规模
+（远小于作者 FLT 全量=子集，等于换训练集，要有意为之）。英文 R0–R3 要的是**源英文 caption**，
+不是中文 `raw_caption_zh_translated`。详见 `experiments/SETUP_B100.md` §4「方案 C」。
+
+**Do this next（在 `rby/mobileclip` 项目根，已 `source .gitenv` 且 conda 环境激活）：**
+```bash
+SRC=/workspace/mount/b100_zaip_data/zyc/vibe_coding/low_resource_cv/MobileViCLIP/outputs/internvid_alignment/caption_translation_qwen36_v0_1/20_outputs/aligned_internvid_zh_translated_retry_merged.jsonl
+# ① probe：认出源英文 caption 字段名 + 看分片覆盖/条数
+python - <<PY
+import json,re,collections
+r=json.loads(next(l for l in open("$SRC") if l.strip()))
+print("keys:",list(r.keys()))
+for k,v in r.items(): print(f"  {k!r:34s} {type(v).__name__:6s} {repr(v)[:150]}")
+rx=re.compile(r"^(InternVId-FLT_(?:1[01]|[1-9]))/"); c=collections.Counter(); n=bad=0
+for l in open("$SRC"):
+    if not l.strip(): continue
+    n+=1; m=rx.match(json.loads(l).get("video",""))
+    c[m.group(1)]+=1 if m else 0; bad+=0 if m else 1
+print("total:",n,"| video 前缀不匹配:",bad)
+for i in range(1,12): print(f"  InternVId-FLT_{i}: {c[f'InternVId-FLT_{i}']}")
+PY
+```
+拿到 ① 输出后，按 §4「方案 C」的 ②（生成 shard 1 + `check_readiness` 验 `internvid_v1`，
+用来确定 `CAPKEY` 和 `STRIP`），③（验好再一次性生成 11 片）执行——那两段命令都在 md 里，照抄。
+
+**Then report back** in from-server.md：贴 ① 的完整输出（keys 那几行 + 每分片条数）、
+② 里 `internvid_v1` 那一行是 `[OK ]` 还是 `全部缺失`、以及你最终用的 `CAPKEY`/`STRIP`。
+据此我把 §4「方案 C」的占位改成对准你真实字段的定稿脚本，并判断是否算“全量”。
+
+---
+
 ## 2026-07-23 (6) — §2 返工：先清理误装进 conda base 的包，再用 conda py3.10 重建
 
 **Diagnosis:** 你的 §2 输出显示两个叠加故障：**(a)** `python -m venv` 建的环境没带

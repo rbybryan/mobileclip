@@ -290,6 +290,98 @@ print(len(out),"records ->",dst)
 PY
 ```
 
+### 方案 C：用 zyc 的合并 jsonl 里的**源 caption** 直接生成 anno（免 gdown）
+
+zyc 的翻译产物**同时含原始英文源 caption**，可以据此直接生成 11 个训练 anno，
+**省掉 §4 里 gdown 下作者 anno 包这一步**。文件（b100 绝对路径）：
+
+```
+/workspace/mount/b100_zaip_data/zyc/vibe_coding/low_resource_cv/MobileViCLIP/outputs/internvid_alignment/caption_translation_qwen36_v0_1/20_outputs/aligned_internvid_zh_translated_retry_merged.jsonl
+```
+
+**能不能用它替代下载？——满足两条即可，先 probe 核实：**
+① 记录里确有**英文源 caption 字段**（不是只有中文 `raw_caption_zh_translated`）；
+② `video` 前缀覆盖 `InternVId-FLT_1..11`，且其数量就是你要训的规模（**若远小于作者
+FLT 全量，则这是子集，等于换了训练集,要有意为之**）。英文 R0–R3 要的是**源英文 caption**，
+不是中文译文。
+
+**① probe——找出源 caption 是哪个 key、看分片覆盖/条数：**
+
+```bash
+SRC=/workspace/mount/b100_zaip_data/zyc/vibe_coding/low_resource_cv/MobileViCLIP/outputs/internvid_alignment/caption_translation_qwen36_v0_1/20_outputs/aligned_internvid_zh_translated_retry_merged.jsonl
+# 1a) 首条所有 key + 样例（认出英文源 caption 的字段名）
+python - <<PY
+import json
+with open("$SRC") as f:
+    r=json.loads(next(l for l in f if l.strip()))
+print("keys:", list(r.keys()))
+for k,v in r.items():
+    print(f"  {k!r:34s} {type(v).__name__:6s} {repr(v)[:150]}")
+PY
+# 1b) 总条数 + 每个 FLT 分片各多少条（确认覆盖 1..11、是否子集）
+python - <<PY
+import json,re,collections
+rx=re.compile(r"^(InternVId-FLT_(?:1[01]|[1-9]))/"); c=collections.Counter(); n=bad=0
+for l in open("$SRC"):
+    if not l.strip(): continue
+    n+=1; m=rx.match(json.loads(l).get("video",""))
+    c[m.group(1)]+=1 if m else 0
+    bad+=0 if m else 1
+print("total:",n,"| video 前缀不匹配:",bad)
+for i in range(1,12): print(f"  InternVId-FLT_{i}: {c[f'InternVId-FLT_{i}']}")
+PY
+```
+
+**② test——先只生成 shard 1 并用预检验证 video 路径解析对不对（关键：验证是否该剥前缀）：**
+
+```bash
+CAPKEY=<把 1a 认定的英文源 caption 字段名填这里>   # 如 raw_caption / caption / caption_en
+STRIP=1     # data_root 已含分片；video 若带 InternVId-FLT_i/ 前缀就剥掉。若 ② 结果“全部缺失”改 0 重跑
+mkdir -p anno_downstream/InternVid
+python - <<PY
+import json
+src="$SRC"; capkey="$CAPKEY"; strip=int("$STRIP"); i=1; pref=f"InternVId-FLT_{i}/"; out=[]
+for l in open(src):
+    if not l.strip(): continue
+    r=json.loads(l); v=r.get("video","")
+    if not v.startswith(pref): continue
+    cap=r.get(capkey)
+    if isinstance(cap,list): cap=cap[0]
+    if not isinstance(cap,str) or not cap.strip(): continue
+    out.append({"video": v[len(pref):] if strip else v, "caption": cap.strip()})
+json.dump(out, open(f"anno_downstream/InternVid/InternVid-10M-flt_{i}.json","w"), ensure_ascii=False)
+print("shard 1 ->", len(out), "records")
+PY
+# 用预检只看 internvid_v1：亮 [OK ] 说明 STRIP 猜对；“抽查…全部缺失”就把 STRIP 翻成 0 重来
+python experiments/check_readiness.py --decode 2>/dev/null | grep -E "internvid_v1 "
+```
+
+**③ shard 1 过了 [OK ]，再一次性生成全部 11 片**（`CAPKEY`/`STRIP` 用 ② 验好的值）：
+
+```bash
+python - <<PY
+import json
+src="$SRC"; capkey="$CAPKEY"; strip=int("$STRIP")
+for i in range(1,12):
+    pref=f"InternVId-FLT_{i}/"; out=[]
+    for l in open(src):
+        if not l.strip(): continue
+        r=json.loads(l); v=r.get("video","")
+        if not v.startswith(pref): continue
+        cap=r.get(capkey)
+        if isinstance(cap,list): cap=cap[0]
+        if not isinstance(cap,str) or not cap.strip(): continue
+        out.append({"video": v[len(pref):] if strip else v, "caption": cap.strip()})
+    json.dump(out, open(f"anno_downstream/InternVid/InternVid-10M-flt_{i}.json","w"), ensure_ascii=False)
+    print(f"InternVId-FLT_{i} -> {len(out)}")
+PY
+python experiments/check_readiness.py     # 11 个 internvid_v* 全 [OK ] 才进 §5/§6
+```
+
+> 走了方案 C 就**不用** §4 上面那段 gdown（`1grbR39K...`）。`MVC_ANNO_DIR` 保持默认
+> `anno_downstream`。生成的就是 `{"video","caption":str}` JSON 数组，天然满足上面
+> 「caption 格式核对」的三条要求。
+
 > 若探盘发现 `$FULL` 布局本就是 `.../video_sample/InternVId-FLT_{i}`，那连软链都免了，
 > 直接 `export MVC_DATA_DIR=<那个 video_sample 的父目录>`。软链方案只是为了对付命名不一致。
 
