@@ -1758,9 +1758,22 @@ unset TOK
 chmod 600 "$RBY/.git-credentials"
 ```
 
-②③ 用 `git config --file`（同键覆盖），重复跑不会写重。自检：
+②③ 用 `git config --file`（同键覆盖），重复跑不会写重。自检（**新开 shell、不 source**）：
 `git config --show-origin --get credential.helper` 应指向 `rby/.gitconfig-cred`，
 随后 `git pull origin main` 不再问密码。
+
+**做了 ③ 之后不需要每次登录再 `source .gitenv`** —— 身份和凭据由 `$HOME/.gitconfig` 里的
+`includeIf` 自动加载。**唯一例外是 `safe.directory`**：git 检查「可疑的仓库所有权」发生在
+*early / protected config* 阶段，那时仓库尚未认出，`gitdir:` 条件无从匹配，因此写在
+conditional include 里的 `safe.directory` **不被采纳**（实测：`git config --get-all
+safe.directory` 看得见该值，同一仓库仍报 `detected dubious ownership`）。若确实撞上这个报错，
+把它直接写进共用 `$HOME/.gitconfig`（只有路径、无 token），此后永久免 source：
+
+```bash
+git config --global --add safe.directory /workspace/mount/b100_zaip_data/rby/MobileViCLIP
+```
+
+`.gitenv` 里的 `GIT_CONFIG_SYSTEM=/dev/null`（屏蔽 `/etc/gitconfig`）同样只在 source 后生效。
 
 四点提醒：GitHub 已取消密码认证，"密码"处填 **PAT**；共用 root 下 `chmod 600` 给不了任何
 隔离（大家都是 root），所以请用 **只授权 `rbybryan/mobileclip` 的 fine-grained PAT**；
