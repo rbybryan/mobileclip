@@ -2033,3 +2033,57 @@ Hopper 支持。
   这次评测,训练配置不动);b100 上用 bf16(动态范围大,天然免疫)。
 - 快速定位坏在哪一侧:在 `tasks_clip/retrieval_utils.py:139` 前临时加
   `print(torch.isnan(image_feats).any(), torch.isnan(text_feats).any())`。
+---
+
+## `ModuleNotFoundError: No module named 'scripts.pretraining'`——被别的包顶掉了名字
+
+**症状**：b100 上跑 §6 冒烟，依赖都齐了、`models`/`utils` 都 import 成功，却崩在
+
+```
+File "experiments/configs/r0_baseline.py", line 6, in <module>
+    from scripts.pretraining.clip.mobileviclip_small.config import *
+ModuleNotFoundError: No module named 'scripts.pretraining'
+```
+
+同一份代码在 V100（101vector）上一直是好的。
+
+**Cause**：注意报的是 **`'scripts.pretraining'` 而不是 `'scripts'`** —— `scripts` 本身
+import 成功了，只是**导进来的不是本仓库的那个**。
+
+本仓库的 `scripts/` 原先**一个 `__init__.py` 都没有**，属于 PEP 420 **命名空间包**。
+而命名空间包的优先级**低于普通包**：Python 扫 `sys.path` 时，
+
+- 遇到 `<entry>/scripts/__init__.py` → 普通包，**立即返回**；
+- 遇到无 `__init__.py` 的 `<entry>/scripts/` 目录 → 只记一个 "portion"，**继续往后扫**。
+
+所以只要 `sys.path` 后面（比如 site-packages）有任何一个带 `__init__.py` 的 `scripts`
+包，它就会**反超**仓库根目录里的 `scripts/`——哪怕仓库根在 `PYTHONPATH` 里排在更前面。
+b100 的共用 site-packages 里恰好有这么一个包，V100 上没有，所以只在 b100 复现。
+
+**Fix**：已在仓库里给 `scripts/` 及其子目录补上 `__init__.py`（`scripts/`、
+`scripts/pretraining/`、`scripts/pretraining/clip/`、`mobileviclip_small/`、
+`mobileviclip_tiny/`），`scripts` 因此变成普通包，在 `PYTHONPATH` 首次命中即返回。
+服务器 `git pull` 即可，**别删这些文件**（每个文件里都写了原因）。
+
+自检：
+
+```bash
+source experiments/env_b100.sh
+python -c "import scripts; print(scripts.__file__)"
+# 必须打印 .../rby/mobileclip/scripts/__init__.py；打印成 site-packages 里的路径就是没 pull 到
+```
+
+想知道是谁占了这个名字（可选，纯取证）：
+
+```bash
+python - <<'PY'
+import importlib.util as u
+for name in ("scripts",):
+    s = u.find_spec(name)
+    print(name, "->", s.origin, "| search:", s.submodule_search_locations)
+PY
+```
+
+> 同类风险：仓库里 `configs/`、`utils/`、`tasks_clip/` 也都是命名空间包。目前没撞上，
+> 但只要哪天 site-packages 里出现同名普通包，会以完全一样的方式发作——症状同样是
+> "`No module named '<pkg>.<submodule>'` 而不是 `'<pkg>'`"，认这个特征。
