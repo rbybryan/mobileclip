@@ -23,6 +23,66 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (25) — MSR-VTT 视频"全部缺失"：软链接错了一层（我的文档写错了）
+
+**Diagnosis:** anno 本身完全没问题，是**我上一版 §4b 步骤 3 写错了**。
+
+你贴回来的探盘结果里有关键一行：
+
+```
+{"video": "TestVideo/video9770.mp4", "caption": [...]}
+```
+
+`video` 字段**带子目录前缀**。而仓库拼视频路径只有一种写法、**任何地方都不取 basename**：
+
+```python
+join(data_root, anno["video"])        # dataset/utils.py:121，check_readiness.py 同款
+```
+
+所以它要找的是 `data/MSRVTT_Videos/TestVideo/video9770.mp4`，
+而步骤 3 让你把 mp4 **拍平**软链，给出的是 `data/MSRVTT_Videos/video9770.mp4` —— **差一层**。
+10000 个软链一个都对不上，就是这个原因。
+
+其余都是好的：anno 是仓库原生格式（list/1000 条）、`caption` 是列表也没关系
+（`ret_dataset.py:323` 有 list 分支）、`TestVideo/` 覆盖 1000/1000。**MSR-VTT 不用下载任何东西。**
+
+我在本地用 fixture 复现了这个失败、也验证了下面这个修法能翻成 `[OK ]`。
+
+**Do this next:**
+
+```bash
+cd /workspace/mount/b100_zaip_data/rby/mobileclip
+git pull origin main
+source experiments/env_b100.sh
+
+MSRVTT=/workspace/mount/b100_zaip_data/video_datasets/MSR-VTT
+
+# 清掉拍平的那批（-type l 保证只删软链，真文件一个都碰不到）
+find data/MSRVTT_Videos -maxdepth 1 -type l -name '*.mp4' -delete
+
+# 改成把子目录整个软链进去
+for sub in TestVideo TrainValVideo; do
+  [ -d "$MSRVTT/$sub" ] && ln -sfn "$MSRVTT/$sub" "data/MSRVTT_Videos/$sub"
+done
+
+ls -l data/MSRVTT_Videos/                          # 只剩 TestVideo、TrainValVideo 两条软链
+python experiments/check_readiness.py --decode 2>&1 | grep -i msrvtt
+```
+
+期望：`[OK ] msrvtt   anno 1000 条;抽查 20 条,缺失 0;试解码 OK(N 帧)`。
+
+**顺带改了 `check_readiness.py`**：以后报"全部缺失"会把**它试过的完整路径**打出来，
+不用再猜是哪一层错了。剩下 6 个基准接线时，**每个都要先看一眼 `anno[0]["video"]`**
+是纯文件名还是带子目录（各家 anno 不一样），别照抄 MSR-VTT 的接法 —— 规则写在
+§4b 步骤 3 的表里，坑记在 `TROUBLESHOOTING.md`「预检报"抽查 N 条视频全部缺失"」。
+
+**Then report back** in from-server.md：上面那条 `grep -i msrvtt` 的输出。
+
+⚠️ **但真正的关键路径仍然是 (19) 的 2 卡冒烟** —— §4b 这一整节都不挡 R0–R3
+（预训练只用 `internvid_all`，§4 已全绿）。冒烟先跑，MSR-VTT 顺手修。
+
+---
+
 ## 2026-07-24 (24) — pipeline-sample 首跑判读：链路 ✅、多样性 ✅；SigLIP 路径 bug 已修（#265），重跑补两列
 
 **判读（好消息为主）：** 50 片全链跑通。**温度坍缩红旗未触发**——片内成对 3-gram Jaccard
