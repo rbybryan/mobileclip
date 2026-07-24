@@ -208,7 +208,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | B0 多 T 曲线(U2/1.6) | ✅ | 2026-07-24 实测:emb r_mean 55.4/60.0/61.6/62.3 @ T=2/4/8/16;T8-DSL t2v=42.5 复现 B0 锚点(2.1 零回归);T16 免训练反超;表在 1.6 + from-claude (18) |
 | 顺序敏感基准(选定 RTime) | ⬜ | **RTime 不分发视频**(已核实,只给 URL);先跑零成本静态审计再决定是否买基准。见 [`notes/order-sensitive-eval.md`](../notes/order-sensitive-eval.md) |
 | **GATE-0 时间维容量审计** | 🟡 | MSR-VTT 半边 ✅ 结案(**shuffle 不掉分、freeze 掉 13 点** ⇒ 顺序值≈0、帧多样性值 13);SSv2-MC 半边被**数据缺失**卡住。见 [`experiments/gate0_results.md`](gate0_results.md) |
-| 脑启发第二轮(F1–F4 + R1/R2/R3) | ✅ | `notes/neural-inspired-round2.md`;四份独立评审收敛,含对第一轮 A1/B1 的修正 |
+| 脑启发第二轮(F1–F4 + R1/R2/R3) | ✅ | `notes/neural-inspired-round2.md`(中文全文 `notes/neural-inspired-round2_zh.md`);四份独立评审收敛,含对第一轮 A1/B1 的修正 |
 
 ## 进展日志(实时,倒序;每个会话在此加一行,格式:日期:事件(出处))
 

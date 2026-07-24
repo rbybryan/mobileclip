@@ -2,6 +2,8 @@
 
 **Date:** 2026-07-24
 
+> 中文全文见 [`neural-inspired-round2_zh.md`](neural-inspired-round2_zh.md)（内容等价，改动时同步）。
+
 **Scope.** Round 1 (`notes/neural-inspired-directions.md`, `notes/neural-inspired-implementation.md`)
 ranked eight brain-inspired ideas N1–N8 and turned three into buildable plans (A1 surprise
 pooling, A2 graded windows, B1 geometry-KD). This note is the **second, deeper pass**: it
