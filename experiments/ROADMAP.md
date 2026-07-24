@@ -206,12 +206,19 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 计划评审 + 文献网扫(U1–U10) | ✅ | `notes/plan-review-upgrades.md`;C2 按 FluxViT 收窄、导出冒烟=1.5、多 T 曲线=1.6 |
 | 导出冒烟(U1) | ⬜ | ← 第一线 1.5,零权重即可,决定 P9 触发 |
 | B0 多 T 曲线(U2/1.6) | ✅ | 2026-07-24 实测:emb r_mean 55.4/60.0/61.6/62.3 @ T=2/4/8/16;T8-DSL t2v=42.5 复现 B0 锚点(2.1 零回归);T16 免训练反超;表在 1.6 + from-claude (18) |
-| 顺序敏感基准(选定 RTime) | ⬜ | **RTime 不分发视频**(已核实,只给 URL);先跑零成本静态审计再决定是否买基准。见 [`notes/order-sensitive-eval.md`](../notes/order-sensitive-eval.md) |
-| **GATE-0 时间维容量审计** | 🟡 | MSR-VTT 半边 ✅ 结案(**shuffle 不掉分、freeze 掉 13 点** ⇒ 顺序值≈0、帧多样性值 13);SSv2-MC 半边被**数据缺失**卡住。见 [`experiments/gate0_results.md`](gate0_results.md) |
+| 顺序敏感基准(RTime/SSv2) | ⏸ **暂缓** | GATE-0 三条证据都说模型没有方向信息 ⇒ **不买**(省掉一整轮视频抓取)。只有要证 R2 的**下游收益**时才回收。见 [`notes/order-sensitive-eval.md`](../notes/order-sensitive-eval.md) |
+| **GATE-0 时间维容量审计** | ✅ | **已结案**:三条独立证据(行为 shuffle≈0 / 核反对称 0.5011=随机 null / 时序闸门仅空间的 6.1% 且同初值)一致 ⇒ 模型不编码时间方向。见 [`experiments/gate0_results.md`](gate0_results.md) §8 |
+| ~~GATE-0(旧状态)~~ | 🟡 | MSR-VTT 半边 ✅ 结案(**shuffle 不掉分、freeze 掉 13 点** ⇒ 顺序值≈0、帧多样性值 13);SSv2-MC 半边被**数据缺失**卡住。见 [`experiments/gate0_results.md`](gate0_results.md) |
 | 脑启发第二轮(F1–F4 + R1/R2/R3) | ✅ | `notes/neural-inspired-round2.md`(中文全文 `notes/neural-inspired-round2_zh.md`);四份独立评审收敛,含对第一轮 A1/B1 的修正 |
 
 ## 进展日志(实时,倒序;每个会话在此加一行,格式:日期:事件(出处))
 
+- 2026-07-24:**GATE-0 结案 ✅**(`experiments/gate0_results.md` §8):三条独立证据一致 ——
+  ①行为 打乱8帧 +0.1/+0.2(≈0)、单帧重复 −13;②核形状 反对称占比 0.5011 vs 随机 null 0.4999
+  (逐分位点吻合,n=9920);③闸门 时序 `layer_scale_1d` 仅为同层空间 `layer_scale` 的 **6.1%**,
+  且二者**同初值 1e-5**(`mobileviclip_small.py:636-641`)⇒ 16 倍差距是训练结果而非初始化。
+  **⇒ 模型不编码时间方向;顺序敏感基准暂缓采购(省一轮视频抓取);下一步投 R1。**
+  ⚠️ 期间修正了一个自己的错误判据:反对称占比的随机 null 是 **0.500 而非 0**,已固化为 self-test 断言(#266)
 - 2026-07-24:**GATE-0 动态审计 MSR-VTT 半边结案**(`experiments/gate0_results.md`):打乱 8 帧顺序
   **不掉分**(t2v 42.50→42.6 DSL / 40.80→41.0 raw),换成单帧重复**掉 13 个点**(→29.5/28.7,两口径同向)
   ⇒ **帧多样性值 ~13 R@1、帧顺序值 ~0**;`freeze` 兼作阳性对照,证明零效应为真零。
