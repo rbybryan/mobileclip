@@ -678,11 +678,22 @@ PY
     --aprime "$OUT/pipe_aprime.jsonl" --verified "$OUT/pipe_verified.jsonl" \
     --derived "$OUT/pipe_views.*.jsonl" --diag "$OUT/pipe_diag.jsonl" \
     --output "$OUT/recap_pipeline.tsv"
+  echo "== ⑦ HTML 索引可视化（单文件，浏览器打开：索引表点 video 跳卡片） =="
+  python tools/data_audit/make_pipeline_html.py --tsv "$OUT/recap_pipeline.tsv" \
+    --output "$OUT/recap_pipeline.html" || echo "[warn] HTML 生成失败（TSV 仍可用）"
   echo ""
-  echo "✅ 产物: $OUT/recap_pipeline.tsv （utf-8-sig；scp 回本地 Excel/WPS 打开）"
-  echo "   每片一行: en源caption | zh翻译 | 5重述(⟨SigLIP分⟩) | A−保留 | A′句切 |"
-  echo "             ✓过验真视图 | ·未验(保守留) | ✗被滤视图[gdino/ocr] | 坍缩旗标"
+  echo "✅ 产物: $OUT/recap_pipeline.tsv （Excel/WPS） + $OUT/recap_pipeline.html （浏览器）"
+  echo "   每片一卡: en源caption | zh旧译 | 5重述(⟨SigLIP分⟩+A−徽标) | A′句切 |"
+  echo "             ✓过验真(绿) | ·未验(灰) | ✗被滤(红删除线,带验真器名) | 旗标"
   echo "   诊断摘要: $OUT/pipe_diag.txt"
+  echo ""
+  echo "―― 在你【本地机器】上执行 scp 取回（二选一）――"
+  echo "  scp rby@101vector:~/mobileclip/$OUT/recap_pipeline.html ."
+  echo "  scp rby@101vector:~/mobileclip/$OUT/recap_pipeline.tsv ."
+  echo "带视频的完整包（服务器上先打包，~几百 MB）："
+  echo "  python tools/data_audit/make_pipeline_html.py --tsv $OUT/recap_pipeline.tsv \\"
+  echo "    --output $OUT/bundle/recap_pipeline.html --copy-videos --video-root \"$CLIPS\""
+  echo "  tar cf $OUT/recap_bundle.tar -C $OUT bundle   # 然后本地: scp rby@101vector:~/mobileclip/$OUT/recap_bundle.tar ."
   ;;
 # ------------------------------- ⑨b 粒度重判结果分析 + n_info=0 归因
 gran-check)
