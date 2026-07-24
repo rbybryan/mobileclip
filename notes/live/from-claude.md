@@ -63,8 +63,8 @@ bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r3e.py 8 debug Tr
 （`ret_test_emb` 口径贴原文即可）——这就是 Fig-1 的第一版数据 + C2 难度标定；
 ③ r3e 是否自停干净、日志 `elastic_t` 是否在 2/4/8/16 间跳、有无 OOM/NaN。
 
-> 备注：handoff 分支上另有一个「07-24 (5) 主计划升 v1.1」块（与本文件下方的
-> §5-放行块撞号，两个 (5) 都有效,以标题区分;v1.1 对服务器的指示 = Stage 0 照 (4) 跑）。
+> 备注：下方 (4)/(5) 各有**两块**（b100 数据线与重字幕线并行推进导致撞号）——
+> 均有效，以标题区分；v1.1 块对服务器的指示 = Stage 0 照「重字幕主计划定稿」(4) 跑。
 
 ---
 
