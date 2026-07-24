@@ -23,6 +23,74 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (15) — 冒烟只差几个小包；但**别再往共用系统 site-packages 里装**
+
+**Diagnosis:** 2 卡冒烟的这次崩溃其实是**进展**——deepspeed 已经起来、`models` 也
+import 成功了，说明 (8) 之前的两关（peft 的 `cannot import name 'Cache'`、
+`No module named 'open_clip'`）都过了。现在只剩 `utils/logger.py:14` 缺 `termcolor`
+这种纯 python 小包。
+
+两个必须先说清楚的判断：
+
+1. **不再修 `mvc_env310`，改用系统 torch。** 日志里 `python : /usr/bin/python`——
+   提示符上的环境名只是 PS1 文本，实际解释器一直是系统的。而系统 torch 是
+   **2.5.1+cu124、`get_arch_list()` 含 `sm_90`**，Hopper 支持本来就是好的。为本项目再
+   下一套几个 G 的 torch 没有收益，**沿用系统 torch 是更省事也更稳的选择**。
+
+2. **⚠️ 但装包的落点必须改。** 这一路 `pip install` 全落进了
+   `/usr/local/lib/python3.10/dist-packages`——那是 wky / zyc 共用的目录。**尤其别照抄
+   `scripts/setup_env.sh` Stage 4 那串带版本号的命令**（`transformers==4.28.1`
+   `numpy==1.26.4` `timm==0.5.4` …）：那是给 V100 的 torch 1.13.1+cu117 写的，在 b100 上
+   会把别人在用的公共依赖**降级**，属于事故级操作。
+
+**方案：私有 user-site。** 缺的包装进 `rby/pyuser/`，系统目录一个字节不动；user-site
+在 `sys.path` 里优先，所以只对 source 过环境文件的 shell 生效。仓库里新加了两个文件
+（`experiments/env_b100.sh`、`experiments/check_imports.py`），先 `git pull`。
+
+**Do this next（b100，仓库根，全程零 GPU）：**
+
+```bash
+cd /workspace/mount/b100_zaip_data/rby/mobileclip
+git pull
+
+# ① 每个新 shell 都先 source 一次（只设环境变量，不装任何东西，重复 source 无副作用）
+source experiments/env_b100.sh
+
+# ② 一次列全缺哪些包（不用再一轮崩一个）——末尾会打印可直接复制的 pip 命令
+python experiments/check_imports.py
+```
+
+`check_imports.py` 把整条 pretrain import 链上的第三方模块逐个 try 一遍，并顺带打印
+`sys.executable` / `torch.__version__` / `get_arch_list()`。按它末尾给的命令补装，
+**只用这一种形式**：
+
+```bash
+python -m pip install --user --no-deps <它列出的包名>
+python experiments/check_imports.py      # 重跑，直到打印“全部 [OK]”
+```
+
+- `--user` + `PYTHONUSERBASE`（`env_b100.sh` 里设好了）→ 落到 `rby/pyuser/`，不碰共用目录。
+- `--no-deps` → 不让 pip 顺手升/降级 torch / transformers / numpy。
+- 用 `python -m pip` 而不是裸 `pip`，保证装到当前解释器。
+
+**③ 依赖齐了再冒烟**（等有空闲卡；`nvidia-smi` 先看清前 4 张的占用）：
+
+```bash
+source experiments/env_b100.sh           # 新 shell 必须重新 source
+CUDA_VISIBLE_DEVICES=0,1 bash experiments/run_pretrain.sh \
+    experiments/configs/r0_baseline.py 2 \
+    use_bf16 True bf16 True deepspeed.enable False debug True
+```
+
+脚本开头现在会打印 `python` 和 `userbase` 两行——**看到 `userbase : <未设置>` 就是忘了
+source**，停下来重来（子进程靠继承环境变量，漏了就等于没装）。
+
+**Then report back** in from-server.md：`check_imports.py` 的完整输出（尤其是
+`[缺失]`/`[异常]` 行和最后那条 pip 命令），以及补装后重跑是否打印“全部 [OK]”。
+冒烟真跑到 loss 打印就贴前 30 行日志。
+
+对应文档已更新：`experiments/SETUP_B100.md` §2「现行方案」+ §6 步骤 0、
+`TROUBLESHOOTING.md`「b100 共用系统 site-packages」。
 ## 2026-07-24 (14) — pipeline-sample 缺队列已修：先跑 s3(0.3)+新 s4 两条秒级命令（#243）
 
 **Diagnosis:** 你贴的报错是对的——`v0_2/recaption_tasks.jsonl` 从没在本机落地过，而旧的落地

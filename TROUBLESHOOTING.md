@@ -1907,3 +1907,56 @@ torchvision/torchaudio 弄坏，报 `cannot import name '_cast_Long'`）。
 
 > 装之前先 `python -c "import sys;print(sys.executable)"` 确认装到的是**自己的**环境——
 > b100 是共用 root 账号，装进 `/usr/local/lib/python3.10/dist-packages` 会影响别人。
+
+---
+
+## b100 共用系统 site-packages：缺包别再往系统里装，用私有 user-site
+
+**症状**：在 b100 上跑 §6 冒烟，一轮崩一个包——先是 peft 的
+`cannot import name 'Cache'`，再是 `No module named 'open_clip'`，接着
+`utils/logger.py:14 → No module named 'termcolor'`……而且 `run_pretrain.sh` 打出的
+`python : /usr/bin/python`、traceback 里全是
+`/usr/local/lib/python3.10/dist-packages/...`，尽管提示符上亮着 `(mvc_env310)`。
+
+**Cause**：两件事叠在一起。
+
+1. **激活的环境没生效**：提示符只是 `PS1` 文本，`command -v python` 仍是
+   `/usr/bin/python`。凡是 `python -m pip install` 装的东西，全落进**系统**
+   site-packages。
+2. **b100 的 root 账号是多人共用的**，`/usr/local/lib/python3.10/dist-packages`
+   同时被 wky（中文 NebulaCV 线）和 zyc（翻译流水线）使用。往里装包 = 改别人的环境；
+   带版本号装（`pip install transformers==4.28.1 numpy==1.26.4 timm==0.5.4`，也就是
+   `scripts/setup_env.sh` Stage 4 那串）会把他们在用的版本**降级**，属于事故级操作。
+
+**注意 `scripts/setup_env.sh` 是给 torch 1.13.1+cu117 的 V100 环境写的，不能照抄到
+b100**：b100 的系统 torch 是 2.5.1+cu124（`get_arch_list()` 含 `sm_90`，Hopper 本来就
+支持），照抄 Stage 4 会把整台机器的公共依赖拽回旧版本。
+
+**Fix**：沿用系统 torch，缺的小包装进**自己的 user-site**（详见
+`experiments/SETUP_B100.md` §2「现行方案」）。
+
+```bash
+cd /workspace/mount/b100_zaip_data/rby/mobileclip
+source experiments/env_b100.sh          # 只 export PYTHONUSERBASE / PYTHONPATH / MVC_*
+python experiments/check_imports.py     # 一次列全缺哪些包 + 打印可复制的 pip 命令
+python -m pip install --user --no-deps <上一步列出的包>
+python experiments/check_imports.py     # 直到打印“全部 [OK]”
+```
+
+为什么这样安全：
+
+- `--user` 配合 `PYTHONUSERBASE=/workspace/mount/b100_zaip_data/rby/pyuser`，包落到
+  rby 自己的目录，**系统 site-packages 一个字节都不动**；user-site 在 `sys.path` 里
+  优先于系统目录，所以补的包（乃至更高版本）只对 source 过 `env_b100.sh` 的 shell 生效。
+- `--no-deps` 挡住 pip 顺手升/降级 torch、transformers、numpy 这些共用重依赖。
+- 用 `python -m pip`（而不是裸 `pip`）保证装到的就是当前解释器；因为跑的是
+  `/usr/bin/python` 本身（不在 venv 里），`--user` 不会被 pip 拒绝。
+
+**别再一轮试一个包**：`tasks_clip/pretrain.py` 的 import 链很长，
+`experiments/check_imports.py` 会把链上所有第三方模块逐个 try 一遍，一次报全，并顺带
+打印 `sys.executable` / `torch.__version__` / `get_arch_list()`，用来确认解释器和
+Hopper 支持。
+
+> `PYTHONUSERBASE` 要在**启动训练前**导出：`run_pretrain.sh` 用
+> `python -m torch.distributed.run` 拉子进程，子进程继承环境变量。脚本开头会打印
+> `python` 与 `userbase`，看到 `userbase : <未设置>` 就是忘了 `source`。
