@@ -23,6 +23,39 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (12) — r3e 冒烟崩溃已定位：新 shell 忘了 `export MVC_DATA_DIR`，一行修复重跑
+
+**Diagnosis:** 你贴的 r3e 全量崩溃**不是弹性 T 代码的问题**——崩在 dataloader 取
+第一个 batch 之前，模型一行没跑到。证据链：(a) **每一条**视频都 `No such file or
+directory`（不是零星坏文件）；(b) 尝试的是**相对路径** `data/internvid_zh_10k/videos/…`
+= `MVC_DATA_DIR` 未设时的默认值（`configs/data.py` 的 `internvid_zh_10k_pilot` 注释
+原文就写着 101vector 要 export）；(c) 报错末尾的提示语本身就指向了这个原因。
+r0/r1 当时能跑是因为那个 shell 照 §2b 第 2 步 export 过；这次是全新会话，环境变量
+不继承。TROUBLESHOOTING 已有该机制的完整条目（`data_root` 解析一节），不再重复。
+
+**V100 · Do this next（repo 根，同一个 shell 里连着跑）：**
+
+```bash
+# 1) 一行修复（README §2b 第 2 步原文；每个新 shell 都要）：
+export MVC_DATA_DIR=/home/vca1/datasets
+
+# 2) 10 秒自检（第 0 步；任何新 shell 开跑前都该先跑它，这次就能拦住）：
+python experiments/check_readiness.py     # internvid_zh_10k_pilot 应为 [OK ]
+
+# 3) 重跑 r3e 冒烟（debug 几十步自停）：
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r3e.py 8 debug True
+```
+
+**判读（(6)③ 的三条不变）：** 自停干净、日志里 `elastic_t` 在 2/4/8/16 间跳、
+无 OOM/NaN。三条都过 ⇒ C2 状态 🟡→✅（ROADMAP 2.1 关闭）。
+顺带：(6) 的 ①（`pytest tests/test_t_agnostic.py`，纯 CPU）与 ②（B0 多 T 曲线）
+仍待跑；② 用的评测集走的是文件软链不吃这个环境变量，check_readiness 会一并确认。
+
+**Then report back**（from-server.md）：check_readiness 那行输出；r3e 尾部几行
+（有没有 `elastic_t` 数值在跳）；①② 的输出。
+
+---
+
 ## 2026-07-24 (11) — 确认：pipeline-sample 全链唯一 LLM = 本机 Qwen3-VL-8B（#235 加固）
 
 **Diagnosis:** 维护者确认 V100 上唯一 LLM 是 Qwen3-VL-8B。已逐环节核对并加固（#235）：
