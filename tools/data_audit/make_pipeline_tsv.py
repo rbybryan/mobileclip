@@ -10,6 +10,9 @@ Joins (by video):
   --verified fuse_verify.py output        (optional; A_llm views + panel status)
   --derived  derive-output glob           (fallback when --verified absent:
                                            shows A_llm views as unverified)
+  --units    fuse_condense.py output      (optional; C_fuse voted units+dropped)
+  --fused    fuse_verify.py over condense (optional; C_fuse views + status)
+  --fused-raw condense-output glob        (fallback when --fused absent)
   --diag     recap_diag.py per-clip jsonl (optional; collapse metrics)
 
 Row = video | reasons | en_source | zh_translated | recap_1..5 (⟨sig⟩ appended
@@ -82,6 +85,13 @@ def main():
     ap.add_argument("--aprime", default=None)
     ap.add_argument("--verified", default=None)
     ap.add_argument("--derived", default=None)
+    ap.add_argument("--units", default=None,
+                    help="fuse_condense.py output (voted units + dropped)")
+    ap.add_argument("--fused", default=None,
+                    help="fuse_verify.py output over the C_fuse condensed views")
+    ap.add_argument("--fused-raw", default=None,
+                    help="raw condense output (fallback when --fused absent: "
+                         "shows C_fuse views as unverified)")
     ap.add_argument("--diag", default=None)
     ap.add_argument("--top-k", type=int, default=3, help="A- keeps top-k recaps")
     ap.add_argument("--limit", type=int, default=0)
@@ -106,18 +116,24 @@ def main():
     aprime = load_jsonl(args.aprime)
     verified = load_jsonl(args.verified)
     derived = load_jsonl(args.derived)
+    units = load_jsonl(args.units)
+    fusedv = load_jsonl(args.fused)
+    fused_raw = load_jsonl(args.fused_raw)
     diag = load_jsonl(args.diag)
 
     header = ["video", "bucket_reasons", "en_source", "zh_translated",
               *[f"recap_{i + 1}" for i in range(5)], "A_minus_keep",
               "views_A_prime", "views_pass", "views_unverified", "views_fail",
-              "jaccard_med", "ident_pairs", "flags"]
+              "fuse_units", "fuse_dropped", "fuse_pass", "fuse_unverified",
+              "fuse_fail", "jaccard_med", "ident_pairs", "flags"]
 
     SHEET_Q = ["重述质量[重述更好/差不多/旧译更好]",
-               "被滤视图判读[真幻觉/误杀/无被滤]", "note"]
+               "被滤视图判读[真幻觉/误杀/无被滤]",
+               "浓缩vs逐条[浓缩更好/差不多/逐条更好]", "note"]
     sheet_hdr = (["video", "video_path", "旗标", "A−保留", "英文en", "原zh"]
                  + [f"重述{i + 1}" for i in range(5)]
-                 + ["A′视图", "✓视图", "·视图", "✗视图"] + SHEET_Q)
+                 + ["A′视图", "✓视图", "·视图", "✗视图",
+                    "投票单元", "淘汰单元", "✓浓缩", "·浓缩", "✗浓缩"] + SHEET_Q)
     sheet_rows = []
 
     n_rows = 0
@@ -164,6 +180,25 @@ def main():
             fails = SEP.join(
                 fmt(v) + "[" + "+".join(sorted(v.get("checks") or {})) + "]"
                 for v in vviews if v.get("status") == "fail")
+            # C_fuse: voted units (with support counts) + condensed views
+            urec = units.get(vid) or {}
+            fb = " ⚠保底" if urec.get("fallback") else ""
+            u_kept = SEP.join(f"{flat(u.get('text'))}({u.get('support')})"
+                              for u in (urec.get("units") or [])) + fb
+            u_drop = SEP.join(f"{flat(u.get('text'))}({u.get('support')})"
+                              for u in (urec.get("dropped") or []))
+            frec = fusedv.get(vid) or {}
+            fviews = frec.get("views")
+            if fviews is None:
+                fviews = [{**v, "status": "unverified", "checks": {}}
+                          for v in ((fused_raw.get(vid, {}).get("verdict") or {})
+                                    .get("views") or [])]
+            f_pass = SEP.join(fmt(v) for v in fviews if v.get("status") == "pass")
+            f_unv = SEP.join(fmt(v) for v in fviews
+                             if v.get("status") == "unverified")
+            f_fail = SEP.join(
+                fmt(v) + "[" + "+".join(sorted(v.get("checks") or {})) + "]"
+                for v in fviews if v.get("status") == "fail")
             drec = diag.get(vid, {})
             jmed = drec.get("jaccard_med")
             flags = []
@@ -178,6 +213,7 @@ def main():
                    *cap_cols, keep,
                    SEP.join((aprime.get(vid, {}).get("views")) or []),
                    passes, unv, fails,
+                   u_kept, u_drop, f_pass, f_unv, f_fail,
                    f"{jmed:.3f}" if isinstance(jmed, (int, float)) else "",
                    str(drec.get("n_identical_pairs", "")),
                    "|".join(flags)]
@@ -198,7 +234,9 @@ def main():
                      flat(task.get("zh_old") or task.get("zh")),
                      *recap_cells,
                      SEP.join((aprime.get(vid, {}).get("views")) or []),
-                     passes, unv, fails] + [""] * len(SHEET_Q))
+                     passes, unv, fails,
+                     u_kept, u_drop, f_pass, f_unv, f_fail]
+                    + [""] * len(SHEET_Q))
             n_rows += 1
             if args.limit and n_rows >= args.limit:
                 break
@@ -211,7 +249,7 @@ def main():
               f"(feed to make_review_bundle.py)")
     print(f"[done] {n_rows} rows -> {args.output}")
     print("列: video|理由|en源|zh译|5重述(⟨SigLIP分⟩)|A−保留|A′句切|"
-          "✓过验真|·未验|✗被滤[验真器]|多样性|旗标")
+          "✓过验真|·未验|✗被滤[验真器]|投票单元(票)|淘汰单元|✓/·/✗浓缩|多样性|旗标")
 
 
 if __name__ == "__main__":

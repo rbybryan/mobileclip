@@ -104,9 +104,9 @@ addEventListener("keydown",e=>{if(e.key==="n"&&!/INPUT|TEXTAREA/.test(e.target.t
 const app=document.getElementById("app");
 ROWS.forEach((r,i)=>{
   const d=document.createElement("div");d.className="card";d.id="c"+i;
-  const CAPRE=/^(原zh|候选\\d|英文en|融合稿|重述\\d|A′视图|✓视图|·视图|✗视图)$/;
+  const CAPRE=/^(原zh|候选\\d|英文en|融合稿|重述\\d|A′视图|✓视图|·视图|✗视图|投票单元|淘汰单元|✓浓缩|·浓缩|✗浓缩)$/;
   const caps=COLS.filter(c=>CAPRE.test(c)&&r[c])
-    .map(c=>`<div class="cap ${c==="原zh"?"orig":(c==="融合稿"||c[0]==="✓")?"fused":c[0]==="✗"?"filt":""}"><span class="lbl">${c}</span>${r[c]}</div>`).join("");
+    .map(c=>`<div class="cap ${c==="原zh"?"orig":(c==="融合稿"||c[0]==="✓")?"fused":(c[0]==="✗"||c==="淘汰单元")?"filt":""}"><span class="lbl">${c}</span>${r[c]}</div>`).join("");
   const other=COLS.filter(c=>!CAPRE.test(c)&&!/^(video|video_path)$/.test(c)&&r[c])
     .map(c=>`${c}=<b>${r[c]}</b>`).join(" · ");
   const qs=QS.map(q=>q.opts.length
