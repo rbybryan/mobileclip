@@ -120,12 +120,17 @@ bigger pool cannot help).
 
 ## 5. Cheapest first experiment — zero training, zero GPU, and it also de-risks §1/§3
 
+> **Runnable now:** `experiments/r1_fn_density.py` (self-tested; `caption_to_idx` verified byte-identical to the repo). Part A (exact-duplicate density) needs only the anno JSONs — commands in `COMMANDS.md` §3.2. Part B (embedding near-duplicate density) consumes a precomputed text-feature `.npy`; `--help-feats` prints the generator snippet.
+
 Before building the bank, one offline measurement sizes both the opportunity and the risk, and
 it is only possible **because** the text space is static (so it doubles as a smoke-test of the
 exact-bank premise):
 
-> Encode a large InternVid caption sample once with the frozen text tower (pre-projection),
-> and measure the **false-negative / near-duplicate density** at several cosine thresholds.
+> Encode a large InternVid caption sample once with the frozen text tower and measure the
+> **false-negative / near-duplicate density** at several cosine thresholds. Measure in the
+> **projected, normalized** space — that is the space the loss compares captions in
+> (`sim = v @ text_proj.T`), so it is where "the loss can't tell two captions apart" is defined.
+> (Pre-projection matters only for *bank exactness* per §0, not for this density measurement.)
 
 It answers three things at once:
 - **Opportunity (§4):** how many *distinct* captions exist ⇒ how many genuinely-hard negatives
