@@ -350,6 +350,58 @@ python experiments/r1_fn_density.py --anno anno_downstream/InternVid/InternVid-1
 
 ---
 
+### 3.4 选帧基线 — C2 必须打赢的那条平凡基线(零训练,V100 一晚)
+
+**为什么现在做**:GATE-0 实测**帧的多样性值 ~13 个 R@1、帧的顺序值 ~0**
+(`experiments/gate0_results.md`),而 1.6 的多 T 曲线显示 T=2 相对 T=8 掉 5.1 个
+t2v R@1。两件事合起来说明:低帧预算下「挑哪几帧」可能很要紧,而**从来没量过**。
+C2 的卖点是"弹性 T 在低 T 优于固定 T",审稿人必然会问有没有跟"零训练、只是把帧
+挑得聪明一点"比过 —— 现在这张对照表不存在。跑完就存在了。
+
+⚠️ 评测,按 README §3.0 双根规则必须先 `unset MVC_DATA_DIR`;脚本内部也会 unset,
+并在检测到 `MVC_FRAME_PERTURB` 已设置时**拒绝执行**(两个效应混在一起读不出来)。
+
+```bash
+unset MVC_DATA_DIR
+python experiments/check_readiness.py            # msrvtt 应为 [OK ]
+python -m pytest tests/test_frame_select.py -v   # 34 项;先在本机确认钩子行为
+
+# 9 个臂,单卡串行。已有 eval_res.json 的臂自动跳过 ⇒ 中断后重跑即可续跑
+CUDA_VISIBLE_DEVICES=0 bash experiments/run_frame_select.sh \
+    small msrvtt ./checkpoints/mobileviclip_small.pt \
+    experiments/evals/frame_select
+
+python experiments/collect_frame_select.py --root experiments/evals/frame_select
+```
+
+先 `FS_DRY_RUN=1 bash experiments/run_frame_select.sh` 看一眼要跑哪 9 个臂。
+
+| 臂 | 帧从哪来 | 作用 |
+|---|---|---|
+| `pool16` | 整段 middle 采 16 帧,不选 | 复现 1.6 的 T=16 ⇒ 兼作"钩子未开=零操作"的验证 |
+| `nativeT2` / `nativeT4` | 整段 middle 采 K 帧,不选 | 复现 1.6 的 T=2/T=4;与 `seluniform` 的差别只在**采样支撑** |
+| `seluniform_K*` | 16 帧母序列里均匀取 K | **受控基线**,与 C2 训练切片口径逐位一致 |
+| `seldivmax_K*` | 16 帧里贪心 k-center 选 K | **候选方案**,只用降采样像素打分、不过编码器 ⇒ 可部署 |
+| `selrandom_K*` | 16 帧里确定性随机取 K | **地板**;uniform 若赢不过它,该 K 上选帧问题不存在 |
+
+三条读法(汇总脚本会自动打出来):
+
+1. **先看地板**。`uniform` 打不过 `random` ⇒ 在这个 K 上"挑哪几帧"不构成问题,
+   `divmax` 的任何差值都别当真。
+2. **判据钉在 t2v R@1、两口径同向、|Δ| ≥ 1.6**。1.6 是 1K 测试集的二项抽样误差
+   (与 GATE-0 判 `reverse` 为噪声同一条带);`r_mean` 只当描述性数字,**不要**给它
+   套 R@1 的阈值。
+3. **功效上限**:1K 测试集只看得到 ≥1.6 R@1 的效应。若差值在 1 个点上下,本实验
+   **判不了**,要换 MSR-VTT 全量 3k / DiDeMo / ANet ——「没测出来」不等于「没有效应」。
+
+结果落档到 `experiments/frame_select_results.md`(模板已在,含判读栏)。
+
+**成本诚实性(报结果时必须写)**:`divmax` 不过编码器,所以是同成本对照;用编码器
+特征选帧要先把 16 帧全编码一遍,等于把想省的算力先花掉,**只能当上界报**。特征空间
+上界若要做,走离线预计算下标的路子,别塞进数据集钩子。
+
+---
+
 
 ## 4. Training (pretraining)
 

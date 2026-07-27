@@ -130,6 +130,23 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       **未完成**:SSv2-MC 四个扰动全崩于 `FileNotFoundError: anno_downstream/ssv2_mc_val.json`
       —— **数据缺失**(B0 当初也只锁了 msrvtt/hmdb51/ucf101/k400),不是代码问题。
       (a) 静态审计、(c) RTime、(d) 种子复现 仍未做。
+- [ ] **1.8 选帧基线(零训练;命令见 `COMMANDS.md` §3.4;代码已合入)** ——
+      **C2 必须打赢的那条平凡基线**,由 GATE-0 的结果直接逼出来:帧的**多样性
+      值 ~13 个 R@1、顺序值 ~0**,而 1.6 显示 T=2 相对 T=8 掉 **5.1 个 t2v R@1**。
+      ⇒ 低帧预算下"喂哪几帧"理应很要紧,而这一点**从未量过**。
+      C2 的卖点是"弹性 T 在低 T 优于固定 T",审稿人必然会问有没有跟"零训练、
+      只是把帧挑得聪明一点"比过 —— 这张对照表现在不存在。
+      **9 个臂**(K∈{2,4} × {uniform 受控基线 / divmax 候选 / random 地板}
+      + pool16 与 nativeT2/T4 三个参照),单卡串行、可续跑:
+      `bash experiments/run_frame_select.sh` → `python experiments/collect_frame_select.py`。
+      **判据先写死**:t2v R@1、两口径同向、|Δ| ≥ 1.6(1K 测试集的二项抽样误差,
+      与 GATE-0 判 `reverse` 同一条带);`r_mean` 只当描述性数字。**先看地板** ——
+      uniform 打不过 random 就说明该 K 上选帧问题不存在。
+      **两种结果都有用**:补回缺口一大块 ⇒ C2 净增益要扣掉这块再报;补不回来
+      ⇒ C2 故事更硬且多一张必需的对照表。
+      落档模板 [`experiments/frame_select_results.md`](frame_select_results.md)。
+      **定位**:C2 的对照臂,**不是新贡献线** —— paper-plan 已判 whitespace §4
+      被 C2 吸收、round-2 §4 已判"任何新的 token 合并/剪枝/选择"赛道关闭。
 
 ## 第二线:代码开发(不依赖数据,随时推进)
 
@@ -213,10 +230,18 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | B0 多 T 曲线(U2/1.6) | ✅ | 2026-07-24 实测:emb r_mean 55.4/60.0/61.6/62.3 @ T=2/4/8/16;T8-DSL t2v=42.5 复现 B0 锚点(2.1 零回归);T16 免训练反超;表在 1.6 + from-claude (18) |
 | 顺序敏感基准(RTime/SSv2) | ⏸ **暂缓** | GATE-0 三条证据都说模型没有方向信息 ⇒ **不买**(省掉一整轮视频抓取)。只有要证 R2 的**下游收益**时才回收。见 [`notes/order-sensitive-eval.md`](../notes/order-sensitive-eval.md) |
 | **GATE-0 时间维容量审计** | ✅ | **已结案**:三条独立证据(行为 shuffle≈0 / 核反对称 0.5011=随机 null / 时序闸门仅空间的 6.1% 且同初值)一致 ⇒ 模型不编码时间方向。见 [`experiments/gate0_results.md`](gate0_results.md) §8 |
+| **选帧基线(C2 的平凡对照)** | 🟡 | 代码+34 项单测已合入,**9 个臂待在 V100 上跑**;由 GATE-0 逼出(多样性 13 分/顺序 0 分 + 1.6 的 T=2 缺口 5.1 分)。命令 `COMMANDS.md` §3.4,落档 [`frame_select_results.md`](frame_select_results.md) |
 | ~~GATE-0(旧状态)~~ | 🟡 | MSR-VTT 半边 ✅ 结案(**shuffle 不掉分、freeze 掉 13 点** ⇒ 顺序值≈0、帧多样性值 13);SSv2-MC 半边被**数据缺失**卡住。见 [`experiments/gate0_results.md`](gate0_results.md) |
 | 脑启发第二轮(F1–F4 + R1/R2/R3) | ✅ | `notes/neural-inspired-round2.md`(中文全文 `notes/neural-inspired-round2_zh.md`);四份独立评审收敛,含对第一轮 A1/B1 的修正 |
 
 ## 进展日志(实时,倒序;每个会话在此加一行,格式:日期:事件(出处))
+
+- 2026-07-27:**选帧基线代码合入,1.8 开条(待跑)**:GATE-0 的"多样性值 13 个 R@1/顺序值 0"
+  直接逼出一条 C2 必须打赢的平凡基线 —— 零训练、从 16 帧母序列里选 K 帧、模型真跑 K 帧
+  (同成本)。`utils/frame_select.py`(uniform/divmax/random 三模式,divmax 只用降采样像素
+  打分不过编码器 ⇒ 可部署)+ `dataset/base_dataset.py` 环境变量钩子(未设=返回同一对象)
+  + `experiments/run_frame_select.sh`(9 臂、可续跑)+ `collect_frame_select.py`(判据钉死
+  在 t2v R@1、两口径同向、±1.6 二项带;r_mean 仅描述)+ 34 项单测。命令 `COMMANDS.md` §3.4
 
 - 2026-07-24:**GATE-0 结案 ✅**(`experiments/gate0_results.md` §8):三条独立证据一致 ——
   ①行为 打乱8帧 +0.1/+0.2(≈0)、单帧重复 −13;②核形状 反对称占比 0.5011 vs 随机 null 0.4999

@@ -61,6 +61,54 @@ def maybe_perturb_frames(frames, index=0):
     )
 
 
+# --------------------------------------------------------------------------
+# 选帧基线(情形 B):从已解码的 T 帧母序列里挑 K 帧,模型真正只跑 K 帧
+# ⇒ 与 num_frames_test=K 成本一致,可同台比较。默认关闭 = 逐位等价基线。
+#
+#   MVC_FRAME_SELECT    uniform | divmax | random | none(未设=none)
+#   MVC_FRAME_SELECT_K  选几帧(必填;>= T 时不切片)
+#   MVC_FRAME_SELECT_SEED  random 模式的种子(默认 0)
+#
+# 动机、成本诚实性与判读见 utils/frame_select.py 顶部与
+# experiments/frame_select_results.md。⚠️ 只在评测时设置,不要在训练时打开。
+# --------------------------------------------------------------------------
+_SELECT_WARNED = False
+
+
+def maybe_select_frames(frames, index=0):
+    """选帧(默认 no-op)。frames: [T, C, H, W] -> [K, C, H, W]。"""
+    mode = os.environ.get("MVC_FRAME_SELECT", "").strip().lower()
+    if not mode or mode == "none":
+        return frames
+
+    raw_k = os.environ.get("MVC_FRAME_SELECT_K", "").strip()
+    if not raw_k:
+        raise ValueError("设了 MVC_FRAME_SELECT 就必须同时设 MVC_FRAME_SELECT_K")
+
+    from utils.frame_select import select_indices
+
+    idx = select_indices(
+        mode,
+        total=frames.shape[0],
+        k=int(raw_k),
+        frames=frames,
+        index=index,
+        seed=int(os.environ.get("MVC_FRAME_SELECT_SEED", 0)),
+    )
+
+    global _SELECT_WARNED
+    if not _SELECT_WARNED:
+        logger.warning(
+            "MVC_FRAME_SELECT=%s K=%s —— 正在从 %d 帧里选帧(选帧基线实验)。"
+            "训练时绝不应出现这一行。%s",
+            mode, raw_k, frames.shape[0],
+            "" if idx is not None else " 本次 K>=T,不切片。",
+        )
+        _SELECT_WARNED = True
+
+    return frames if idx is None else frames[idx]
+
+
 class BaseDataset(Dataset):
     """Base class that implements the image and video loading methods"""
 
@@ -158,5 +206,8 @@ class BaseDataset(Dataset):
         frames = self.transform(frames)
         # GATE-0 审计开关;未设 MVC_FRAME_PERTURB 时是纯 no-op(返回同一对象)
         frames = maybe_perturb_frames(frames, index)
+        # 选帧基线开关;未设 MVC_FRAME_SELECT 时是纯 no-op(返回同一对象)
+        # 放在扰动之后:扰动是诊断、选帧是候选方案,两者正交且不应同时开
+        frames = maybe_select_frames(frames, index)
         return frames, index
 
