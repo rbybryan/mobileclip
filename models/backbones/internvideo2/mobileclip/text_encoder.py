@@ -176,6 +176,7 @@ class TextTransformer(nn.Module):
         text_tokens: Tensor,
         key_padding_mask: Optional[Tensor] = None,
         return_all_tokens: bool = False,
+        return_pre_proj: bool = False,
         *args,
         **kwargs
     ) -> Tensor:
@@ -187,6 +188,9 @@ class TextTransformer(nn.Module):
                 Shape: [batch_size, context_length]
             return_all_tokens: a boolean flag to return all tokens, defaults to False
                 to return only EOT token embedding.
+            return_pre_proj: return the EOT-pooled feature *before* `@ projection_layer`
+                (the exact input the R1 text bank caches, so it can re-project each step
+                with the current projection; notes/r1-implementation-plan.md §2/§7.6).
         Returns:
             A tensor of [batch_size, context_length, hidden_dim] if return_all_tokens is
             True, otherwise a tensor of [batch_size, hidden_dim].
@@ -221,6 +225,9 @@ class TextTransformer(nn.Module):
         token_emb = token_emb[
             torch.arange(text_tokens.shape[0]), text_tokens.argmax(dim=-1)
         ]
+
+        if return_pre_proj:
+            return token_emb
 
         token_emb = token_emb @ self.projection_layer
         return token_emb
