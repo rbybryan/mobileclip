@@ -7,7 +7,16 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
                                 "tools", "data_audit"))
 from vlm_audit import (CONDENSE_PROMPT, DERIVE_PROMPT,  # noqa: E402
-                      RECAP_PROMPT, STRUCT_KEYS, STRUCT_RECAP_PROMPT)
+                      FUSE_DIRECT_KEYS, FUSE_DIRECT_PROMPT, RECAP_PROMPT,
+                      STRUCT_KEYS, STRUCT_RECAP_PROMPT)
+
+
+def test_fuse_direct_prompt_formats_cleanly():
+    # .format-consumed: doubled braces + exactly the {n}/{recaps} slots
+    assert FUSE_DIRECT_KEYS == {"views"}
+    filled = FUSE_DIRECT_PROMPT.format(n=3, recaps="描述1：x")
+    assert '"views"' in filled and '"dropped"' in filled
+    assert "{" + "n}" not in filled  # no unfilled placeholder survives
 
 
 def test_struct_prompt_is_raw_with_single_braces():

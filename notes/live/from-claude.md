@@ -23,6 +23,28 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-27 (39) — 浓缩改「LLM 直接融合」一步到位(§5.7, 新默认 FUSE_IMPL=direct)
+
+**指令已落地**:让 LLM 直接读 3/5 遍独立重述,一次调用完成「语义数票(≥2 遍支持才写)+
+压缩成 2-5 条 ≤28 字短句」,参考 ASID(arXiv 2602.13013)的 Verify-refine 思路。
+**为什么更好**:规则聚类是实测最弱一环(34/50 片投不出跨遍匹配——中文改写字面重叠太低),
+语义等价判断恰是 LLM 强项。**守住的底线**:融合输入仍是 N 遍**独立**重述(投票前提不变);
+模型必须**自报 dropped**(被排除的单源细节,落盘可查);规则投票降为诊断列继续跑(与自报
+dropped 对照);GDINO/OCR 验真照旧是硬性后置门(防融合时新增幻觉)。
+
+```bash
+git pull origin main
+rm -f outputs/audit_10k/pipe_fused*.jsonl outputs/audit_10k/pipe_st_fused*.jsonl  # 换融合实现必清
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare   # A/B 两臂自动都用新融合
+tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
+# 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/compare.tgz . && tar xzf compare.tgz
+# 只跑单臂: N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample (A) 或 RECAP_STYLE=struct ... (B)
+# 回退旧两段式: FUSE_IMPL=vote 重跑(同样先 rm)
+```
+
+**Then report back** in from-server.md: A浓缩/B浓缩 目检感受 + 随手抽一片看
+`outputs/audit_10k/pipe_fused.0.jsonl` 里 `verdict.dropped` 的自报淘汰是否合理。
+
 ## 2026-07-27 (38) — R1 池代码已落地(2.4c):建缓存 + 跑 A/B 一条龙
 
 **GO 之后的池代码写完并推上来了,默认关=逐位不变。** 改动:`models/criterions.py`(池损失

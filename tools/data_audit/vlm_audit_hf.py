@@ -36,10 +36,11 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vlm_audit import (CONDENSE_KEYS, CONDENSE_PROMPT, DERIVE_KEYS,  # noqa: E402
-                       DERIVE_PROMPT, GRAN_KEYS, GRAN_PROMPT, MERGE_KEYS,
-                       MERGE_PROMPT, PROMPT, RECAP_PROMPT, STRUCT_KEYS,
-                       STRUCT_RECAP_PROMPT, TRANS_KEYS, TRANS_PROMPT,
-                       VERDICT_KEYS, extract_json, resolve_video_path)
+                       DERIVE_PROMPT, FUSE_DIRECT_KEYS, FUSE_DIRECT_PROMPT,
+                       GRAN_KEYS, GRAN_PROMPT, MERGE_KEYS, MERGE_PROMPT,
+                       PROMPT, RECAP_PROMPT, STRUCT_KEYS, STRUCT_RECAP_PROMPT,
+                       TRANS_KEYS, TRANS_PROMPT, VERDICT_KEYS, extract_json,
+                       resolve_video_path)
 
 
 def sample_frames_pil(path, num_frames, max_side, phase=0.5):
@@ -140,7 +141,8 @@ def main():
                          "variance for the temperature ablation (§6.4).")
     ap.add_argument("--mode", default="full",
                     choices=["full", "trans", "gran", "merge", "recap",
-                             "recap-struct", "derive", "condense"],
+                             "recap-struct", "derive", "condense",
+                             "fuse-direct"],
                     help="'full' = combined video rubric (default). 'recap' = write "
                          "N independent Chinese captions FROM the frames (RECAPTION "
                          "bucket front-end for the fusion scheme; RECAP_PROMPT, "
@@ -402,6 +404,60 @@ def main():
                                           "gloss": gloss, "src_recap": "fuse"})
                     out["verdict"] = {"views": views, "n_views": len(views),
                                       "n_units": len(units)}
+                elif args.mode == "fuse-direct":
+                    # §5.7 direct LLM fusion (ASID-Verify-style refine, arXiv
+                    # 2602.13013): ONE text-only greedy call reads the N
+                    # independent recaptions and does semantic vote + condense
+                    # in a single step. The LLM judges "same fact" far better
+                    # than n-gram clustering (measured: 34/50 no-match), at the
+                    # price of an unauditable vote -- so it must self-report
+                    # dropped single-source details, the rule vote stays as a
+                    # diagnostic, and Panel-V remains the backstop.
+                    recaps = [c for c in ((rec.get("verdict") or {})
+                                          .get("recaps") or [])
+                              if isinstance(c, str) and c.strip()]
+                    if not recaps:
+                        out["verdict"] = {"views": [], "n_recaps": 0,
+                                          "skipped": "no_recaps"}
+                        fout.write(json.dumps(out, ensure_ascii=False) + "\n")
+                        fout.flush(); n_done += 1
+                        continue
+                    rlist = "\n".join(f"描述{i + 1}：{c.strip()}"
+                                      for i, c in enumerate(recaps))
+                    prompt = FUSE_DIRECT_PROMPT.format(n=len(recaps),
+                                                       recaps=rlist)
+                    obj = None
+                    try:
+                        text = generate(model, processor, [], prompt,
+                                        args.max_new_tokens)
+                        obj = extract_json(text, FUSE_DIRECT_KEYS)
+                    except (ValueError, torch.cuda.OutOfMemoryError) as ex:
+                        if isinstance(ex, torch.cuda.OutOfMemoryError):
+                            torch.cuda.empty_cache()
+                        try:  # one retry with mild sampling
+                            text = generate(model, processor, [], prompt,
+                                            args.max_new_tokens,
+                                            temperature=0.3)
+                            obj = extract_json(text, FUSE_DIRECT_KEYS)
+                        except Exception:  # noqa: BLE001
+                            obj = None
+                    views, seen = [], set()
+                    for v in (obj or {}).get("views") or []:
+                        if isinstance(v, dict) and isinstance(v.get("text"),
+                                                              str) \
+                                and v["text"].strip() \
+                                and v["text"].strip() not in seen:
+                            seen.add(v["text"].strip())
+                            gloss = [g.strip().lower()
+                                     for g in (v.get("gloss") or [])
+                                     if isinstance(g, str) and g.strip()]
+                            views.append({"text": v["text"].strip(),
+                                          "gloss": gloss, "src_recap": "fuse"})
+                    dropped = [d.strip() for d in (obj or {}).get("dropped")
+                               or [] if isinstance(d, str) and d.strip()]
+                    out["verdict"] = {"views": views, "dropped": dropped,
+                                      "n_views": len(views),
+                                      "n_recaps": len(recaps)}
                 elif args.mode == "merge":
                     # 合并 better_zh 的多条候选（在 s2_verdicts 里）为一条。纯文本。
                     cands = [c for c in ((rec.get("verdict") or {}).get("better_zh")
@@ -438,7 +494,7 @@ def main():
                                            en=(rec.get("en") or "(无)"),
                                            zh=(rec.get("zh") or "(空)"))
                 if args.mode not in ("recap", "recap-struct", "derive",
-                                     "condense"):  # these built their verdict above
+                                     "condense", "fuse-direct"):  # these built their verdict above
                     try:
                         text = generate(model, processor, frames, prompt,
                                         args.max_new_tokens)
