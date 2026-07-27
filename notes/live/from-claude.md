@@ -23,6 +23,27 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (27) — 派生步 OOM：GPU0 被占（16.6GB 外部进程），已改为自动选空卡
+
+**Diagnosis:** 你的 pipeline-sample 在步② 装 Qwen3-VL-8B 时 OOM——不是代码错：GPU0 上有个
+16.63 GiB 的外部进程（PID 922896，多半是并行实验），而单卡步骤默认钉死 `PIPE_GPU=0`；
+8B fp16 装载需 ~19GB，只剩 13.9GB。已修（本块随附 PR）：`PIPE_GPU` 未指定时**自动选剩余
+显存最大的卡**，全卡都 <19GB 时会明确报错并提示等待/指定。tar 失败只是链条中断的连带
+（bundle 没生成），修复后重跑即得。
+
+**Do this next（101vector）：**
+```bash
+git pull origin main
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample   # 会打印 [gpu] 选了哪张卡
+tar czf outputs/audit_10k/pipeline.tgz -C outputs/audit_10k bundle_pipeline
+```
+（不想 pull 的立即绕法：`nvidia-smi` 挑张空卡，`PIPE_GPU=<卡号> N_SAMPLE=50 bash … pipeline-sample`。）
+本地取回同 (26)：`scp rby@101vector:~/mobileclip/outputs/audit_10k/pipeline.tgz . && tar xzf pipeline.tgz`
+
+**Then report back** 同 (26)：页头「视频 X/50」、重述 vs 旧译的判感、红✗ 视图真幻觉还是误杀。
+
+---
+
 ## 2026-07-24 (26) — 目检改成 better_zh 同款评审包：index.html + 视频 + 打分单选（取代 (24) 的单文件 HTML）
 
 **Diagnosis:** 应维护者要求，pipeline 目检改用与 better_zh/merge 抽检完全同款的离线评审包

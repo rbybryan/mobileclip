@@ -571,7 +571,21 @@ recap-tsv)
 # 旋钮: N_SAMPLE=50  PIPE_GPU=0  PIPE_VERIFIERS=gdino,ocr  GDINO_MODEL=...
 pipeline-sample)
   need_clips; need_py
-  N_SAMPLE=${N_SAMPLE:-50}; PIPE_GPU=${PIPE_GPU:-0}
+  N_SAMPLE=${N_SAMPLE:-50}
+  # 单卡步骤(派生/打分/验真)的卡: 未指定时自动选剩余显存最大的卡——盒子常有并行任务占卡,
+  # 钉死 GPU0 会像 2026-07-24 那样在装载 8B fp16(~19GB)时 OOM
+  if [ -z "${PIPE_GPU:-}" ]; then
+    PIPE_GPU=$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits 2>/dev/null \
+      | sort -t, -k2 -nr | head -1 | cut -d, -f1 | tr -d ' ')
+    PIPE_GPU=${PIPE_GPU:-0}
+    FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits -i "$PIPE_GPU" 2>/dev/null | tr -d ' ')
+    echo "[gpu] PIPE_GPU 未指定 → 自动选最空的卡: GPU$PIPE_GPU（剩余 ${FREE:-?} MiB）"
+    if [ -n "${FREE:-}" ] && [ "$FREE" -lt 19000 ]; then
+      echo "❌ 最空的卡也只有 ${FREE} MiB——Qwen3-VL-8B fp16 装载需 ~19GB。"
+      echo "   nvidia-smi 看谁在占卡；等其退出，或显式指定: PIPE_GPU=<卡号> bash $0 pipeline-sample"
+      exit 1
+    fi
+  fi
   QUEUE=${RECAP_INPUT:-$OUT/v0_2/recaption_tasks.jsonl}
   [ -f "$QUEUE" ] || { echo "缺队列 $QUEUE —— 两条命令补齐（均为 CPU 秒级）：
   TARGET_PRECISION=0.3 bash $0 s3   # 重算分桶（0.8 版作废——audit 结论 15；重跑保险）
