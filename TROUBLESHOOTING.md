@@ -2172,3 +2172,54 @@ python experiments/check_readiness.py --decode 2>&1 | grep -i msrvtt   # 期望 
 
 拿这条路径和 `ls` 出来的真实位置逐层比，差哪层补哪层。剩下 6 个评测基准接线时
 （`experiments/SETUP_B100.md` §4b）**先跑一遍这个字段检查**，别照抄 MSR-VTT 的接法。
+
+---
+
+## 冒烟 CUDA OOM——共用机上别人占了卡（不是模型太大）
+
+### Symptom
+
+2 卡冒烟一路全过——导入、`scripts` 包、配置、InternVid 解码进 forward、MSR-VTT anno 载入、
+双塔载入、bf16、优化器、dataloader、`Start training / Epoch: 0` 全到位——然后第一个训练步
+`torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 320.00 MiB`。
+2026-07-27 b100 上 `CUDA_VISIBLE_DEVICES=0,1` 就是这样。
+
+### Cause
+
+**看报错里的 per-process 内存分解,别只看 "out of memory"。** 那次是:
+
+```
+GPU 1 ... 26.62 MiB is free. Process 266057 has 70.38 GiB memory in use. Process 406330 has 8.75 GiB ...
+GPU 0 ... 21.06 MiB is free. Process 265325 has 69.30 GiB memory in use. Process 406329 has 9.07 GiB ...
+```
+
+`266057 / 265325` 是**别人的**进程,各占 ~70GB;我们的进程(`4063xx`)才占 ~9GB。
+H100 单卡 80GB,被别人吃掉 70,只剩 ~9GB,我们的模型加载到 9GB 再要 320MB 就爆了。
+**MobileViCLIP-small 本身很小(~9GB@bs64),换两张空卡就能打印 loss。** 这不是配置问题。
+
+判据:
+- 报错里**别人的 PID 占大头** → 卡被占,换卡(下方 Fix),别动 batch。
+- 只有**我们自己的进程**且接近满卡 → 才是真的模型/batch 太大,那时才考虑降 batch /
+  开 `gradient_checkpointing` / `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`。
+
+### Fix
+
+选两张真空闲的卡(`free>70000 MiB`),把 `CUDA_VISIBLE_DEVICES` 换成它们:
+
+```bash
+nvidia-smi --query-gpu=index,memory.free,memory.used,utilization.gpu \
+    --format=csv,noheader,nounits | \
+  awk -F', ' '{printf "GPU %s  free=%6s MiB  used=%6s MiB  util=%s%%  %s\n",
+               $1,$2,$3,$4,($2>70000?"空闲✅":"占用⛔")}'
+# 然后 CUDA_VISIBLE_DEVICES=<两张✅的卡号> 重跑冒烟(experiments/SETUP_B100.md §6 步骤 1)
+```
+
+⚠️ **共用机纪律**:只挑空卡,**不要**去 kill 占卡的进程(那是别人的,§0 标准规则)。
+前 4 张若被占,是和维护者/中文线协调的事(等空 / 换空卡),不是自己顺手开满 8 张。
+
+### 顺带:这两条冒烟日志是正常的
+
+- `_IncompatibleKeys(missing_keys=[... token_mixer.mixer_1d ..., ... temporal_embedding ...])`
+  —— 视频专用时序参数,图像底座 `mobileclip_s2.pt` 里没有,按设计新初始化;看 `unexpected_keys=[]`。
+- `No pretrained checkpoint provided, training from scratch` —— 指没有整模型续训 ckpt;
+  双塔已从 `mobileclip_s2.pt` 载入(日志上方 `Load vision/text_encoder checkpoint`)。R0 本该如此。
