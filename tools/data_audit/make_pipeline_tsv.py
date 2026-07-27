@@ -127,13 +127,13 @@ def main():
               "fuse_units", "fuse_dropped", "fuse_pass", "fuse_unverified",
               "fuse_fail", "jaccard_med", "ident_pairs", "flags"]
 
+    # review sheet: maintainer directive 2026-07-27 -- show ONLY the decision
+    # chain (en source / old zh / 5 recaps / final condensed views); the full
+    # per-stage panorama stays in --output for analysis
     SHEET_Q = ["重述质量[重述更好/差不多/旧译更好]",
-               "被滤视图判读[真幻觉/误杀/无被滤]",
-               "浓缩vs逐条[浓缩更好/差不多/逐条更好]", "note"]
-    sheet_hdr = (["video", "video_path", "旗标", "A−保留", "英文en", "原zh"]
-                 + [f"重述{i + 1}" for i in range(5)]
-                 + ["A′视图", "✓视图", "·视图", "✗视图",
-                    "投票单元", "淘汰单元", "✓浓缩", "·浓缩", "✗浓缩"] + SHEET_Q)
+               "浓缩质量[可直接用/信息不足/含幻觉]", "note"]
+    sheet_hdr = (["video", "video_path", "英文en", "原zh"]
+                 + [f"重述{i + 1}" for i in range(5)] + ["浓缩"] + SHEET_Q)
     sheet_rows = []
 
     n_rows = 0
@@ -226,16 +226,16 @@ def main():
                     if c and str(k + 1) in kept:
                         c += " ★A−"
                     recap_cells.append(c)
+                final_c = SEP.join(flat(v.get("text", "")) for v in fviews
+                                   if v.get("status") != "fail")
+                if urec.get("fallback"):
+                    final_c += " ⚠保底"
                 sheet_rows.append(
                     [flat(vid),
                      resolve(args.video_root or "", task, vid) if resolve else "",
-                     "|".join(flags), keep,
                      flat(task.get("en")),
                      flat(task.get("zh_old") or task.get("zh")),
-                     *recap_cells,
-                     SEP.join((aprime.get(vid, {}).get("views")) or []),
-                     passes, unv, fails,
-                     u_kept, u_drop, f_pass, f_unv, f_fail]
+                     *recap_cells, final_c]
                     + [""] * len(SHEET_Q))
             n_rows += 1
             if args.limit and n_rows >= args.limit:

@@ -4,10 +4,13 @@
 Master plan §5.5 (2026-07-27): instead of consuming per-recap views as-is,
 cluster the derived short views ACROSS the N independent recaptions of the same
 clip; a cluster's support = how many distinct recaps contributed a member.
-Units with support >= k (preregistered k*=3, §5.2) are "voted reliable" and go
-to the LLM condense call (vlm_audit_hf --mode condense) which packs them into
-2-4 dense <=28-char training views. Units below threshold are recorded as
-`dropped` -- the voting effect stays visible in the TSV.
+Units with support >= k (default 2 -- coverage-first per maintainer directive
+2026-07-27; the G2-binding k* stays a §5.2 question) are "voted reliable" and
+go to the LLM condense call (vlm_audit_hf --mode condense) which packs them
+into 2-5 dense <=28-char training views. Units below threshold are recorded as
+`dropped` -- the voting effect stays visible in the TSV. When NO unit clears
+the gate, the top-3 (not top-1) are kept and flagged `fallback`: losing real
+information is worse than admitting weakly-voted units.
 
 Pure python (no model): same-fact matching uses char-3-gram Jaccard, with an
 en_gloss overlap rescue for paraphrases that share detected objects but few
@@ -110,11 +113,24 @@ def cluster_views(views, jac_th=0.35, gloss_th=0.5, jac_lo=0.10,
         gloss = sorted({g for m in members for g in (m.get("gloss") or [])})
         units.append({"text": rep["text"], "support": support, "gloss": gloss,
                       "members": sorted({m["text"] for m in members})})
-    # tie-break by detectable-noun count before text: when the fallback keeps a
-    # single unit, a verifiable subject fact must beat an incidental detail
+    # tie-break by detectable-noun count before text: the fallback keeps the
+    # top units, so verifiable subject facts must beat incidental details
     units.sort(key=lambda u: (-u["support"], -len(u["members"]),
                               -len(u["gloss"]), u["text"]))
     return units
+
+
+def select_units(units, min_support, fallback_top=3):
+    """Vote gate + coverage-first fallback. Units clearing min_support pass;
+    if none do, keep the top fallback_top by sort order (support, breadth,
+    detectable-noun count) instead of a single one -- over-condensing loses
+    real information (maintainer directive 2026-07-27).
+
+    Returns (kept, fallback_flag)."""
+    kept = [u for u in units if u["support"] >= min_support]
+    if not kept and units:
+        return units[:fallback_top], True
+    return kept, False
 
 
 def iglob_lines(pattern):
@@ -154,9 +170,10 @@ def main():
                     help="optional score_alignment glob (tag=recap_i) -- picks "
                          "each unit's representative from the SigLIP-top recap")
     ap.add_argument("--output", required=True)
-    ap.add_argument("--min-support", type=int, default=3,
+    ap.add_argument("--min-support", type=int, default=2,
                     help="keep units seen in >= this many distinct recaps "
-                         "(preregistered k*=3, master plan §5.2)")
+                         "(default 2: coverage-first, maintainer 2026-07-27; "
+                         "the G2-binding k* stays a §5.2 question)")
     ap.add_argument("--jac-th", type=float, default=0.35,
                     help="3-gram Jaccard above which texts merge outright")
     ap.add_argument("--gloss-th", type=float, default=0.5,
@@ -177,12 +194,8 @@ def main():
             views = (rec.get("verdict") or {}).get("views") or []
             units = cluster_views(views, args.jac_th, args.gloss_th,
                                   args.jac_lo, best_recap=best.get(vid))
-            kept = [u for u in units if u["support"] >= args.min_support]
-            fallback = False
-            if not kept and units:
-                # 保底回退 (mirrors C_v discipline): never leave a clip with
-                # zero units -- take the top-voted one and flag it
-                kept, fallback = units[:1], True
+            kept, fallback = select_units(units, args.min_support)
+            if fallback:
                 n_fallback += 1
             dropped = [{"text": u["text"], "support": u["support"]}
                        for u in units if u not in kept]

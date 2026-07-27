@@ -686,14 +686,14 @@ PY
   python tools/data_audit/recap_diag.py --recaps "$OUT/pipe_recaps.jsonl" \
     --out-perclip "$OUT/pipe_diag.jsonl" | tee "$OUT/pipe_diag.txt"
 
-  echo "== ④b C_fuse 投票浓缩（§5.5: 跨重述单元投票 support≥${FUSE_MIN_SUPPORT:-3} → 高浓度短句）=="
+  echo "== ④b C_fuse 投票浓缩（§5.5: 跨重述单元投票 support≥${FUSE_MIN_SUPPORT:-2} → 高浓度短句 = 最终训练字幕）=="
   # set -e 在顶部生效：本段任何失败都不许拖死整条流水线（TSV 对缺失的
   # pipe_units/pipe_fused 会自动出空列），故两条命令都带 || 兜底。
   # 注意：改 FUSE_MIN_SUPPORT 重跑前要 rm pipe_fused*.jsonl —— 浓缩按 video 续跑，
   # 旧门槛的结果不会自动重算。
   python tools/data_audit/fuse_condense.py --views "$OUT/pipe_views.*.jsonl" \
     --scores "$OUT/pipe_scores.*.jsonl" --output "$OUT/pipe_units.jsonl" \
-    --min-support "${FUSE_MIN_SUPPORT:-3}" \
+    --min-support "${FUSE_MIN_SUPPORT:-2}" \
     || echo "[warn] 投票段失败——TSV 的 C_fuse 列将为空，其余照常"
   CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
     --input "$OUT/pipe_units.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
@@ -730,9 +730,9 @@ PY
     || echo "[warn] 评审包生成失败（TSV 仍可用）"
   echo ""
   echo "✅ 产物: $OUT/bundle_pipeline/（index.html+videos/, 主推） · $OUT/recap_pipeline.tsv"
-  echo "   每片一卡: 视频 | en源 | zh旧译(黄) | 重述1-5(⟨SigLIP分⟩,★A−) | A′视图 |"
-  echo "             ✓视图(绿) | ·视图(灰) | ✗视图(红) | 投票单元(票数) | 淘汰单元 |"
-  echo "             ✓/·/✗浓缩(C_fuse 高浓度短句) + 三道判读单选 + 备注, 可导出 TSV"
+  echo "   每片一卡(维护者指令精简): 视频 | en源 | zh旧译(黄) | 重述1-5(⟨SigLIP分⟩,★A−) |"
+  echo "             浓缩(=最终训练字幕候选, 已剔验真✗句) + 两道判读单选 + 备注, 可导出 TSV"
+  echo "   全景各阶段列(A′/✓·✗视图/投票·淘汰单元)仍在 recap_pipeline.tsv"
   echo "   诊断摘要: $OUT/pipe_diag.txt"
   echo ""
   echo "―― 取回（服务器先打包，再在你【本地机器】scp）――"
