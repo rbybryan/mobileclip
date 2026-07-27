@@ -50,8 +50,9 @@ PAGE = """<!doctype html>
  .card{background:#fff;margin:14px auto;max-width:1080px;border:1px solid var(--bd);
        border-radius:10px;padding:14px 16px}
  .card.done{opacity:.55}
- .top{display:flex;gap:16px;flex-wrap:wrap}
- video{width:420px;max-width:100%;background:#000;border-radius:6px}
+ .top{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+ video{width:420px;max-width:100%;height:auto;background:#000;border-radius:6px;
+       position:sticky;top:58px}
  .nov{width:420px;max-width:100%;min-height:150px;display:flex;flex-direction:column;
       align-items:center;justify-content:center;text-align:center;color:#a12;
       background:#fff5f5;border:1px dashed #e0a0a0;border-radius:6px;padding:12px;word-break:break-all}
