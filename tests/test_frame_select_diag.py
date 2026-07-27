@@ -102,6 +102,86 @@ def test_every_verdict_has_prose():
     assert set(diag.VERDICT_TEXT) == {"A", "B", "AB", "neither"}
 
 
+# ------------------------------------------------------------ corpus 包装
+# 这一组是真实事故的回归:第一版把 available_corpus[...] 这个**普通 dict**
+# 直接塞进 VidTxtRetEvalDataset,在 V100 上崩于
+#   dataset/utils.py:102  data_root = d.data_root
+#   AttributeError: 'dict' object has no attribute 'data_root'
+# 本机没有 decord / anno 文件,跑不了真集成测试,所以这里用静态契约把它钉死。
+
+def _load_anno_source() -> str:
+    """把 dataset/utils.py 里 load_anno 的函数体切出来(纯文本,不 import)。"""
+    src = open(os.path.join(_ROOT, "dataset", "utils.py")).read()
+    start = src.index("def load_anno(")
+    rest = src[start + 1:]
+    nxt = rest.find("\ndef ")
+    return rest[:nxt] if nxt != -1 else rest
+
+
+def _attrs_read_by_load_anno():
+    """load_anno 用**属性**读的字段名(`d.xxx`),排除 dict 方法。"""
+    import re
+    names = set(re.findall(r"\bd\.([A-Za-z_][A-Za-z0-9_]*)", _load_anno_source()))
+    return names - {"get", "keys", "items", "values"}
+
+
+def test_plain_dict_lacks_attribute_access():
+    """记录 bug 本身:普通 dict 上 d.data_root 就是会炸。"""
+    with pytest.raises(AttributeError):
+        {"data_root": "/x"}.data_root
+
+
+def test_attrdict_supports_load_anno_access_pattern():
+    """逐行复现 load_anno 开头对 corpus 条目的访问。"""
+    d = diag.AttrDict({"anno_path": "a.json", "data_root": "/root", "media_type": "video"})
+    assert isinstance(d, dict)          # load_anno 靠这个决定要不要包成单元素列表
+    assert d.data_root == "/root"
+    assert d.get("data_root_prefix", "") == ""
+    assert d.anno_path == "a.json"
+    assert d.media_type == "video"
+
+
+def test_attrdict_missing_key_raises_attributeerror():
+    """必须是 AttributeError 而不是 KeyError,否则 getattr(o, x, default) 会炸。"""
+    d = diag.AttrDict({"a": 1})
+    with pytest.raises(AttributeError):
+        d.nope
+    assert getattr(d, "nope", "fallback") == "fallback"
+
+
+def test_corpus_entry_provides_every_attr_load_anno_reads():
+    """msrvtt corpus 条目必须覆盖 load_anno 读的所有属性 —— 少一个就是下一次 V100 崩。"""
+    from configs.data import available_corpus
+    entry = available_corpus["msrvtt_1k_test"]
+    missing = _attrs_read_by_load_anno() - set(entry)
+    assert not missing, f"corpus 条目缺少 load_anno 需要的属性: {sorted(missing)}"
+
+
+def test_attrs_probe_actually_found_something():
+    """防止上面的正则因为 load_anno 改写而静默匹配到空集(测试变成永真)。"""
+    assert "data_root" in _attrs_read_by_load_anno()
+
+
+def test_load_anno_actually_accepts_attrdict(tmp_path):
+    """真跑一次崩溃点 —— 本机缺 torchaudio/decord 会跳过,V100 上会真执行。
+
+    上面几条是静态契约;这条是唯一能证明 AttrDict 真的喂得进 load_anno 的测试。
+    """
+    import json as _json
+    pytest.importorskip("torchaudio")
+    pytest.importorskip("decord")
+    from dataset.utils import load_anno
+
+    anno = tmp_path / "tiny.json"
+    anno.write_text(_json.dumps([{"video": "v0.mp4", "caption": "a cat"}]))
+    d = diag.AttrDict({
+        "anno_path": str(anno), "data_root": "/videos", "media_type": "video",
+    })
+    out = load_anno(d)                       # 第一版就是死在这里
+    assert len(out) == 1
+    assert out[0]["image"] == "/videos/v0.mp4"
+
+
 # ------------------------------------------------------------ 守卫
 @pytest.mark.parametrize("var", ["MVC_FRAME_SELECT", "MVC_FRAME_PERTURB"])
 def test_refuses_to_run_with_hook_enabled(var):

@@ -156,6 +156,27 @@ VERDICT_TEXT = {
 
 
 # ---------------------------------------------------------------- 数据侧
+class AttrDict(dict):
+    """属性可访问的 dict。
+
+    `dataset/utils.py:load_anno` 用**属性**读 corpus 条目(`d.data_root`、
+    `d.anno_path`、`d.media_type`),而 `configs/data.py` 里存的是普通 dict
+    —— 真实链路里这层包装由 `utils/config.py` 的 `Config`(内部 EasyDict)完成,
+    直接把 `available_corpus[...]` 塞进数据集会 `AttributeError`。
+
+    这里不 import easydict:它只是 `utils/config.py` 的传递依赖,不保证在任何
+    跑本脚本的环境里都装了(本机就没有),而 corpus 条目是扁平的字符串字典,
+    等价的最小包装就够。**必须是 dict 子类** —— `load_anno` 用
+    `isinstance(ann_file_list, dict)` 决定要不要包成单元素列表。
+    """
+
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError as exc:                      # 属性协议要求 AttributeError
+            raise AttributeError(name) from exc
+
+
 def build_eval_dataset(pool: int):
     """复用评测那条链路,逐位重建 1.8 那轮看到的帧。"""
     import torch  # noqa: F401  - torchvision 需要
@@ -171,7 +192,7 @@ def build_eval_dataset(pool: int):
         transforms.Lambda(lambda x: x.float().div(255.0)),
     ])
     return VidTxtRetEvalDataset(
-        available_corpus["msrvtt_1k_test"],
+        AttrDict(available_corpus["msrvtt_1k_test"]),
         transform,
         num_frames=pool,
         video_reader_type="decord",
