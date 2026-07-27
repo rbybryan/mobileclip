@@ -124,6 +124,11 @@ N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
 
 - 单卡前台顺序执行（重述段自动复用 8 卡 recap 并等待），50 片全程 **~1 小时**；
   首次会经 hf-mirror 下载 GroundingDINO-base（~700MB, fp32）。
+- **⏱ 分段计时与全量外推**：每段墙钟自动落 `pipe[_st]_timing.tsv`，结尾打印
+  「秒/片 → 全桶小时 → 每 10 万片小时」外推表。**测真实成本必须用冷样本**
+  （缓存续跑的段显示 ~0s，外推无效）：`SAMPLE_OFFSET=200 N_SAMPLE=50 ... pipeline-sample`
+  从队列第 201 片起取一批没跑过的。注意外推按"下游单卡串行"算——全量生产时
+  ②派生/④b融合可像 ① 一样 `--num-shards 8` 分片，对应行 ÷8。
 - 每片一行：`en_source | zh_translated | recap_1..5(⟨SigLIP 分⟩) | A−保留(top-3 重述号) |
   A′句切视图 | ✓过验真视图[gloss] | ·未验(保守留) | ✗被滤视图[gdino/ocr] |
   投票单元(票数) | 淘汰单元 | ✓/·/✗浓缩 | 坍缩旗标`——

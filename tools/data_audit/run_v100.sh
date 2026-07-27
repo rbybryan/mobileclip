@@ -609,7 +609,9 @@ pipeline-sample)
   bash $0 s4                        # 落地任务队列（无 better_zh 融合稿依赖版）
 然后重跑: N_SAMPLE=50 bash $0 pipeline-sample"; exit 1; }
   SAMPLE="$OUT/v0_2/pipeline_sample.jsonl"
-  head -n "$N_SAMPLE" "$QUEUE" > "$SAMPLE"
+  # SAMPLE_OFFSET=k 从队列第 k+1 片开始取样。测真实耗时用：前 50 片各段已有缓存，
+  # 计时会虚低——SAMPLE_OFFSET=200 取一批冷片才是全量成本的真实样本。
+  sed -n "$(( ${SAMPLE_OFFSET:-0} + 1 )),$(( ${SAMPLE_OFFSET:-0} + N_SAMPLE ))p" "$QUEUE" > "$SAMPLE"
   # 重述风格（§5.6）：方案A dense(默认/主线) = 5 遍稠密段→派生→投票浓缩；
   # 方案B struct(平行备选) = OwlCap 式 caption-set, 3 遍独立 × 每遍 5-8 条带属性短句,
   # 派生步跳过。两臂产物完全隔离(B 一律带 _st 后缀), 互不覆盖——对比用 pipeline-compare。
@@ -623,7 +625,12 @@ pipeline-sample)
     P="$OUT/pipe"; TSVF="$OUT/recap_pipeline.tsv"
     SHEET="$OUT/review_pipeline.tsv"; BUNDLE="$OUT/bundle_pipeline"
   fi
-  echo "== ⓪ 样本 = 队列前 $N_SAMPLE 片 -> $SAMPLE （重述 style=$RECAP_STYLE）=="
+  # ⏱ 分段计时：每段墙钟秒数落 ${P}_timing.tsv，结尾按队列总量线性外推全量耗时
+  PIPE_TLAST=$(date +%s); : > "${P}_timing.tsv"
+  t_stage() { local now; now=$(date +%s)
+    printf '%s\t%d\n' "$1" "$((now - PIPE_TLAST))" >> "${P}_timing.tsv"
+    echo "   ⏱ $1: $((now - PIPE_TLAST))s"; PIPE_TLAST=$now; }
+  echo "== ⓪ 样本 = 队列第 $(( ${SAMPLE_OFFSET:-0} + 1 ))-$(( ${SAMPLE_OFFSET:-0} + N_SAMPLE )) 片 -> $SAMPLE （重述 style=$RECAP_STYLE）=="
   echo "[model] 全链唯一 LLM = $S2_MODEL（① 重述 temp0.9 独立采样$( [ "$RECAP_STYLE" = struct ] && echo '，短句+gloss 内联，② 派生步跳过' || echo ' / ② 派生 temp0 贪心' )；"
   echo "        ③ SigLIP2 打分与 ⑤ GDINO/OCR 验真均为非 LLM 小模型，SigLIP 已在 s1 轮缓存）"
 
@@ -662,6 +669,7 @@ PY
   done
   # 循环打满仍不足 → 明确失败，不带着空数据往下跑
   [ "${COV:-0}" -ge "$N_SAMPLE" ] || { echo "❌ 等待超时: 覆盖 $COV/$N_SAMPLE。看 $OUT/recap_shard*.log 后重跑本命令续走。"; exit 1; }
+  t_stage "①重述×${RC_N}遍(${NGPU}卡并行,含装载)"
 
   echo "== ②′ 样本重述子集 -> ${P}_recaps.jsonl =="
   python - "$SAMPLE" "$OUT" "$RC_PREFIX" "$P" <<'PY'
@@ -691,6 +699,7 @@ PY
     VIEWS_GLOB="${P}_views.*.jsonl"
   fi
 
+  t_stage "②派生(单卡; struct 臂≈0)"
   echo "== ③ SigLIP 逐重述打分（A− 选择依据；tag=recap_i 回联）=="
   python - "$P" <<'PY'
 import json, sys
@@ -708,12 +717,14 @@ PY
     --output "${P}_scores.{shard}.jsonl" --frames 4 --batch-clips 8 \
     --xlingual-model ''
 
+  t_stage "③SigLIP打分(单卡)"
   echo "== ④ A′ 句切 + 多样性诊断 =="
   python tools/data_audit/split_views.py --recaps "${P}_recaps.jsonl" \
     --output "${P}_aprime.jsonl"
   python tools/data_audit/recap_diag.py --recaps "${P}_recaps.jsonl" \
     --out-perclip "${P}_diag.jsonl" | tee "${P}_diag.txt"
 
+  t_stage "④A′切句+多样性诊断(CPU)"
   echo "== ④b 融合双版并出（直融 §5.7 + 投票浓缩 §5.5, 每次都产两版, 评审包并排对比）=="
   # set -e 在顶部生效：本段任何失败都不许拖死整条流水线（TSV 对缺失的
   # 融合文件会自动出空列），故各命令都带 || 兜底。
@@ -736,6 +747,7 @@ PY
     --output "${P}_fused_v.{shard}.jsonl" \
     || echo "[warn] 投票浓缩段失败（常见: 卡被占 OOM）——重跑本命令会按 video 续跑补齐"
 
+  t_stage "④b融合双版(直融+投票浓缩,单卡)"
   echo "== ⑤ Panel-V v0 验真（GDINO fp32 + RapidOCR；均非 LLM；不可用会降级为 unverified 不阻塞）=="
   CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/fuse_verify.py \
     --views "$VIEWS_GLOB" --video-root "$CLIPS" \
@@ -756,6 +768,7 @@ PY
     ${GDINO_MODEL:+--gdino-model "$GDINO_MODEL"} \
     || echo "[warn] 投票浓缩视图验真失败——按 unverified 保守保留"
 
+  t_stage "⑤验真×3路(单卡)"
   echo "== ⑥ 全景 TSV + 评审表 =="
   python tools/data_audit/make_pipeline_tsv.py --tasks "$SAMPLE" \
     --recaps "${P}_recaps.jsonl" --scores "${P}_scores.*.jsonl" \
@@ -770,6 +783,17 @@ PY
   python tools/data_audit/make_review_bundle.py \
     --sheet "$SHEET" --out-dir "$BUNDLE" \
     || echo "[warn] 评审包生成失败（TSV 仍可用）"
+  t_stage "⑥⑦TSV+评审包(CPU)"
+  QTOT=$(wc -l < "$QUEUE")
+  echo ""
+  echo "== ⏱ 分段耗时 + 全量外推（臂=$RECAP_STYLE; 队列 $QTOT 片; 线性外推=同硬件、全冷缓存）=="
+  awk -F'\t' -v n="$N_SAMPLE" -v q="$QTOT" '
+    {tot+=$2; printf "   %-34s %6ds  %6.2f s/片  → 全桶(%d片) ~%5.1f h\n", $1, $2, $2/n, q, $2/n*q/3600}
+    END{printf "   %-34s %6ds  %6.2f s/片  → 全桶 ~%5.1f h ; 每10万片 ~%.0f h\n",
+        "合计", tot, tot/n, tot/n*q/3600, tot/n*100000/3600}' "${P}_timing.tsv"
+  echo "   注: 显示 ~0s 的段 = 命中续跑缓存, 该行外推无效。测真实全量成本用冷样本:"
+  echo "       SAMPLE_OFFSET=200 N_SAMPLE=50 bash $0 pipeline-sample"
+  echo "   模型装载(~1-2min/卡)是固定开销, 大批量摊薄后 ① 的 s/片 更低; 原始计时: ${P}_timing.tsv"
   echo ""
   echo "✅ 产物[$RECAP_STYLE]: $BUNDLE/（index.html+videos/） · $TSVF"
   echo "   每片一卡(维护者指令精简): 视频 | en源 | zh旧译(黄) | 重述(⟨SigLIP分⟩,★A−) |"
@@ -800,6 +824,15 @@ pipeline-compare)
   python tools/data_audit/make_review_bundle.py \
     --sheet "$OUT/review_compare.tsv" --out-dir "$OUT/bundle_compare" \
     || echo "[warn] 对比包生成失败（review_compare.tsv 仍可用）"
+  echo ""
+  echo "== ⏱ A/B 两臂分段耗时（原始表: pipe_timing.tsv / pipe_st_timing.tsv）=="
+  for tf in "$OUT/pipe_timing.tsv" "$OUT/pipe_st_timing.tsv"; do
+    [ -s "$tf" ] || continue
+    case "$(basename "$tf")" in pipe_timing.tsv) arm="方案A(dense×5)";; *) arm="方案B(struct×3)";; esac
+    echo "-- $arm:"
+    awk -F'\t' -v n="$N_SAMPLE" '{tot+=$2; printf "   %-34s %6ds (%.2f s/片)\n",$1,$2,$2/n}
+      END{printf "   %-34s %6ds (%.2f s/片)\n","合计",tot,tot/n}' "$tf"
+  done
   echo ""
   echo "✅ A/B 对比包: $OUT/bundle_compare/（每片: en源|原zh|A重述|A直融|A投票|B重述|B直融|B投票 + 四选一单选）"
   echo "   打包: tar czf $OUT/compare.tgz -C $OUT bundle_compare"

@@ -23,6 +23,29 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-27 (40) — 流水线加了分段计时:跑一次冷样本,全量耗时表自动算出来
+
+**变更(pull 生效)**:pipeline-sample 每段墙钟自动记录(`pipe[_st]_timing.tsv`),结尾打印
+外推表:每段「秒/片 → 全桶(按队列实数)小时 → 每10万片小时」;pipeline-compare 结尾并排打
+A/B 两臂耗时。新增 `SAMPLE_OFFSET=k`(从队列第 k+1 片取样)。
+
+**关键:测真实成本必须用冷样本**——前 50 片各段全有缓存,计时会虚低到 ~0s。照这个跑:
+
+```bash
+git pull origin main
+SAMPLE_OFFSET=200 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+# 结尾自动出 A/B 两臂的分段耗时 + 全桶(2532片)/每10万片外推
+```
+
+**读数注意**:
+- 外推按「①8卡并行 + 下游单卡串行」的现状算——全量生产时 ②派生/④b融合 也能
+  `--num-shards 8` 分片,对应行可 ÷8;
+- ①行含 8×模型装载(~1-2min)固定开销,大批量摊薄后更低;
+- 每段原始秒数在 `outputs/audit_10k/pipe_timing.tsv`(A) / `pipe_st_timing.tsv`(B)。
+
+**Then report back** in from-server.md: 把结尾两张 ⏱ 表整段贴回来——我据此把主计划
+§5 成本表换成实测数,并给出全量(2532片)与语料级的排期建议。
+
 ## 2026-07-27 (39) — 「LLM 直接融合」已落地,且按最新指令改为与投票浓缩**双版并出**(§5.7 v2)
 
 **指令已落地**:让 LLM 直接读 3/5 遍独立重述,一次调用完成「语义数票(≥2 遍支持才写)+
