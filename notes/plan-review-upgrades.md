@@ -305,6 +305,12 @@ Qwen2.5-VL-7B。吞吐粗估(vLLM,3–4B,8 帧/片,~100–150 输出 token):
    (§六.9 的设计决策 3)、注意力池化的时序显著性蒸馏信号、R4 自蒸馏复用。
 3. **≥2 条合成字幕/片:** MobileCLIP2 的最大单项杠杆;`captions` 列表 + uniform
    采样钩子已在,只需 CapRL 产出侧保证 K≥2(`data-quality` §4.4 形态)。
+4. **(2026-07-27 增补) 教师身份定案 + Qwen 搭车否决:** 教师维持 **InternVideo2-stage2**
+   (对比式共享空间,vtc_kd 可算)。「重述 pass 顺手抽 Qwen3-VL 特征作主教师」经带检索
+   评审**否决**:Qwen 全模型无对比对齐空间(LLM2CLIP 2411.04997 反证)、覆盖仅
+   RECAPTION 桶 25%(偏置 + 成对信号 ~6%)、生成式→对比式特征蒸馏零发表先例、且省下
+   的 ~17 H100·h 与 IV2-1B 全语料 pass(~21 H100·h 计算,4×H100 实际 1–2 天含解码)
+   同量级。完整数字与架构事实见 `notes/caption-kd-review-2026-07.md`。
 
 ### U8 · 便宜标准项(半天级,各自独立)
 
@@ -323,6 +329,16 @@ Qwen2.5-VL-7B。吞吐粗估(vLLM,3–4B,8 帧/片,~100–150 输出 token):
 MSE,#197 B1)都是 O(B²) 关系型蒸馏,信号高度重叠。整并为 R2 内**一张消融表、
 一个所有者**:`arm-cos`(仅 uta 余弦)→ `+sim-KL` → `+geo` →(预算内)`+两者`;
 rkd 降为附录/缩预算档。两文档各加一行交叉引用,避免两处「novel loss」互相稀释。
+
+**(2026-07-27) 表加一行可选 `+geo(Qwen)`**——生成式教师几何是否在对比式几何之外带
+增量(文献空白,便宜可测):重述 sample-1 **prefill** 单层 hook(LLM 层 30/36 +
+视觉塔 mean-pool 1152-d 对照),视觉 token 位 masked-mean → 逐维 z-score(必须,杀
+massive-activation 维)→ L2 → PCA-1024(2 KiB/片,@6M 12 GiB),损失用 Tung-Mori
+归一化 Gram Frobenius(**不用 KL**——任意空间教师无校准温度)。**CKA 前置门**
+(~1 GPU·h,2.5k 试点):CKA(Qwen,IV2)>0.8 → 冗余撤行;∈[0.4,0.7] 且
+CKA(Qwen,字幕文本)≥CKA(IV2,字幕文本) → 建行;层扫 {18,24,30,36}+塔出口。
+**硬约束**:抓取不得迫使重述任务离开 vLLM(退 HF generate = 5–20× 慢);否则改
+单独 prefill-only pass。设计全文见 `notes/caption-kd-review-2026-07.md` §一。
 
 ### U10 · 统计口径三件套
 
