@@ -310,25 +310,22 @@ python experiments/r1_fn_density.py --feats /tmp/txtfeats.npy --thresholds 0.9,0
 
 全部从 repo 根目录跑。判读与方案见 [`notes/r1-implementation-plan.md`](notes/r1-implementation-plan.md)。
 
-**① go/no-go 探针 —— 已跑过一轮(2026-07-27),但探针指标当时选错,已在本轮修正。**
-结果 = **不建、暂不砍(inconclusive,偏向砍)**;完整判读与决策表见
-[`notes/r1-implementation-plan.md`](notes/r1-implementation-plan.md) **§7**。要点:旧判据
-「`top1_is_pos→1 ⇒ 砍`」是**错的科学**(最难负例随池 `~log(池大小)` 增长,512 全分开 ≠ 大池无益),
-且 `top1/margin` 是**分离度代理,不是梯度量**。修正后探针改记两项**能直接判**的量:
-`maxneg_by_pool`(最难负例随池大小是否仍在涨)与 `neg_grad_mass`(批内负例的有效梯度质量)。
-`pilot_10k_r1.py` 是 sigmoid 试点;`MVC_LOG_SAT=<间隔>` 打开只读探针(默认不设 = 逐位不影响训练)。
+**① go/no-go(最该先跑)—— 批内是否已在 512 饱和?若是则 R1 无益,直接砍。**
+`pilot_10k_r1.py` 已是 sigmoid 试点;`MVC_LOG_SAT=<间隔>` 打开只读饱和探针
+(默认不设 = 逐位不影响训练)。试点语料在 `/home/vca1/datasets`(见 README §2b 双根规则)。
 
 ```bash
 cd ~/mobileclip && git pull origin main
 export MVC_DATA_DIR=/home/vca1/datasets          # 试点视频根(训练/试点要 export)
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7       # 按空卡改
-# 重跑一轮读新指标(~180 步,10 epoch),每 20 步打一行 [SAT]:
+# 先冒烟(几十步即停,确认探针在打印 [SAT] 行):
+MVC_LOG_SAT=5 bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8 debug True
+# 正跑(~180 步,10 epoch),每 20 步打一行 [SAT]:
 MVC_LOG_SAT=20 bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8
 grep '\[SAT\]' experiments/runs/pilot_10k_r1/train.log | tail -20
 ```
-判读(§7 决策表):`maxneg_by_pool` 到 512 **已平** ⇒ **砍**(没有更难的负例可加)。
-仍在涨 + Part B 近重复密度**高** ⇒ **砍/先修标签**(「难负例」多是假负例)。
-仍在涨 + 近重复密度**低** ⇒ **才建 R1**(三种里最不可能)。`neg_grad_mass≈0` ⇒ 批内负例已「死」。
+判读:`top1_is_pos` 收敛到 ≈1.0 且 `mean(pos-hardestneg)` 明显为正 ⇒ **批内 512 已饱和**
+⇒ 更大负例池(R1)无益 ⇒ 砍。反之(top1_is_pos 明显 <1、margin 不大)⇒ (d) 是真瓶颈 ⇒ 值得建池。
 
 **② Part B — 近重复密度(定 R1 要不要余弦去重掩码;顺便验证 dump 脚本在真权重上能跑)**
 
@@ -347,10 +344,9 @@ python experiments/r1_fn_density.py --feats /tmp/txtfeats.npy --thresholds 0.9,0
 python experiments/r1_fn_density.py --anno anno_downstream/InternVid/InternVid-10M-flt_*.json
 ```
 
-> **注:** ① 的探针在 `models/criterions.py`(`saturation_stats` + `_maybe_log_saturation`,
-> 默认关、只读、已单测:`maxneg_by_pool`/`neg_grad_mass` 数学对齐 numpy 参考)。它测的是
-> **批内**结构(无需负例池);建池后的「banked 占 softmax 质量」探针在真正建 R1 池子时再加。
-> 近重复去重掩码现在是**建池的前置必需**(不是可选)——见方案 §7.4。
+> **注:** ① 的两行探针已合入 `models/criterions.py`(`saturation_stats` + `_maybe_log_saturation`,
+> 默认关、只读、已单测)。它测的是**批内**饱和(无需负例池);建池后的
+> 「banked 占 softmax 质量」探针在真正建 R1 池子时再加(方案 §4)。
 
 ---
 
