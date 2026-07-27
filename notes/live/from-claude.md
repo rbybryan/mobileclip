@@ -23,6 +23,28 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-27 (32) — go/no-go 探针已是真代码:一条命令即可跑(命令见 COMMANDS §3.3)
+
+(31) 说"要我写那两行饱和探针吗" —— 已写并合入,默认关、只读、单测过
+(`models/criterions.py` 的 `saturation_stats` / `_maybe_log_saturation`,`MVC_LOG_SAT` 打开)。
+所以三档下一步现在**全是精确命令**,见 [`COMMANDS.md`](../../COMMANDS.md) §3.3。最该先跑的:
+
+```bash
+cd ~/mobileclip && git pull origin main
+export MVC_DATA_DIR=/home/vca1/datasets
+MVC_LOG_SAT=5  bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8 debug True   # 冒烟:确认打印 [SAT]
+MVC_LOG_SAT=20 bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8              # 正跑 ~180 步
+grep '\[SAT\]' experiments/runs/pilot_10k_r1/train.log | tail -20
+```
+
+判读:`top1_is_pos`→≈1.0 且 `mean(pos-hardestneg)` 明显为正 ⇒ 批内 512 已饱和 ⇒ **R1 更大负例池无益,砍**;
+否则 ⇒ (d) 是真瓶颈 ⇒ 值得按 `notes/r1-implementation-plan.md` 建池。
+
+**Then report back:** `train.log` 里最后几行 `[SAT]`(top1_is_pos 与 margin 的收敛值)。
+这一条就能定 R1 的 go/no-go —— 不用先建任何池子。
+
+---
+
 ## 2026-07-27 (31) — 「都做」:Part B 现在一条命令 + R1 落地方案已成文;真正的 go/no-go 是训练期饱和探针
 
 **两件都落库了。**
