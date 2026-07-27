@@ -755,28 +755,42 @@ PY
     --verifiers "${PIPE_VERIFIERS:-gdino,ocr}" \
     ${GDINO_MODEL:+--gdino-model "$GDINO_MODEL"} \
     || echo "[warn] 验真档整体失败——全部视图按 unverified 保守保留，TSV 照常生成（勿用 Qwen 自验替代：计划 §3.5 纪律）"
-  CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/fuse_verify.py \
-    --views "${P}_fused_d.*.jsonl" --video-root "$CLIPS" \
-    --output "${P}_fused_d_verified.jsonl" \
-    --verifiers "${PIPE_VERIFIERS:-gdino,ocr}" \
-    ${GDINO_MODEL:+--gdino-model "$GDINO_MODEL"} \
-    || echo "[warn] 直融视图验真失败——按 unverified 保守保留"
-  CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/fuse_verify.py \
-    --views "${P}_fused_v.*.jsonl" --video-root "$CLIPS" \
-    --output "${P}_fused_v_verified.jsonl" \
-    --verifiers "${PIPE_VERIFIERS:-gdino,ocr}" \
-    ${GDINO_MODEL:+--gdino-model "$GDINO_MODEL"} \
-    || echo "[warn] 投票浓缩视图验真失败——按 unverified 保守保留"
+  # 两版融合稿：验真 → (§5.8-1 ASID 式修复环) 有 ✗ 才起一次最小修改修复 + 复验；
+  # 终稿一律落 *_final.jsonl（无 ✗ 时=首轮验真件的拷贝）。修复 prompt 改动后重跑
+  # 需 rm ${P}_fused_*_r.*.jsonl（修复按 video 续跑）。
+  for FV in fused_d fused_v; do
+    CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/fuse_verify.py \
+      --views "${P}_${FV}.*.jsonl" --video-root "$CLIPS" \
+      --output "${P}_${FV}_verified.jsonl" \
+      --verifiers "${PIPE_VERIFIERS:-gdino,ocr}" \
+      ${GDINO_MODEL:+--gdino-model "$GDINO_MODEL"} \
+      || echo "[warn] ${FV} 验真失败——按 unverified 保守保留"
+    if grep -q '"status": "fail"' "${P}_${FV}_verified.jsonl" 2>/dev/null; then
+      CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
+        --input "${P}_${FV}_verified.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
+        --mode refine --max-new-tokens 320 --num-shards 1 --shard-id 0 \
+        --output "${P}_${FV}_r.{shard}.jsonl" \
+      && CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/fuse_verify.py \
+        --views "${P}_${FV}_r.*.jsonl" --video-root "$CLIPS" \
+        --output "${P}_${FV}_final.jsonl" \
+        --verifiers "${PIPE_VERIFIERS:-gdino,ocr}" \
+        ${GDINO_MODEL:+--gdino-model "$GDINO_MODEL"} \
+      || { echo "[warn] ${FV} 修复/复验失败——回退用首轮验真结果"
+           cp -f "${P}_${FV}_verified.jsonl" "${P}_${FV}_final.jsonl"; }
+    else
+      cp -f "${P}_${FV}_verified.jsonl" "${P}_${FV}_final.jsonl"
+    fi
+  done
 
-  t_stage "⑤验真×3路(单卡)"
+  t_stage "⑤验真+✗修复复验(单卡)"
   echo "== ⑥ 全景 TSV + 评审表 =="
   python tools/data_audit/make_pipeline_tsv.py --tasks "$SAMPLE" \
     --recaps "${P}_recaps.jsonl" --scores "${P}_scores.*.jsonl" \
     --aprime "${P}_aprime.jsonl" --verified "${P}_verified.jsonl" \
     --derived "$VIEWS_GLOB" --diag "${P}_diag.jsonl" \
-    --units "${P}_units.jsonl" --fused "${P}_fused_v_verified.jsonl" \
+    --units "${P}_units.jsonl" --fused "${P}_fused_v_final.jsonl" \
     --fused-raw "${P}_fused_v.*.jsonl" \
-    --dfused "${P}_fused_d_verified.jsonl" --dfused-raw "${P}_fused_d.*.jsonl" \
+    --dfused "${P}_fused_d_final.jsonl" --dfused-raw "${P}_fused_d.*.jsonl" \
     --output "$TSVF" \
     --sheet-output "$SHEET" --video-root "$CLIPS"
   echo "== ⑦ 离线评审包（better_zh 同款 index.html + videos/，含打分单选与导出） =="
@@ -815,11 +829,11 @@ pipeline-compare)
   python tools/data_audit/make_style_compare.py \
     --tasks "$OUT/v0_2/pipeline_sample.jsonl" --video-root "$CLIPS" \
     --recaps-a "$OUT/pipe_recaps.jsonl" \
-    --dfused-a "$OUT/pipe_fused_d_verified.jsonl" --dfused-a-raw "$OUT/pipe_fused_d.*.jsonl" \
-    --fused-a "$OUT/pipe_fused_v_verified.jsonl" --fused-a-raw "$OUT/pipe_fused_v.*.jsonl" \
+    --dfused-a "$OUT/pipe_fused_d_final.jsonl" --dfused-a-raw "$OUT/pipe_fused_d.*.jsonl" \
+    --fused-a "$OUT/pipe_fused_v_final.jsonl" --fused-a-raw "$OUT/pipe_fused_v.*.jsonl" \
     --recaps-b "$OUT/pipe_st_recaps.jsonl" \
-    --dfused-b "$OUT/pipe_st_fused_d_verified.jsonl" --dfused-b-raw "$OUT/pipe_st_fused_d.*.jsonl" \
-    --fused-b "$OUT/pipe_st_fused_v_verified.jsonl" --fused-b-raw "$OUT/pipe_st_fused_v.*.jsonl" \
+    --dfused-b "$OUT/pipe_st_fused_d_final.jsonl" --dfused-b-raw "$OUT/pipe_st_fused_d.*.jsonl" \
+    --fused-b "$OUT/pipe_st_fused_v_final.jsonl" --fused-b-raw "$OUT/pipe_st_fused_v.*.jsonl" \
     --output "$OUT/review_compare.tsv"
   python tools/data_audit/make_review_bundle.py \
     --sheet "$OUT/review_compare.tsv" --out-dir "$OUT/bundle_compare" \

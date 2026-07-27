@@ -232,6 +232,18 @@ def main():
                 flags.append("IDENT")
             if vrec.get("error"):
                 flags.append("DECODE_ERR")
+            # §5.8-3 Missing-direction sentinel: fused output must cover the
+            # majority-voted (support>=2) unit glosses; coverage <70% -> flag
+            want = {g for u in (urec.get("units") or [])
+                    if (u.get("support") or 0) >= 2
+                    for g in (u.get("gloss") or [])}
+            if want:
+                for mtag, mviews in (("MISS_D", dviews), ("MISS_V", fviews)):
+                    have = {g for v in mviews if v.get("status") != "fail"
+                            for g in (v.get("gloss") or [])}
+                    cov = len(want & have) / len(want)
+                    if cov < 0.7:
+                        flags.append(f"{mtag}{int(cov * 100)}")
             row = [flat(vid), flat("; ".join(task.get("reasons") or [])),
                    flat(task.get("en")), flat(task.get("zh_old") or task.get("zh")),
                    *cap_cols, keep,

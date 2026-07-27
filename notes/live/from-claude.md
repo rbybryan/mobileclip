@@ -23,6 +23,30 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-27 (43) — ASID 三修复已入库:✗改修复、JSON三级兜底、漏说哨兵——先 pull 再走 (41) 的两步
+
+**维护者批「按建议执行」,§5.8 的 1-3 已实施合并**:
+
+1. **✗ 句从删除改修复**:两版融合稿验真后若有 ✗,自动发一次"只修问题处"的最小修改
+   调用并复验;终稿一律 `*_fused_*_final.jsonl`(无 ✗ 时=首轮验真件拷贝)。上轮 A 臂
+   那 10 条直融 ✗ 这次会被修而不是扔;
+2. **struct JSON 三级兜底**:重试@0.3 → 残缺 JSON 逐条抢救 → 该遍改跑 dense 段落
+   兜底——**B 臂不会再丢片**(上轮丢 5/50);兜底次数落在 `n_dense_fallback`;
+3. **漏说哨兵**:TSV 旗标新增 `MISS_D/MISS_V`(融合产出对 ≥2 票单元 gloss 覆盖
+   <70% = 可能把主要信息浓缩丢了)。
+
+**操作不变,只是先 pull**——(41) 的两步照走,修复自动生效:
+
+```bash
+git pull origin main
+# ① 取包目检(命令同 (41)); ② 冷样本计时:
+SAMPLE_OFFSET=200 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+```
+
+**Then report back**(在 (41) 报告项上加三样): ⑤ 段的修复行(`n_repaired`/仍败数)、
+`grep -o '"n_dense_fallback": [0-9]*' outputs/audit_10k/recap_struct.*.jsonl | sort | uniq -c`、
+TSV 旗标列里 `MISS_` 的出现次数。
+
 ## 2026-07-27 (42) — R1 A/B 崩因是**粘贴把建缓存命令折断**,不是代码;缓存本身是对的,改名即可
 
 **收到的输出说明两件事,都不是 bug:**
