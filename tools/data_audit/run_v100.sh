@@ -686,6 +686,15 @@ PY
   python tools/data_audit/recap_diag.py --recaps "$OUT/pipe_recaps.jsonl" \
     --out-perclip "$OUT/pipe_diag.jsonl" | tee "$OUT/pipe_diag.txt"
 
+  echo "== ④b C_fuse 投票浓缩（§5.5: 跨重述单元投票 support≥${FUSE_MIN_SUPPORT:-3} → 高浓度短句）=="
+  python tools/data_audit/fuse_condense.py --views "$OUT/pipe_views.*.jsonl" \
+    --scores "$OUT/pipe_scores.*.jsonl" --output "$OUT/pipe_units.jsonl" \
+    --min-support "${FUSE_MIN_SUPPORT:-3}"
+  CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
+    --input "$OUT/pipe_units.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
+    --mode condense --max-new-tokens 320 --num-shards 1 --shard-id 0 \
+    --output "$OUT/pipe_fused.{shard}.jsonl"
+
   echo "== ⑤ Panel-V v0 验真（GDINO fp32 + RapidOCR；均非 LLM；不可用会降级为 unverified 不阻塞）=="
   CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/fuse_verify.py \
     --views "$OUT/pipe_views.*.jsonl" --video-root "$CLIPS" \
@@ -693,12 +702,20 @@ PY
     --verifiers "${PIPE_VERIFIERS:-gdino,ocr}" \
     ${GDINO_MODEL:+--gdino-model "$GDINO_MODEL"} \
     || echo "[warn] 验真档整体失败——全部视图按 unverified 保守保留，TSV 照常生成（勿用 Qwen 自验替代：计划 §3.5 纪律）"
+  CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/fuse_verify.py \
+    --views "$OUT/pipe_fused.*.jsonl" --video-root "$CLIPS" \
+    --output "$OUT/pipe_fused_verified.jsonl" \
+    --verifiers "${PIPE_VERIFIERS:-gdino,ocr}" \
+    ${GDINO_MODEL:+--gdino-model "$GDINO_MODEL"} \
+    || echo "[warn] 浓缩视图验真失败——按 unverified 保守保留"
 
   echo "== ⑥ 全景 TSV + 评审表 =="
   python tools/data_audit/make_pipeline_tsv.py --tasks "$SAMPLE" \
     --recaps "$OUT/pipe_recaps.jsonl" --scores "$OUT/pipe_scores.*.jsonl" \
     --aprime "$OUT/pipe_aprime.jsonl" --verified "$OUT/pipe_verified.jsonl" \
     --derived "$OUT/pipe_views.*.jsonl" --diag "$OUT/pipe_diag.jsonl" \
+    --units "$OUT/pipe_units.jsonl" --fused "$OUT/pipe_fused_verified.jsonl" \
+    --fused-raw "$OUT/pipe_fused.*.jsonl" \
     --output "$OUT/recap_pipeline.tsv" \
     --sheet-output "$OUT/review_pipeline.tsv" --video-root "$CLIPS"
   echo "== ⑦ 离线评审包（better_zh 同款 index.html + videos/，含打分单选与导出） =="
@@ -708,7 +725,8 @@ PY
   echo ""
   echo "✅ 产物: $OUT/bundle_pipeline/（index.html+videos/, 主推） · $OUT/recap_pipeline.tsv"
   echo "   每片一卡: 视频 | en源 | zh旧译(黄) | 重述1-5(⟨SigLIP分⟩,★A−) | A′视图 |"
-  echo "             ✓视图(绿) | ·视图(灰) | ✗视图(红) + 两道判读单选 + 备注, 可导出 TSV"
+  echo "             ✓视图(绿) | ·视图(灰) | ✗视图(红) | 投票单元(票数) | 淘汰单元 |"
+  echo "             ✓/·/✗浓缩(C_fuse 高浓度短句) + 三道判读单选 + 备注, 可导出 TSV"
   echo "   诊断摘要: $OUT/pipe_diag.txt"
   echo ""
   echo "―― 取回（服务器先打包，再在你【本地机器】scp）――"

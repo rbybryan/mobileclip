@@ -23,7 +23,26 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
-## 2026-07-27 (32) — go/no-go 探针已是真代码:一条命令即可跑(命令见 COMMANDS §3.3)
+## 2026-07-27 (33) — pipeline-sample 新增 C_fuse 投票浓缩段：pull 后重跑一次（增量只需几分钟）
+
+**变更**（维护者指令：不满足于 A′ 机械切句 → 跨重述投票筛细节、浓缩成高浓度短句；
+主计划 §5.5）：`pipeline-sample` 在派生/打分之后新增 ④b——`fuse_condense.py` 把
+A_llm 短句跨 5 条重述聚类计票（纯规则、不占卡），support≥3 的单元交 Qwen 文本-only
+打包成 2–4 条 ≤28 字浓缩短句，再照走 GDINO/OCR 验真。TSV/评审包新增列：
+`投票单元(票数) | 淘汰单元 | ✓/·/✗浓缩` + 第三道判读单选「浓缩 vs 逐条」。
+
+**Do this next**（重述/派生/打分全部按 video 续跑秒过，增量只有浓缩+验真+重出表）：
+```bash
+cd ~/mobileclip && git pull origin main
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+tar czf outputs/audit_10k/pipeline.tgz -C outputs/audit_10k bundle_pipeline
+# 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/pipeline.tgz . && tar xzf pipeline.tgz
+```
+
+**Then report back** in from-server.md：`pipe_units.jsonl` 尾部打印的
+`voted units kept (X/clip), Y dropped, Z fallback` 三个数 + 目检 3–5 片：
+「淘汰单元」列里被投掉的是幻觉还是真细节？「✓/·浓缩」读起来比「A′视图/✓视图」
+更好吗（第三道单选顺手勾）？若 fallback 多（>20%），下次跑加 `FUSE_MIN_SUPPORT=2`。
 
 (31) 说"要我写那两行饱和探针吗" —— 已写并合入,默认关、只读、单测过
 (`models/criterions.py` 的 `saturation_stats` / `_maybe_log_saturation`,`MVC_LOG_SAT` 打开)。

@@ -35,10 +35,11 @@ import torch
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from vlm_audit import (DERIVE_KEYS, DERIVE_PROMPT, GRAN_KEYS,  # noqa: E402
-                       GRAN_PROMPT, MERGE_KEYS, MERGE_PROMPT, PROMPT,
-                       RECAP_PROMPT, TRANS_KEYS, TRANS_PROMPT, VERDICT_KEYS,
-                       extract_json, resolve_video_path)
+from vlm_audit import (CONDENSE_KEYS, CONDENSE_PROMPT, DERIVE_KEYS,  # noqa: E402
+                       DERIVE_PROMPT, GRAN_KEYS, GRAN_PROMPT, MERGE_KEYS,
+                       MERGE_PROMPT, PROMPT, RECAP_PROMPT, TRANS_KEYS,
+                       TRANS_PROMPT, VERDICT_KEYS, extract_json,
+                       resolve_video_path)
 
 
 def sample_frames_pil(path, num_frames, max_side, phase=0.5):
@@ -138,14 +139,19 @@ def main():
                          "different frames. --no-frame-jitter isolates decoding "
                          "variance for the temperature ablation (§6.4).")
     ap.add_argument("--mode", default="full",
-                    choices=["full", "trans", "gran", "merge", "recap", "derive"],
+                    choices=["full", "trans", "gran", "merge", "recap", "derive",
+                             "condense"],
                     help="'full' = combined video rubric (default). 'recap' = write "
                          "N independent Chinese captions FROM the frames (RECAPTION "
                          "bucket front-end for the fusion scheme; RECAP_PROMPT, "
                          "temperature + frame jitter, no en/zh shown). 'derive' = "
                          "text-only per-recap view derivation (A_llm, master plan "
                          "D5): input = recap5 jsonl, one call per recap, outputs "
-                         "verdict.views = [{text, gloss, src_recap}]. 'trans' = "
+                         "verdict.views = [{text, gloss, src_recap}]. 'condense' = "
+                         "C_fuse recompose (master plan §5.5): input = "
+                         "fuse_condense.py output (voted units), ONE text-only "
+                         "call per clip packs them into 2-4 dense <=28-char "
+                         "views, src_recap='fuse'. 'trans' = "
                          "text-only translation re-judgement: no video is read "
                          "and no frames are shown, so trans_score cannot anchor "
                          "on the video-alignment judgement (see vlm_audit.py "
@@ -278,6 +284,55 @@ def main():
                             uniq.append(v)
                     out["verdict"] = {"views": uniq, "n_views": len(uniq),
                                       "n_recaps": len(recaps)}
+                elif args.mode == "condense":
+                    # C_fuse recompose (master plan §5.5): pack the voted units
+                    # into 2-4 dense short views. One text-only greedy call per
+                    # clip; closed set (units are the sole evidence -- support
+                    # was already established by the cross-recap vote, so the
+                    # model must not re-introduce voted-out details).
+                    units = [u for u in (rec.get("units") or [])
+                             if isinstance(u, dict)
+                             and isinstance(u.get("text"), str)
+                             and u["text"].strip()]
+                    if not units:
+                        out["verdict"] = {"views": [], "n_units": 0,
+                                          "skipped": "no_units"}
+                        fout.write(json.dumps(out, ensure_ascii=False) + "\n")
+                        fout.flush(); n_done += 1
+                        continue
+                    ulist = "\n".join(
+                        f"{i + 1}. {u['text'].strip()}（{u.get('support', '?')}票）"
+                        for i, u in enumerate(units))
+                    prompt = CONDENSE_PROMPT.format(units=ulist)
+                    obj = None
+                    try:
+                        text = generate(model, processor, [], prompt,
+                                        args.max_new_tokens)
+                        obj = extract_json(text, CONDENSE_KEYS)
+                    except (ValueError, torch.cuda.OutOfMemoryError) as ex:
+                        if isinstance(ex, torch.cuda.OutOfMemoryError):
+                            torch.cuda.empty_cache()
+                        try:  # one retry with mild sampling
+                            text = generate(model, processor, [], prompt,
+                                            args.max_new_tokens,
+                                            temperature=0.3)
+                            obj = extract_json(text, CONDENSE_KEYS)
+                        except Exception:  # noqa: BLE001
+                            obj = None
+                    views, seen = [], set()
+                    for v in (obj or {}).get("views") or []:
+                        if isinstance(v, dict) and isinstance(v.get("text"),
+                                                              str) \
+                                and v["text"].strip() \
+                                and v["text"].strip() not in seen:
+                            seen.add(v["text"].strip())
+                            gloss = [g.strip().lower()
+                                     for g in (v.get("gloss") or [])
+                                     if isinstance(g, str) and g.strip()]
+                            views.append({"text": v["text"].strip(),
+                                          "gloss": gloss, "src_recap": "fuse"})
+                    out["verdict"] = {"views": views, "n_views": len(views),
+                                      "n_units": len(units)}
                 elif args.mode == "merge":
                     # 合并 better_zh 的多条候选（在 s2_verdicts 里）为一条。纯文本。
                     cands = [c for c in ((rec.get("verdict") or {}).get("better_zh")
@@ -313,7 +368,7 @@ def main():
                     prompt = PROMPT.format(n_frames=args.frames,
                                            en=(rec.get("en") or "(无)"),
                                            zh=(rec.get("zh") or "(空)"))
-                if args.mode not in ("recap", "derive"):  # these built their verdict above
+                if args.mode not in ("recap", "derive", "condense"):  # these built their verdict above
                     try:
                         text = generate(model, processor, frames, prompt,
                                         args.max_new_tokens)
