@@ -157,9 +157,12 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       (d) ⚠️ **副产物**:`nativeT2` 与 `seluniform_K2` 采样只差 3.1% 时长
       ({0.250,0.750} vs {0.281,0.781})却差 raw +2.40 ⇒ **±1.6 二项带低估真实波动**
       (查询间误差相关,非独立),后续把 1.6 当**下界**用,阳性主张要更高门槛。
-      **下一步(零 GPU,~10 min)**:dump divmax 在 K=2 的选帧下标,用 |i−j| 分布与
+      **下一步(零 GPU,~10 min;脚本已就绪)**:`python experiments/frame_select_diag.py`
+      (命令与判读见 `COMMANDS.md` §3.5)dump divmax 在 K=2 的选帧下标,用 |i−j| 分布与
       端点命中率分开"偏好离群帧"与"像素距离≠时间距离"两个假说
-      (见 [`frame_select_results.md`](frame_select_results.md) §4.1)。
+      (相反预测见 [`frame_select_results.md`](frame_select_results.md) §4.1)。
+      (e) **±1.6 已提升为仓库级约定** —— [`README.md`](README.md) §6.1:阴性结论照用,
+      阳性主张要求 |Δ| 明显大于 2.4;`gate0_results.md` 已加补注(带更宽只让其阴性结论更稳)。
       **定位**:C2 的对照臂,**不是新贡献线** —— paper-plan 已判 whitespace §4
       被 C2 吸收、round-2 §4 已判"任何新的 token 合并/剪枝/选择"赛道关闭。
 
