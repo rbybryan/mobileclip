@@ -23,6 +23,39 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-27 (41) — A/B 对比跑通判读:三个发现 + 两步走(先取包目检,再拉计时跑冷样本)
+
+**你贴的 pipeline-compare 全跑通**:A 臂 50 片、B 臂 45 片、对比包 50 片(both=45)。
+三个发现:
+
+1. **B 臂丢了 5 片(50→45)**:struct 重述三遍 JSON 全解析失败的片被静默丢弃(§5.6 登记
+   的代价,但 10% 偏高)。先诊断再修——把这个贴回来:
+   ```bash
+   grep -o '"n_samples": [0-9]*' outputs/audit_10k/recap_struct.*.jsonl | sort | uniq -c
+   ```
+   (n_samples=0 的就是全失败片;若 1-2 遍的也多,说明 JSON 稳定性要加固)
+2. **直融被 OCR 抓到 10 条 ✗(A 臂),投票浓缩 0 条**(B 臂: 直融 3 vs 投票 1)——方向与
+   §5.7 登记的风险一致(融合调用可能改写引号文字/新增细节)。目检时**优先看直融的红色
+   ✗ 条目**(recap_pipeline.tsv 的「直融✗」「直融dropped」列):是真幻觉还是 OCR 误杀?
+3. **k=2 后投票健康度**:A 臂 2.1 单元/片、回退 20/50;B 臂 3.0 单元/片、回退仅 9/45
+   ——struct 的属性结构+gloss 让跨遍投票明显更好使(早期信号,记档)。
+
+**两步走**:
+
+```bash
+# ① 取包目检(A/B 并排,每片四版: A直融|A投票|B直融|B投票):
+tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
+# 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/compare.tgz . && tar xzf compare.tgz
+
+# ② 你这次跑时计时代码还没进你的 checkout(刚合并)——拉一次再跑冷样本出全量耗时表:
+git pull origin main
+SAMPLE_OFFSET=200 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+```
+
+**Then report back**: ①的四版目检结论(哪版最像你要的训练字幕) + ②结尾两张 ⏱ 表 +
+上面 n_samples 分布。顺带说一句:B 臂重述这轮肉眼计时 ~12.5 分钟/50 片(8卡)——struct
+的 JSON 长输出比 dense 段落更慢,全量估算等 ⏱ 表定数。
+
 ## 2026-07-27 (40) — 流水线加了分段计时:跑一次冷样本,全量耗时表自动算出来
 
 **变更(pull 生效)**:pipeline-sample 每段墙钟自动记录(`pipe[_st]_timing.tsv`),结尾打印
