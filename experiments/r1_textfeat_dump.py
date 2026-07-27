@@ -34,7 +34,9 @@ import os
 import sys
 
 # 复用 r1_fn_density 里已自测的字幕组装 / caption_to_idx(单一来源,避免漂移)。
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _HERE)                    # 兄弟脚本 r1_fn_density
+sys.path.insert(0, os.path.dirname(_HERE))   # 仓库根:直接跑脚本时 `utils`/`models` 不在 path 上
 import importlib.util as _ilu
 
 _spec = _ilu.spec_from_file_location(

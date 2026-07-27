@@ -11,11 +11,13 @@ mathematically-exact bank". The exactness is a real but **v2t-side** engineering
 cosine dedup mask; run `experiments/r1_textfeat_dump.py` → `r1_fn_density.py --feats`
 (COMMANDS §3.2).
 
-**Go/no-go pilot RAN (2026-07-27) — see §7.** Result: **inconclusive, prior tilted to
-KILL.** The probe as first shipped was *mis-specified* (its metrics answer the wrong
-question, and its baked-in "saturated ⇒ kill" rule was wrong science). §7 records the
-numbers, the correction, the two zero-training checks that actually decide, and why
-**near-dup dedup is now a build prerequisite, not optional** (upgrades §2 / examination §3).
+**Go/no-go pilot RAN twice (2026-07-27) — see §7.** First run's probe was *mis-specified*
+(§7.1); the corrected metrics from the second run (§7.5) show the pool lever is **NOT
+saturated at 512** — `maxneg_by_pool` keeps climbing ~+0.2/doubling with no flattening. So
+the lean **flipped from "tilted to kill" to "leans BUILD, conditional on Part B"**: the whole
+call now rests on whether the harder negatives a bigger pool surfaces are genuine or
+near-duplicate false-negatives. **Part B is the sole remaining decider** and its script had a
+path bug (now fixed, §7.5). **Near-dup dedup remains a build prerequisite** (§7.4 / examination §3).
 
 ---
 
@@ -255,8 +257,53 @@ Part B is high" to a **hard prerequisite** (§2 bullet updated). The same mechan
 a pool "work" (surfacing high-logit negatives) is the mechanism that injects mislabeled repulsion;
 an un-deduplicated 32k pool is a **net-negative risk**, not a neutral default.
 
-**Do not build the pool on this evidence.** Re-run the pilot to read `maxneg_by_pool`/`neg_grad_mass`,
-run Part B, then apply the table above.
-
 *Interpretation pressure-tested via a `deep-learning-researcher` review of the InfoNCE/sigmoid
 gradient (2026-07-27); the corrections above are its findings, verified against `criterions.py`.*
+
+---
+
+## 7.5 Second pilot — the corrected metrics (measured 2026-07-27), and the lean flips
+
+Re-ran the same pilot with the corrected probe. `maxneg_by_pool` = mean hardest-negative logit
+over nested column prefixes; `neg_grad_mass` = mean over rows of Σσ(logit) on negatives:
+
+| step | maxneg 64 → 128 → 256 → 512 | Δ / doubling | neg_grad_mass |
+|---|---|---|---|
+| 20  | −7.24 → −7.07 → −6.91 → −6.77 | ~+0.16 | 0.10 |
+| 80  | −4.87 → −4.69 → −4.48 → −4.30 | ~+0.19 | 0.63 |
+| 120 | −4.74 → −4.51 → −4.27 → −4.05 | ~+0.23 | 0.72 |
+| 160 | −4.77 → −4.48 → −4.19 → **−4.00** | +0.29 / +0.29 / **+0.20** | 0.69 |
+
+(Pilot val plateaued t2v R@1 ≈ 77, unchanged from the first run — the probe is read-only, as designed.)
+
+**Reading — this is the key result, and it flips the prior lean:**
+
+1. **The pool lever is NOT saturated at 512.** The hardest-negative logit is still rising at the
+   256→512 step (~+0.2), and the per-doubling increment is roughly **constant** (≈+0.2), not
+   decaying toward 0. That is the textbook `max-neg ~ log(pool size)` signature *still in its
+   linear regime* — extrapolating 512→65k (≈7 doublings) predicts the hardest negative keeps
+   getting ~+1.4 harder. **A larger pool would keep surfacing materially harder negatives.**
+   This directly contradicts the regime-prior guess (§7.3) that an aligned-init fine-tune would
+   sit on the flat part of the curve. It does not.
+2. **`neg_grad_mass` ≈ 0.7, plateaued.** In-batch negatives are alive (not ≈0 ⇒ not the
+   "everything dead, nothing to gain" case), but the in-batch hard-negative gradient has
+   *stabilised* while harder negatives demonstrably exist just outside the 512-sample (point 1).
+   That combination — in-batch gradient saturating **while** the pool still holds harder
+   negatives — is precisely the SigLIP "batch-limited" signature. Mildly R1-favourable.
+
+**Updated verdict: leans BUILD — conditional entirely on Part B.** The `maxneg` climb is real,
+but the probe cannot tell whether the harder negatives a bigger pool adds are *genuine* or
+*near-duplicate false-negatives* (which have high similarity and would inflate `maxneg` identically
+— examination §3, §7.4). So:
+
+| `maxneg` at 512 | near-dup density (Part B) | call |
+|---|---|---|
+| still rising *(measured: yes)* | **low** | **BUILD R1** (SigLIP-regime pool per §2; the climb is genuine hard negatives) |
+| still rising *(measured: yes)* | **high** | **KILL / fix labels first** (the climb is mostly false-negatives; an un-deduped pool amplifies mislabeled repulsion) |
+
+**Part B is now the sole decider and it did not run** — `r1_textfeat_dump.py` hit
+`ModuleNotFoundError: No module named 'utils'` (run as a plain script, repo root wasn't on
+`sys.path`). **Fixed this round** (insert repo root at import time; verified the import now
+advances past the `utils` path to a normal dependency load). Re-run Part B (COMMANDS §3.3 ②),
+then apply the table. Caveats unchanged: 10k zh pilot; `maxneg` beyond 512 is an extrapolation;
+`neg_grad_mass`/margin still partly reflect memorisation on 9k examples.
