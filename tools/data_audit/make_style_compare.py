@@ -77,11 +77,15 @@ def main():
     ap.add_argument("--tasks", required=True, help="sampled task queue jsonl")
     ap.add_argument("--video-root", default="")
     ap.add_argument("--recaps-a", default=None)
-    ap.add_argument("--fused-a", default=None)
+    ap.add_argument("--fused-a", default=None, help="A vote-condensed, verified")
     ap.add_argument("--fused-a-raw", default=None)
+    ap.add_argument("--dfused-a", default=None, help="A direct-fused, verified")
+    ap.add_argument("--dfused-a-raw", default=None)
     ap.add_argument("--recaps-b", default=None)
-    ap.add_argument("--fused-b", default=None)
+    ap.add_argument("--fused-b", default=None, help="B vote-condensed, verified")
     ap.add_argument("--fused-b-raw", default=None)
+    ap.add_argument("--dfused-b", default=None, help="B direct-fused, verified")
+    ap.add_argument("--dfused-b-raw", default=None)
     ap.add_argument("--output", required=True)
     args = ap.parse_args()
 
@@ -90,12 +94,14 @@ def main():
 
     ra, fa, fra = (load_jsonl(args.recaps_a), load_jsonl(args.fused_a),
                    load_jsonl(args.fused_a_raw))
+    da, dra = load_jsonl(args.dfused_a), load_jsonl(args.dfused_a_raw)
     rb, fb, frb = (load_jsonl(args.recaps_b), load_jsonl(args.fused_b),
                    load_jsonl(args.fused_b_raw))
+    db, drb = load_jsonl(args.dfused_b), load_jsonl(args.dfused_b_raw)
 
     hdr = ["video", "video_path", "英文en", "原zh",
-           "A重述", "A浓缩", "B重述", "B浓缩",
-           "浓缩对比[A稠密更好/B结构化更好/差不多/都不行]", "note"]
+           "A重述", "A直融", "A投票", "B重述", "B直融", "B投票",
+           "最佳浓缩[A直融/A投票/B直融/B投票/都不行]", "note"]
     n = 0
     with open(args.output, "w", encoding="utf-8-sig", newline="") as fout:
         fout.write("\t".join(hdr) + "\n")
@@ -117,8 +123,10 @@ def main():
                     flat(task.get("en")),
                     flat(task.get("zh_old") or task.get("zh")),
                     recap_cell(ra.get(vid)),
+                    condensed_cell(da.get(vid), dra.get(vid)),
                     condensed_cell(fa.get(vid), fra.get(vid)),
                     recap_cell(rb.get(vid)),
+                    condensed_cell(db.get(vid), drb.get(vid)),
                     condensed_cell(fb.get(vid), frb.get(vid)),
                     "", ""]) + "\n")
                 n += 1

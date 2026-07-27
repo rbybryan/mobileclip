@@ -23,27 +23,28 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
-## 2026-07-27 (39) — 浓缩改「LLM 直接融合」一步到位(§5.7, 新默认 FUSE_IMPL=direct)
+## 2026-07-27 (39) — 「LLM 直接融合」已落地,且按最新指令改为与投票浓缩**双版并出**(§5.7 v2)
 
 **指令已落地**:让 LLM 直接读 3/5 遍独立重述,一次调用完成「语义数票(≥2 遍支持才写)+
-压缩成 2-5 条 ≤28 字短句」,参考 ASID(arXiv 2602.13013)的 Verify-refine 思路。
-**为什么更好**:规则聚类是实测最弱一环(34/50 片投不出跨遍匹配——中文改写字面重叠太低),
-语义等价判断恰是 LLM 强项。**守住的底线**:融合输入仍是 N 遍**独立**重述(投票前提不变);
-模型必须**自报 dropped**(被排除的单源细节,落盘可查);规则投票降为诊断列继续跑(与自报
-dropped 对照);GDINO/OCR 验真照旧是硬性后置门(防融合时新增幻觉)。
+压缩成 2-5 条 ≤28 字短句」——参考 ASID(arXiv 2602.13013, 南开+字节+清华)的
+Verify-refine 思路;模型必须**自报 dropped**(被排除的单源细节,落盘可查),GDINO/OCR
+验真照旧是硬性后置门。**v2 更新(维护者:都出一版,要对比)**:不再设 FUSE_IMPL 二选一——
+**每次同时产两版**:直融(`*_fused_d.*`) + 投票浓缩(`*_fused_v.*`),各自验真;
+单臂评审包并排「直融|投票浓缩」两列,A/B 对比包每片并排**四版**:
+A直融|A投票|B直融|B投票 + 四选一「最佳浓缩」。
 
 ```bash
 git pull origin main
-rm -f outputs/audit_10k/pipe_fused*.jsonl outputs/audit_10k/pipe_st_fused*.jsonl  # 换融合实现必清
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare   # A/B 两臂自动都用新融合
+rm -f outputs/audit_10k/pipe_fused*.jsonl outputs/audit_10k/pipe_st_fused*.jsonl  # 清旧命名的融合产物
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare   # A/B 双臂 × 直融/投票 四版一次出
 tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
 # 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/compare.tgz . && tar xzf compare.tgz
-# 只跑单臂: N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample (A) 或 RECAP_STYLE=struct ... (B)
-# 回退旧两段式: FUSE_IMPL=vote 重跑(同样先 rm)
+# 只跑单臂: N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample (A) 或 RECAP_STYLE=struct 同命令 (B)
 ```
 
-**Then report back** in from-server.md: A浓缩/B浓缩 目检感受 + 随手抽一片看
-`outputs/audit_10k/pipe_fused.0.jsonl` 里 `verdict.dropped` 的自报淘汰是否合理。
+**Then report back** in from-server.md: bundle_compare 四选一统计(50 片里 A直融/A投票/
+B直融/B投票/都不行 各多少——多数版本即生产配方)+ 随手抽一片看
+`outputs/audit_10k/pipe_fused_d.0.jsonl` 里 `verdict.dropped` 的自报淘汰是否合理。
 
 ## 2026-07-27 (38) — R1 池代码已落地(2.4c):建缓存 + 跑 A/B 一条龙
 
@@ -161,8 +162,8 @@ tar czf outputs/audit_10k/pipeline.tgz -C outputs/audit_10k bundle_pipeline
 当命令贴进终端了,无害。)
 
 **Then report back** in from-server.md: A/B 两臂各自 ④b 的 `[done]` 行(kept/dropped/
-fallback)+ **bundle_compare 单选统计**(50 片里 A更好/B更好/差不多/都不行 各多少——这
-一票直接定生产配方走哪臂;打平按成本取 B)+ B 臂 `n_samples` 分布(3 遍齐不齐)。
+fallback)+ **bundle_compare 四选一统计**(见块 (39):A直融/A投票/B直融/B投票/都不行)
++ B 臂 `n_samples` 分布(3 遍齐不齐)。
 
 ## 2026-07-27 (35) — 新指标读完:池杠杆在 512 **没饱和** → 倾向「建」,只差 Part B(其路径 bug 已修)
 

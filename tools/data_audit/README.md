@@ -137,21 +137,22 @@ N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
 - **A/B 对比（`bash tools/data_audit/run_v100.sh pipeline-compare`）**：同一批
   N_SAMPLE 片先后跑 A(dense)、B(struct)（各自按 video 续跑，已缓存部分秒过），再由
   `make_style_compare.py` 合成 `review_compare.tsv` + `bundle_compare/`——每片并排
-  en源/原zh/A重述/A浓缩/B重述/B浓缩 + 单选「浓缩对比」。
-- **直接 LLM 融合（§5.7，默认 `FUSE_IMPL=direct`）**：`--mode fuse-direct` 每片一次
+  en源/原zh/A重述/**A直融/A投票**/B重述/**B直融/B投票** + 四选一「最佳浓缩」。
+- **直接 LLM 融合「直融」（§5.7，与投票浓缩双版并出）**：`--mode fuse-direct` 每片一次
   文本调用读 N 遍独立重述，**语义投票（≥2 段支持才写）+ 压缩**一步到位，输出 2-5 条
-  ≤28 字短句 + gloss，并**自报 dropped**（被排除的单源细节，落在 fused jsonl 的
-  `verdict.dropped`）。此模式下条目的规则投票（下条）降为诊断列；`FUSE_IMPL=vote`
-  切回两段式。**换开关/换 prompt 重跑前先 `rm outputs/audit_10k/pipe*_fused*.jsonl`**。
-- **C_fuse 投票浓缩（§5.5，`FUSE_IMPL=vote` 时为主路径，direct 时为诊断）**：`fuse_condense.py`
+  ≤28 字短句 + gloss，并**自报 dropped**（被排除的单源细节，落在 `verdict.dropped`）。
+  输出 `*_fused_d.*`，与下条投票浓缩（`*_fused_v.*`）**每次同时产出、各自验真**，
+  单臂评审包并排两列+版本对比单选。**换 prompt 重跑前先
+  `rm outputs/audit_10k/pipe*_fused*.jsonl`**。
+- **C_fuse 投票浓缩（§5.5，与直融并出的第二版）**：`fuse_condense.py`
   把 A_llm 短句跨 5 条重述聚类计票（纯规则），support≥2 的单元（默认；50 片实测 k=3
   回退率 34/50，对多样性健康的重述太严）交 `--mode condense` 打包成 2–5 条 ≤28 字
   **高浓度短句**，再照走验真。**覆盖优先、不过度浓缩**：全淘时保底留前 3 个单元
   （原为 1），浓缩 prompt 明令"宁多一条、不丢单元信息"；浓缩短句（去 ✗）即 RECAPTION
   桶的训练 `captions`。`FUSE_MIN_SUPPORT` 可改门槛（**重跑前先
   `rm outputs/audit_10k/pipe_fused*.jsonl`**——浓缩按 video 续跑，旧门槛/旧 prompt 的
-  结果不会自动重算）；本段任何失败只会让浓缩列为空，不阻塞 TSV/评审包。评审包按指令
-  只显示 en源/原zh/重述×5/浓缩 四样，全景各阶段列仍在 `recap_pipeline.tsv`。
+  结果不会自动重算）；本段任何失败只会让对应列为空，不阻塞 TSV/评审包。评审包按指令
+  只显示 en源/原zh/重述/直融/投票浓缩，全景各阶段列仍在 `recap_pipeline.tsv`。
 - **模型依赖（V100 盒子现状即可跑，无需任何新 LLM）**：全链**唯一的 LLM = Qwen3-VL-8B**
   （`$S2_MODEL`，本地 `ckpts/Qwen3-VL-8B-Instruct` 优先）——重述用 temp0.9 采样制造投票方差、
   派生用 temp0 贪心保证闭集确定性，两处用法刻意不同。其余全是非 LLM 小模型：SigLIP2 打分

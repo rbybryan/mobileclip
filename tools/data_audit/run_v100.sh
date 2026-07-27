@@ -714,30 +714,27 @@ PY
   python tools/data_audit/recap_diag.py --recaps "${P}_recaps.jsonl" \
     --out-perclip "${P}_diag.jsonl" | tee "${P}_diag.txt"
 
-  echo "== ④b 融合浓缩（FUSE_IMPL=${FUSE_IMPL:-direct}: direct=LLM 语义投票+压缩一步(§5.7) / vote=规则投票+浓缩(§5.5)）=="
+  echo "== ④b 融合双版并出（直融 §5.7 + 投票浓缩 §5.5, 每次都产两版, 评审包并排对比）=="
   # set -e 在顶部生效：本段任何失败都不许拖死整条流水线（TSV 对缺失的
-  # pipe_units/pipe_fused 会自动出空列），故各命令都带 || 兜底。
-  # 注意：改 FUSE_IMPL/FUSE_MIN_SUPPORT/融合 prompt 后重跑前要 rm ${P}_fused*.jsonl ——
-  # 融合按 video 续跑，旧实现/旧门槛的结果不会自动重算。
-  # 规则投票始终跑（CPU 秒级）：vote 模式下是浓缩的输入；direct 模式下降为诊断
-  # （TSV 投票单元/淘汰单元列，与 LLM 自报的 dropped 互相对照）。
+  # 融合文件会自动出空列），故各命令都带 || 兜底。
+  # 注意：改 FUSE_MIN_SUPPORT/融合 prompt 后重跑前要 rm ${P}_fused*.jsonl ——
+  # 两版融合都按 video 续跑，旧实现/旧门槛的结果不会自动重算。
   python tools/data_audit/fuse_condense.py --views "$VIEWS_GLOB" \
     --scores "${P}_scores.*.jsonl" --output "${P}_units.jsonl" \
     --min-support "${FUSE_MIN_SUPPORT:-2}" \
-    || echo "[warn] 投票段失败——TSV 的投票诊断列将为空，其余照常"
-  if [ "${FUSE_IMPL:-direct}" = direct ]; then
-    CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
-      --input "${P}_recaps.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
-      --mode fuse-direct --max-new-tokens 384 --num-shards 1 --shard-id 0 \
-      --output "${P}_fused.{shard}.jsonl" \
-      || echo "[warn] 直接融合段失败（常见: 卡被占 OOM）——重跑本命令会按 video 续跑补齐"
-  else
-    CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
-      --input "${P}_units.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
-      --mode condense --max-new-tokens 320 --num-shards 1 --shard-id 0 \
-      --output "${P}_fused.{shard}.jsonl" \
-      || echo "[warn] 浓缩 LLM 段失败（常见: 卡被占 OOM）——重跑本命令会按 video 续跑补齐"
-  fi
+    || echo "[warn] 投票段失败——投票浓缩与诊断列将为空，其余照常"
+  # 版本一「直融」(§5.7, ASID-Verify 式): LLM 直接读 N 遍重述, 语义数票+压缩一步, 自报 dropped
+  CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
+    --input "${P}_recaps.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
+    --mode fuse-direct --max-new-tokens 384 --num-shards 1 --shard-id 0 \
+    --output "${P}_fused_d.{shard}.jsonl" \
+    || echo "[warn] 直融段失败（常见: 卡被占 OOM）——重跑本命令会按 video 续跑补齐"
+  # 版本二「投票浓缩」(§5.5): 规则跨遍计票 -> LLM 只打包过票单元
+  CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
+    --input "${P}_units.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
+    --mode condense --max-new-tokens 320 --num-shards 1 --shard-id 0 \
+    --output "${P}_fused_v.{shard}.jsonl" \
+    || echo "[warn] 投票浓缩段失败（常见: 卡被占 OOM）——重跑本命令会按 video 续跑补齐"
 
   echo "== ⑤ Panel-V v0 验真（GDINO fp32 + RapidOCR；均非 LLM；不可用会降级为 unverified 不阻塞）=="
   CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/fuse_verify.py \
@@ -747,19 +744,26 @@ PY
     ${GDINO_MODEL:+--gdino-model "$GDINO_MODEL"} \
     || echo "[warn] 验真档整体失败——全部视图按 unverified 保守保留，TSV 照常生成（勿用 Qwen 自验替代：计划 §3.5 纪律）"
   CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/fuse_verify.py \
-    --views "${P}_fused.*.jsonl" --video-root "$CLIPS" \
-    --output "${P}_fused_verified.jsonl" \
+    --views "${P}_fused_d.*.jsonl" --video-root "$CLIPS" \
+    --output "${P}_fused_d_verified.jsonl" \
     --verifiers "${PIPE_VERIFIERS:-gdino,ocr}" \
     ${GDINO_MODEL:+--gdino-model "$GDINO_MODEL"} \
-    || echo "[warn] 浓缩视图验真失败——按 unverified 保守保留"
+    || echo "[warn] 直融视图验真失败——按 unverified 保守保留"
+  CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/fuse_verify.py \
+    --views "${P}_fused_v.*.jsonl" --video-root "$CLIPS" \
+    --output "${P}_fused_v_verified.jsonl" \
+    --verifiers "${PIPE_VERIFIERS:-gdino,ocr}" \
+    ${GDINO_MODEL:+--gdino-model "$GDINO_MODEL"} \
+    || echo "[warn] 投票浓缩视图验真失败——按 unverified 保守保留"
 
   echo "== ⑥ 全景 TSV + 评审表 =="
   python tools/data_audit/make_pipeline_tsv.py --tasks "$SAMPLE" \
     --recaps "${P}_recaps.jsonl" --scores "${P}_scores.*.jsonl" \
     --aprime "${P}_aprime.jsonl" --verified "${P}_verified.jsonl" \
     --derived "$VIEWS_GLOB" --diag "${P}_diag.jsonl" \
-    --units "${P}_units.jsonl" --fused "${P}_fused_verified.jsonl" \
-    --fused-raw "${P}_fused.*.jsonl" \
+    --units "${P}_units.jsonl" --fused "${P}_fused_v_verified.jsonl" \
+    --fused-raw "${P}_fused_v.*.jsonl" \
+    --dfused "${P}_fused_d_verified.jsonl" --dfused-raw "${P}_fused_d.*.jsonl" \
     --output "$TSVF" \
     --sheet-output "$SHEET" --video-root "$CLIPS"
   echo "== ⑦ 离线评审包（better_zh 同款 index.html + videos/，含打分单选与导出） =="
@@ -769,7 +773,7 @@ PY
   echo ""
   echo "✅ 产物[$RECAP_STYLE]: $BUNDLE/（index.html+videos/） · $TSVF"
   echo "   每片一卡(维护者指令精简): 视频 | en源 | zh旧译(黄) | 重述(⟨SigLIP分⟩,★A−) |"
-  echo "             浓缩(训练字幕候选, 已剔验真✗句) + 两道判读单选 + 备注, 可导出 TSV"
+  echo "             直融(§5.7 LLM一步融合) | 投票浓缩(§5.5 规则票后打包) + 判读单选, 可导出 TSV"
   echo "   全景各阶段列(A′/✓·✗视图/投票·淘汰单元)仍在 $TSVF"
   echo "   诊断摘要: ${P}_diag.txt"
   echo "   A/B 双臂对比(方案A稠密 vs 方案B结构化 并排一页): bash $0 pipeline-compare"
@@ -787,15 +791,17 @@ pipeline-compare)
   python tools/data_audit/make_style_compare.py \
     --tasks "$OUT/v0_2/pipeline_sample.jsonl" --video-root "$CLIPS" \
     --recaps-a "$OUT/pipe_recaps.jsonl" \
-    --fused-a "$OUT/pipe_fused_verified.jsonl" --fused-a-raw "$OUT/pipe_fused.*.jsonl" \
+    --dfused-a "$OUT/pipe_fused_d_verified.jsonl" --dfused-a-raw "$OUT/pipe_fused_d.*.jsonl" \
+    --fused-a "$OUT/pipe_fused_v_verified.jsonl" --fused-a-raw "$OUT/pipe_fused_v.*.jsonl" \
     --recaps-b "$OUT/pipe_st_recaps.jsonl" \
-    --fused-b "$OUT/pipe_st_fused_verified.jsonl" --fused-b-raw "$OUT/pipe_st_fused.*.jsonl" \
+    --dfused-b "$OUT/pipe_st_fused_d_verified.jsonl" --dfused-b-raw "$OUT/pipe_st_fused_d.*.jsonl" \
+    --fused-b "$OUT/pipe_st_fused_v_verified.jsonl" --fused-b-raw "$OUT/pipe_st_fused_v.*.jsonl" \
     --output "$OUT/review_compare.tsv"
   python tools/data_audit/make_review_bundle.py \
     --sheet "$OUT/review_compare.tsv" --out-dir "$OUT/bundle_compare" \
     || echo "[warn] 对比包生成失败（review_compare.tsv 仍可用）"
   echo ""
-  echo "✅ A/B 对比包: $OUT/bundle_compare/（每片: en源|原zh|A重述|A浓缩|B重述|B浓缩 + 对比单选）"
+  echo "✅ A/B 对比包: $OUT/bundle_compare/（每片: en源|原zh|A重述|A直融|A投票|B重述|B直融|B投票 + 四选一单选）"
   echo "   打包: tar czf $OUT/compare.tgz -C $OUT bundle_compare"
   echo "   本地: scp rby@101vector:~/mobileclip/$OUT/compare.tgz . && tar xzf compare.tgz"
   ;;
