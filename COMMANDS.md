@@ -449,6 +449,38 @@ python experiments/collect_frame_select.py --root experiments/evals/frame_select
 ---
 
 
+### 3.5 选帧诊断 —— divmax 为什么失败(零 GPU,~10 min)
+
+1.8 已定论:K=2 上**选帧要紧**(uniform 相对 random +3.40/+3.90)**但 divmax 是错的判据**
+(相对 uniform −2.80/−2.40,且与纯随机无可测差别)。剩下的问题是**为什么**,
+而两个预注册假说对**选帧下标**给出相反预测
+([`experiments/frame_select_results.md`](experiments/frame_select_results.md) §4.1):
+
+| 假说 | 端点命中率 | 平均配对间隔 \|i−j\| |
+|---|---|---|
+| (A) k-center 偏好离群帧 | 远高于随机基线(16 取 2 时 0.242) | 接近最大(15) |
+| (B) 像素距离 ≠ 时间距离 | 接近随机基线 | 接近 (n+1)/3 ≈ 5.67 |
+
+```bash
+unset MVC_DATA_DIR                                  # 评测侧不 export(双根规则)
+python experiments/frame_select_diag.py --limit 50  # 冒烟,几十秒
+python experiments/frame_select_diag.py             # 全量 1000 条
+```
+
+不建模型、不过编码器、不需要 GPU;复用 `VidTxtRetEvalDataset` + 同一套变换
+(`Resize(256)` + `/255`,**Normalize 在 `get_test_transform` 里是注释掉的**)
+⇒ 打分用的像素与 1.8 那轮逐位相同。原始下标 dump 到
+`experiments/evals/frame_select/diag_indices.json` 供复查。
+
+脚本会拒绝在 `MVC_FRAME_SELECT` / `MVC_FRAME_PERTURB` 开着时运行 —— 那会改变
+数据集吐出的帧,等于诊断了另一件事。
+
+**产出怎么用**:若判 (A),论文里那句话是**「要有代表性的帧,不要极端帧」**,
+与 GATE-0 相容(`freeze` 崩 13 分 ⇒ 需要一些分散;本轮 ⇒ 最大化分散是过头的)。
+若判 (B),结论收窄为**「廉价像素代理不可用」**,不能推广到"多样性判据错"。
+
+---
+
 ## 4. Training (pretraining)
 
 **Preflight — run this before every pretraining launch, not just the first:**

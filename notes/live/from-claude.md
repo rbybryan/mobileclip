@@ -23,7 +23,7 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
-## 2026-07-27 (40) — R1 A/B 崩因是**粘贴把建缓存命令折断**,不是代码;缓存本身是对的,改名即可
+## 2026-07-27 (42) — R1 A/B 崩因是**粘贴把建缓存命令折断**,不是代码;缓存本身是对的,改名即可
 
 **收到的输出说明两件事,都不是 bug:**
 
@@ -54,6 +54,62 @@ bash experiments/run_pretrain.sh experiments/configs/nR1_textbank_pilot.py 8   #
 **Then report back** in from-server.md:两臂逐 epoch 的 `txt_r1 / img_r1`(文本池硬化 v2t=txt_r1
 直接、t2v=img_r1 间接),以及 `[R1]` 那行有没有出现。**kill 判据不变**:池 vs 无池 < 0.5 R-Sum ⇒
 (d) 误判,停。
+
+## 2026-07-27 (41) — A/B 对比跑通判读:三个发现 + 两步走(先取包目检,再拉计时跑冷样本)
+
+**你贴的 pipeline-compare 全跑通**:A 臂 50 片、B 臂 45 片、对比包 50 片(both=45)。
+三个发现:
+
+1. **B 臂丢了 5 片(50→45)**:struct 重述三遍 JSON 全解析失败的片被静默丢弃(§5.6 登记
+   的代价,但 10% 偏高)。先诊断再修——把这个贴回来:
+   ```bash
+   grep -o '"n_samples": [0-9]*' outputs/audit_10k/recap_struct.*.jsonl | sort | uniq -c
+   ```
+   (n_samples=0 的就是全失败片;若 1-2 遍的也多,说明 JSON 稳定性要加固)
+2. **直融被 OCR 抓到 10 条 ✗(A 臂),投票浓缩 0 条**(B 臂: 直融 3 vs 投票 1)——方向与
+   §5.7 登记的风险一致(融合调用可能改写引号文字/新增细节)。目检时**优先看直融的红色
+   ✗ 条目**(recap_pipeline.tsv 的「直融✗」「直融dropped」列):是真幻觉还是 OCR 误杀?
+3. **k=2 后投票健康度**:A 臂 2.1 单元/片、回退 20/50;B 臂 3.0 单元/片、回退仅 9/45
+   ——struct 的属性结构+gloss 让跨遍投票明显更好使(早期信号,记档)。
+
+**两步走**:
+
+```bash
+# ① 取包目检(A/B 并排,每片四版: A直融|A投票|B直融|B投票):
+tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
+# 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/compare.tgz . && tar xzf compare.tgz
+
+# ② 你这次跑时计时代码还没进你的 checkout(刚合并)——拉一次再跑冷样本出全量耗时表:
+git pull origin main
+SAMPLE_OFFSET=200 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+```
+
+**Then report back**: ①的四版目检结论(哪版最像你要的训练字幕) + ②结尾两张 ⏱ 表 +
+上面 n_samples 分布。顺带说一句:B 臂重述这轮肉眼计时 ~12.5 分钟/50 片(8卡)——struct
+的 JSON 长输出比 dense 段落更慢,全量估算等 ⏱ 表定数。
+
+## 2026-07-27 (40) — 流水线加了分段计时:跑一次冷样本,全量耗时表自动算出来
+
+**变更(pull 生效)**:pipeline-sample 每段墙钟自动记录(`pipe[_st]_timing.tsv`),结尾打印
+外推表:每段「秒/片 → 全桶(按队列实数)小时 → 每10万片小时」;pipeline-compare 结尾并排打
+A/B 两臂耗时。新增 `SAMPLE_OFFSET=k`(从队列第 k+1 片取样)。
+
+**关键:测真实成本必须用冷样本**——前 50 片各段全有缓存,计时会虚低到 ~0s。照这个跑:
+
+```bash
+git pull origin main
+SAMPLE_OFFSET=200 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+# 结尾自动出 A/B 两臂的分段耗时 + 全桶(2532片)/每10万片外推
+```
+
+**读数注意**:
+- 外推按「①8卡并行 + 下游单卡串行」的现状算——全量生产时 ②派生/④b融合 也能
+  `--num-shards 8` 分片,对应行可 ÷8;
+- ①行含 8×模型装载(~1-2min)固定开销,大批量摊薄后更低;
+- 每段原始秒数在 `outputs/audit_10k/pipe_timing.tsv`(A) / `pipe_st_timing.tsv`(B)。
+
+**Then report back** in from-server.md: 把结尾两张 ⏱ 表整段贴回来——我据此把主计划
+§5 成本表换成实测数,并给出全量(2532片)与语料级的排期建议。
 
 ## 2026-07-27 (39) — 「LLM 直接融合」已落地,且按最新指令改为与投票浓缩**双版并出**(§5.7 v2)
 
