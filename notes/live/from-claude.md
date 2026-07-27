@@ -23,6 +23,47 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-27 (31) — 「都做」:Part B 现在一条命令 + R1 落地方案已成文;真正的 go/no-go 是训练期饱和探针
+
+**两件都落库了。**
+
+**① Part B(近重复密度)现在一条命令能出** —— 之前卡在"要自己写建模型的脚本"。
+新 `experiments/r1_textfeat_dump.py` **复用 GATE-0 评测在服务器上跑通的同一条构建路径**
+(`Config.from_file(eval配置)` → `MobileViCLIP_Small(config)` → 模型自己的 `load_checkpoint`
+做键重映射,再 `strict=False` 覆盖 small.pt 取训练后的投影),不重造 setup_model:
+
+```bash
+python experiments/r1_textfeat_dump.py \
+    --anno anno_downstream/InternVid/InternVid-10M-flt_1.json \
+    --ckpt checkpoints/mobileviclip_small.pt --out /tmp/txtfeats.npy --sample 10000
+python experiments/r1_fn_density.py --feats /tmp/txtfeats.npy --thresholds 0.9,0.95,0.99
+```
+判读:「有≥1近邻」占比高 ⇒ R1 需余弦去重掩码;低 ⇒ 免。
+⚠️ 该脚本的**建模型/前向未在真权重上验证**(我这边没权重)——字幕读取/去重/分块已自测,
+构建若报错把**完整报错**贴回,最可能是 `Config.from_file` 字段或 `encode_text` 返回形状,微调即可。
+
+**② R1 落地方案成文** —— [`notes/r1-implementation-plan.md`](../r1-implementation-plan.md)。
+按 examination §6 重构为「SigLIP 制度」一条臂,含:触点(criterions/forward/config)、
+**穿过 `get_mask` 的损失参考实现**(不是 `cross_entropy(arange)`,否则注入假负例)、
+fp16 的 fp32+分块(且指出 sigmoid 下 logit 尺度≈10 而非 100,本就远离溢出)、
+默认关=逐位一致的开关、以及离线缓存投影前特征的"精确"机制(附 dropout=0 的不变量断言)。
+
+**但最关键的一句(别被"精确负例库"带跑偏):**
+**R1 的 go/no-go 不是 Part A/B,是训练期的批内饱和探针。** 而且它最便宜的形式**不需要**先建池子:
+拿现成的 `r1a_sigmoid.py`(sigmoid+可学习 t/b,已实现)+ 加两行日志(banked/批内负例的 softmax 质量占比、
+正样本在 512 内的排名),跑一个 10k 试点即可回答"(d) 在我们这个对齐初始化的 3-epoch 制度下到底真不真"。
+若显示 512 就已饱和 ⇒ 不必建池子,直接砍。方案 §4/§5 写了这条最省的路径。
+
+**Do this next(三选,按信息价值排序):**
+1. **最省的 go/no-go**:`r1a_sigmoid.py` + 两行饱和日志,10k 试点(方案 §4)。**这一条最该先跑。**
+2. Part B 近重复密度(上面 ①):定 `dedup_cos`,顺便验证 `r1_textfeat_dump.py` 在真权重上能跑。
+3. Part A 收紧到 55k:`--anno …flt_*.json`(秒级,可选)。
+
+**要我把 §4 的两行饱和探针直接写进 `criterions.py` / `r1a` 配置吗?** 那是能立刻产生 go/no-go 的最小改动。
+说一声我就写(会是默认关、可跑的最小 diff,不是又一份方案)。
+
+---
+
 ## 2026-07-27 (30) — R1 前置探针 A 出数:精确重复 ≈0 ⇒ 免做精确去重;近重复(B)成为唯一待测设计项
 
 **你跑的 Part A(InternVid-10M-flt_1,5000 条):** 4998 条不同(**99.96%**),
