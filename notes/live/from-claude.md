@@ -23,6 +23,44 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-27 (35) — 新指标读完:池杠杆在 512 **没饱和** → 倾向「建」,只差 Part B(其路径 bug 已修)
+
+**重跑读到了修正后的两项指标。结论翻转:从上一条的「偏向砍」→ 现在「倾向建,取决于 Part B」。**
+
+**关键读数 `maxneg_by_pool`(最难负例 logit,64/128/256/512 嵌套前缀):**
+- step160: `-4.77 → -4.48 → -4.19 → -3.996`,每翻倍 +0.29/+0.29/+0.20 —— **到 512 仍在涨,增量近似恒定、没有变平**。
+- 这正是 `最难负例 ~ log(池大小)` 还在**线性段**的特征。外推 512→65k(≈7 次翻倍)≈ 再 +1.4 ⇒
+  **更大的池会持续捞到更难的负例。** 这**推翻**了我上一条基于「对齐初始化⇒杠杆已平」的先验猜测——数据不支持。
+- `neg_grad_mass ≈ 0.7 且已稳`:批内负例还活着(不是全死),但批内难负例梯度已饱和,而更难的负例明明就在
+  512 采样之外(见上)。这正是 SigLIP「批受限」的特征,轻微利好 R1。
+
+**所以判据不再是「砍」。现在整件事只压在 Part B 上**(`maxneg` 涨,但探针分不清这些更难的负例是**真**难负例
+还是**近重复假负例**——后者相似度也高,会同样抬高 `maxneg`):
+| `maxneg`@512 | 近重复密度 (Part B) | 结论 |
+|---|---|---|
+| 仍涨(实测:是) | **低** | **建 R1**(按 §2 建 SigLIP 池;涨的是真难负例) |
+| 仍涨(实测:是) | **高** | **先砍/修标签**(涨的多是假负例,不去重的大池放大错误排斥) |
+
+**Part B 这次没跑成 —— 是我脚本的 bug,已修:** `r1_textfeat_dump.py` 直接当脚本跑时仓库根不在
+`sys.path` 上(训练入口是通过 launcher 加的),报 `ModuleNotFoundError: No module named 'utils'`。
+本轮已在脚本顶部插入仓库根;我这边验证过:`import utils.config` 现在能越过 `utils` 路径、进到正常的
+依赖加载(easydict,服务器上有)。
+
+**下一步(pull 后只需重跑 Part B ②;① 不用再跑,`maxneg` 已读到):**
+```bash
+cd ~/mobileclip && git pull origin main
+python experiments/r1_textfeat_dump.py \
+    --anno anno_downstream/InternVid/InternVid-10M-flt_1.json \
+    --ckpt checkpoints/mobileviclip_small.pt --out /tmp/txtfeats.npy --sample 10000
+python experiments/r1_fn_density.py --feats /tmp/txtfeats.npy --thresholds 0.9,0.95,0.99
+```
+若建模型那步又报错,把**完整 traceback** 贴回(最可能是 `Config.from_file` 字段或 `encode_text` 返回形状,
+按报错微调;字幕读取已验证 4998 条 OK)。完整推导见 [`notes/r1-implementation-plan.md`](../r1-implementation-plan.md) **§7.5**。
+
+**报告回来:** Part B 三个阈值(0.9/0.95/0.99)下「有≥1 近邻」的占比。低 ⇒ 建 R1;高 ⇒ 砍/先修标签。
+
+---
+
 ## 2026-07-27 (34) — R1 go/no-go 试点结果:不建、暂不砍(探针指标当时选错,已修)
 
 **你贴回的 `[SAT]` 8 行读完了。结论:go/no-go 是 inconclusive,偏向砍,但先别动手建池。**
