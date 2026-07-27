@@ -23,6 +23,53 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-27 (34) — R1 go/no-go 试点结果:不建、暂不砍(探针指标当时选错,已修)
+
+**你贴回的 `[SAT]` 8 行读完了。结论:go/no-go 是 inconclusive,偏向砍,但先别动手建池。**
+
+**数字:** `top1_is_pos` 全程 ≈0.67–0.77(随机基线 ≈1/512≈0.002),`mean(pos-hardestneg)`
+0.25→0.60 且**还在涨**。试点 val 稳在 t2v R@1≈76–77 / R@5≈92。
+
+**关键更正(我上一版探针错了,这轮已改 `models/criterions.py`):**
+1. 旧判据「`top1_is_pos→1 ⇒ 批内饱和 ⇒ 大池无益 ⇒ 砍」是**错的科学**。最难负例的相似度随池
+   `~log(池大小)` 增长——512 里全分开,32k 池几乎仍能捞到更难的负例。「512 全分开」和
+   「大池能加梯度」**不互斥**。而且 `top1=0.73`(不是 →1),这条判据本来就没触发。
+2. `top1/margin` 是**排序/分离度代理**,**不是**决定「大池有没有用」的量。sigmoid 下负例的梯度
+   `∝ σ(t·s+b)`,只有落在边界活跃区的负例才有梯度。判据应看**梯度质量**,不是排序。
+
+**修正后探针现在多记两项(同一 `[B,B]` 矩阵即可算,不额外训练):**
+`maxneg_by_pool`(最难负例随 64/128/256/512 前缀是否仍在涨——直接回答「大池会不会加更难负例」)
+和 `neg_grad_mass`(批内负例的有效梯度质量,≈0 ⇒ 负例已「死」)。
+
+**为什么 0.73 既不能砍也不能建:** 27% 的查询批内有负例压过正例——**没饱和**;但这被两件事污染:
+(a) 10k/3-epoch 上「margin 还在涨」多半是**记忆**,不代表全量语料;(b)**假负例**——近重复但
+`idx` 不同的字幕被当负例,它们本就是高 logit 的「难负例」,同时**压低 top1、抬高 margin**,却不是真信号。
+
+**下一步(两项零训练检查,按 §7 决策表判):**
+```bash
+cd ~/mobileclip && git pull origin main
+export MVC_DATA_DIR=/home/vca1/datasets
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+# ① 重跑同一试点,读新指标 maxneg_by_pool / neg_grad_mass:
+MVC_LOG_SAT=20 bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8
+grep '\[SAT\]' experiments/runs/pilot_10k_r1/train.log | tail -20
+# ② Part B 近重复密度(定去重掩码;dump 建模型部分仍未在真权重验证,报错贴 traceback):
+python experiments/r1_textfeat_dump.py \
+    --anno anno_downstream/InternVid/InternVid-10M-flt_1.json \
+    --ckpt checkpoints/mobileviclip_small.pt --out /tmp/txtfeats.npy --sample 10000
+python experiments/r1_fn_density.py --feats /tmp/txtfeats.npy --thresholds 0.9,0.95,0.99
+```
+**判:** `maxneg_by_pool` 到 512 已平 ⇒ 砍。仍涨 + 近重复密度高 ⇒ 砍/先修标签。
+仍涨 + 密度低 ⇒ 才建 R1(三种里最不可能——对齐初始化+冻结文本塔+小数据,预期这杠杆很平)。
+
+**顺带一个建池前置结论:** 近重复去重掩码从「Part B 高才加」升级为**建池必需**——假负例正是
+sigmoid 大池里主导梯度的高 logit 对,不去重 = 放大错误排斥。完整推导见
+[`notes/r1-implementation-plan.md`](../r1-implementation-plan.md) **§7**(附 `deep-learning-researcher` 复核)。
+
+**报告回来:** 新 `[SAT]` 行(`maxneg_by_pool[...]` 与 `neg_grad_mass`)+ Part B 的近邻占比。
+
+---
+
 ## 2026-07-27 (33) — pipeline-sample 新增 C_fuse 投票浓缩段：pull 后重跑一次（增量只需几分钟）
 
 **变更**（维护者指令：不满足于 A′ 机械切句 → 跨重述投票筛细节、浓缩成高浓度短句；

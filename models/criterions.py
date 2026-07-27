@@ -14,16 +14,27 @@ logger = logging.getLogger(__name__)
 
 
 @torch.no_grad()
-def saturation_stats(sim: torch.Tensor, pos_mask: torch.Tensor):
-    """In-batch contrastive saturation over a [B,B] similarity matrix (R1 go/no-go).
+def saturation_stats(sim: torch.Tensor, pos_mask: torch.Tensor, is_logit: bool = False):
+    """In-batch contrastive diagnostics over a [B,B] similarity/logit matrix.
 
-    Answers "does batch B already separate positives from negatives?" — if yes, a
-    bigger negative pool (R1) cannot help (bottleneck (d) misdiagnosed).
+    ⚠️ Read `notes/r1-implementation-plan.md` §7 before interpreting. `top1_is_pos` and
+    `mean_margin` are *ranking/separation* proxies — they are NOT the quantity that
+    decides whether a bigger negative pool (R1) would help. Two subtleties make them
+    misleading on their own: (a) `max negative similarity grows ~log(pool size)`, so a
+    batch can be fully separated at B yet a larger pool still surfaces harder negatives
+    (i.e. `top1_is_pos→1` does NOT imply "pool useless"); (b) near-duplicate captions
+    with a different `idx` are labeled negatives but are semantically positive, so they
+    inflate the margin and depress top1 without being real hard negatives.
 
-    Returns (top1_is_pos, mean_margin):
-      top1_is_pos  fraction of query rows whose argmax column is a positive.
-      mean_margin  mean over rows of (min positive logit − max negative logit).
-    Pure/read-only; unit-tested in tests + inline. Not called unless MVC_LOG_SAT is set.
+    The load-bearing metrics are therefore:
+      maxneg_scale  mean hardest-negative value over nested column prefixes 64/128/256/512.
+                    Still rising at 512 ⇒ a larger pool keeps surfacing harder negatives
+                    (the direct, link-function-free "would more negatives help?" probe).
+      neg_grad_mass (sigmoid/logit path only, else NaN) mean over rows of Σ_j σ(logit_ij)
+                    over negatives = effective #gradient-bearing negatives. ≈0 ⇒ in-batch
+                    negatives are dead (adding *easy* ones is free of signal).
+
+    Returns a dict. Pure/read-only; unit-tested. Not called unless MVC_LOG_SAT is set.
     """
     s = sim.detach().float()
     B = s.shape[0]
@@ -31,19 +42,36 @@ def saturation_stats(sim: torch.Tensor, pos_mask: torch.Tensor):
     ar = torch.arange(B, device=s.device)
     top1 = s.argmax(dim=1)
     top1_is_pos = pm[ar, top1].float().mean().item()
-    neg = s.masked_fill(pm, float("-inf"))
-    posv = s.masked_fill(~pm, float("inf"))
-    margin = posv.min(1).values - neg.max(1).values
+    negfill = s.masked_fill(pm, float("-inf"))   # positives -> -inf (dropped from neg ops)
+    posfill = s.masked_fill(~pm, float("inf"))    # negatives -> +inf (dropped from pos ops)
+    margin = posfill.min(1).values - negfill.max(1).values
     margin = margin[torch.isfinite(margin)]
     mean_margin = margin.mean().item() if margin.numel() else float("nan")
-    return top1_is_pos, mean_margin
+    # nested-prefix scaling of the mean hardest-negative value (a shuffled prefix of the
+    # batch is an i.i.d. sample of that pool size; nesting makes the curve monotone).
+    maxneg_scale = {}
+    for k in (64, 128, 256, 512):
+        if k > B:
+            break
+        mk = negfill[:, :k].max(1).values
+        mk = mk[torch.isfinite(mk)]
+        maxneg_scale[k] = mk.mean().item() if mk.numel() else float("nan")
+    # gradient-bearing negative mass — only meaningful when s are true sigmoid logits.
+    # σ(-inf)=0 cleanly zeroes the positive columns, so the sum is over negatives only.
+    neg_grad_mass = torch.sigmoid(negfill).sum(1).mean().item() if is_logit else float("nan")
+    return {
+        "top1_is_pos": top1_is_pos,
+        "mean_margin": mean_margin,
+        "maxneg_scale": maxneg_scale,
+        "neg_grad_mass": neg_grad_mass,
+    }
 
 
-def _maybe_log_saturation(counter_obj, sim, pos_mask):
-    """Env-gated (MVC_LOG_SAT=<interval>, default off) read-only saturation logger.
+def _maybe_log_saturation(counter_obj, sim, pos_mask, is_logit: bool = False):
+    """Env-gated (MVC_LOG_SAT=<interval>, default off) read-only diagnostics logger.
 
     Off-path (env unset) returns before touching any tensor -> loss is bitwise
-    unchanged. See notes/r1-implementation-plan.md §4 (the R1 go/no-go).
+    unchanged. See notes/r1-implementation-plan.md §7 (the R1 go/no-go, corrected).
     """
     every = os.environ.get("MVC_LOG_SAT")
     if not every:
@@ -52,11 +80,14 @@ def _maybe_log_saturation(counter_obj, sim, pos_mask):
     counter_obj._sat_step = getattr(counter_obj, "_sat_step", 0) + 1
     if counter_obj._sat_step % every != 0:
         return
-    top1, margin = saturation_stats(sim, pos_mask)
+    st = saturation_stats(sim, pos_mask, is_logit=is_logit)
+    scale = " ".join(f"{k}:{v:.3f}" for k, v in st["maxneg_scale"].items())
     logger.info(
         f"[SAT] step~{counter_obj._sat_step} B={sim.shape[0]} "
-        f"top1_is_pos={top1:.4f} mean(pos-hardestneg)={margin:.4f}  "
-        f"(top1_is_pos→1 且 margin 大 ⇒ 批内已饱和 ⇒ R1 更大负例池无益)"
+        f"top1_is_pos={st['top1_is_pos']:.4f} margin={st['mean_margin']:.4f} "
+        f"neg_grad_mass={st['neg_grad_mass']:.4f} maxneg_by_pool[{scale}]  "
+        f"(top1/margin=分离度代理,非判据;判据见 notes/r1-implementation-plan.md §7: "
+        f"maxneg 随池增大仍上升 且 近重复密度低 ⇒ 才建 R1)"
     )
 
 
@@ -236,7 +267,7 @@ class VTC_VTM_Loss(nn.Module):
         log_likelihood = F.logsigmoid(mask * logits)
         nll = -torch.sum(log_likelihood, dim=-1)
         loss = torch.mean(nll)
-        _maybe_log_saturation(self, logits, pos > 0)
+        _maybe_log_saturation(self, logits, pos > 0, is_logit=True)
         return loss
 
     def vtm_loss(

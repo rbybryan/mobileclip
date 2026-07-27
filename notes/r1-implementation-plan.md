@@ -7,9 +7,15 @@ mathematically-exact bank". The exactness is a real but **v2t-side** engineering
 (examination §1); the number we lead with (t2v) still rides a stale video queue.
 
 **Status of the pre-checks (examination §7):** Part A done — exact-duplicate FN ≈0, so
-**exact-`idx` dedup can be skipped**. Part B (near-duplicate density) decides whether a
-cosine dedup mask is needed; run `experiments/r1_textfeat_dump.py` → `r1_fn_density.py --feats`
-(COMMANDS §3.2). **The go/no-go is neither — it is the in-batch saturation probe below.**
+**exact-`idx` dedup can be skipped**. Part B (near-duplicate density) decides the
+cosine dedup mask; run `experiments/r1_textfeat_dump.py` → `r1_fn_density.py --feats`
+(COMMANDS §3.2).
+
+**Go/no-go pilot RAN (2026-07-27) — see §7.** Result: **inconclusive, prior tilted to
+KILL.** The probe as first shipped was *mis-specified* (its metrics answer the wrong
+question, and its baked-in "saturated ⇒ kill" rule was wrong science). §7 records the
+numbers, the correction, the two zero-training checks that actually decide, and why
+**near-dup dedup is now a build prerequisite, not optional** (upgrades §2 / examination §3).
 
 ---
 
@@ -83,8 +89,11 @@ extra_mask = (idx.view(-1,1) == bank_idx_sub.view(1,-1))         # [B, K'] posit
   t2v.
 - **Exact-`idx` dedup:** Part A showed it is ≈moot (examination §7) — the `extra_mask` above
   already handles the rare exact collision correctly, so nothing extra is needed there.
-- **Near-dup dedup:** add a precomputed cosine-threshold mask **iff** Part B shows high near-dup
-  density; otherwise skip.
+- **Near-dup dedup:** a precomputed cosine-threshold mask is a **prerequisite**, not optional
+  (revised — see §7.4). A near-duplicate caption with a different `idx` is a *semantic positive
+  labeled negative*; under sigmoid its high logit sits in the active region and dominates the
+  gradient, so scaling the pool scales up **mislabeled repulsion**. Part B sizes the mask; it
+  does not decide whether the mask exists.
 
 ---
 
@@ -112,6 +121,11 @@ executes ops and can change fp16 reduction order; examination §3 / GATE-0 lesso
 ---
 
 ## 4. The go/no-go instrumentation (build this before the pool pays off)
+
+> **Superseded by §7 (2026-07-27).** The pilot ran; the metrics below (softmax-mass /
+> positive-rank) were the right *intuition* but `top1_is_pos`/margin turned out to be the wrong
+> instruments and the kill rule was mis-stated. §7 has the measured numbers, the corrected
+> metrics now in code (`maxneg_by_pool`, `neg_grad_mass`), and the decision table. Read §7 first.
 
 Log every step (cheap):
 - **softmax/sigmoid mass on banked vs in-batch negatives** — <5% ⇒ the pool is inert ⇒ **kill**.
@@ -152,3 +166,97 @@ reachable for ~one pilot's cost, before the pool is built.
 
 *Code references checked 2026-07-27 against `models/criterions.py`, `models/mobileviclip_small.py`,
 `scripts/pretraining/clip/mobileviclip_small/config.py`, `experiments/configs/r1a_sigmoid.py`.*
+
+---
+
+## 7. Go/no-go pilot — measured (2026-07-27), and the probe corrected
+
+Ran the pilot per COMMANDS §3.3 (`MVC_LOG_SAT=20 bash experiments/run_pretrain.sh
+experiments/configs/pilot_10k_r1.py 8`): sigmoid loss, global **B=512**, 10 epochs on the
+`internvid_zh_10k` pilot (9000 train / 1000 val), both towers from the aligned `mobileclip_s2`.
+`[SAT]` every 20 steps:
+
+| step | top1_is_pos | mean(pos − hardest_neg) |
+|---|---|---|
+| 20  | 0.754 | 0.431 |
+| 40  | 0.670 | 0.253 |
+| 60  | 0.686 | 0.315 |
+| 80  | 0.744 | 0.466 |
+| 100 | 0.740 | 0.526 |
+| 120 | 0.752 | 0.555 |
+| 140 | 0.758 | 0.604 |
+| 160 | 0.773 | 0.595 |
+
+Pilot val retrieval plateaued at ~**t2v R@1 76–77, R@5 92** (started at 79.7 from the aligned
+init, dipped, recovered — normal for a sigmoid fine-tune re-learning `logit_scale`/`logit_bias`).
+
+### 7.1 The probe as first shipped was mis-specified — now corrected in code
+
+Two errors, both fixed in `models/criterions.py` this round:
+
+1. **Wrong kill rule.** The v1 log line asserted "`top1_is_pos→1` & big margin ⇒ batch
+   saturated ⇒ bigger pool useless." That logic is **false**: the hardest negative in the data
+   grows like **`max-neg-similarity ~ log(pool size)`**, so a 32k pool almost always surfaces a
+   harder negative than any fixed 512-draw — *even when every 512-batch is perfectly separated*.
+   Full in-batch separation and "a bigger pool adds gradient" are **not** mutually exclusive.
+2. **Wrong instruments.** `top1_is_pos` and `mean_margin` measure **ranking/separation**, not the
+   quantity that decides the lever: **where the negative-logit mass sits relative to the sigmoid
+   boundary**. Under `L = −log σ(z·(t·s+b))`, a negative contributes gradient `∝ σ(t·s+b)` — it is
+   dead once pushed below the boundary. "More negatives help" requires the larger pool to add
+   negatives that land in the **still-active region**; ranking stats cannot see that.
+
+The probe now also logs the two metrics that *can* (both computable from the same `[B,B]`
+matrix, no extra training):
+- **`maxneg_by_pool[64:… 128:… 256:… 512:…]`** — mean hardest-negative value over nested column
+  prefixes. **Still rising at 512 ⇒ a larger pool keeps finding harder negatives** (the direct,
+  link-function-free test). Flat by 512 ⇒ pool won't add hard negatives.
+- **`neg_grad_mass`** (sigmoid path) — mean over rows of `Σ_j σ(logit_ij)` over negatives =
+  effective # of gradient-bearing negatives. **≈0 ⇒ in-batch negatives are dead** (adding *easy*
+  ones from a pool is free of signal).
+
+### 7.2 What the measured numbers do and don't say
+
+- `top1_is_pos ≈ 0.73` (random ≈ 1/512 ≈ 0.002) ⇒ the 512-batch is **strongly separated but NOT
+  saturated** — ~27% of queries still have an in-batch negative outranking the positive. **The
+  clean "512 saturated ⇒ kill" signal did not fire.**
+- But this is **not** a build signal either. The residual hard negatives are confounded twice:
+  (a) on a 10k / 3-epoch pilot a **growing** margin is mostly **memorization**, not evidence about
+  the corpus; (b) **false negatives** — near-duplicate captions with a different `idx` — are
+  labeled negatives yet are semantically correct; they *are* high-logit "hard" negatives, so they
+  simultaneously **depress `top1_is_pos`** and **inflate the margin** without being real signal.
+
+### 7.3 Verdict — inconclusive, prior tilted to KILL; two zero-training checks decide
+
+The two metrics I *didn't* have (7.1) are exactly what's needed, and both are free:
+
+1. **`maxneg_by_pool` scaling** (now logged) — re-run the same pilot; read whether mean
+   hardest-negative is still climbing 256→512. Plateaued ⇒ **kill**.
+2. **Near-duplicate density** (Part B; `r1_textfeat_dump.py` → `r1_fn_density.py --feats`,
+   COMMANDS §3.2) — off-diagonal high-cosine pairs in the *projected* space.
+
+Decision table:
+
+| `maxneg_by_pool` at 512 | near-dup density | call |
+|---|---|---|
+| plateaued | any | **kill** (no harder negatives to add) |
+| still rising | **high** | **kill / fix labels** ("hard negatives" are false negatives; a bigger un-deduped pool amplifies mislabeled repulsion) |
+| still rising | **low** | **build R1** (genuine hard negatives a larger pool would add) — least likely of the three |
+
+**Regime prior (independent of the pilot).** Aligned init + frozen text + only the projection
+trainable + tiny data means we start *inside* the flat, post-saturation part of SigLIP's
+batch-size curve (that curve is a from-scratch, alignment-from-noise phenomenon). So the
+negative-pool lever is expected to be **substantially flatter here** than SigLIP's "batch-limited
+below 16k" headline — that number does not transfer to our regime (echoes examination §4).
+
+### 7.4 Consequence for the build (revises §2)
+
+Because **false negatives are themselves hard negatives**, near-dup dedup moves from "add iff
+Part B is high" to a **hard prerequisite** (§2 bullet updated). The same mechanism that would make
+a pool "work" (surfacing high-logit negatives) is the mechanism that injects mislabeled repulsion;
+an un-deduplicated 32k pool is a **net-negative risk**, not a neutral default.
+
+**Do not build the pool on this evidence.** Re-run the pilot to read `maxneg_by_pool`/`neg_grad_mass`,
+run Part B, then apply the table above.
+
+*Interpretation pressure-tested via a `deep-learning-researcher` review of the InfoNCE/sigmoid
+gradient (2026-07-27); the corrections above are its findings, verified against `criterions.py`.*
