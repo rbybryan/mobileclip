@@ -172,3 +172,41 @@ stop the two silent-underperformance modes (§2, §3) from muddying it.
 `models/backbones/internvideo2/mobileclip/text_encoder.py`,
 `scripts/pretraining/clip/mobileviclip_small/config.py`, `tasks_clip/pretrain.py` on `main`
 (`e199f20`).*
+
+---
+
+## 7. Part A measured (2026-07-27, server) — exact-duplicate FN is negligible
+
+Ran `r1_fn_density.py --anno .../InternVid-10M-flt_1.json` (one 5000-caption shard):
+
+| quantity | value |
+|---|---|
+| captions | 5000 |
+| distinct (by `caption_to_idx`) | **4998 (99.96%)** |
+| same-caption pair rate | **≈1.6e-7 (0.0000%)** ⇒ ~0 false negatives per 65k pool |
+| samples in a duplicate group | ~0.1% |
+
+**Interpretation — this de-risks one of the four findings and shrinks the build:**
+
+1. **§3's exact-match concern is real practice but low-stakes.** A 65k pool draws ≈**0** exact
+   false negatives, so a naive bank that ignored exact-`idx` dedup would barely be contaminated
+   by *exact* matches. The `get_mask` threading (§3) is still correct hygiene, but it is **not**
+   the thing that can sink R1 — one less risk on the critical build.
+2. **Secondary:** this retroactively shows that B0/R0 **not** setting `caption_idx` (only `r1a`
+   does) cost essentially nothing — the multi-positive term was ~empty on InternVid anyway.
+3. **The load-bearing risk now sits entirely in Part B** (near-duplicate density in the
+   *projected* space, which `idx` cannot catch). The captions surfaced here — e.g. *"a woman
+   with red hair singing into a microphone"* — are exactly the generic kind that have many
+   *near*-duplicates at ~0 *exact* duplicates. Part B is the one that decides whether a
+   cosine-threshold dedup mask is needed.
+
+**Caveats (state them):** one random 5k shard; running all 11 shards (`--anno
+anno_downstream/InternVid/InternVid-10M-flt_*.json`, still seconds) tightens the estimate, and
+boilerplate captions could repeat more across the full 10M than within 5k — but 99.96% distinct
+on a random shard is already strong evidence that exact dupes are rare corpus-wide.
+
+**And the boundary this does _not_ cross:** neither Part A nor Part B is the R1 **go/no-go**.
+Go/no-go is the *training-time* saturation check (§4: softmax mass on banked negatives; rank of
+the positive among the 512 in-batch negatives). The pre-checks only (i) rule out a failure mode
+and (ii) set one design knob (dedup-mask yes/no). R1 can be built now with exact-dedup skipped;
+add the cosine dedup mask only if Part B shows near-dup density is high.

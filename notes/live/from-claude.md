@@ -23,6 +23,47 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-27 (30) — R1 前置探针 A 出数:精确重复 ≈0 ⇒ 免做精确去重;近重复(B)成为唯一待测设计项
+
+**你跑的 Part A(InternVid-10M-flt_1,5000 条):** 4998 条不同(**99.96%**),
+随机一对同字幕概率 **≈1.6e-7(0.0000%)** ⇒ 65k 池里期望 **0** 个精确假负例。
+
+**含义(这条结果替 R1 减了一项风险、也缩了要写的代码):**
+- **examination §3 的"精确匹配假负例"担忧基本不成立。** 65k 池几乎抽不到精确重复,
+  所以即使负例库**不做**精确 `idx` 去重,也几乎没有精确假负例污染。穿过 `get_mask` 仍是
+  好习惯,但**不是能把 R1 搞砸的那一环** —— 关键路径上少一个风险点。
+- **顺带**:这也说明 B0/R0 没设 `caption_idx`(只有 r1a 设了)其实几乎零代价 ——
+  InternVid 上那条多正例项本来就近乎空。
+- **风险现在全压在 Part B(近重复)** —— idx 抓不到的、投影空间里语义相近的字幕。
+  样本里那种通用句("a woman with red hair singing into a microphone")正是"精确重复 0、
+  近重复多"的典型。**Part B 决定要不要加基于余弦阈值的去重掩码。**
+
+**边界(别读过头):** Part A / B 都**不是 R1 的 go/no-go**。go/no-go 是**训练期**的饱和探针
+(banked 负例占 softmax 质量 <5% ⇒ 库惰性;正样本在 512 批内已 rank-1 ⇒ 512 就饱和)。
+前置探针只是(i)排除一个失败模式、(ii)定一个设计旋钮(去重掩码要不要)。
+
+**接下来二选一(你定):**
+
+**① 想把前置探针做全**(都很便宜):
+```bash
+# A 收紧到 55k(11 片,仍是秒级)
+python experiments/r1_fn_density.py --anno anno_downstream/InternVid/InternVid-10M-flt_*.json
+# B 近重复:先在训练环境生成文本特征(片段见下),再算密度
+python experiments/r1_fn_density.py --help-feats     # 打印生成 .npy 的片段(复用 eval 的 encode_text)
+python experiments/r1_fn_density.py --feats /tmp/txtfeats.npy --thresholds 0.9,0.95,0.99
+```
+Part B 的判读:「有≥1近邻」占比高 ⇒ 必须上余弦去重掩码;低 ⇒ 免了。
+
+**② 直接开 R1 训练臂**(Part A 已说可跳过精确去重;近重复掩码可等 B 或按需再加)。
+按 examination §6 重构为 **SigLIP 制度**一条臂:sigmoid 损失(已实现 `r1a_sigmoid.py`)+
+可学习温度 + 大文本负例池,**臂内埋饱和探针**(才是 go/no-go)。
+你说一声要走 ②,我把「离线缓存投影前文本特征 → 每步重投影拼进 `get_mask` → 三件套(池子/温度/sigmoid)」
+的落地步骤写进 `COMMANDS.md` + 新配置,连 fp16 溢出的 fp32/分块处理一起给全。
+
+**要我现在写 ② 的落地方案吗?** 还是你先把 B 跑了我们再定池子大小?
+
+---
+
 ## 2026-07-27 (29) — 2 卡冒烟几乎全过！只栽在别人占了卡的 OOM(不是我们的问题)
 
 **Diagnosis:** 这是**大进展**。冒烟这次一路走通:导入链、`scripts` 包、配置加载、
