@@ -343,3 +343,30 @@ distribution; boilerplate captions could repeat more across the full 10M than wi
 density on the actual pool when the offline cache is built (it is a byproduct of the cache pass). The
 **GO is not "R1 works"** — it is "the premise holds, build the arm and run the A/B." The kill criterion
 still governs: **512→65k negatives < 0.5 R-Sum ⇒ stop** (§5).
+
+---
+
+## 8. Build landed (2.4c, 2026-07-27) — what to run, what's verified
+
+The pool is implemented as a **config-gated, default-off** feature (same discipline as the probe:
+no `criterion.text_bank` ⇒ bitwise-identical to today). Files:
+
+| file | change |
+|---|---|
+| `models/criterions.py` | `vtc_loss_sigmoid(text_bank=None)` + `_text_bank_nll` — extends the `[B,B]` sigmoid matrix with `[B,K']` video–bankedtext columns; banked cols sharing a query idx are **positives**; near-dup cols (cosine to the query's own text ≥ `dedup_cos`) dropped. fp32 matmul. **All under `if text_bank is not None`** ⇒ off-path unchanged. |
+| `models/mobileviclip_small.py` | `_init_text_bank` (loads `feats`/`idx` buffers iff `criterion.text_bank.enable`), `_sample_text_bank` (per-step deterministic subset, **re-projects with the current `projection_layer`** = exact bank), `forward` passes it only when `training`. |
+| `models/backbones/.../mobileclip/text_encoder.py` | `encode_text(return_pre_proj=True)` returns the EOT-pooled feature **before** `@ projection_layer` (what the cache stores). |
+| `experiments/r1_build_textbank.py` | offline cache: pre-projection feats `[K, C_pre]` fp16 + `caption_to_idx` `[K]` — reuses the Part-B-verified build path. |
+| `experiments/configs/nR1_textbank_pilot.py` | pilot A/B **treatment** (control = `pilot_10k_r1.py`); only diff is `criterion.text_bank`. |
+
+**Run:** COMMANDS **§3.3.1** — build the cache, then the A/B (`nR1_textbank_pilot` vs `pilot_10k_r1`,
+matched steps). Startup logs `[R1] text bank ON: …`.
+
+**Verified on CPU here:** the `_text_bank_nll` math (positives, dedup drops exactly the near-dup
+false-negatives, fp16 round-trip) against an inline reference; all files parse; `caption_to_idx` in the
+cache builder is byte-identical to the training `dataset.pt_dataset` one (bank idx = training idx);
+`projection_layer` is a direct trainable attr of `text_encoder`. **GPU-unverified (disclosed):**
+end-to-end forward wiring, buffer dtype/device movement under deepspeed, and the cache encode pass
+(its build path is the one Part B already ran). If the run errors, paste the traceback.
+
+**Report BOTH directions** (v2t hardened directly, t2v indirect — §1); apply the kill criterion (§5).

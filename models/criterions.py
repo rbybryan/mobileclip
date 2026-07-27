@@ -232,6 +232,7 @@ class VTC_VTM_Loss(nn.Module):
         b=None,
         all_gather=True,
         agg_method="mean",
+        text_bank=None,
     ):
         """forward to calculate the loss
 
@@ -241,6 +242,15 @@ class VTC_VTM_Loss(nn.Module):
             idx (torch.Tensor): The index for each example. Shape: [B,].
             temp (torch.Tensor): The temperature. Shape: [].
             all_gather (bool): If true, will gather samples across all the GPUs and calculate loss across the gathered samples.
+            text_bank (dict|None): R1 SigLIP-regime negative pool (notes/r1-implementation-plan.md
+                §2/§7.6). When None (default) this is a strict no-op — the path below is byte-identical
+                to the base loss. When set, a dict with:
+                  feats     [K',C] re-projected (with the *current* projection) banked text features
+                            (un-normalized; normalized here, mirroring get_sim_sigmoid).
+                  idx       [K']   caption_to_idx of each banked text (same id space as `idx`, so a
+                            banked caption sharing a query clip's idx is a POSITIVE, not a negative).
+                  dedup_cos float|None  drop banked cols whose cosine to the query's own in-batch text
+                            ≥ this (near-duplicate false negatives; §7.4). None disables the mask.
 
         Returns: loss_vtc (torch.Tensor): The video-text contrastive loss. Shape: [].
 
@@ -266,9 +276,35 @@ class VTC_VTM_Loss(nn.Module):
         mask = (-torch.ones_like(logits) + 2 * pos)
         log_likelihood = F.logsigmoid(mask * logits)
         nll = -torch.sum(log_likelihood, dim=-1)
+        if text_bank is not None:
+            nll = nll + self._text_bank_nll(
+                vision_proj, text_proj, idx, t, b, temp, text_bank)
         loss = torch.mean(nll)
         _maybe_log_saturation(self, logits, pos > 0, is_logit=True)
         return loss
+
+    def _text_bank_nll(self, vision_proj, text_proj, idx, t, b, temp, text_bank):
+        """R1 extra sigmoid terms over banked text negatives -> per-row nll [B].
+
+        Same per-pair sigmoid form as the in-batch block, extending the [B,B] matrix with
+        [B,K'] video–bankedtext columns. fp32 matmul (safety margin; the SigLIP logit scale
+        ≈10 is far from fp16 overflow, §0). Banked cols that share a query's idx are positives;
+        near-duplicate cols (cosine to the query's own text ≥ dedup_cos) are dropped from the sum.
+        """
+        v = F.normalize(vision_proj, dim=-1).float()               # [B,C]
+        tb = F.normalize(text_bank["feats"], dim=-1).float()       # [K',C]
+        bidx = text_bank["idx"].to(idx.device)
+        extra = v @ tb.T / temp                                     # [B,K'] cosine (temp=1 for sigmoid)
+        extra = extra * t if b is None else extra * t + b          # scale/bias like the in-batch logits
+        extra_pos = (idx.view(-1, 1) == bidx.view(1, -1)).to(extra.dtype)   # [B,K'] positives among the bank
+        emask = -torch.ones_like(extra) + 2 * extra_pos
+        ll = F.logsigmoid(emask * extra)                           # [B,K']
+        dedup_cos = text_bank.get("dedup_cos", None)
+        if dedup_cos is not None:
+            tin = F.normalize(text_proj, dim=-1).float()           # [B,C] in-batch texts
+            near = (tin @ tb.T >= dedup_cos) & (extra_pos == 0)    # near-dup, not already a positive
+            ll = ll.masked_fill(near, 0.0)                         # drop from the sum (neither pos nor neg)
+        return (-torch.sum(ll, dim=-1)).to(vision_proj.dtype)      # [B]
 
     def vtm_loss(
         self,

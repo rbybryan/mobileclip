@@ -145,6 +145,9 @@ class MobileViCLIP_Small(nn.Module):
             self.logit_scale = nn.parameter.Parameter(torch.ones([]) * math.log(10.0))
             self.logit_bias = nn.parameter.Parameter(torch.ones([]) * -10.0)
 
+        # R1 SigLIP-regime text negative pool (default OFF; notes/r1-implementation-plan.md §2/§7.6).
+        self._init_text_bank()
+
     def no_weight_decay(self):
         ret = {"temp", "logit_scale", "logit_bias"}
         ret.update(
@@ -161,6 +164,48 @@ class MobileViCLIP_Small(nn.Module):
     def clip_contrastive_temperature(self):
         """Seems only used during pre-training"""
         self.temp.clamp_(min=self.temp_min)
+
+    def _init_text_bank(self):
+        """Load the R1 pre-projection text bank if `criterion.text_bank.enable` (else no-op).
+
+        Buffers are non-persistent (rebuilt from the cache, not the checkpoint). `feats` is
+        [K, C_pre] pre-projection text features; `idx` is [K] caption_to_idx (same id space as
+        the training idx). See notes/r1-implementation-plan.md §2/§7.6.
+        """
+        crit = getattr(self.config, "criterion", None)
+        cfg = crit.get("text_bank", None) if crit is not None else None
+        self.text_bank_enabled = bool(cfg and cfg.get("enable", False))
+        if not self.text_bank_enabled:
+            return
+        import numpy as np
+        feats = np.load(cfg["path"])          # [K, C_pre] pre-projection text features
+        bidx = np.load(cfg["idx_path"])       # [K] caption_to_idx
+        self.register_buffer("text_bank_feats", torch.from_numpy(feats), persistent=False)
+        self.register_buffer("text_bank_idx", torch.from_numpy(bidx).long(), persistent=False)
+        self.text_bank_K = int(cfg.get("K", self.text_bank_feats.shape[0]))
+        self.text_bank_dedup_cos = cfg.get("dedup_cos", None)
+        self._bank_step = 0
+        logger.info(f"[R1] text bank ON: pool={tuple(self.text_bank_feats.shape)} "
+                    f"K'={self.text_bank_K} dedup_cos={self.text_bank_dedup_cos}")
+
+    def _sample_text_bank(self, dtype, device):
+        """Sample K' banked texts and re-project with the CURRENT projection (exact bank).
+
+        Deterministic per-step seed (a plain step counter) => identical subset on every rank,
+        so the gathered-loss bank block is consistent and no data-RNG stream is touched.
+        """
+        K = self.text_bank_feats.shape[0]
+        Ks = min(self.text_bank_K, K)
+        g = torch.Generator().manual_seed(int(self._bank_step))
+        self._bank_step += 1
+        sub = torch.randperm(K, generator=g)[:Ks].to(device)
+        pre = self.text_bank_feats.index_select(0, sub).to(dtype)    # [Ks, C_pre]
+        feats = pre @ self.text_encoder.projection_layer            # re-project w/ current proj -> exact
+        return {
+            "feats": feats,                                         # [Ks, C_out] (un-normalized)
+            "idx": self.text_bank_idx.index_select(0, sub),         # [Ks]
+            "dedup_cos": self.text_bank_dedup_cos,
+        }
 
     def forward(self, image, text, idx):
         """forward and calculate loss.
@@ -179,10 +224,14 @@ class MobileViCLIP_Small(nn.Module):
 
         # VTC loss
         if self.use_sigmoid_loss:
+            # R1: sample + re-project the text bank only when training (default OFF; eval untouched).
+            text_bank = None
+            if getattr(self, "text_bank_enabled", False) and self.training:
+                text_bank = self._sample_text_bank(text_embeds.dtype, text_embeds.device)
             loss_vtc = self.clip_loss.vtc_loss_sigmoid(
                 vision_embeds, text_embeds, idx,
                 temp=1.0, t=self.logit_scale.exp(), b=self.logit_bias,
-                all_gather=True,
+                all_gather=True, text_bank=text_bank,
             )
         else:
             loss_vtc = self.clip_loss.vtc_loss(

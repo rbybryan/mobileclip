@@ -23,6 +23,41 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-27 (38) — R1 池代码已落地(2.4c):建缓存 + 跑 A/B 一条龙
+
+**GO 之后的池代码写完并推上来了,默认关=逐位不变。** 改动:`models/criterions.py`(池损失
+`vtc_loss_sigmoid(text_bank=…)` + `_text_bank_nll`)、`models/mobileviclip_small.py`(`_init_text_bank`/
+`_sample_text_bank`/forward 接线,**每步用当前 projection_layer 重投影 = 精确池**)、
+`text_encoder.py`(`return_pre_proj` 暴露投影前特征)、`experiments/r1_build_textbank.py`(离线缓存)、
+`experiments/configs/nR1_textbank_pilot.py`(A/B 处理臂,对照 = `pilot_10k_r1`)。
+
+**池的数学我这边已 CPU 单测**(正例识别、去重恰好丢近重复假负例、fp16 往返都对齐参考实现);
+`caption_to_idx` 与训练用的 `dataset.pt_dataset` 逐字节一致(池 idx = 训练 idx)。
+**端到端前向/缓存只能你那边验**——建模型走的是 Part B 已跑通的同一条路。
+
+**服务器一条龙(pull 后):**
+```bash
+cd ~/mobileclip && git pull origin main
+export MVC_DATA_DIR=/home/vca1/datasets
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+# ① 建缓存(投影前文本特征 + idx;单卡纯前向,几分钟):
+python experiments/r1_build_textbank.py \
+    --anno anno_downstream/internvid_zh_10k_pilot.json \
+    --ckpt checkpoints/mobileviclip_small.pt \
+    --out-feats experiments/cache/textbank_pilot_feats.fp16.npy \
+    --out-idx   experiments/cache/textbank_pilot_idx.npy
+# ② A/B 处理臂(启动日志应有一行 `[R1] text bank ON: ...`):
+bash experiments/run_pretrain.sh experiments/configs/nR1_textbank_pilot.py 8
+# 对照臂若没跑过:bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8
+```
+判读:处理 vs 对照 held-out R@1,**两个方向都报**(池硬化 v2t=txt_r1;t2v=img_r1 只间接受益)。
+kill 判据:池 vs 无池 < 0.5 R-Sum ⇒ 停。细节见 [`notes/r1-implementation-plan.md`](../r1-implementation-plan.md) §8 / COMMANDS §3.3.1。
+
+**报告回来:** ① 缓存的 `feats.shape` 与 distinct idx 数;② 两臂逐 epoch 的 `txt_r1 / img_r1`(以及有没有报错 / `[R1]` 那行)。
+若 ① 建模型报错,贴完整 traceback。
+
+---
+
 ## 2026-07-27 (37) — Part B 跑通,近重复密度**低** → **GO(建 R1)**;下一步 2.4c 建池
 
 **Part B 这次跑通了(路径修好、模型建起来、encode_text 形状正常,4998 条字幕全编码)。近重复密度低:**
