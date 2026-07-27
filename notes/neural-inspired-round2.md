@@ -232,6 +232,9 @@ Ranked by (expected gain × novelty) ÷ (risk + cost), under T1/T2 from round 1 
 
 ### R1 · Exact frozen-text negative bank — the one all four reviews picked
 
+> ⚠️ **Examined 2026-07-24 — see [`notes/r1-examination.md`](r1-examination.md).** Verified against code: the exactness is real but attaches to **v2t**, while our headline is **t2v** (needs *video* negatives → stale queue); exactness also holds only because every text-path dropout is p=0 (train-mode leaves dropout active); and the sketch's `cross_entropy(arange)` must become `get_mask`-based multi-positive or it injects false negatives. Lead with the SigLIP-regime framing, and run the free offline false-negative-density probe first.
+
+
 **The observation.** `TextTransformer.encode_text` ends with a **single trainable op** —
 `token_emb @ self.projection_layer` (`text_encoder.py:225`). Everything before it is frozen by
 `freeze_text=True` (`mobileviclip_small.py:74-80`). Therefore **a caption's pre-projection
