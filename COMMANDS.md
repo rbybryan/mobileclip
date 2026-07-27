@@ -367,12 +367,17 @@ python experiments/r1_fn_density.py --anno anno_downstream/InternVid/InternVid-1
 > `FileNotFoundError`。**好消息:那份缓存本身是对的**——投影前特征只由 eval 配置里的冻结文本
 > 底座(`mobileclip_s2.pt`)决定,与 `--ckpt` 无关,所以 `--ckpt` 丢了也没影响。**直接改名即可,不必重建:**
 >
+> **`cp` 的源+目标全路径太长会被终端折行,粘贴时折行变真换行 → `cp` 只拿到一个参数
+> (`missing destination file operand`)。先 `cd` 进 cache 目录,用短文件名,每行都短到不折行:**
+>
 > ```bash
+> cd ~/mobileclip/experiments/cache
+> cp textbank_feats.fp16.npy textbank_pilot_feats.fp16.npy
+> cp textbank_idx.npy textbank_pilot_idx.npy
 > cd ~/mobileclip
-> cp experiments/cache/textbank_feats.fp16.npy experiments/cache/textbank_pilot_feats.fp16.npy
-> cp experiments/cache/textbank_idx.npy        experiments/cache/textbank_pilot_idx.npy
-> bash experiments/run_pretrain.sh experiments/configs/nR1_textbank_pilot.py 8   # 启动日志应出现 `[R1] text bank ON: pool=(8999, 512) ...`
+> bash experiments/run_pretrain.sh experiments/configs/nR1_textbank_pilot.py 8
 > ```
+> 启动日志应出现:`[R1] text bank ON: pool=(8999, 512) ...`。
 
 ```bash
 cd ~/mobileclip && git pull origin main      # 若报 "divergent branches",见下方 TROUBLESHOOTING
