@@ -616,17 +616,22 @@ k\*=3 对 N=5 是强门，拿信息量换可靠性——50 片试运行实测回
 
 - **为什么不能只跑一遍**：§5.5 投票的前提是样本**独立**。一遍解码出的 5-8 条共享同一
   上下文，一个幻觉会连贯地污染整组（自回归条件依赖），support 计数变假信号。
-- **新默认（`--mode recap-struct`，`RECAP_STYLE=struct`）**：每遍一次解码产 **5-8 条
-  带属性短句**（attr∈subject/action/scene/text，每条 ≤28 字 + 内联 en_gloss），
-  **独立跑 N=3 遍**（temp 0.9 + 帧抖动）；跨遍投票照走 §5.5（k=2/3 即多数门）。
+- **定位（2026-07-27 深夜二次指令）：方案B 平行备选，不覆盖方案A**。默认
+  `RECAP_STYLE=dense`（方案A 稠密×5 主线不动）；`RECAP_STYLE=struct` 启用 B 臂：
+  每遍一次解码产 **5-8 条带属性短句**（attr∈subject/action/scene/text，≤28 字 +
+  内联 en_gloss），**独立跑 N=3 遍**（temp 0.9 + 帧抖动）；跨遍投票照走 §5.5。
+  两臂产物完全隔离（B 臂全部带 `_st` 后缀 + `recap_struct.*`），互不覆盖。
 - **管线收益**：派生步整体裁撤（D8 的 gloss 改随重述产出）；视觉 prefill 5→3 次；
   全桶重述+派生成本约降一半。`verdict.recaps` 保留每遍拼接串——SigLIP 打分、多样性
   诊断、A′ 句切、TSV 列全部零改动兼容；`verdict.views`（带 src_recap/attr）直供
   fuse_condense 投票。输出写 `recap_struct.*.jsonl`，与旧 `recap5.*` 互不覆盖。
 - **登记的代价**：N=3 下 A− 选择臂退化为空转（top-3 of 3，选择只在 N>3 有意义）；
   单遍内条目彼此不独立（因此投票单位是「遍」不是「条」——support 仍按 src_recap 数）；
-  JSON 解析失败的遍静默缺席（诊断：`n_samples` 分布）。G1/G2 预注册仍按 dense×5 定义，
-  生产候选切 struct，以 50 片目检定夺。
+  JSON 解析失败的遍静默缺席（诊断：`n_samples` 分布）。G1/G2 预注册仍按 dense×5 定义。
+- **A/B 裁决协议**：`run_v100.sh pipeline-compare` 在同一批 50 片上双跑两臂（同
+  投票门 k=2、同浓缩 prompt、同验真），合成 `bundle_compare/`——每片并排展示
+  en源/原zh/A重述/A浓缩/B重述/B浓缩 + 单选「浓缩对比[A稠密更好/B结构化更好/差不多/
+  都不行]」。维护者单选多数定胜者，胜者才进生产配方；打平则按成本取 B（便宜一半）。
 
 ## 6. 明确不做（守边界）
 

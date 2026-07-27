@@ -104,7 +104,7 @@ addEventListener("keydown",e=>{if(e.key==="n"&&!/INPUT|TEXTAREA/.test(e.target.t
 const app=document.getElementById("app");
 ROWS.forEach((r,i)=>{
   const d=document.createElement("div");d.className="card";d.id="c"+i;
-  const CAPRE=/^(原zh|候选\\d|英文en|融合稿|重述\\d|A′视图|✓视图|·视图|✗视图|投票单元|淘汰单元|✓浓缩|·浓缩|✗浓缩|浓缩)$/;
+  const CAPRE=/^(原zh|候选\\d|英文en|融合稿|重述\\d|A′视图|✓视图|·视图|✗视图|投票单元|淘汰单元|✓浓缩|·浓缩|✗浓缩|浓缩|A重述|B重述|A浓缩|B浓缩)$/;
   const caps=COLS.filter(c=>CAPRE.test(c)&&r[c])
     .map(c=>`<div class="cap ${c==="原zh"?"orig":(c==="融合稿"||c[0]==="✓")?"fused":(c[0]==="✗"||c==="淘汰单元")?"filt":""}"><span class="lbl">${c}</span>${r[c]}</div>`).join("");
   const other=COLS.filter(c=>!CAPRE.test(c)&&!/^(video|video_path)$/.test(c)&&r[c])
@@ -153,6 +153,14 @@ HINTS = {
     "merge": "对着画面看 <b>3 条候选</b> 和绿色的 <b>融合稿</b>："
              "<b>幻觉</b>=融合稿说了任何一条候选都没提、且画面里也没有的东西（y=有，最要紧）；"
              "<b>更全</b>=融合稿比其中写得最好的那一条候选含更多<b>真实</b>细节（y=更全）。",
+    "compare": "A/B 双臂对比（同一批片、同一投票/浓缩参数）：<b>A重述/A浓缩</b> = 方案A "
+               "稠密×5（先长文再派生投票浓缩）；<b>B重述/B浓缩</b> = 方案B OwlCap 结构化×3"
+               "（每遍直接产 5-8 条带属性短句再投票浓缩）。对着画面回答一道单选：哪边的"
+               "<b>浓缩</b>更适合当这段视频的训练字幕——信息覆盖、真实性、句子质量一起权衡；"
+               "两边都行选「差不多」，两边都差选「都不行」并在 note 里写差在哪。",
+    "pipeline_st": "（方案B 结构化臂）对着画面依次读四样：英文en → 黄色原zh（旧译）→ "
+                   "重述（每遍 5-8 条带属性短句，⟨⟩为 SigLIP 分）→ 浓缩（最终训练字幕候选）。"
+                   "两道单选：重述质量、浓缩质量。",
     "pipeline": "对着画面依次读四样：<b>英文en</b>（源字幕）→ 黄色<b>原zh</b>（旧译，"
                 "将被替换）→ <b>5 条重述</b>（⟨⟩内是 SigLIP 图文分，★A− 为分数前三）→ "
                 "<b>浓缩</b>（跨重述投票+压缩后的<b>最终训练字幕候选</b>，已剔除验真失败句；"
