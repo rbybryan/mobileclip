@@ -128,12 +128,15 @@ N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
   A′句切视图 | ✓过验真视图[gloss] | ·未验(保守留) | ✗被滤视图[gdino/ocr] |
   投票单元(票数) | 淘汰单元 | ✓/·/✗浓缩 | 坍缩旗标`——
   这就是主计划 G2 各臂（A_llm/A−/C_v/**C_fuse**）的样本级预览。
-- **C_fuse 投票浓缩**（§5.5，维护者指令 2026-07-27）：`fuse_condense.py` 把 A_llm 短句
-  跨 5 条重述聚类计票（纯规则），support≥3 的单元交 `--mode condense` 打包成 2–4 条
-  ≤28 字**高浓度短句**（一句装下主体+动作+场景），再照走验真。被投票淘汰的细节留在
-  「淘汰单元」列——目检时能直接看到投票滤掉了什么。`FUSE_MIN_SUPPORT=2` 可放宽门槛
-  （**改门槛重跑前先 `rm outputs/audit_10k/pipe_fused*.jsonl`**——浓缩按 video 续跑，
-  旧门槛结果不会自动重算）；本段任何失败只会让 C_fuse 列为空，不阻塞 TSV/评审包。
+- **C_fuse 投票浓缩 = 最终训练字幕**（§5.5，维护者指令 2026-07-27）：`fuse_condense.py`
+  把 A_llm 短句跨 5 条重述聚类计票（纯规则），support≥2 的单元（默认；50 片实测 k=3
+  回退率 34/50，对多样性健康的重述太严）交 `--mode condense` 打包成 2–5 条 ≤28 字
+  **高浓度短句**，再照走验真。**覆盖优先、不过度浓缩**：全淘时保底留前 3 个单元
+  （原为 1），浓缩 prompt 明令"宁多一条、不丢单元信息"；浓缩短句（去 ✗）即 RECAPTION
+  桶的训练 `captions`。`FUSE_MIN_SUPPORT` 可改门槛（**重跑前先
+  `rm outputs/audit_10k/pipe_fused*.jsonl`**——浓缩按 video 续跑，旧门槛/旧 prompt 的
+  结果不会自动重算）；本段任何失败只会让浓缩列为空，不阻塞 TSV/评审包。评审包按指令
+  只显示 en源/原zh/重述×5/浓缩 四样，全景各阶段列仍在 `recap_pipeline.tsv`。
 - **模型依赖（V100 盒子现状即可跑，无需任何新 LLM）**：全链**唯一的 LLM = Qwen3-VL-8B**
   （`$S2_MODEL`，本地 `ckpts/Qwen3-VL-8B-Instruct` 优先）——重述用 temp0.9 采样制造投票方差、
   派生用 temp0 贪心保证闭集确定性，两处用法刻意不同。其余全是非 LLM 小模型：SigLIP2 打分
