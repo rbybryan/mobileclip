@@ -89,10 +89,18 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 - [ ] **1.4 B0 锁基线**(1.1 完成后,README §3):官方权重跑已到位的
       基准 → `collect_results.py --out experiments/BASELINE.md`。
       核对 MSR-VTT DSL 口径 t2v R@1 ≈ 42.5;**论文主口径 = raw(`_emb/`)**。
-- [ ] **1.5 导出冒烟(U1,零训练权重,CPU 可做,立即)**:随机权重实例化
-      `MobileViCLIP_Small`(带全部时序算子),分走 ONNX / TFLite / coremltools
-      转换,按 T∈{2,4,8,16} 各出静态图;记录每路 pass/fail + 失败算子。
-      产出决定 P9 是否提前触发(真机延迟档仍在第 8 周)。
+- [~] **1.5 导出冒烟(U1,零训练权重,CPU 可做)—— 脚本已就绪,待在 101vector 上跑全量**:
+      随机权重实例化视觉塔(架构参数与 `build_vision_encoder` 逐项一致 ⇒ 带全部时序
+      算子),分走 ONNX / TFLite / coremltools 转换,按 T∈{2,4,8,16} 各出静态图;
+      记录每路 pass/fail + 失败算子。产出决定 P9 是否提前触发(真机延迟档仍在第 8 周)。
+      **脚本** `experiments/export_smoke.py`,**命令** `COMMANDS.md` §3.6,
+      **测试** `tests/test_export_smoke.py`(17 项)。三条路线互相独立,缺依赖记 skip 不崩。
+      ⚠️ **skip ≠ fail**:脚本把「缺依赖」「缺传递依赖」都归 skip —— 把环境问题记成 fail
+      会产生**假的 P9 触发**(实测踩过:torch≥2.6 的 ONNX 导出器需 `onnxscript`)。
+      **本机 CPU 预跑(torch 2.12)**:全尺寸 **ONNX 路线 T=2 / T=4 pass**
+      (导出 + `onnx.checker` + onnxruntime 加载推理全过)⇒ 联合注意力在 ONNX 这条路上
+      **暂无导出障碍**。T=8/16 本机未跑完,TFLite / Core ML 两路本机无依赖未测 ——
+      **这两点是 P9 判据的缺口,101vector 上补齐即可结案。**
 - [x] **1.6 B0 多 T 退化曲线(U2)** —— ✅ 2026-07-24 V100 实测完成(官方
       `mobileviclip_small.pt`,MSR-VTT 1K,fp32,middle 采样;from-claude (18)):
 
