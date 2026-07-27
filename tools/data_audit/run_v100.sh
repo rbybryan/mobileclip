@@ -687,13 +687,19 @@ PY
     --out-perclip "$OUT/pipe_diag.jsonl" | tee "$OUT/pipe_diag.txt"
 
   echo "== ④b C_fuse 投票浓缩（§5.5: 跨重述单元投票 support≥${FUSE_MIN_SUPPORT:-3} → 高浓度短句）=="
+  # set -e 在顶部生效：本段任何失败都不许拖死整条流水线（TSV 对缺失的
+  # pipe_units/pipe_fused 会自动出空列），故两条命令都带 || 兜底。
+  # 注意：改 FUSE_MIN_SUPPORT 重跑前要 rm pipe_fused*.jsonl —— 浓缩按 video 续跑，
+  # 旧门槛的结果不会自动重算。
   python tools/data_audit/fuse_condense.py --views "$OUT/pipe_views.*.jsonl" \
     --scores "$OUT/pipe_scores.*.jsonl" --output "$OUT/pipe_units.jsonl" \
-    --min-support "${FUSE_MIN_SUPPORT:-3}"
+    --min-support "${FUSE_MIN_SUPPORT:-3}" \
+    || echo "[warn] 投票段失败——TSV 的 C_fuse 列将为空，其余照常"
   CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
     --input "$OUT/pipe_units.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
     --mode condense --max-new-tokens 320 --num-shards 1 --shard-id 0 \
-    --output "$OUT/pipe_fused.{shard}.jsonl"
+    --output "$OUT/pipe_fused.{shard}.jsonl" \
+    || echo "[warn] 浓缩 LLM 段失败（常见: 卡被占 OOM）——重跑本命令会按 video 续跑补齐"
 
   echo "== ⑤ Panel-V v0 验真（GDINO fp32 + RapidOCR；均非 LLM；不可用会降级为 unverified 不阻塞）=="
   CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/fuse_verify.py \

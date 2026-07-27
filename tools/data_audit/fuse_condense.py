@@ -110,7 +110,10 @@ def cluster_views(views, jac_th=0.35, gloss_th=0.5, jac_lo=0.10,
         gloss = sorted({g for m in members for g in (m.get("gloss") or [])})
         units.append({"text": rep["text"], "support": support, "gloss": gloss,
                       "members": sorted({m["text"] for m in members})})
-    units.sort(key=lambda u: (-u["support"], -len(u["members"]), u["text"]))
+    # tie-break by detectable-noun count before text: when the fallback keeps a
+    # single unit, a verifiable subject fact must beat an incidental detail
+    units.sort(key=lambda u: (-u["support"], -len(u["members"]),
+                              -len(u["gloss"]), u["text"]))
     return units
 
 
