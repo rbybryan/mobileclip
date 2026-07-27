@@ -37,9 +37,9 @@ from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vlm_audit import (CONDENSE_KEYS, CONDENSE_PROMPT, DERIVE_KEYS,  # noqa: E402
                        DERIVE_PROMPT, GRAN_KEYS, GRAN_PROMPT, MERGE_KEYS,
-                       MERGE_PROMPT, PROMPT, RECAP_PROMPT, TRANS_KEYS,
-                       TRANS_PROMPT, VERDICT_KEYS, extract_json,
-                       resolve_video_path)
+                       MERGE_PROMPT, PROMPT, RECAP_PROMPT, STRUCT_KEYS,
+                       STRUCT_RECAP_PROMPT, TRANS_KEYS, TRANS_PROMPT,
+                       VERDICT_KEYS, extract_json, resolve_video_path)
 
 
 def sample_frames_pil(path, num_frames, max_side, phase=0.5):
@@ -139,12 +139,18 @@ def main():
                          "different frames. --no-frame-jitter isolates decoding "
                          "variance for the temperature ablation (§6.4).")
     ap.add_argument("--mode", default="full",
-                    choices=["full", "trans", "gran", "merge", "recap", "derive",
-                             "condense"],
+                    choices=["full", "trans", "gran", "merge", "recap",
+                             "recap-struct", "derive", "condense"],
                     help="'full' = combined video rubric (default). 'recap' = write "
                          "N independent Chinese captions FROM the frames (RECAPTION "
                          "bucket front-end for the fusion scheme; RECAP_PROMPT, "
-                         "temperature + frame jitter, no en/zh shown). 'derive' = "
+                         "temperature + frame jitter, no en/zh shown). "
+                         "'recap-struct' = OwlCap-style caption-set (§5.6): each "
+                         "of N independent passes emits 5-8 attribute-tagged "
+                         "short captions + gloss in ONE decode; verdict.views "
+                         "feeds fuse_condense directly (derive subsumed), "
+                         "verdict.recaps keeps joined per-pass strings for "
+                         "scoring/diag. 'derive' = "
                          "text-only per-recap view derivation (A_llm, master plan "
                          "D5): input = recap5 jsonl, one call per recap, outputs "
                          "verdict.views = [{text, gloss, src_recap}]. 'condense' = "
@@ -242,6 +248,69 @@ def main():
                         if cap:
                             recaps.append(cap)
                     out["verdict"] = {"recaps": recaps, "n_samples": len(recaps)}
+                elif args.mode == "recap-struct":
+                    # OwlCap-style caption-SET (§5.6): each pass emits 5-8
+                    # attribute-tagged short captions in ONE decode. Passes stay
+                    # INDEPENDENT (temperature + frame jitter) so the §5.5
+                    # cross-pass vote keeps meaning -- a single shared-context
+                    # generation would let one hallucination contaminate every
+                    # caption coherently and support counts would be fiction.
+                    path = resolve_video_path(args.video_root, rec, rec["video"])
+                    sets_ = []
+                    for s in range(args.n_captions):
+                        phase = (0.5 if args.no_frame_jitter
+                                 else (s + 0.5) / args.n_captions)
+                        frames = sample_frames_pil(path, args.frames,
+                                                   args.max_side, phase=phase)
+                        obj = None
+                        try:
+                            text = generate(model, processor, frames,
+                                            STRUCT_RECAP_PROMPT,
+                                            args.max_new_tokens,
+                                            temperature=args.temperature,
+                                            top_p=args.top_p)
+                            obj = extract_json(text, STRUCT_KEYS)
+                        except (ValueError, torch.cuda.OutOfMemoryError) as ex:
+                            if isinstance(ex, torch.cuda.OutOfMemoryError):
+                                torch.cuda.empty_cache()
+                            try:  # one retry; mild sampling keeps independence
+                                text = generate(model, processor, frames,
+                                                STRUCT_RECAP_PROMPT,
+                                                args.max_new_tokens,
+                                                temperature=0.3,
+                                                top_p=args.top_p)
+                                obj = extract_json(text, STRUCT_KEYS)
+                            except Exception:  # noqa: BLE001
+                                obj = None
+                        caps = []
+                        for v in (obj or {}).get("captions") or []:
+                            if isinstance(v, dict) \
+                                    and isinstance(v.get("text"), str) \
+                                    and v["text"].strip():
+                                gloss = [g.strip().lower()
+                                         for g in (v.get("gloss") or [])
+                                         if isinstance(g, str) and g.strip()]
+                                attr = (v.get("attr") or "") \
+                                    if isinstance(v.get("attr"), str) else ""
+                                caps.append({"text": v["text"].strip(),
+                                             "gloss": gloss,
+                                             "attr": attr.strip()})
+                        if caps:
+                            sets_.append(caps)
+                    views, seen = [], set()
+                    for i, caps in enumerate(sets_):
+                        for v in caps:
+                            if v["text"] not in seen:
+                                seen.add(v["text"])
+                                views.append({**v, "src_recap": i})
+                    out["verdict"] = {
+                        # joined per-pass strings keep every dense-mode consumer
+                        # working (SigLIP per-pass scoring, diversity diag, TSV
+                        # recap columns, A' split)
+                        "recaps": ["；".join(v["text"] for v in caps)
+                                   for caps in sets_],
+                        "views": views, "n_samples": len(sets_),
+                        "n_views": len(views)}
                 elif args.mode == "derive":
                     # A_llm per-recap view derivation (master plan D5/D8): one
                     # text-only call per recap; the dense recap is the sole
@@ -368,7 +437,8 @@ def main():
                     prompt = PROMPT.format(n_frames=args.frames,
                                            en=(rec.get("en") or "(无)"),
                                            zh=(rec.get("zh") or "(空)"))
-                if args.mode not in ("recap", "derive", "condense"):  # these built their verdict above
+                if args.mode not in ("recap", "recap-struct", "derive",
+                                     "condense"):  # these built their verdict above
                     try:
                         text = generate(model, processor, frames, prompt,
                                         args.max_new_tokens)

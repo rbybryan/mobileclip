@@ -608,6 +608,26 @@ k\*=3 对 N=5 是强门，拿信息量换可靠性——50 片试运行实测回
 - **仍然不做**（§6 维持）：B1 GRPO 在线 RL 训字幕器（除非 B0 显域 gap）、
   CapRL-MCQ 当事实门。
 
+### 5.6 结构化重述：OwlCap 式 caption-set × 独立 N 遍（维护者指令，2026-07-27 深夜）
+
+维护者问「能否一次性生成 5-8 个不同属性的 caption（类似 OwlCap）」。裁决：**采纳集合式
+输出，拒绝单遍生成**——OwlCap（arXiv 2508.18634）的 caption-set 思想离线借用；其 GRPO
+训字幕器（CSER 奖励）维持 §5.5 采纳边界，不做。
+
+- **为什么不能只跑一遍**：§5.5 投票的前提是样本**独立**。一遍解码出的 5-8 条共享同一
+  上下文，一个幻觉会连贯地污染整组（自回归条件依赖），support 计数变假信号。
+- **新默认（`--mode recap-struct`，`RECAP_STYLE=struct`）**：每遍一次解码产 **5-8 条
+  带属性短句**（attr∈subject/action/scene/text，每条 ≤28 字 + 内联 en_gloss），
+  **独立跑 N=3 遍**（temp 0.9 + 帧抖动）；跨遍投票照走 §5.5（k=2/3 即多数门）。
+- **管线收益**：派生步整体裁撤（D8 的 gloss 改随重述产出）；视觉 prefill 5→3 次；
+  全桶重述+派生成本约降一半。`verdict.recaps` 保留每遍拼接串——SigLIP 打分、多样性
+  诊断、A′ 句切、TSV 列全部零改动兼容；`verdict.views`（带 src_recap/attr）直供
+  fuse_condense 投票。输出写 `recap_struct.*.jsonl`，与旧 `recap5.*` 互不覆盖。
+- **登记的代价**：N=3 下 A− 选择臂退化为空转（top-3 of 3，选择只在 N>3 有意义）；
+  单遍内条目彼此不独立（因此投票单位是「遍」不是「条」——support 仍按 src_recap 数）；
+  JSON 解析失败的遍静默缺席（诊断：`n_samples` 分布）。G1/G2 预注册仍按 dense×5 定义，
+  生产候选切 struct，以 50 片目检定夺。
+
 ## 6. 明确不做（守边界）
 
 - ❌ CapRL B1（GRPO 自训字幕器）——维持 caprl §4.2 与 U 评审的「除非 B0 显域 gap」；

@@ -128,6 +128,12 @@ N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
   A′句切视图 | ✓过验真视图[gloss] | ·未验(保守留) | ✗被滤视图[gdino/ocr] |
   投票单元(票数) | 淘汰单元 | ✓/·/✗浓缩 | 坍缩旗标`——
   这就是主计划 G2 各臂（A_llm/A−/C_v/**C_fuse**）的样本级预览。
+- **结构化重述（§5.6，默认 `RECAP_STYLE=struct`）**：`--mode recap-struct` 每遍一次解码
+  产 5-8 条带属性（subject/action/scene/text）≤28 字短句 + 内联 en_gloss，**独立跑
+  N=3 遍**（temp0.9+帧抖动）保住跨遍投票；② 派生步自动跳过，输出写
+  `recap_struct.*.jsonl`（与旧 `recap5.*` 互不干扰；旧稠密风格 `RECAP_STYLE=dense`
+  仍可用）。切换风格重跑前 `rm -f pipe_views.*.jsonl pipe_fused*.jsonl
+  pipe_verified.jsonl`——下游按 video 续跑，不清会吃到旧风格结果。
 - **C_fuse 投票浓缩 = 最终训练字幕**（§5.5，维护者指令 2026-07-27）：`fuse_condense.py`
   把 A_llm 短句跨 5 条重述聚类计票（纯规则），support≥2 的单元（默认；50 片实测 k=3
   回退率 34/50，对多样性健康的重述太严）交 `--mode condense` 打包成 2–5 条 ≤28 字
