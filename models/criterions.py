@@ -1,4 +1,5 @@
 import logging
+import os
 from functools import lru_cache
 
 import torch
@@ -10,6 +11,53 @@ from utils.distributed import get_rank, get_world_size
 from utils.easydict import EasyDict
 
 logger = logging.getLogger(__name__)
+
+
+@torch.no_grad()
+def saturation_stats(sim: torch.Tensor, pos_mask: torch.Tensor):
+    """In-batch contrastive saturation over a [B,B] similarity matrix (R1 go/no-go).
+
+    Answers "does batch B already separate positives from negatives?" — if yes, a
+    bigger negative pool (R1) cannot help (bottleneck (d) misdiagnosed).
+
+    Returns (top1_is_pos, mean_margin):
+      top1_is_pos  fraction of query rows whose argmax column is a positive.
+      mean_margin  mean over rows of (min positive logit − max negative logit).
+    Pure/read-only; unit-tested in tests + inline. Not called unless MVC_LOG_SAT is set.
+    """
+    s = sim.detach().float()
+    B = s.shape[0]
+    pm = pos_mask.bool()
+    ar = torch.arange(B, device=s.device)
+    top1 = s.argmax(dim=1)
+    top1_is_pos = pm[ar, top1].float().mean().item()
+    neg = s.masked_fill(pm, float("-inf"))
+    posv = s.masked_fill(~pm, float("inf"))
+    margin = posv.min(1).values - neg.max(1).values
+    margin = margin[torch.isfinite(margin)]
+    mean_margin = margin.mean().item() if margin.numel() else float("nan")
+    return top1_is_pos, mean_margin
+
+
+def _maybe_log_saturation(counter_obj, sim, pos_mask):
+    """Env-gated (MVC_LOG_SAT=<interval>, default off) read-only saturation logger.
+
+    Off-path (env unset) returns before touching any tensor -> loss is bitwise
+    unchanged. See notes/r1-implementation-plan.md §4 (the R1 go/no-go).
+    """
+    every = os.environ.get("MVC_LOG_SAT")
+    if not every:
+        return
+    every = int(every) if every.isdigit() and int(every) > 0 else 20
+    counter_obj._sat_step = getattr(counter_obj, "_sat_step", 0) + 1
+    if counter_obj._sat_step % every != 0:
+        return
+    top1, margin = saturation_stats(sim, pos_mask)
+    logger.info(
+        f"[SAT] step~{counter_obj._sat_step} B={sim.shape[0]} "
+        f"top1_is_pos={top1:.4f} mean(pos-hardestneg)={margin:.4f}  "
+        f"(top1_is_pos→1 且 margin 大 ⇒ 批内已饱和 ⇒ R1 更大负例池无益)"
+    )
 
 
 def get_sim(
@@ -136,10 +184,11 @@ class VTC_VTM_Loss(nn.Module):
             sim_v2t_targets = self.get_mask(sim_v2t, idx=idx, normalize=True)
             sim_t2v_targets = sim_v2t_targets
 
-        loss_i2t = -torch.sum(F.log_softmax(sim_v2t, dim=1) * sim_v2t_targets, dim=1).mean() 
+        loss_i2t = -torch.sum(F.log_softmax(sim_v2t, dim=1) * sim_v2t_targets, dim=1).mean()
         loss_t2i = -torch.sum(F.log_softmax(sim_t2v, dim=1) * sim_t2v_targets, dim=1).mean()
 
         loss_vtc = (loss_i2t + loss_t2i) / 2
+        _maybe_log_saturation(self, sim_v2t, sim_v2t_targets > 0)
         return loss_vtc
     
     def vtc_loss_sigmoid(
@@ -187,6 +236,7 @@ class VTC_VTM_Loss(nn.Module):
         log_likelihood = F.logsigmoid(mask * logits)
         nll = -torch.sum(log_likelihood, dim=-1)
         loss = torch.mean(nll)
+        _maybe_log_saturation(self, logits, pos > 0)
         return loss
 
     def vtm_loss(

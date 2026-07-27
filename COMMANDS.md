@@ -306,6 +306,51 @@ python experiments/r1_fn_density.py --feats /tmp/txtfeats.npy --thresholds 0.9,0
 ---
 
 
+### 3.3 R1 下一步 — 精确命令(三档,按信息价值排序)
+
+全部从 repo 根目录跑。判读与方案见 [`notes/r1-implementation-plan.md`](notes/r1-implementation-plan.md)。
+
+**① go/no-go(最该先跑)—— 批内是否已在 512 饱和?若是则 R1 无益,直接砍。**
+`pilot_10k_r1.py` 已是 sigmoid 试点;`MVC_LOG_SAT=<间隔>` 打开只读饱和探针
+(默认不设 = 逐位不影响训练)。试点语料在 `/home/vca1/datasets`(见 README §2b 双根规则)。
+
+```bash
+cd ~/mobileclip && git pull origin main
+export MVC_DATA_DIR=/home/vca1/datasets          # 试点视频根(训练/试点要 export)
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7       # 按空卡改
+# 先冒烟(几十步即停,确认探针在打印 [SAT] 行):
+MVC_LOG_SAT=5 bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8 debug True
+# 正跑(~180 步,10 epoch),每 20 步打一行 [SAT]:
+MVC_LOG_SAT=20 bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8
+grep '\[SAT\]' experiments/runs/pilot_10k_r1/train.log | tail -20
+```
+判读:`top1_is_pos` 收敛到 ≈1.0 且 `mean(pos-hardestneg)` 明显为正 ⇒ **批内 512 已饱和**
+⇒ 更大负例池(R1)无益 ⇒ 砍。反之(top1_is_pos 明显 <1、margin 不大)⇒ (d) 是真瓶颈 ⇒ 值得建池。
+
+**② Part B — 近重复密度(定 R1 要不要余弦去重掩码;顺便验证 dump 脚本在真权重上能跑)**
+
+```bash
+python experiments/r1_textfeat_dump.py \
+    --anno anno_downstream/InternVid/InternVid-10M-flt_1.json \
+    --ckpt checkpoints/mobileviclip_small.pt --out /tmp/txtfeats.npy --sample 10000
+python experiments/r1_fn_density.py --feats /tmp/txtfeats.npy --thresholds 0.9,0.95,0.99
+```
+判读:「有≥1近邻」占比高 ⇒ 需余弦去重掩码;低 ⇒ 免。
+⚠️ dump 的建模型部分未在真权重上验证;报错就把完整 traceback 贴回。
+
+**③ Part A 收紧到 55k(秒级,可选)**
+
+```bash
+python experiments/r1_fn_density.py --anno anno_downstream/InternVid/InternVid-10M-flt_*.json
+```
+
+> **注:** ① 的两行探针已合入 `models/criterions.py`(`saturation_stats` + `_maybe_log_saturation`,
+> 默认关、只读、已单测)。它测的是**批内**饱和(无需负例池);建池后的
+> 「banked 占 softmax 质量」探针在真正建 R1 池子时再加(方案 §4)。
+
+---
+
+
 ## 4. Training (pretraining)
 
 **Preflight — run this before every pretraining launch, not just the first:**
