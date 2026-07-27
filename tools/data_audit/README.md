@@ -138,7 +138,12 @@ N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
   N_SAMPLE 片先后跑 A(dense)、B(struct)（各自按 video 续跑，已缓存部分秒过），再由
   `make_style_compare.py` 合成 `review_compare.tsv` + `bundle_compare/`——每片并排
   en源/原zh/A重述/A浓缩/B重述/B浓缩 + 单选「浓缩对比」。
-- **C_fuse 投票浓缩 = 最终训练字幕**（§5.5，维护者指令 2026-07-27）：`fuse_condense.py`
+- **直接 LLM 融合（§5.7，默认 `FUSE_IMPL=direct`）**：`--mode fuse-direct` 每片一次
+  文本调用读 N 遍独立重述，**语义投票（≥2 段支持才写）+ 压缩**一步到位，输出 2-5 条
+  ≤28 字短句 + gloss，并**自报 dropped**（被排除的单源细节，落在 fused jsonl 的
+  `verdict.dropped`）。此模式下条目的规则投票（下条）降为诊断列；`FUSE_IMPL=vote`
+  切回两段式。**换开关/换 prompt 重跑前先 `rm outputs/audit_10k/pipe*_fused*.jsonl`**。
+- **C_fuse 投票浓缩（§5.5，`FUSE_IMPL=vote` 时为主路径，direct 时为诊断）**：`fuse_condense.py`
   把 A_llm 短句跨 5 条重述聚类计票（纯规则），support≥2 的单元（默认；50 片实测 k=3
   回退率 34/50，对多样性健康的重述太严）交 `--mode condense` 打包成 2–5 条 ≤28 字
   **高浓度短句**，再照走验真。**覆盖优先、不过度浓缩**：全淘时保底留前 3 个单元

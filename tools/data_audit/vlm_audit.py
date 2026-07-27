@@ -219,6 +219,31 @@ RECAP_PROMPT = """你是一个严谨的视频画面描述助手。下面是从�
 6. 覆盖以下方面（只写真实可见的）：主体（人/物的外观、服装、颜色等特征）、主体的动作及其先后、场景与背景环境、屏幕上的文字。如果某一方面在画面中不存在，就完全不要提它。
 7. 输出一段连贯、信息密集的中文，不要分点、不要标题、不要开场白或结束语，只输出这段描述本身。"""
 
+# --mode fuse-direct (§5.7, maintainer 2026-07-27; ASID-Verify-style LLM
+# refine, arXiv 2602.13013): ONE text-only call reads the N independent
+# recaptions and does the semantic vote + condense in a single step. Replaces
+# the n-gram clustering as the DEFAULT condense implementation because the
+# LLM judges "same fact" far better than character overlap (measured: 34/50
+# clips found no cross-pass match under the rule clustering). The vote is no
+# longer auditable, so (a) the model must self-report dropped single-source
+# details, (b) the rule vote keeps running as a diagnostic, (c) Panel-V
+# remains the hallucination backstop. Consumed via .format -> doubled braces.
+FUSE_DIRECT_KEYS = {"views"}
+FUSE_DIRECT_PROMPT = """下面是同一段视频的 {n} 段互相独立的中文描述。它们各自可能包含错误，但被多段独立提到的信息更可靠。
+
+请你逐条核对哪些信息被至少两段描述支持（措辞不同但意思相同也算支持），然后只用这些可靠信息，写出 2-5 条互补的中文检索短句，作为这段视频的最终字幕。
+
+规则：
+1. 每条短句不超过 28 个字，语法完整、可独立成句，不用"他/她/它/这"开头。
+2. 把能自然合并的信息浓缩进同一条短句（如同一主体的外观+动作+位置），信息密度尽量高；可靠信息要全部覆盖，宁可多写一条短句也不要丢；条与条不要互相复述。
+3. 只被一段描述提到的细节一律不写进短句，放进 dropped 列表；绝不新增任何描述之外的内容。
+4. 引号“”内的画面文字只有在至少两段描述中出现且一致时才保留，且原样照抄、不改一字。
+5. gloss：该短句里能在画面中被检测到的具体名词的英文（小写，1-4 个），如 ["man", "kitchen"]；抽象概念、动词不要放。
+6. 只输出一个 JSON 对象，不要任何解释：
+{{"views": [{{"text": "短句一", "gloss": ["..."]}}, {{"text": "短句二", "gloss": []}}], "dropped": ["被排除的单源细节", "..."]}}
+
+{recaps}"""
+
 # --mode recap-struct: OwlCap-style caption-SET output (arXiv 2508.18634's
 # set idea, adopted offline -- §5.6): ONE decode emits 5-8 attribute-tagged
 # short captions (subject/action/scene/text) with inline en_gloss, so the

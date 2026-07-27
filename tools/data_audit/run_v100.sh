@@ -714,20 +714,30 @@ PY
   python tools/data_audit/recap_diag.py --recaps "${P}_recaps.jsonl" \
     --out-perclip "${P}_diag.jsonl" | tee "${P}_diag.txt"
 
-  echo "== ④b C_fuse 投票浓缩（§5.5: 跨重述单元投票 support≥${FUSE_MIN_SUPPORT:-2} → 高浓度短句 = 最终训练字幕）=="
+  echo "== ④b 融合浓缩（FUSE_IMPL=${FUSE_IMPL:-direct}: direct=LLM 语义投票+压缩一步(§5.7) / vote=规则投票+浓缩(§5.5)）=="
   # set -e 在顶部生效：本段任何失败都不许拖死整条流水线（TSV 对缺失的
-  # pipe_units/pipe_fused 会自动出空列），故两条命令都带 || 兜底。
-  # 注意：改 FUSE_MIN_SUPPORT 或浓缩 prompt 后重跑前要 rm ${P}_fused*.jsonl —— 浓缩按
-  # video 续跑，旧门槛/旧 prompt 的结果不会自动重算。
+  # pipe_units/pipe_fused 会自动出空列），故各命令都带 || 兜底。
+  # 注意：改 FUSE_IMPL/FUSE_MIN_SUPPORT/融合 prompt 后重跑前要 rm ${P}_fused*.jsonl ——
+  # 融合按 video 续跑，旧实现/旧门槛的结果不会自动重算。
+  # 规则投票始终跑（CPU 秒级）：vote 模式下是浓缩的输入；direct 模式下降为诊断
+  # （TSV 投票单元/淘汰单元列，与 LLM 自报的 dropped 互相对照）。
   python tools/data_audit/fuse_condense.py --views "$VIEWS_GLOB" \
     --scores "${P}_scores.*.jsonl" --output "${P}_units.jsonl" \
     --min-support "${FUSE_MIN_SUPPORT:-2}" \
-    || echo "[warn] 投票段失败——TSV 的 C_fuse 列将为空，其余照常"
-  CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
-    --input "${P}_units.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
-    --mode condense --max-new-tokens 320 --num-shards 1 --shard-id 0 \
-    --output "${P}_fused.{shard}.jsonl" \
-    || echo "[warn] 浓缩 LLM 段失败（常见: 卡被占 OOM）——重跑本命令会按 video 续跑补齐"
+    || echo "[warn] 投票段失败——TSV 的投票诊断列将为空，其余照常"
+  if [ "${FUSE_IMPL:-direct}" = direct ]; then
+    CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
+      --input "${P}_recaps.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
+      --mode fuse-direct --max-new-tokens 384 --num-shards 1 --shard-id 0 \
+      --output "${P}_fused.{shard}.jsonl" \
+      || echo "[warn] 直接融合段失败（常见: 卡被占 OOM）——重跑本命令会按 video 续跑补齐"
+  else
+    CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
+      --input "${P}_units.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
+      --mode condense --max-new-tokens 320 --num-shards 1 --shard-id 0 \
+      --output "${P}_fused.{shard}.jsonl" \
+      || echo "[warn] 浓缩 LLM 段失败（常见: 卡被占 OOM）——重跑本命令会按 video 续跑补齐"
+  fi
 
   echo "== ⑤ Panel-V v0 验真（GDINO fp32 + RapidOCR；均非 LLM；不可用会降级为 unverified 不阻塞）=="
   CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/fuse_verify.py \
