@@ -260,6 +260,46 @@ PY
 
 ---
 
+### 3.2 R1 前置探针 — 假负例 / 近重复密度(零训练;`notes/r1-examination.md` §5)
+
+在动手建 R1 文本负例库之前,先量化机会与风险。**A 部分现在就能跑**(不用 GPU / 权重 /
+decord,只要 anno JSON);判读见 `notes/r1-examination.md` §5/§6。
+
+**A · 精确重复密度(秒级,模型无关)** —— 用仓库自己的 `caption_to_idx` 统计字幕碰撞,
+这正是损失多正例掩码 `get_mask` 用的键:
+
+```bash
+python experiments/r1_fn_density.py --self-test          # 先自检
+python experiments/r1_fn_density.py \
+    --anno anno_downstream/InternVid/InternVid-10M-flt_1.json
+# 想看全量趋势可多给几片:--anno anno_downstream/InternVid/InternVid-10M-flt_*.json
+# 语料很大时先抽样:--sample 200000
+```
+
+判读:`distinct_frac` 接近 1 ⇒ 65k 池里基本都是不同字幕(难负例供给充足);
+「随机一对同字幕的概率」× 65k = 每个池子的期望假负例数 —— 这部分**只要负例库穿过
+`get_mask`(examination §3)就被当正例处理掉**,`r1a_sigmoid.py` 已设 `caption_idx=True`。
+
+**B · 嵌入近重复密度(需冻结文本塔特征;idx 掩码抓不到的那部分假负例)** ——
+先在训练环境里生成文本特征,再喂给同一脚本:
+
+```bash
+python experiments/r1_fn_density.py --help-feats   # 打印生成 .npy 的片段(复用 eval 的 encode_text)
+# 按片段在训练环境跑出 /tmp/txtfeats.npy 后:
+python experiments/r1_fn_density.py --feats /tmp/txtfeats.npy --thresholds 0.9,0.95,0.99
+```
+
+判读:「有≥1近邻」占比高 ⇒ 大量语义近重复被当负例 ⇒ **必须**上基于余弦阈值的离线去重掩码,
+不能只靠 `caption_idx`。低 ⇒ idx 掩码就够。
+
+> **在这两条之后**才开 R1 训练臂,且按 examination §6 重构为「SigLIP 制度」:
+> sigmoid 损失(已实现,`r1a_sigmoid.py`)+ 温度 + 大负例池,一条臂。
+> 训练臂里再加**批内饱和度**探针:每步记录 banked 负例占 softmax 质量的比例
+> (<5% ⇒ 库惰性,砍)和正样本在 512 批内负例中的排名(多数已 rank-1 ⇒ 512 就已饱和)。
+
+---
+
+
 ## 4. Training (pretraining)
 
 **Preflight — run this before every pretraining launch, not just the first:**
