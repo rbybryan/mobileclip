@@ -23,6 +23,54 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-27 (29) — 2 卡冒烟几乎全过！只栽在别人占了卡的 OOM(不是我们的问题)
+
+**Diagnosis:** 这是**大进展**。冒烟这次一路走通:导入链、`scripts` 包、配置加载、
+**InternVid 预训练视频真的解码进了 forward**(崩在 `patch_embed`,说明 dataloader 产出了
+真实 batch → §4 的预训练数据确实读得动)、MSR-VTT 评测 anno 载入 1000/1000、从
+`mobileclip_s2.pt` 载入双塔、bf16、优化器、dataloader(83183 batch)、`Start training /
+Epoch: 0` 全部到位。
+
+崩在第一个训练步的 `CUDA out of memory`——但**不是模型太大**。看报错的 per-process 分解:
+GPU0/1 各有一个**别人的**进程占了 ~70GB,我们的进程才占 ~9GB。`CUDA_VISIBLE_DEVICES=0,1`
+恰好选中了两张被别人吃满的卡。MobileViCLIP-small 本身只要 ~9GB,**换两张空卡就能打印 loss**。
+
+冒烟日志里这两条**是正常的,别当错误**:
+- `_IncompatibleKeys(missing_keys=[... mixer_1d ... temporal_embedding ...])`:视频专用时序
+  参数,图像底座里没有,按设计新初始化(`unexpected_keys=[]` 是关键)。
+- `No pretrained checkpoint provided, training from scratch`:指没有整模型续训 ckpt;双塔已
+  从 `mobileclip_s2.pt` 载入。R0 本该如此。
+
+**Do this next**(`git pull` 拿到我加的选卡工具):
+
+```bash
+cd /workspace/mount/b100_zaip_data/rby/mobileclip
+git pull origin main
+source experiments/env_b100.sh
+
+# 1) 挑两张真空闲的卡(free>70000 MiB 才算空)
+nvidia-smi --query-gpu=index,memory.free,memory.used,utilization.gpu \
+    --format=csv,noheader,nounits | \
+  awk -F', ' '{printf "GPU %s  free=%6s MiB  used=%6s MiB  util=%s%%  %s\n",
+               $1,$2,$3,$4,($2>70000?"kong-OK":"占用")}'
+
+# 2) 把 G 换成上面 OK 的两张卡号,重跑冒烟
+G=4,5   # ← 改成两张空卡号,别盲抄
+CUDA_VISIBLE_DEVICES=$G bash experiments/run_pretrain.sh \
+    experiments/configs/r0_baseline.py 2 \
+    use_bf16 True bf16 True deepspeed.enable False debug True
+```
+
+**Then report back**(from-server.md):冒烟有没有打印出 loss(几十步自停)。
+- **打印了 loss** → 冒烟正式通过,接 §6 步骤 2 真 R0;**先用同一句选卡工具确认要用的 4 张卡
+  都空**,前 4 张被占是要和你/中文线协调的事(等空或换空卡),不要 kill 别人进程、也别开满 8 张。
+- **又 OOM** → 贴新的内存分解,大概率还是没挑到真空的卡。
+
+⚠️ 共用机纪律(§0):只挑空卡,不 kill 占卡的进程。坑已固化到 `TROUBLESHOOTING.md`
+「冒烟 CUDA OOM——共用机上别人占了卡」+ §6 步骤 1 现在带选卡工具、不再硬编码 0,1。
+
+---
+
 ## 2026-07-24 (28) — 八卡各挂 17GB 零利用率 = 滞留的重述分片；核对→清理→重跑（两处已加固）
 
 **Diagnosis:** 你贴的 nvidia-smi 判断正确：**0% 利用率 + 17GB 常驻 = 进程持显存不干活**。

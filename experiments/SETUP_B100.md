@@ -667,17 +667,43 @@ python experiments/check_imports.py     # 必须打印“全部 [OK]”，否则
 ```
 
 **步骤 1 — 首光冒烟**（DDP+AMP 绕开 deepspeed 构建，bf16 + debug，几十步自停，只验
-arch/数据/前反向；2 卡更快，仍在前 4 张之内）。**跑之前先 `nvidia-smi` 看 0、1 号卡空不空：**
+arch/数据/前反向；2 卡更快）。
+
+⚠️ **先选两张真空闲的卡,别硬编码 `0,1`。** 2026-07-27 就栽在这:`CUDA_VISIBLE_DEVICES=0,1`
+撞上别人各占 ~70GB 的两张卡,整条链路全过、`Start training` 都到了,最后 `CUDA out of
+memory`——**不是模型太大**(MobileViCLIP-small 才占 ~9GB),是卡被别人吃满了。判读见
+`TROUBLESHOOTING.md`「冒烟 CUDA OOM——共用机上别人占了卡」。
+
+先跑这一句挑空卡(`free>70000 MiB` 才算空闲),把冒烟命令里的两个卡号换成它标 ✅ 的:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 bash experiments/run_pretrain.sh \
+nvidia-smi --query-gpu=index,memory.free,memory.used,utilization.gpu \
+    --format=csv,noheader,nounits | \
+  awk -F', ' '{printf "GPU %s  free=%6s MiB  used=%6s MiB  util=%s%%  %s\n",
+               $1,$2,$3,$4,($2>70000?"空闲✅":"占用⛔")}'
+```
+
+```bash
+G=0,1   # ← 换成上面标 ✅ 的两张卡号；不要盲抄 0,1
+CUDA_VISIBLE_DEVICES=$G bash experiments/run_pretrain.sh \
     experiments/configs/r0_baseline.py 2 \
     use_bf16 True bf16 True deepspeed.enable False debug True
 ```
 
-> ⛔ **闸门：冒烟没跑到打印 loss，就不要执行步骤 2。** 崩了就贴日志回 `from-server.md`。
+> ⛔ **闸门：冒烟没跑到打印 loss,就不要执行步骤 2。** 崩了就贴日志回 `from-server.md`。
+> 若崩在 `CUDA out of memory`,先按上面那句重挑空卡,不是改 batch。
+>
+> ℹ️ 冒烟日志里这两条**是正常的,不是错误**:
+> - `_IncompatibleKeys(missing_keys=[... token_mixer.mixer_1d ... temporal_embedding ...])`
+>   —— 这些是**视频专用**的时序参数,图像底座 `mobileclip_s2.pt` 里本就没有,按设计新初始化;
+>   `unexpected_keys=[]` 才是关键(载入没有多余键)。
+> - `No pretrained checkpoint provided, training from scratch` —— 指没有**整模型**续训
+>   checkpoint,双塔已分别从 `mobileclip_s2.pt` 载入(日志上面有 `Load vision/text_encoder
+>   checkpoint`),R0 本就该这样。
 
-**步骤 2 — 真 R0**（全量基线；bf16；前 4 张卡；后台挂多天，掉隧道也不影响）：
+**步骤 2 — 真 R0**（全量基线；bf16；前 4 张卡；后台挂多天，掉隧道也不影响）。
+**先用步骤 1 那句选卡工具确认要用的 4 张都 ✅ 空闲**——若前 4 张被别人占着,是需要和维护者/
+中文线协调的事(等空 / 换 4 张空卡),别顺手开到后 4 张,也别去挤别人已占的卡:
 
 ```bash
 mkdir -p experiments/runs   # nohup 重定向要先有这个目录
