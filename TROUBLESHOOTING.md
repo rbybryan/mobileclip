@@ -2223,3 +2223,40 @@ nvidia-smi --query-gpu=index,memory.free,memory.used,utilization.gpu \
   —— 视频专用时序参数,图像底座 `mobileclip_s2.pt` 里没有,按设计新初始化;看 `unexpected_keys=[]`。
 - `No pretrained checkpoint provided, training from scratch` —— 指没有整模型续训 ckpt;
   双塔已从 `mobileclip_s2.pt` 载入(日志上方 `Load vision/text_encoder checkpoint`)。R0 本该如此。
+
+## pipeline-sample：GDINO / MiniRBT 拉不下来（hf-mirror 也不通）→ 本地下载后 scp 模型缓存
+
+### Symptom
+
+```
+[gdino] unavailable (OSError: We couldn't connect to 'https://hf-mirror.com' ...)
+[tokenizer] load failed (...) ; falling back to char budget 30
+```
+
+验真全部降级 unverified（✗ 列缺"物体在不在画面里"这个轴），A′ 句切用 30 字回退预算
+而非真 32-token。
+
+### Cause
+
+101vector 既连不上 huggingface.co 也连不上 hf-mirror.com，而 `grounding-dino-base` 与
+`minirbt-h288` 不在本地缓存（流水线其余模型全走本地 `ckpts/` 目录，不受影响）。
+
+### Fix
+
+在**本地能上网的机器**下载快照，scp 整个缓存目录给服务器：
+
+```bash
+# 本地：
+pip install -U huggingface_hub
+huggingface-cli download IDEA-Research/grounding-dino-base   # ~700MB
+huggingface-cli download hfl/minirbt-h288                    # ~40MB
+ssh rby@101vector 'mkdir -p ~/.cache/huggingface/hub'
+scp -r ~/.cache/huggingface/hub/models--IDEA-Research--grounding-dino-base rby@101vector:~/.cache/huggingface/hub/
+scp -r ~/.cache/huggingface/hub/models--hfl--minirbt-h288    rby@101vector:~/.cache/huggingface/hub/
+```
+
+之后在服务器重跑前必须清掉"GDINO 缺席"时代的旧判定（验真按 video 续跑，不清则永不重验）：
+
+```bash
+rm -f outputs/audit_10k/pipe_verified.jsonl outputs/audit_10k/pipe_fused_verified.jsonl
+```

@@ -23,6 +23,57 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-27 (36) — pipeline-sample 判读 + 三条新指令已落地:浓缩=最终字幕、覆盖优先、评审包精简
+
+**你贴的运行读完了。全绿**:重述/派生/浓缩全部按 video 秒级续跑(#274 的早退生效)、
+多样性健康(Jaccard 0.226 无坍缩)、评审包 50/50 已打好。
+**但 ④b 暴露真问题**:`34 fallback / 50` —— 68% 的片投不出任何 ≥3/5 票单元,浓缩列
+退化成保底单句(重述被刻意做得多样,同一细节要 3/5 独立出现太严)。
+
+**三条指令全部已实现并入库,pull 即生效**:
+
+1. **浓缩短句 = 最终训练字幕**(生产主配方;RECAPTION 桶训练 `captions` 即浓缩短句
+   去 ✗;G2 消融降级为验证性对照)——主计划 §5.5「定位更新」;
+2. **不过度浓缩、覆盖优先**:投票门默认 3→**2**、全淘保底从留 1 条改**留前 3 条**、
+   浓缩输出 2-4→**2-5 条**且 prompt 明令"宁多一条、不丢单元信息";
+3. **评审包只显示四样**:英文en / 原zh(黄) / 重述×5(⟨SigLIP分⟩+★A−) / **浓缩**
+   (+两道单选:重述质量、浓缩质量)。全景各阶段列仍在 `recap_pipeline.tsv`。
+
+```bash
+# ① pull 后重跑(必须先清旧门槛/旧 prompt 的浓缩产物;其余全缓存,增量几分钟)
+git pull origin main
+rm -f outputs/audit_10k/pipe_fused*.jsonl
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+tar czf outputs/audit_10k/pipeline.tgz -C outputs/audit_10k bundle_pipeline
+# 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/pipeline.tgz . && tar xzf pipeline.tgz
+```
+
+**② GDINO + MiniRBT:这台机连 hf-mirror 也不通,只能本地下载后 scp 缓存**。不装的话
+浓缩句验真永远缺"物体在不在画面里"这个轴、A′ 一直用 30 字回退预算(TROUBLESHOOTING 有存档):
+
+```bash
+# 在你【本地能上网的机器】:
+pip install -U huggingface_hub
+huggingface-cli download IDEA-Research/grounding-dino-base   # ~700MB
+huggingface-cli download hfl/minirbt-h288                    # ~40MB
+ssh rby@101vector 'mkdir -p ~/.cache/huggingface/hub'
+scp -r ~/.cache/huggingface/hub/models--IDEA-Research--grounding-dino-base rby@101vector:~/.cache/huggingface/hub/
+scp -r ~/.cache/huggingface/hub/models--hfl--minirbt-h288    rby@101vector:~/.cache/huggingface/hub/
+
+# scp 完成后在服务器上——验真按 video 续跑,必须清掉"GDINO 缺席"时代的旧判定让它重验:
+rm -f outputs/audit_10k/pipe_verified.jsonl outputs/audit_10k/pipe_fused_verified.jsonl
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+tar czf outputs/audit_10k/pipeline.tgz -C outputs/audit_10k bundle_pipeline
+```
+
+①② 相互独立;都做就按顺序来,② 的重跑会顺带把新浓缩句也过一遍 GDINO。
+(另:上次末尾那行 `-bash: 重述/派生/打分...: No such file or directory` 是把注释行
+当命令贴进终端了,无害。)
+
+**Then report back** in from-server.md: 新 ④b 的 `[done]` 行(kept/dropped/fallback
+三个数,回退应大降)+ 目检两判:**重述质量**(重述 vs 旧译,方案成立与否的直接证据)、
+**浓缩质量**(浓缩短句可否直接当该视频的训练字幕——信息够不够、有无幻觉、会不会太瘦)。
+
 ## 2026-07-27 (35) — 新指标读完:池杠杆在 512 **没饱和** → 倾向「建」,只差 Part B(其路径 bug 已修)
 
 **重跑读到了修正后的两项指标。结论翻转:从上一条的「偏向砍」→ 现在「倾向建,取决于 Part B」。**

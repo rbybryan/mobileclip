@@ -4,7 +4,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
                                 "tools", "data_audit"))
-from fuse_condense import cluster_views, jaccard, ngrams  # noqa: E402
+from fuse_condense import (cluster_views, jaccard, ngrams,  # noqa: E402
+                           select_units)
 
 
 def V(text, src, gloss=()):
@@ -72,3 +73,25 @@ def test_tiebreak_prefers_more_detectable_nouns():
     units = cluster_views([V("天空有几只飞鸟", 1, ["bird"]),
                            V("狗在草地上奔跑", 0, ["dog", "grass"])])
     assert units[0]["text"] == "狗在草地上奔跑"
+
+
+def test_select_units_gate_no_fallback():
+    units = cluster_views([V("男子在厨房切菜", 0, ["man", "kitchen"]),
+                           V("男子在厨房里切菜", 1, ["man", "kitchen"]),
+                           V("窗外是夜晚的街道", 2, ["street"])])
+    kept, fb = select_units(units, 2)
+    assert not fb and [u["support"] for u in kept] == [2]
+
+
+def test_select_units_fallback_keeps_top3_not_top1():
+    # nothing clears the gate -> coverage-first fallback keeps 3 units, so a
+    # clip degrades to "weakly voted" rather than "single sentence"
+    units = cluster_views([V("男子在厨房切菜", 0, ["man", "kitchen"]),
+                           V("窗外是夜晚的街道", 1, ["street"]),
+                           V("桌上放着一杯咖啡", 2, ["cup", "coffee"]),
+                           V("天空有几只飞鸟", 3, ["bird"])])
+    kept, fb = select_units(units, 2)
+    assert fb and len(kept) == 3
+    # both 2-gloss subject facts survive; a 1-gloss incidental is what drops
+    texts = {u["text"] for u in kept}
+    assert {"男子在厨房切菜", "桌上放着一杯咖啡"} <= texts
