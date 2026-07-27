@@ -219,6 +219,33 @@ RECAP_PROMPT = """你是一个严谨的视频画面描述助手。下面是从�
 6. 覆盖以下方面（只写真实可见的）：主体（人/物的外观、服装、颜色等特征）、主体的动作及其先后、场景与背景环境、屏幕上的文字。如果某一方面在画面中不存在，就完全不要提它。
 7. 输出一段连贯、信息密集的中文，不要分点、不要标题、不要开场白或结束语，只输出这段描述本身。"""
 
+# --mode recap-struct: OwlCap-style caption-SET output (arXiv 2508.18634's
+# set idea, adopted offline -- §5.6): ONE decode emits 5-8 attribute-tagged
+# short captions (subject/action/scene/text) with inline en_gloss, so the
+# derive stage is subsumed (D8's gloss rides this call). The prompt is used
+# RAW (no .format), so JSON braces below are single, not doubled. Passes stay
+# independent (temperature + frame jitter) -- the cross-pass vote (§5.5)
+# only means something over independent samples.
+STRUCT_KEYS = {"captions"}
+STRUCT_RECAP_PROMPT = """你是一个严谨的视频画面描述助手。下面是从同一段视频中按时间先后均匀抽取的若干帧画面。
+请把画面内容拆成 5-8 条不同侧面的中文短描述，合起来尽量覆盖所有真实可见的信息，同时绝不编造。
+
+严格遵守以下规则：
+1. 每条不超过 28 个字，语法完整、可独立成句，不用"他/她/它/这"开头；每条标注一个属性 attr：
+   subject（主体及外观特征）/ action（动作及先后）/ scene（场景与背景环境）/ text（画面文字）。
+   同一属性可以出现多条（如多个主体、先后两个动作）；画面中不存在的属性完全不要输出。
+2. 只描述画面中清晰可见的内容。看不清、不确定、被遮挡或需要推测的一律省略，不要猜测。
+3. 不要描述画面之外的信息：不推断拍摄地点、时间、人物身份、情绪动机、前因后果。禁止出现
+   帧号、秒数、时间戳或"第几张图/第几帧/视频/画面/图片"这类元描述词；动作的先后用
+   "先""接着""随后""最后"表达。
+4. 屏幕上的文字（字幕、标题、标牌、水印等）只有清晰可辨时才用中文引号“”原样照抄，
+   不翻译、不补全、不猜测残缺文字；无法辨认就不输出 text 条目。
+5. 数量只有在很少且能明确数清时才给具体数字，否则用"几""一些""一群"等模糊量词。
+6. gloss：该条里能在画面中被检测到的具体名词的英文（小写，1-4 个），如 ["man", "kitchen"]；
+   抽象概念、动词、顺序词不要放；没有可检测名词就给 []。
+7. 只输出一个 JSON 对象，不要任何解释或多余文字，格式：
+{"captions": [{"attr": "subject", "text": "……", "gloss": ["…"]}, {"attr": "action", "text": "……", "gloss": []}]}"""
+
 # --mode derive: per-recap S7-style view derivation (master plan D5 A_llm).
 # Text-only (the dense recap is the sole evidence; showing frames again would
 # let the deriver inject NEW details, breaking the closed-set rule). gloss =

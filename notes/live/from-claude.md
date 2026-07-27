@@ -23,29 +23,38 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
-## 2026-07-27 (36) — pipeline-sample 判读 + 三条新指令已落地:浓缩=最终字幕、覆盖优先、评审包精简
+## 2026-07-27 (36) — pipeline-sample 判读 + 四条指令已落地:浓缩=最终字幕、覆盖优先、评审包精简、重述改 OwlCap 式结构化
 
 **你贴的运行读完了。全绿**:重述/派生/浓缩全部按 video 秒级续跑(#274 的早退生效)、
 多样性健康(Jaccard 0.226 无坍缩)、评审包 50/50 已打好。
 **但 ④b 暴露真问题**:`34 fallback / 50` —— 68% 的片投不出任何 ≥3/5 票单元,浓缩列
 退化成保底单句(重述被刻意做得多样,同一细节要 3/5 独立出现太严)。
 
-**三条指令全部已实现并入库,pull 即生效**:
+**四条指令全部已实现并入库,pull 即生效**:
 
 1. **浓缩短句 = 最终训练字幕**(生产主配方;RECAPTION 桶训练 `captions` 即浓缩短句
    去 ✗;G2 消融降级为验证性对照)——主计划 §5.5「定位更新」;
 2. **不过度浓缩、覆盖优先**:投票门默认 3→**2**、全淘保底从留 1 条改**留前 3 条**、
    浓缩输出 2-4→**2-5 条**且 prompt 明令"宁多一条、不丢单元信息";
 3. **评审包只显示四样**:英文en / 原zh(黄) / 重述×5(⟨SigLIP分⟩+★A−) / **浓缩**
-   (+两道单选:重述质量、浓缩质量)。全景各阶段列仍在 `recap_pipeline.tsv`。
+   (+两道单选:重述质量、浓缩质量)。全景各阶段列仍在 `recap_pipeline.tsv`;
+4. **重述改 OwlCap 式结构化(§5.6,新默认)**:每遍一次解码产 **5-8 条带属性短句**
+   (subject/action/scene/text,≤28 字+内联 gloss),**独立跑 3 遍**(temp0.9+帧抖动),
+   派生步整体裁撤。为什么不是只跑一遍 5-8 条:一遍产的条目共享上下文、彼此不独立,
+   一个幻觉会连贯污染整组,票数变假信号——独立 3 遍×集合输出兼得省钱与投票,
+   成本仍比旧 5 遍稠密+派生低约一半。
 
 ```bash
-# ① pull 后重跑(必须先清旧门槛/旧 prompt 的浓缩产物;其余全缓存,增量几分钟)
+# ① pull 后重跑。struct 是新默认;旧 dense 的中间产物一律先清(下游按 video 续跑,不清会吃到旧结果):
 git pull origin main
-rm -f outputs/audit_10k/pipe_fused*.jsonl
+rm -f outputs/audit_10k/pipe_views.*.jsonl outputs/audit_10k/pipe_fused*.jsonl \
+      outputs/audit_10k/pipe_verified.jsonl
 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+# 重述写新文件 recap_struct.*(旧 recap5.* 保留不动;要对照旧风格可 RECAP_STYLE=dense 重跑)
+# 50 片×3 遍 8 卡约 5-10 分钟,之后投票+浓缩+验真+出包几分钟
 tar czf outputs/audit_10k/pipeline.tgz -C outputs/audit_10k bundle_pipeline
 # 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/pipeline.tgz . && tar xzf pipeline.tgz
+# 顺手贴回 JSON 解析健康度: grep -o '"n_samples": [0-9]*' outputs/audit_10k/recap_struct.*.jsonl | sort | uniq -c
 ```
 
 **② GDINO + MiniRBT:这台机连 hf-mirror 也不通,只能本地下载后 scp 缓存**。不装的话
