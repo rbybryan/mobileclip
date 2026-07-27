@@ -280,22 +280,28 @@ python experiments/r1_fn_density.py \
 「随机一对同字幕的概率」× 65k = 每个池子的期望假负例数 —— 这部分**只要负例库穿过
 `get_mask`(examination §3)就被当正例处理掉**,`r1a_sigmoid.py` 已设 `caption_idx=True`。
 
-**B · 嵌入近重复密度(需冻结文本塔特征;idx 掩码抓不到的那部分假负例)** ——
-先在训练环境里生成文本特征,再喂给同一脚本:
+**B · 嵌入近重复密度(现在一条命令,复用 eval 的模型构建路径)** —— idx 掩码抓不到、
+但对比损失会当假负例的那部分。先 dump 文本特征,再算密度:
 
 ```bash
-python experiments/r1_fn_density.py --help-feats   # 打印生成 .npy 的片段(复用 eval 的 encode_text)
-# 按片段在训练环境跑出 /tmp/txtfeats.npy 后:
+# ① 用冻结文本塔编码 InternVid 字幕(纯前向,单卡即可;自动去精确重复后编码)
+python experiments/r1_textfeat_dump.py \
+    --anno anno_downstream/InternVid/InternVid-10M-flt_1.json \
+    --ckpt checkpoints/mobileviclip_small.pt --out /tmp/txtfeats.npy --sample 10000
+# ② 算近重复密度
 python experiments/r1_fn_density.py --feats /tmp/txtfeats.npy --thresholds 0.9,0.95,0.99
 ```
 
-判读:「有≥1近邻」占比高 ⇒ 大量语义近重复被当负例 ⇒ **必须**上基于余弦阈值的离线去重掩码,
-不能只靠 `caption_idx`。低 ⇒ idx 掩码就够。
+判读:「有≥1近邻」占比高 ⇒ 大量语义近重复被当负例 ⇒ R1 需上基于余弦阈值的去重掩码
+(`nR1_textbank` 的 `dedup_cos`);低 ⇒ 免了。
+⚠️ `r1_textfeat_dump.py` 的**建模型/前向部分未在真权重上验证**(Claude 侧无权重);
+若构建报错,把完整报错贴回 —— 字幕读取/去重/分块已自测,只差建模型那步。
 
 > **在这两条之后**才开 R1 训练臂,且按 examination §6 重构为「SigLIP 制度」:
 > sigmoid 损失(已实现,`r1a_sigmoid.py`)+ 温度 + 大负例池,一条臂。
-> 训练臂里再加**批内饱和度**探针:每步记录 banked 负例占 softmax 质量的比例
-> (<5% ⇒ 库惰性,砍)和正样本在 512 批内负例中的排名(多数已 rank-1 ⇒ 512 就已饱和)。
+> 训练臂里再加**批内饱和度**探针(**这才是 go/no-go**):每步记录 banked 负例占 softmax
+> 质量的比例(<5% ⇒ 库惰性,砍)和正样本在 512 批内负例中的排名(多数已 rank-1 ⇒ 512 就已饱和)。
+> **完整落地方案(触点/损失/fp16/开关/时序)见 [`notes/r1-implementation-plan.md`](notes/r1-implementation-plan.md)。**
 
 ---
 

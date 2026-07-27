@@ -168,7 +168,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       「精确、无动量编码器」成立但落在 **v2t** 一侧,而头条指标是 **t2v**(需**视频**负例 ⇒ 仍是陈旧队列);
       精确性只因文本支路 dropout 全为 0(train 态 dropout 仍开)且草图的 `cross_entropy(arange)` 必须改成
       `get_mask` 多正例否则注入假负例;30–60× 那个杠杆是**从头训练**制度下测的,本项目是对齐初始化的 3-epoch 微调,
-      收益是**开放问题**。**先做零成本的离线假负例密度探针(`experiments/r1_fn_density.py`,命令见 `COMMANDS.md` §3.2),再按 SigLIP 制度(sigmoid+温度+池子)开一条臂。** **[A 已测 2026-07-27:精确重复 ≈0(4998/5000 distinct)⇒ 免精确去重;近重复(B)与 go/no-go(训练期饱和探针)仍未测。见 `notes/r1-examination.md` §7]**
+      收益是**开放问题**。**先做零成本的离线假负例密度探针(`experiments/r1_fn_density.py`,命令见 `COMMANDS.md` §3.2),再按 SigLIP 制度(sigmoid+温度+池子)开一条臂。** **[A 已测 2026-07-27:精确重复 ≈0(4998/5000 distinct)⇒ 免精确去重;近重复(B)与 go/no-go(训练期饱和探针)仍未测。见 `notes/r1-examination.md` §7]** **落地方案见 [`notes/r1-implementation-plan.md`](../notes/r1-implementation-plan.md);Part B 现在一条命令(`r1_textfeat_dump.py`→`r1_fn_density.py --feats`)。**
 - [ ] **2.5 P1 逐帧轨迹外露 + R2 可恢复顺序的读出头**(§3 R2、§5 P1):
       `FastViT.forward:1377` 造出 `[T,B,C]`、`:1384` 只返回池化后的 `[B,C]`,损失层根本看不到
       —— 这一处一次性改动解锁 R2/R3 全家。R2 消融梯子:`mean / additive / slope / phase`,
