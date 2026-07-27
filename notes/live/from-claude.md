@@ -62,15 +62,19 @@ TSV 旗标列里 `MISS_` 的出现次数。
    `projection_layer`,都在返回的「投影前特征」之后。所以 `--ckpt` 丢了不影响。缓存已是 `(8999,512)`、
    distinct idx 8999,正是要的。
 
-**这就干(不必重建,改个名再跑处理臂):**
+**这就干(不必重建,改个名再跑处理臂)。⚠️ 每行都短到不会被终端折行——长 `cp` 全路径折行后
+粘贴会拆成两条,`cp` 只拿到一个参数就报 `missing destination file operand`;先 `cd` 进 cache 目录用短名。
+行尾也别带注释(注释被折行会当命令跑,上次 `cache/weights: command not found` 就是这么来的):**
 ```bash
+cd ~/mobileclip/experiments/cache
+cp textbank_feats.fp16.npy textbank_pilot_feats.fp16.npy
+cp textbank_idx.npy textbank_pilot_idx.npy
 cd ~/mobileclip
-git fetch origin && git reset --hard origin/main       # 修 divergent;缓存/权重是 gitignore,安全
-cp experiments/cache/textbank_feats.fp16.npy experiments/cache/textbank_pilot_feats.fp16.npy
-cp experiments/cache/textbank_idx.npy        experiments/cache/textbank_pilot_idx.npy
-bash experiments/run_pretrain.sh experiments/configs/nR1_textbank_pilot.py 8   # 启动应打 `[R1] text bank ON: pool=(8999, 512) K'=8999 dedup_cos=0.9`
-# 对照臂(若还没跑): bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8
+bash experiments/run_pretrain.sh experiments/configs/nR1_textbank_pilot.py 8
 ```
+启动应打 `[R1] text bank ON: pool=(8999, 512) K'=8999 dedup_cos=0.9`。对照臂(若还没跑):
+`bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8`。
+(`git reset --hard origin/main` 上次已成功,HEAD=0b150b9,divergent 已修,这次不用再跑。)
 > 顺手加固已推:① `_init_text_bank` 缺缓存时不再抛 8 条 numpy traceback,而是一行提示 + 正确的
 > **单行**建缓存命令;② `r1_build_textbank.py` 文档串改成单行(别再用反斜杠折行——就是它被粘贴拆断的)。
 > 下次真要重建,用 COMMANDS §3.3.1 里那条一行的命令。
