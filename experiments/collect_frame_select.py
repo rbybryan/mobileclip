@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """汇总选帧基线(情形 B)的结果,输出 markdown 表 + 判读。
 
-只依赖标准库。读 experiments/evals/frame_select/<bench>_<arm>/eval_res.json。
+只依赖标准库。读 experiments/evals/frame_select/<bench>_<arm>/eval_res_latest.json。
+
+⚠️ 文件名与键名都别凭印象写(这两处各犯过一次错):
+  - `evaluate: True` 时 `tasks_clip/pretrain.py` 只写 **eval_res_latest.json**;
+    `eval_res_best.json` 要 `not config.evaluate` 才写,`eval_res.json` 只有
+    multiple-choice 任务(`retrieval_mc.py`)才写。
+  - 口径键**带尾部斜杠**:`retrieval_utils.py:83-84` 是 `prefix + "/"` 和
+    `prefix + "_emb/"`,所以是 `ret_test/` 而不是 `ret_test`。
 
 两个口径都报(仓库规矩:结论必须两口径同向才可信):
   ret_test/      DSL(dual-softmax,测试集级先验)
@@ -34,14 +41,29 @@ import re
 # MSR-VTT 1K 上 R@1 的二项抽样误差(见上文推导)
 NOISE_R1 = 1.6
 
-CALIBERS = [("ret_test_emb", "raw(主口径)"), ("ret_test", "DSL")]
+CALIBERS = [("ret_test_emb/", "raw(主口径)"), ("ret_test/", "DSL")]
 MODE_ORDER = {"uniform": 0, "divmax": 1, "random": 2}
+
+# 按优先级找结果文件;评测模式下实际只会有第一个(见模块 docstring)
+RESULT_FILES = ("eval_res_latest.json", "eval_res_best.json", "eval_res.json")
+
+
+def find_result(arm_dir):
+    """返回该臂目录里第一个存在的结果文件路径;都没有则 None。"""
+    for fname in RESULT_FILES:
+        path = os.path.join(arm_dir, fname)
+        if os.path.isfile(path):
+            return path
+    return None
 
 
 def load_arms(root):
     arms = {}
-    for path in sorted(glob.glob(os.path.join(root, "*", "eval_res.json"))):
-        name = os.path.basename(os.path.dirname(path))
+    for arm_dir in sorted(glob.glob(os.path.join(root, "*", ""))):
+        path = find_result(arm_dir)
+        if path is None:
+            continue
+        name = os.path.basename(os.path.normpath(arm_dir))
         bench, _, arm = name.partition("_")
         with open(path) as f:
             arms.setdefault(bench, {})[arm] = json.load(f)
@@ -95,16 +117,28 @@ def main():
 
     arms_by_bench = load_arms(args.root)
     if not arms_by_bench:
-        print(f"没找到任何结果:{args.root}/*/eval_res.json")
+        print(f"没找到任何结果:{args.root}/*/{{{','.join(RESULT_FILES)}}}")
         print("先跑 bash experiments/run_frame_select.sh")
         return
 
     for bench, arms in arms_by_bench.items():
         print(f"\n## {bench}\n")
+
+        # 静默失败保护:文件读到了但一个口径都取不出数,几乎一定是键名对不上,
+        # 别让它退化成一句无信息的「臂不齐」(这个坑踩过一次)。
+        if not any(get(r, c, "img_r1") is not None
+                   for r in arms.values() for c, _ in CALIBERS):
+            sample = next(iter(arms.values()), {})
+            print(f"⚠️ 读到 {len(arms)} 个臂,但没有一个能取出 `img_r1`。")
+            print(f"   期望的口径键:{[c for c, _ in CALIBERS]}")
+            print(f"   实际的顶层键:{sorted(sample)}")
+            print("   → 键名对不上,先核对 tasks_clip/retrieval_utils.py 的 prefix 拼法。")
+            continue
+
         for caliber, label in CALIBERS:
             if not any(get(r, caliber, "img_r1") is not None for r in arms.values()):
                 continue
-            print(f"### {label} (`{caliber}/`)\n")
+            print(f"### {label} (`{caliber}`)\n")
             print("| 臂 | t2v R@1 | v2t R@1 | r_mean(仅描述) | t2v R@1 vs 同 K native |")
             print("|---|---|---|---|---|")
             for arm in sorted(arms, key=arm_sort_key):
