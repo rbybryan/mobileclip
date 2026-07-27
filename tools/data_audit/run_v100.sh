@@ -527,6 +527,14 @@ recap)
   再 s4-merged 落地即会写出 v0_2/recaption_tasks.jsonl；
   或指向任意含 video 字段的 jsonl： RECAP_INPUT=xxx.jsonl bash $0 recap"; exit 1; }
   N_RECAP=${N_RECAP:-5}; RECAP_TEMP=${RECAP_TEMP:-0.9}
+  # 防重复启动：已有分片在跑时不再叠加 8 份 17GB 装载（滞留分片先 ps 核对再 pkill）
+  rc_alive=$(pgrep -fc "vlm_audit_hf.py.*--mode recap" || true)
+  if [ "${rc_alive:-0}" -gt 0 ]; then
+    echo "⚠️ 检测到 $rc_alive 个重述分片进程已在运行——不重复启动。"
+    echo "   看进度: bash $0 status   看它们是谁: ps -o pid,user,etime,cmd -C python | grep recap"
+    echo "   若确认是滞留/僵死进程: pkill -f 'vlm_audit_hf.py.*--mode recap'  然后重跑本命令"
+    exit 0
+  fi
   echo "[model] S2_MODEL=$S2_MODEL"
   echo "[recap] 每片 $N_RECAP 条独立重述, temp=$RECAP_TEMP, top_p=0.9, 帧抖动开, 看 $S2_FRAMES 帧"
   echo "[input] $RECAP_INPUT （$(wc -l < "$RECAP_INPUT") 片）"

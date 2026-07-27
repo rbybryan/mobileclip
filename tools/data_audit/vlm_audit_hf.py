@@ -164,13 +164,9 @@ def main():
         dtype = {"bf16": torch.bfloat16, "fp16": torch.float16,
                  "fp32": torch.float32}[args.dtype]
 
-    from transformers import AutoModelForImageTextToText, AutoProcessor
-    print(f"[load] {args.model} dtype={dtype} (Volta: fp16+sdpa)", file=sys.stderr)
-    model = AutoModelForImageTextToText.from_pretrained(
-        args.model, torch_dtype=dtype, attn_implementation="sdpa",
-        device_map=args.device_map if torch.cuda.is_available() else "cpu").eval()
-    processor = AutoProcessor.from_pretrained(args.model)
-
+    # resume/todo BEFORE the model load: a shard with nothing to do must exit
+    # without touching the GPU at all -- resumed re-launches used to park
+    # 8x17GB of fp16 weights (one per card) just to discover todo=0
     out_path = args.output.replace("{shard}", str(args.shard_id))
     os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
     done = set()
@@ -194,6 +190,17 @@ def main():
                 todo.append(rec)
     if args.limit:
         todo = todo[:args.limit]
+    if not todo:
+        print(f"[done] shard {args.shard_id}: nothing to do "
+              f"({len(done)} already present) -- model not loaded")
+        return
+
+    from transformers import AutoModelForImageTextToText, AutoProcessor
+    print(f"[load] {args.model} dtype={dtype} (Volta: fp16+sdpa)", file=sys.stderr)
+    model = AutoModelForImageTextToText.from_pretrained(
+        args.model, torch_dtype=dtype, attn_implementation="sdpa",
+        device_map=args.device_map if torch.cuda.is_available() else "cpu").eval()
+    processor = AutoProcessor.from_pretrained(args.model)
     print(f"[audit] shard {args.shard_id}: {len(todo)} clips", file=sys.stderr)
 
     n_done = 0

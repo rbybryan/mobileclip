@@ -23,6 +23,32 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-24 (28) — 八卡各挂 17GB 零利用率 = 滞留的重述分片；核对→清理→重跑（两处已加固）
+
+**Diagnosis:** 你贴的 nvidia-smi 判断正确：**0% 利用率 + 17GB 常驻 = 进程持显存不干活**。
+PID 932606–932613 连号、一卡一个、各 17032MiB——就是一次 8 卡重述分发装载的 Qwen3-VL-8B
+残留（我们自己的分片；GPU6 那堆 404–504MB `python3` 是别的小任务，**不要动**）。
+两处根因已修（本块随附 PR）：① `vlm_audit_hf` 原来**先装 17GB 模型再查有没有活干**——
+续跑重启时 8 个 todo=0 的分片也会各压 17GB；现在改为**先查 todo、为空直接退出、不碰 GPU**。
+② `recap` 子命令加了防重复启动守卫（已有分片在跑时拒绝再叠 8 份装载）。
+
+**Do this next（101vector；先核对再清理，共用机器不盲杀）：**
+```bash
+# ① 确认那 8 个进程是重述分片（cmd 应含 vlm_audit_hf.py --mode recap）:
+ps -o pid,user,etime,cmd -p 932606 932607 932608 932609 932610 932611 932612 932613
+# ② 是的话清掉（只会杀你自己有权限的进程）:
+pkill -f "vlm_audit_hf.py.*--mode recap"
+sleep 3; nvidia-smi | head -20        # 各卡应回到 ~0-1GB 占用
+# ③ 拉修复并重跑（重述已缓存, 全程 ~半小时）:
+git pull origin main
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+tar czf outputs/audit_10k/pipeline.tgz -C outputs/audit_10k bundle_pipeline
+```
+若 ① 显示的不是 recap 分片（cmd 不同或 user 不是你），**别杀**，把 ps 输出贴回来我再看。
+顺手贴一下 `tail -n 3 outputs/audit_10k/recap_shard*.log`——我想确认分片当时停在哪一步。
+
+---
+
 ## 2026-07-24 (27) — 派生步 OOM：GPU0 被占（16.6GB 外部进程），已改为自动选空卡
 
 **Diagnosis:** 你的 pipeline-sample 在步② 装 Qwen3-VL-8B 时 OOM——不是代码错：GPU0 上有个
