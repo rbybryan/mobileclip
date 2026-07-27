@@ -244,6 +244,38 @@ FUSE_DIRECT_PROMPT = """下面是同一段视频的 {n} 段互相独立的中文
 
 {recaps}"""
 
+# --mode refine (§5.8-1, ASID-style selective refinement, arXiv 2602.13013):
+# ONE minimal-edit repair call for views that FAILED Panel-V. Repair-then-
+# reverify replaces delete-on-fail -- a failed check loses one phrase, not the
+# whole view. Consumed via .format -> doubled braces.
+REFINE_KEYS = {"views"}
+REFINE_PROMPT = """下面每条中文短句是同一段视频的候选字幕，括号内标注了它未通过画面检验的原因（画面中检测不到某物体，或找不到某段文字）。请逐条做最小修改：删去或改写未通过检验的部分，其余用词尽量原样保留；改后每条仍不超过 28 个字、语法完整。若删去问题部分后信息所剩无几，该条输出空字符串 ""。
+
+规则：
+1. 只修问题处，绝不新增任何画面细节。
+2. gloss：修改后短句里能在画面中被检测到的具体名词的英文（小写，0-4 个）。
+3. 只输出一个 JSON 对象，条数与输入相同、顺序一一对应，不要任何解释：
+{{"views": [{{"text": "修改后短句或空串", "gloss": ["..."]}}, ...]}}
+
+待修短句：
+{items}"""
+
+
+def salvage_struct_items(text):
+    """(§5.8-2a) Best-effort per-item rescue from malformed struct JSON: find
+    each {...} object and keep the ones that parse with a non-empty text."""
+    items = []
+    for m in re.finditer(r"\{[^{}]*\}", text or ""):
+        try:
+            o = json.loads(m.group(0))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(o, dict) and isinstance(o.get("text"), str) \
+                and o["text"].strip():
+            items.append(o)
+    return items
+
+
 # --mode recap-struct: OwlCap-style caption-SET output (arXiv 2508.18634's
 # set idea, adopted offline -- §5.6): ONE decode emits 5-8 attribute-tagged
 # short captions (subject/action/scene/text) with inline en_gloss, so the

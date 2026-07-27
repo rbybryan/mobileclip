@@ -38,9 +38,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vlm_audit import (CONDENSE_KEYS, CONDENSE_PROMPT, DERIVE_KEYS,  # noqa: E402
                        DERIVE_PROMPT, FUSE_DIRECT_KEYS, FUSE_DIRECT_PROMPT,
                        GRAN_KEYS, GRAN_PROMPT, MERGE_KEYS, MERGE_PROMPT,
-                       PROMPT, RECAP_PROMPT, STRUCT_KEYS, STRUCT_RECAP_PROMPT,
-                       TRANS_KEYS, TRANS_PROMPT, VERDICT_KEYS, extract_json,
-                       resolve_video_path)
+                       PROMPT, RECAP_PROMPT, REFINE_KEYS, REFINE_PROMPT,
+                       STRUCT_KEYS, STRUCT_RECAP_PROMPT, TRANS_KEYS,
+                       TRANS_PROMPT, VERDICT_KEYS, extract_json,
+                       resolve_video_path, salvage_struct_items)
 
 
 def sample_frames_pil(path, num_frames, max_side, phase=0.5):
@@ -142,7 +143,7 @@ def main():
     ap.add_argument("--mode", default="full",
                     choices=["full", "trans", "gran", "merge", "recap",
                              "recap-struct", "derive", "condense",
-                             "fuse-direct"],
+                             "fuse-direct", "refine"],
                     help="'full' = combined video rubric (default). 'recap' = write "
                          "N independent Chinese captions FROM the frames (RECAPTION "
                          "bucket front-end for the fusion scheme; RECAP_PROMPT, "
@@ -264,7 +265,7 @@ def main():
                                  else (s + 0.5) / args.n_captions)
                         frames = sample_frames_pil(path, args.frames,
                                                    args.max_side, phase=phase)
-                        obj = None
+                        obj, text = None, None
                         try:
                             text = generate(model, processor, frames,
                                             STRUCT_RECAP_PROMPT,
@@ -284,8 +285,12 @@ def main():
                                 obj = extract_json(text, STRUCT_KEYS)
                             except Exception:  # noqa: BLE001
                                 obj = None
+                        raw_items = (obj or {}).get("captions") or []
+                        if not raw_items and text:
+                            # §5.8-2a: per-item rescue from malformed JSON
+                            raw_items = salvage_struct_items(text)
                         caps = []
-                        for v in (obj or {}).get("captions") or []:
+                        for v in raw_items:
                             if isinstance(v, dict) \
                                     and isinstance(v.get("text"), str) \
                                     and v["text"].strip():
@@ -297,11 +302,25 @@ def main():
                                 caps.append({"text": v["text"].strip(),
                                              "gloss": gloss,
                                              "attr": attr.strip()})
-                        if caps:
-                            sets_.append(caps)
+                        pass_text = "；".join(v["text"] for v in caps)
+                        if not caps:
+                            # §5.8-2b final fallback: run the DENSE prompt for
+                            # this pass -- the paragraph still feeds recaps
+                            # (fusion/scoring/diag/A') even though it yields no
+                            # attribute views; a clip must never end up empty.
+                            try:
+                                pass_text = clean_caption(generate(
+                                    model, processor, frames, RECAP_PROMPT,
+                                    args.max_new_tokens,
+                                    temperature=args.temperature,
+                                    top_p=args.top_p))
+                            except Exception:  # noqa: BLE001
+                                pass_text = ""
+                        if pass_text:
+                            sets_.append({"text": pass_text, "caps": caps})
                     views, seen = [], set()
-                    for i, caps in enumerate(sets_):
-                        for v in caps:
+                    for i, st_ in enumerate(sets_):
+                        for v in st_["caps"]:
                             if v["text"] not in seen:
                                 seen.add(v["text"])
                                 views.append({**v, "src_recap": i})
@@ -309,10 +328,11 @@ def main():
                         # joined per-pass strings keep every dense-mode consumer
                         # working (SigLIP per-pass scoring, diversity diag, TSV
                         # recap columns, A' split)
-                        "recaps": ["；".join(v["text"] for v in caps)
-                                   for caps in sets_],
+                        "recaps": [st_["text"] for st_ in sets_],
                         "views": views, "n_samples": len(sets_),
-                        "n_views": len(views)}
+                        "n_views": len(views),
+                        "n_dense_fallback": sum(1 for st_ in sets_
+                                                if not st_["caps"])}
                 elif args.mode == "derive":
                     # A_llm per-recap view derivation (master plan D5/D8): one
                     # text-only call per recap; the dense recap is the sole
@@ -458,6 +478,70 @@ def main():
                     out["verdict"] = {"views": views, "dropped": dropped,
                                       "n_views": len(views),
                                       "n_recaps": len(recaps)}
+                elif args.mode == "refine":
+                    # §5.8-1 verify->refine (ASID selective refinement): input
+                    # = fuse_verify output (top-level views with status/checks).
+                    # Views that FAILED get ONE minimal-edit repair; pass/
+                    # unverified views pass through untouched. Output is
+                    # verdict-shaped so fuse_verify can re-check the file.
+                    views_in = [v for v in (rec.get("views") or [])
+                                if isinstance(v, dict)
+                                and isinstance(v.get("text"), str)
+                                and v["text"].strip()]
+                    keep = [{"text": v["text"].strip(),
+                             "gloss": [g for g in (v.get("gloss") or [])
+                                       if isinstance(g, str)]}
+                            for v in views_in if v.get("status") != "fail"]
+                    fails = [v for v in views_in if v.get("status") == "fail"]
+                    n_rep = n_drop = 0
+                    if fails:
+                        lines = []
+                        for i, v in enumerate(fails):
+                            reasons = []
+                            for c in sorted(v.get("checks") or {}):
+                                if c == "gdino":
+                                    reasons.append(
+                                        "物体(" + ",".join(v.get("gloss") or [])
+                                        + ")未在画面检出")
+                                else:
+                                    reasons.append("引号内文字未被画面识别")
+                            lines.append(
+                                f"{i + 1}. {v['text'].strip()}"
+                                f"（未通过: {'；'.join(reasons) or '画面检验'}）")
+                        prompt = REFINE_PROMPT.format(items="\n".join(lines))
+                        obj = None
+                        try:
+                            text = generate(model, processor, [], prompt,
+                                            args.max_new_tokens)
+                            obj = extract_json(text, REFINE_KEYS)
+                        except (ValueError, torch.cuda.OutOfMemoryError) as ex:
+                            if isinstance(ex, torch.cuda.OutOfMemoryError):
+                                torch.cuda.empty_cache()
+                            try:  # one retry with mild sampling
+                                text = generate(model, processor, [], prompt,
+                                                args.max_new_tokens,
+                                                temperature=0.3)
+                                obj = extract_json(text, REFINE_KEYS)
+                            except Exception:  # noqa: BLE001
+                                obj = None
+                        rep = (obj or {}).get("views") or []
+                        for i, v in enumerate(fails):
+                            r = rep[i] if i < len(rep) \
+                                and isinstance(rep[i], dict) else None
+                            t = (r or {}).get("text")
+                            if isinstance(t, str) and t.strip():
+                                keep.append(
+                                    {"text": t.strip(),
+                                     "gloss": [g.strip().lower() for g in
+                                               (r.get("gloss") or [])
+                                               if isinstance(g, str)
+                                               and g.strip()]})
+                                n_rep += 1
+                            else:  # repair gave up (or malformed) -> drop,
+                                n_drop += 1  # matching the old delete behavior
+                    out["verdict"] = {"views": keep, "n_repaired": n_rep,
+                                      "n_dropped_refine": n_drop,
+                                      "n_fail_in": len(fails)}
                 elif args.mode == "merge":
                     # 合并 better_zh 的多条候选（在 s2_verdicts 里）为一条。纯文本。
                     cands = [c for c in ((rec.get("verdict") or {}).get("better_zh")
@@ -494,7 +578,8 @@ def main():
                                            en=(rec.get("en") or "(无)"),
                                            zh=(rec.get("zh") or "(空)"))
                 if args.mode not in ("recap", "recap-struct", "derive",
-                                     "condense", "fuse-direct"):  # these built their verdict above
+                                     "condense", "fuse-direct",
+                                     "refine"):  # these built their verdict above
                     try:
                         text = generate(model, processor, frames, prompt,
                                         args.max_new_tokens)

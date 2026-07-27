@@ -661,7 +661,12 @@ ByteDance/南开 ASID（arXiv 2602.13013：属性结构化标注 + ASID-Verify �
 细读 ASID-Verify 管线（多源产注 → Seed-1.6 整合 → **按属性分别验证（显式 Error 与
 Missing 两类规则）→ 只精修出错属性、其余原样保留** → 格式校修 → 阶段化
 No-Error/No-Missing/Clean 指标 → 300 条人工抽检 98% 可靠）后，对照我们管线的差距，
-按价值/成本排序。**1–3 建议立即做，4–5 门控/记录在案；均待维护者拍板后实施。**
+按价值/成本排序。**维护者批「按建议执行」（2026-07-27 深夜）：1–3 已同日实施入库，
+4 作后续，5 维持门控/不适用。落地形态：** #1 = `--mode refine`（REFINE_PROMPT 最小
+修改 + 复验；run_v100 ⑤ 对两版融合稿在出现 ✗ 时自动触发，终稿一律 `*_final.jsonl`）；
+#2 = struct 每遍「重试@0.3 → `salvage_struct_items` 逐条抢救 → dense prompt 兜底」，
+`n_dense_fallback` 落盘可查；#3 = TSV 旗 `MISS_D/MISS_V`（融合产出 gloss 对 ≥2 票单元
+gloss 并集覆盖 <70% 即打旗）。
 
 1. **✗ 视图从「删除」改「修复」（verify→refine 环；ASID 核心思想）**。现状：验真失败
    直接过滤——信息永久丢失；刚实测直融 10 条 ✗。改法：对 ✗ 视图发一次文本-only 修复
