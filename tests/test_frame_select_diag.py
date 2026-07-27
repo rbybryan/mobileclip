@@ -74,32 +74,89 @@ def test_index_stats_rejects_empty():
 
 
 # ------------------------------------------------------------ 判读
-def test_verdict_A_when_divmax_hugs_endpoints():
-    """恒选 {0,15}:端点率 1.0、间隔顶满 ⇒ 假说 (A) 离群帧。"""
-    stats = diag.index_stats([[0, 15]] * 100, 16)
-    d = diag.discriminate(stats, 16, 2)
-    assert d["verdict"] == "A"
-    assert d["endpoint_ratio_vs_random"] > 4  # 1.0 / 0.2417
+def test_interior_cv_zero_when_flat():
+    """内部完全均匀 ⇒ CV = 0。"""
+    assert diag.interior_cv([99] + [10] * 14 + [99]) == pytest.approx(0.0)
 
 
-def test_verdict_B_when_divmax_looks_random():
-    """构造一批间隔≈(n+1)/3 且端点率≈随机的下标 ⇒ 假说 (B) 像素≠时间。"""
+def test_interior_cv_ignores_endpoints():
+    """端点次数再极端也不该影响内部 CV —— 否则端点偏好会伪装成「内部有结构」。"""
+    flat = [10] * 14
+    assert diag.interior_cv([0] + flat + [0]) == diag.interior_cv([9999] + flat + [9999])
+
+
+def test_verdict_endpoint_bias_flat_is_the_measured_case():
+    """恒选 {0, 中段}:端点率 1.0、内部只有一个位置 —— 但那正是「平坦」的退化情形。
+
+    用真实实测的形状更有意义:端点过采 + 内部近似均匀。
+    """
     import random
     rng = random.Random(0)
-    idx = [sorted(rng.sample(range(16), 2)) for _ in range(4000)]
-    d = diag.discriminate(diag.index_stats(idx, 16), 16, 2)
-    assert d["verdict"] == "B"
+    idx = []
+    for _ in range(4000):
+        if rng.random() < 0.42:                       # 实测 K=2 端点率 0.423
+            idx.append(sorted([rng.choice([0, 15]), rng.randrange(1, 15)]))
+        else:
+            idx.append(sorted(rng.sample(range(1, 15), 2)))
+    d = diag.analyze_mechanism(diag.index_stats(idx, 16), 16, 2)
+    assert d["verdict"] == "endpoint_bias_flat"
+    assert d["endpoint_ratio_vs_random"] > diag.ENDPOINT_BIAS_RATIO
+    assert d["interior_cv"] < diag.FLAT_INTERIOR_CV
 
 
-def test_verdict_neither_when_moderately_spread():
-    """恒选 {2,13}:间隔 11,既没顶满(15)也不同于随机(5.67)⇒ 两条都不命中。"""
-    d = diag.discriminate(diag.index_stats([[2, 13]] * 50, 16), 16, 2)
-    assert d["verdict"] == "neither"
+def test_verdict_uninformative_when_indistinguishable_from_random():
+    """纯随机采样 ⇒ 端点率≈理论值、内部平坦 ⇒ 指标不携带信息。"""
+    import random
+    rng = random.Random(1)
+    idx = [sorted(rng.sample(range(16), 2)) for _ in range(8000)]
+    d = diag.analyze_mechanism(diag.index_stats(idx, 16), 16, 2)
+    assert d["verdict"] == "uninformative"
+
+
+def test_verdict_structured_no_bias_when_fixed_interior_pair():
+    """恒选 {2,13}:不碰端点,但内部极不均匀 ⇒ 有结构、不追端点。"""
+    d = diag.analyze_mechanism(diag.index_stats([[2, 13]] * 50, 16), 16, 2)
+    assert d["verdict"] == "structured_no_bias"
+
+
+def test_verdict_endpoint_bias_structured():
+    """恒选 {0,7}:端点率 1.0 且内部只压在一个位置 ⇒ 端点偏好 + 内部有结构。"""
+    d = diag.analyze_mechanism(diag.index_stats([[0, 7]] * 50, 16), 16, 2)
+    assert d["verdict"] == "endpoint_bias_structured"
+
+
+def test_mean_pair_gap_is_not_used_by_verdict():
+    """回归:间隔曾被当判据并导致 K=4 误判(gap 6.33≈随机 5.67 就判了「像素≠时间」,
+    而同一批数据端点率是随机的 1.57×)。
+
+    构造一对**端点率相同、内部分布同构、间隔差 4 倍**的输入:恒选 {0,3} vs {0,12}。
+    两者内部都是单点尖峰(CV 与位置无关),端点率都是 1.0,间隔 3 vs 12。
+    判读必须一致 —— 若还看间隔就会分叉。
+    """
+    a = diag.analyze_mechanism(diag.index_stats([[0, 3]] * 50, 16), 16, 2)
+    b = diag.analyze_mechanism(diag.index_stats([[0, 12]] * 50, 16), 16, 2)
+    assert a["interior_cv"] == pytest.approx(b["interior_cv"])
+    assert a["endpoint_ratio_vs_random"] == pytest.approx(b["endpoint_ratio_vs_random"])
+    assert a["verdict"] == b["verdict"] == "endpoint_bias_structured"
+    # 间隔确实差很多,证明这一对确实能暴露「判读看了间隔」这个 bug
+    gaps = [diag.index_stats([[0, j]] * 50, 16)["mean_pair_gap"] for j in (3, 12)]
+    assert gaps == [3.0, 12.0]
+
+
+def test_interior_cv_degenerate_when_no_interior_picks():
+    """全选端点(内部零次)时 CV 走 mean==0 分支返回 0,不能崩。
+
+    真实 divmax 不会这样(K=2 时 58% 的选择落在内部),这里只保证不炸。
+    """
+    assert diag.interior_cv([50] + [0] * 14 + [50]) == 0.0
 
 
 def test_every_verdict_has_prose():
     """判读文本必须覆盖所有分支,否则报告阶段 KeyError。"""
-    assert set(diag.VERDICT_TEXT) == {"A", "B", "AB", "neither"}
+    assert set(diag.VERDICT_TEXT) == {
+        "endpoint_bias_flat", "endpoint_bias_structured",
+        "uninformative", "structured_no_bias",
+    }
 
 
 # ------------------------------------------------------------ corpus 包装

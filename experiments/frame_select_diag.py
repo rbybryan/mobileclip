@@ -7,20 +7,32 @@
   - **选帧确实要紧**:uniform 相对 random +3.40/+3.90(两口径同向);
   - **但 divmax 是错的判据**:相对 uniform −2.80/−2.40,且**与纯随机无可测差别**。
 
-"divmax 为什么失败"有两个预注册假说(§4.1),它们对**选帧下标**给出**相反**预测:
+本脚本把 `greedy_kcenter` 在真实测试帧上的**下标**dump 出来,用两条**独立**信号
+判读机制。**不建模型、不过编码器、不需要 GPU。**
 
-| 假说 | 端点命中率 | 平均配对间隔 \\|i−j\\| |
-|---|---|---|
-| (A) k-center 偏好离群帧 | **远高于**随机基线 | 接近最大(≈ n−1) |
-| (B) 像素距离 ≠ 时间距离 | 接近随机基线 | 接近随机基线 ≈ (n+1)/3 |
+| 信号 | 度量什么 |
+|---|---|
+| **端点命中率**(vs 解析随机值 `1 − C(n−2,k)/C(n,k)`) | 是否在抓片段边界 |
+| **内部 CV**(下标 1..n−2 被选次数的 std/mean) | 端点之外该指标还有没有区分度 |
 
-本脚本只做一件事:把 `greedy_kcenter` 在真实测试帧上的**下标**dump 出来,
-用上表两行把 (A)/(B) 分开。**不建模型、不过编码器、不需要 GPU。**
+## 2026-07-27 实测结论(1000 条 MSR-VTT 测试视频)
 
-结论若是 (A)(我的预期):divmax 在**时间上比 uniform 更分散**却更差
-⇒ 可写的结论是"**要有代表性的帧,不要极端帧**",而不是"多样性无用"。
-这也与 GATE-0 相容 —— `freeze`(零分散)崩 13 分说明**需要一些分散**,
-本实验说明**最大化分散是过头的**。
+两个 K 上一致:**端点被系统性过采、内部近乎平坦**。
+
+    K=2  端点率 0.423(随机 0.242,1.75×)  内部 CV 0.110
+    K=4  端点率 0.706(随机 0.450,1.57×)  内部 CV 0.156
+    K=2 直方图:下标 0 被选 283 次(均匀期望 125,2.26×)、下标 15 选 158 次,
+                中间 1–14 落在 91–140 之间
+
+⇒ 机制:**降采样像素距离≈单调漂移(镜头运动/曝光),k-center 的 argmax 把这点
+漂移翻译成「取时间极值」**,于是半个帧预算花在边界帧(淡入淡出、转场、运动模糊)上。
+
+原 §4.1 把 (A)「偏好离群帧」与 (B)「像素≠时间」写成互斥选项是**框架错了** ——
+数据显示两者是同一机制的两面。论文里的那句话仍是「**要有代表性的帧,不要极端帧**」。
+
+⚠️ **「平均配对间隔」不要拿来判读**:greedy k-center 的首点是最靠近均值的帧,
+纯粹追逐端点也只能得到 `gap ≈ (n−1)/2`。第一版据此判错过一次,详见
+`analyze_mechanism` 的文档字符串。
 
 ## 逐位复现评测所见的帧
 
@@ -79,10 +91,13 @@ def index_stats(index_lists, n: int) -> dict:
     if not index_lists:
         raise ValueError("index_lists 为空")
     endpoint_hits, gaps, spans = 0, [], []
+    counts = [0] * n
     for idx in index_lists:
         s = set(idx)
         if 0 in s or (n - 1) in s:
             endpoint_hits += 1
+        for i in idx:
+            counts[i] += 1
         pair_gaps = [abs(a - b) for a, b in combinations(sorted(idx), 2)]
         if pair_gaps:
             gaps.append(sum(pair_gaps) / len(pair_gaps))
@@ -93,64 +108,95 @@ def index_stats(index_lists, n: int) -> dict:
         "mean_pair_gap": (sum(gaps) / len(gaps)) if gaps else 0.0,
         "mean_span": sum(spans) / len(spans),
         "max_span": max(spans),
+        "counts": counts,
     }
 
 
-def discriminate(divmax: dict, n: int, k: int, tol: float = 0.15) -> dict:
-    """用 (A)/(B) 的相反预测判读 divmax 的下标统计。
+def interior_cv(counts) -> float:
+    """内部下标(1 .. n−2)被选中次数的变异系数 std/mean。
 
-    tol 是「接近随机基线」的相对容差。两个假说不互斥 —— 本函数报的是
-    **哪一条预测被数据支持**,不是非此即彼的裁决。
+    小 ⇒ 除端点外该指标**几乎不区分帧**;大 ⇒ 内部真的有结构。
+    刻意排除两个端点,因为端点偏好由 `endpoint_rate` 单独度量,
+    混在一起会让「端点过采」把 CV 顶高、看起来像「内部有结构」。
+    """
+    interior = counts[1:len(counts) - 1]
+    if not interior:
+        raise ValueError("n 太小,没有内部下标")
+    mean = sum(interior) / len(interior)
+    if mean == 0:
+        return 0.0
+    var = sum((c - mean) ** 2 for c in interior) / len(interior)
+    return math.sqrt(var) / mean
+
+
+# 判据阈值。两条信号都是相对量,不依赖具体 n/k。
+ENDPOINT_BIAS_RATIO = 1.3      # 端点命中率 / 随机理论值,超过即算「偏好端点」
+FLAT_INTERIOR_CV = 0.25        # 内部下标次数的 CV,低于即算「内部无区分度」
+
+
+def analyze_mechanism(divmax: dict, n: int, k: int) -> dict:
+    """判读 divmax 的下标分布。**两条独立信号,分别报,不互相否决。**
+
+    ## 为什么不再用「平均配对间隔」当判据(2026-07-27 修正)
+
+    第一版把假说 (A)(k-center 偏好离群帧)的签名写成「间隔顶到最大 ≈ n−1」。
+    **那是推错的。** `greedy_kcenter` 的第一个点是 `argmin ‖x − 均值‖`,即**最有
+    代表性**的帧(通常在中段);第二个点才是最远点。所以即便纯粹追逐端点,
+    K=2 也只会得到 `gap ≈ |中段 − 端点| ≈ (n−1)/2`,**够不到 n−1**。
+
+    后果:实测 K=4 时 `gap 6.33` 落在随机值 5.67 附近,旧函数据此判了 (B)
+    「时间分布与随机无异」—— 而同一批数据的端点命中率是随机的 1.57×,
+    与该结论直接矛盾。**间隔对 greedy k-center 不诊断,端点率才诊断。**
+
+    现在报两条:
+      `endpoint_ratio`  端点命中率 / 随机理论值 —— 是否在抓片段边界
+      `interior_cv`     内部下标次数的变异系数 —— 端点之外该指标还有没有区分度
     """
     rand_ep = analytic_endpoint_rate(n, k)
-    rand_gap = analytic_mean_pair_gap(n)
-    max_gap = float(n - 1)
-
     ep_ratio = divmax["endpoint_rate"] / rand_ep if rand_ep > 0 else float("inf")
-    gap_close_to_random = abs(divmax["mean_pair_gap"] - rand_gap) <= tol * rand_gap
-    gap_close_to_max = divmax["mean_pair_gap"] >= (1 - tol) * max_gap
+    cv = interior_cv(divmax["counts"])
 
-    # (A) 的签名:端点命中率显著高于随机 且 间隔顶到最大
-    supports_a = ep_ratio >= 1.5 and gap_close_to_max
-    # (B) 的签名:间隔与随机基线无异
-    supports_b = gap_close_to_random
-
-    if supports_a and not supports_b:
-        verdict = "A"
-    elif supports_b and not supports_a:
-        verdict = "B"
-    elif supports_a and supports_b:
-        verdict = "AB"      # 数学上不该同时成立(除非 n 很小),留作异常标记
-    else:
-        verdict = "neither"
+    biased = ep_ratio >= ENDPOINT_BIAS_RATIO
+    flat = cv <= FLAT_INTERIOR_CV
+    verdict = ("endpoint_bias_flat" if biased and flat else
+               "endpoint_bias_structured" if biased else
+               "uninformative" if flat else
+               "structured_no_bias")
     return {
         "random_endpoint_rate": rand_ep,
-        "random_mean_pair_gap": rand_gap,
-        "max_possible_gap": max_gap,
+        "random_mean_pair_gap": analytic_mean_pair_gap(n),
         "endpoint_ratio_vs_random": ep_ratio,
+        "interior_cv": cv,
         "verdict": verdict,
     }
 
 
 VERDICT_TEXT = {
-    "A": (
-        "**假说 (A) 成立:k-center 偏好离群帧。**\n"
-        "divmax 在时间上比 uniform **更**分散,却在检索上更差 ⇒ 可写的结论是\n"
-        "**要有代表性的帧,不要极端帧**,而不是「多样性无用」。与 GATE-0 相容:\n"
-        "`freeze`(零分散)崩 13 分说明需要一些分散,本轮说明最大化分散是过头的。"
+    "endpoint_bias_flat": (
+        "**机制:像素距离≈单调漂移 ⇒ argmax 变成「取时间极值」。**\n"
+        "端点被系统性过采,而端点之外的下标分布近乎平坦 —— 也就是说降采样 RGB 上的\n"
+        "远近主要由**镜头运动/曝光漂移**构成,它携带的时间信息只够把「最远」推到片段\n"
+        "边界,内部几乎不区分帧。k-center 的 argmax 把这点漂移直接翻译成挑边界帧\n"
+        "(淡入淡出、转场、运动模糊)。\n\n"
+        "⇒ 原 §4.1 把 (A)「偏好离群帧」与 (B)「像素≠时间」写成互斥选项是**框架错了**:\n"
+        "它们是同一机制的两面。论文里可写的那句仍是**要有代表性的帧,不要极端帧**,\n"
+        "但现在有了机制:**最大化像素多样性 = 去挑片段边界**。\n"
+        "与 GATE-0 相容 —— `freeze`(零分散)崩 13 分说明需要分散;本轮说明**均匀时间\n"
+        "间隔已经把有用的分散拿够了**,再往极值推是有害的。"
     ),
-    "B": (
-        "**假说 (B) 成立:像素距离 ≠ 时间距离。**\n"
-        "divmax 的时间分布与随机无异 ⇒ 降采样 RGB 上的远近被镜头运动/曝光主导,\n"
-        "根本没在挑「内容不同」的帧。结论是**廉价像素代理不可用**,\n"
-        "而不是「多样性判据错」—— 要判后者需换语义特征重跑(那只能当上界报)。"
+    "endpoint_bias_structured": (
+        "**端点被过采,且内部仍有结构。**\n"
+        "指标不只是漂移 —— 端点之外也在做有区分度的选择。要判这份结构是否有语义,\n"
+        "需要把选帧下标与内容标注对齐再看,本脚本给不出。"
     ),
-    "AB": (
-        "⚠️ 两条预测同时命中,这在 n 较大时不该发生 —— 先核对 n/k 与统计口径。"
+    "uninformative": (
+        "**该指标基本不携带信息**:端点命中率与随机无异,内部也平坦。\n"
+        "⇒ 结论收窄为「廉价像素代理不可用」,**不能**推广到「多样性判据错」——\n"
+        "要判后者需换语义特征重跑(那只能当上界报,见 §5 成本诚实性)。"
     ),
-    "neither": (
-        "两条预测都没命中:divmax 既没顶到最大间隔,也不同于随机基线。\n"
-        "⇒ 机制是第三种,先看下标直方图再下结论(原始下标已 dump)。"
+    "structured_no_bias": (
+        "**内部有结构但不追逐端点。**\n"
+        "这是三种失败模式之外的第四种,先看下标直方图再下结论(原始下标已 dump)。"
     ),
 }
 
@@ -238,23 +284,29 @@ def report(out, pool, ks):
     for k in ks:
         lines.append(f"\n## K={k}(母序列 {pool} 帧)\n")
         stats = {m: index_stats(v, pool) for m, v in out[k].items()}
-        lines.append("| 模式 | 端点命中率 | 平均配对间隔 \\|i−j\\| | 平均跨度 |")
+        lines.append("| 模式 | 端点命中率(**判据**) | 内部 CV(**判据**) | 平均配对间隔(*不诊断*) |")
         lines.append("|---|---|---|---|")
         for m in ("uniform", "divmax", "random"):
             s = stats[m]
             lines.append(
-                f"| `{m}` | {s['endpoint_rate']:.3f} | "
-                f"{s['mean_pair_gap']:.2f} | {s['mean_span']:.2f} |"
+                f"| `{m}` | {s['endpoint_rate']:.3f} | {interior_cv(s['counts']):.3f} | "
+                f"{s['mean_pair_gap']:.2f} |"
             )
-        d = discriminate(stats["divmax"], pool, k)
+        d = analyze_mechanism(stats["divmax"], pool, k)
         lines.append(
-            f"| *随机理论值* | {d['random_endpoint_rate']:.3f} | "
-            f"{d['random_mean_pair_gap']:.2f} | — |"
+            f"| *随机理论值* | {d['random_endpoint_rate']:.3f} | — | "
+            f"{d['random_mean_pair_gap']:.2f} |"
         )
         lines.append("")
         lines.append(
-            f"divmax 端点命中率是随机基线的 **{d['endpoint_ratio_vs_random']:.2f}×**;"
-            f"最大可能间隔 {d['max_possible_gap']:.0f}。\n"
+            f"divmax 端点命中率 = 随机基线的 **{d['endpoint_ratio_vs_random']:.2f}×**"
+            f"(阈值 {ENDPOINT_BIAS_RATIO});内部 CV = **{d['interior_cv']:.3f}**"
+            f"(阈值 {FLAT_INTERIOR_CV},低于即算内部无区分度)。\n"
+        )
+        lines.append(
+            "> 「平均配对间隔」只作描述,**不参与判读** —— greedy k-center 的首点是\n"
+            "> 最靠近均值的帧,即便纯粹追逐端点,间隔也够不到 n−1(见 `analyze_mechanism`\n"
+            "> 的文档字符串:第一版正是在这里判错的)。\n"
         )
         lines.append(VERDICT_TEXT[d["verdict"]])
 
