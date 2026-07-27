@@ -48,7 +48,7 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
-## 2026-07-27 (36) — pipeline-sample 判读 + 四条指令已落地:浓缩=最终字幕、覆盖优先、评审包精简、重述改 OwlCap 式结构化
+## 2026-07-27 (36) — pipeline-sample 判读 + 四条指令已落地:浓缩=最终字幕、覆盖优先、评审包精简、OwlCap 结构化=平行B臂(A/B对比)
 
 **你贴的运行读完了。全绿**:重述/派生/浓缩全部按 video 秒级续跑(#274 的早退生效)、
 多样性健康(Jaccard 0.226 无坍缩)、评审包 50/50 已打好。
@@ -63,23 +63,22 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
    浓缩输出 2-4→**2-5 条**且 prompt 明令"宁多一条、不丢单元信息";
 3. **评审包只显示四样**:英文en / 原zh(黄) / 重述×5(⟨SigLIP分⟩+★A−) / **浓缩**
    (+两道单选:重述质量、浓缩质量)。全景各阶段列仍在 `recap_pipeline.tsv`;
-4. **重述改 OwlCap 式结构化(§5.6,新默认)**:每遍一次解码产 **5-8 条带属性短句**
-   (subject/action/scene/text,≤28 字+内联 gloss),**独立跑 3 遍**(temp0.9+帧抖动),
-   派生步整体裁撤。为什么不是只跑一遍 5-8 条:一遍产的条目共享上下文、彼此不独立,
-   一个幻觉会连贯污染整组,票数变假信号——独立 3 遍×集合输出兼得省钱与投票,
-   成本仍比旧 5 遍稠密+派生低约一半。
+4. **OwlCap 式结构化重述 = 方案B 平行备选(§5.6,不覆盖方案A)**:每遍一次解码产
+   **5-8 条带属性短句**(subject/action/scene/text,≤28 字+内联 gloss),**独立跑 3 遍**
+   (temp0.9+帧抖动),派生步裁撤;**产物全部 `_st` 后缀隔离,方案A(稠密×5)主线不动**。
+   为什么不能只跑一遍:一遍产的条目共享上下文、彼此不独立,一个幻觉会连贯污染整组,
+   票数变假信号。新增 `pipeline-compare`:同批 50 片双跑 A/B,出并排对比包。
 
 ```bash
-# ① pull 后重跑。struct 是新默认;旧 dense 的中间产物一律先清(下游按 video 续跑,不清会吃到旧结果):
+# ① pull 后一键 A/B 对比。A 臂重述/派生全缓存秒过;A 的浓缩因 prompt 更新要清一次
+#   (只清 A,不碰 _st);B 臂全新但只有 3 遍×50 片。总计 ~20-30 分钟:
 git pull origin main
-rm -f outputs/audit_10k/pipe_views.*.jsonl outputs/audit_10k/pipe_fused*.jsonl \
-      outputs/audit_10k/pipe_verified.jsonl
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
-# 重述写新文件 recap_struct.*(旧 recap5.* 保留不动;要对照旧风格可 RECAP_STYLE=dense 重跑)
-# 50 片×3 遍 8 卡约 5-10 分钟,之后投票+浓缩+验真+出包几分钟
-tar czf outputs/audit_10k/pipeline.tgz -C outputs/audit_10k bundle_pipeline
-# 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/pipeline.tgz . && tar xzf pipeline.tgz
-# 顺手贴回 JSON 解析健康度: grep -o '"n_samples": [0-9]*' outputs/audit_10k/recap_struct.*.jsonl | sort | uniq -c
+rm -f outputs/audit_10k/pipe_fused*.jsonl
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
+# 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/compare.tgz . && tar xzf compare.tgz
+#       打开 bundle_compare/index.html —— 每片并排: en源|原zh|A重述|A浓缩|B重述|B浓缩 + 单选
+# 顺手贴回 B 臂 JSON 健康度: grep -o '"n_samples": [0-9]*' outputs/audit_10k/recap_struct.*.jsonl | sort | uniq -c
 ```
 
 **② GDINO + MiniRBT:这台机连 hf-mirror 也不通,只能本地下载后 scp 缓存**。不装的话
@@ -104,9 +103,9 @@ tar czf outputs/audit_10k/pipeline.tgz -C outputs/audit_10k bundle_pipeline
 (另:上次末尾那行 `-bash: 重述/派生/打分...: No such file or directory` 是把注释行
 当命令贴进终端了,无害。)
 
-**Then report back** in from-server.md: 新 ④b 的 `[done]` 行(kept/dropped/fallback
-三个数,回退应大降)+ 目检两判:**重述质量**(重述 vs 旧译,方案成立与否的直接证据)、
-**浓缩质量**(浓缩短句可否直接当该视频的训练字幕——信息够不够、有无幻觉、会不会太瘦)。
+**Then report back** in from-server.md: A/B 两臂各自 ④b 的 `[done]` 行(kept/dropped/
+fallback)+ **bundle_compare 单选统计**(50 片里 A更好/B更好/差不多/都不行 各多少——这
+一票直接定生产配方走哪臂;打平按成本取 B)+ B 臂 `n_samples` 分布(3 遍齐不齐)。
 
 ## 2026-07-27 (35) — 新指标读完:池杠杆在 512 **没饱和** → 倾向「建」,只差 Part B(其路径 bug 已修)
 
