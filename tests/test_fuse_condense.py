@@ -64,3 +64,11 @@ def test_best_recap_representative():
 def test_empty_and_blank_views():
     assert cluster_views([]) == []
     assert cluster_views([V("", 0), V("  ", 1)]) == []
+
+
+def test_tiebreak_prefers_more_detectable_nouns():
+    # all-tied support: the unit with more gloss nouns (more verifiable, likely
+    # the subject fact) must sort first -- it becomes the fallback keeper
+    units = cluster_views([V("天空有几只飞鸟", 1, ["bird"]),
+                           V("狗在草地上奔跑", 0, ["dog", "grass"])])
+    assert units[0]["text"] == "狗在草地上奔跑"

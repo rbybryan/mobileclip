@@ -58,6 +58,25 @@ merger 后（纯投影，无度量结构）＞ LLM 隐层（无对比目标 + ma
 52.1 R@1 MSR-VTT T2V——生成式模型内部确有对齐几何；但那是特定 prompt 诱出的，
 我们的稠密中文描述 prompt 下是否存活**未经检验**。
 
+### 追问（2026-07-27 晚）：教师能不能换 InternVideo3？——不能当 vtc_kd 教师
+
+网上核验三个候选，全都**没有对比式图文共享空间**：
+
+- **InternVideo3**（arXiv 2606.12195，2026-06）：副标题即定性——*Agentify Foundation
+  Models with Multimodal Contextual Reasoning*。8B instruct **MLLM/视频智能体**
+  （M²LA KV 压缩、SFT+规则 RL+在线蒸馏的分阶段训练），不是双塔对比模型 →
+  vtc_kd 不可算，与 Qwen 同类否决（只少掉覆盖率那一条理由）。
+- **InternVideo2.5**（2501.12386）：同为长上下文 chat MLLM，同判。
+- **InternVideo-Next**（2512.01342，2025-12）：自监督、**明确不用视频-文本监督**
+  ——没有文本侧，出不了教师相似度矩阵；其视觉几何可作 kd_geo 候选，
+  与 `+geo(Qwen)` 同规则过 CKA 门，不另开行。
+
+**结论**：vtc_kd 教师维持 **InternVideo2-stage2**——它是该家族**最后一代**保有真对比
+视频-文本空间的模型。想要更强教师的正道不是换代际，而是**换尺寸/集成**：
+InternVideo2-stage2-**6B**（同族空间，ZS MSR-VTT ~55.9 vs 1B 的 51.9）或 1B+6B
+双教师集成（DataCompDR 正是双教师配方）；按 U7-1 既有决策法，在 100k 切片上
+1B vs 6B 先试再定，checkpoint 下载条目届时补进 `CHECKPOINTS.md`。
+
 ### 证据梯队（蒸馏路线排序）
 
 - **Tier A（对比教师→对比学生，大增益、有复现）**：DataCompDR/MobileCLIP

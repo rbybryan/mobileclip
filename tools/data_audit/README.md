@@ -131,7 +131,9 @@ N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
 - **C_fuse 投票浓缩**（§5.5，维护者指令 2026-07-27）：`fuse_condense.py` 把 A_llm 短句
   跨 5 条重述聚类计票（纯规则），support≥3 的单元交 `--mode condense` 打包成 2–4 条
   ≤28 字**高浓度短句**（一句装下主体+动作+场景），再照走验真。被投票淘汰的细节留在
-  「淘汰单元」列——目检时能直接看到投票滤掉了什么。`FUSE_MIN_SUPPORT=2` 可放宽门槛。
+  「淘汰单元」列——目检时能直接看到投票滤掉了什么。`FUSE_MIN_SUPPORT=2` 可放宽门槛
+  （**改门槛重跑前先 `rm outputs/audit_10k/pipe_fused*.jsonl`**——浓缩按 video 续跑，
+  旧门槛结果不会自动重算）；本段任何失败只会让 C_fuse 列为空，不阻塞 TSV/评审包。
 - **模型依赖（V100 盒子现状即可跑，无需任何新 LLM）**：全链**唯一的 LLM = Qwen3-VL-8B**
   （`$S2_MODEL`，本地 `ckpts/Qwen3-VL-8B-Instruct` 优先）——重述用 temp0.9 采样制造投票方差、
   派生用 temp0 贪心保证闭集确定性，两处用法刻意不同。其余全是非 LLM 小模型：SigLIP2 打分
