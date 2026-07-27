@@ -128,15 +128,31 @@ N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
   A′句切视图 | ✓过验真视图[gloss] | ·未验(保守留) | ✗被滤视图[gdino/ocr] |
   投票单元(票数) | 淘汰单元 | ✓/·/✗浓缩 | 坍缩旗标`——
   这就是主计划 G2 各臂（A_llm/A−/C_v/**C_fuse**）的样本级预览。
-- **C_fuse 投票浓缩 = 最终训练字幕**（§5.5，维护者指令 2026-07-27）：`fuse_condense.py`
+- **结构化重述 = 方案B 平行备选（§5.6；默认仍是方案A `RECAP_STYLE=dense`）**：
+  `RECAP_STYLE=struct` 启用——`--mode recap-struct` 每遍一次解码产 5-8 条带属性
+  （subject/action/scene/text）≤28 字短句 + 内联 en_gloss，**独立跑 N=3 遍**
+  （temp0.9+帧抖动）保住跨遍投票；② 派生步自动跳过。**两臂产物完全隔离**：B 臂重述写
+  `recap_struct.*.jsonl`、下游全部带 `_st` 后缀（`pipe_st_*`、`recap_pipeline_st.tsv`、
+  `bundle_pipeline_st/`），与 A 臂互不覆盖，无需任何 rm 即可并存。
+- **A/B 对比（`bash tools/data_audit/run_v100.sh pipeline-compare`）**：同一批
+  N_SAMPLE 片先后跑 A(dense)、B(struct)（各自按 video 续跑，已缓存部分秒过），再由
+  `make_style_compare.py` 合成 `review_compare.tsv` + `bundle_compare/`——每片并排
+  en源/原zh/A重述/**A直融/A投票**/B重述/**B直融/B投票** + 四选一「最佳浓缩」。
+- **直接 LLM 融合「直融」（§5.7，与投票浓缩双版并出）**：`--mode fuse-direct` 每片一次
+  文本调用读 N 遍独立重述，**语义投票（≥2 段支持才写）+ 压缩**一步到位，输出 2-5 条
+  ≤28 字短句 + gloss，并**自报 dropped**（被排除的单源细节，落在 `verdict.dropped`）。
+  输出 `*_fused_d.*`，与下条投票浓缩（`*_fused_v.*`）**每次同时产出、各自验真**，
+  单臂评审包并排两列+版本对比单选。**换 prompt 重跑前先
+  `rm outputs/audit_10k/pipe*_fused*.jsonl`**。
+- **C_fuse 投票浓缩（§5.5，与直融并出的第二版）**：`fuse_condense.py`
   把 A_llm 短句跨 5 条重述聚类计票（纯规则），support≥2 的单元（默认；50 片实测 k=3
   回退率 34/50，对多样性健康的重述太严）交 `--mode condense` 打包成 2–5 条 ≤28 字
   **高浓度短句**，再照走验真。**覆盖优先、不过度浓缩**：全淘时保底留前 3 个单元
   （原为 1），浓缩 prompt 明令"宁多一条、不丢单元信息"；浓缩短句（去 ✗）即 RECAPTION
   桶的训练 `captions`。`FUSE_MIN_SUPPORT` 可改门槛（**重跑前先
   `rm outputs/audit_10k/pipe_fused*.jsonl`**——浓缩按 video 续跑，旧门槛/旧 prompt 的
-  结果不会自动重算）；本段任何失败只会让浓缩列为空，不阻塞 TSV/评审包。评审包按指令
-  只显示 en源/原zh/重述×5/浓缩 四样，全景各阶段列仍在 `recap_pipeline.tsv`。
+  结果不会自动重算）；本段任何失败只会让对应列为空，不阻塞 TSV/评审包。评审包按指令
+  只显示 en源/原zh/重述/直融/投票浓缩，全景各阶段列仍在 `recap_pipeline.tsv`。
 - **模型依赖（V100 盒子现状即可跑，无需任何新 LLM）**：全链**唯一的 LLM = Qwen3-VL-8B**
   （`$S2_MODEL`，本地 `ckpts/Qwen3-VL-8B-Instruct` 优先）——重述用 temp0.9 采样制造投票方差、
   派生用 temp0 贪心保证闭集确定性，两处用法刻意不同。其余全是非 LLM 小模型：SigLIP2 打分

@@ -350,6 +350,39 @@ python experiments/r1_fn_density.py --anno anno_downstream/InternVid/InternVid-1
 
 ---
 
+### 3.3.1 R1 建池 A/B(2.4c)—— go/no-go 判 GO 之后建的臂
+
+**方案 §7.6 判 GO,代码已落地**(`models/criterions.py` 池损失、`models/mobileviclip_small.py`
+接线、`text_encoder.py` 暴露投影前特征、`experiments/r1_build_textbank.py` 缓存、
+`experiments/configs/nR1_textbank_pilot.py` 臂配置)。**默认关 = 逐位不变**(不设 `criterion.text_bank`
+的配置完全不受影响)。池的数学已 CPU 单测;端到端前向/缓存只能在服务器验。
+
+```bash
+cd ~/mobileclip && git pull origin main
+export MVC_DATA_DIR=/home/vca1/datasets
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+
+# ① 建缓存(投影前文本特征 + caption_to_idx;单卡、纯前向、几分钟)。
+#    建模型走的是 Part B 已验证的同一条路;若报错把完整 traceback 贴回。
+python experiments/r1_build_textbank.py \
+    --anno anno_downstream/internvid_zh_10k_pilot.json \
+    --ckpt checkpoints/mobileviclip_small.pt \
+    --out-feats experiments/cache/textbank_pilot_feats.fp16.npy \
+    --out-idx   experiments/cache/textbank_pilot_idx.npy
+
+# ② A/B(等步数、同数据):对照 = pilot_10k_r1(无池),处理 = nR1_textbank_pilot(有池)。
+#    对照通常已有(§3.3);只需再跑处理臂。启动日志应出现一行 `[R1] text bank ON: ...`。
+bash experiments/run_pretrain.sh experiments/configs/nR1_textbank_pilot.py 8
+# 若对照臂还没跑:
+# bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8
+```
+判读(看动力学,不看绝对精度):处理 vs 对照的 held-out R@1。**两个方向都报**——文本池硬化
+**v2t(txt_r1)**,t2v(img_r1)只通过共享编码器间接受益(examination §1)。**kill 判据**:池 vs 无池
+< 0.5 R-Sum ⇒ (d) 误判,停(方案 §5)。
+> 池损失默认关的不变性:`vtc_loss_sigmoid` 里池块全在 `if text_bank is not None` 下;不设配置 ⇒ 逐位同旧。
+
+---
+
 ### 3.4 选帧基线 — C2 必须打赢的那条平凡基线(零训练,V100 一晚)
 
 **为什么现在做**:GATE-0 实测**帧的多样性值 ~13 个 R@1、帧的顺序值 ~0**

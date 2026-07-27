@@ -11,13 +11,14 @@ mathematically-exact bank". The exactness is a real but **v2t-side** engineering
 cosine dedup mask; run `experiments/r1_textfeat_dump.py` → `r1_fn_density.py --feats`
 (COMMANDS §3.2).
 
-**Go/no-go pilot RAN twice (2026-07-27) — see §7.** First run's probe was *mis-specified*
-(§7.1); the corrected metrics from the second run (§7.5) show the pool lever is **NOT
-saturated at 512** — `maxneg_by_pool` keeps climbing ~+0.2/doubling with no flattening. So
-the lean **flipped from "tilted to kill" to "leans BUILD, conditional on Part B"**: the whole
-call now rests on whether the harder negatives a bigger pool surfaces are genuine or
-near-duplicate false-negatives. **Part B is the sole remaining decider** and its script had a
-path bug (now fixed, §7.5). **Near-dup dedup remains a build prerequisite** (§7.4 / examination §3).
+**RESOLVED → GO (2026-07-27). Build the pool (2.4c).** The go/no-go pilot (§7.5) showed
+`maxneg_by_pool` still climbing ~+0.2/doubling at 512 (pool lever NOT saturated), and Part B
+(§7.6) measured near-duplicate density **low** (~2% at cos≥0.95 ⇒ ~0.5 false-neg/query at 65k).
+Still-rising + low-near-dup = the **BUILD** row: the harder negatives a bigger pool adds are
+genuine, not false-negatives. Dedup mask `dedup_cos=0.90` stays a (cheap, ~free) prerequisite.
+GO means "premise holds, build the arm + run the A/B", not "R1 works" — kill criterion
+(512→65k < 0.5 R-Sum ⇒ stop) still governs. Trail: §7.1 (probe mis-spec, fixed) → §7.5
+(corrected metrics) → §7.6 (Part B → GO).
 
 ---
 
@@ -112,7 +113,7 @@ optimizer["different_lr"] = dict(                      # (ii) learnable t/b need
     enable=True, module_names=["logit_scale", "logit_bias"], lr=1e-3)
 criterion["text_bank"] = dict(                         # (iii) the pool (read by the new loss path)
     enable=True, path="cache/internvid_txtfeat.fp16.npy",
-    idx_path="cache/internvid_txtidx.npy", K=16384, dedup_cos=None)  # dedup_cos set from Part B
+    idx_path="cache/internvid_txtidx.npy", K=16384, dedup_cos=0.90)  # 0.90 from Part B (§7.6)
 output_dir = "experiments/runs/nR1_textbank"
 ```
 
@@ -144,14 +145,15 @@ that our aligned-init 3-epoch regime may already be near its own saturation.
 ## 5. Sequencing (extends `experiments/ROADMAP.md` 2.4)
 
 ```
-2.4a  Part B near-dup density (now one command; COMMANDS §3.2)   -> sets dedup_cos
-2.4b  r1a_sigmoid.py + 2 saturation log lines, 10k pilot         -> the GO/NO-GO
-        kill: banked/positive-rank say 512 already saturates -> stop, (d) misdiagnosed
+2.4a  Part B near-dup density  DONE (§7.6): low -> dedup_cos = 0.90 (a sparse, ~free mask)
+2.4b  go/no-go pilot           DONE (§7.5): maxneg still climbing at 512 -> NOT saturated -> GO
 2.4c  build the pool (§2): offline cache -> forward plumbing -> get_mask extension -> fp32/chunk
         full A/B: r1a (no pool) vs nR1_textbank (pool), matched steps, both DSL+raw
         report BOTH directions; headline t2v honestly = stale-queue side (§1)
 2.4d  video FIFO queue only if t2v lags (momentum encoder; not exact)
 ```
+
+**Status: 2.4a + 2.4b resolved → GO. Next action is 2.4c (build the pool).**
 
 **Kill criterion (unchanged):** 512 → 65k negatives < 0.5 R-Sum ⇒ stop. 2.4b makes that verdict
 reachable for ~one pilot's cost, before the pool is built.
@@ -307,3 +309,64 @@ but the probe cannot tell whether the harder negatives a bigger pool adds are *g
 advances past the `utils` path to a normal dependency load). Re-run Part B (COMMANDS §3.3 ②),
 then apply the table. Caveats unchanged: 10k zh pilot; `maxneg` beyond 512 is an extrapolation;
 `neg_grad_mass`/margin still partly reflect memorisation on 9k examples.
+
+---
+
+## 7.6 Part B measured (2026-07-27) → **GO**
+
+The path fix landed; `r1_textfeat_dump.py` built the model, encoded 4998 distinct captions with the
+frozen text tower, and `r1_fn_density.py` measured near-duplicate density in the **projected,
+normalized** space (the space the loss compares captions in):
+
+| cosine ≥ | mean neighbors / caption | % with ≥1 neighbor | per-pair rate | ⇒ false-neg / query at K=65k |
+|---|---|---|---|---|
+| 0.90 | 0.166 | 7.3% | 3.3e-5 | ~2.2 |
+| 0.95 | 0.040 | 2.0% | 8.0e-6 | ~0.5 |
+| 0.99 | 0.002 | 0.14% | 4.0e-7 | ~0.03 |
+
+**Density is LOW.** At cos≥0.95 (where two captions are effectively interchangeable) only ~2% of
+captions have *any* near-neighbor, and a 65k pool would inject only ~0.5 false-negatives per query
+(~0.03 at ≥0.99). Cross-referenced with §7.5: the `maxneg` climb (+0.2/doubling, still rising at
+512) is therefore **overwhelmingly genuine hard negatives**, not false-negatives — the high-similarity
+mass sits in the 0.3–0.9 "hard but correct" band, not the ≥0.95 "same caption" band. That is the
+ideal case for a larger negative pool.
+
+**Decision — GO (build R1, 2.4c).** This is the "still rising + low near-dup" row of the §7.5 table.
+
+**Dedup mask: `dedup_cos = 0.90` (conservative), and it is nearly free.** At 65k the mask flags only
+~2 pairs per query (~0.5 at 0.95); a precomputed sparse cosine-threshold mask is cheap to build and
+apply, and it keeps the residual false-negative repulsion negligible while preserving the genuine
+hard-negative signal. It stays a **prerequisite** (§7.4) — cheap, not optional.
+
+**Caveats carried into the build:** one InternVid shard (5k of the distinct captions), zh-pilot text
+distribution; boilerplate captions could repeat more across the full 10M than within 5k, so re-measure
+density on the actual pool when the offline cache is built (it is a byproduct of the cache pass). The
+**GO is not "R1 works"** — it is "the premise holds, build the arm and run the A/B." The kill criterion
+still governs: **512→65k negatives < 0.5 R-Sum ⇒ stop** (§5).
+
+---
+
+## 8. Build landed (2.4c, 2026-07-27) — what to run, what's verified
+
+The pool is implemented as a **config-gated, default-off** feature (same discipline as the probe:
+no `criterion.text_bank` ⇒ bitwise-identical to today). Files:
+
+| file | change |
+|---|---|
+| `models/criterions.py` | `vtc_loss_sigmoid(text_bank=None)` + `_text_bank_nll` — extends the `[B,B]` sigmoid matrix with `[B,K']` video–bankedtext columns; banked cols sharing a query idx are **positives**; near-dup cols (cosine to the query's own text ≥ `dedup_cos`) dropped. fp32 matmul. **All under `if text_bank is not None`** ⇒ off-path unchanged. |
+| `models/mobileviclip_small.py` | `_init_text_bank` (loads `feats`/`idx` buffers iff `criterion.text_bank.enable`), `_sample_text_bank` (per-step deterministic subset, **re-projects with the current `projection_layer`** = exact bank), `forward` passes it only when `training`. |
+| `models/backbones/.../mobileclip/text_encoder.py` | `encode_text(return_pre_proj=True)` returns the EOT-pooled feature **before** `@ projection_layer` (what the cache stores). |
+| `experiments/r1_build_textbank.py` | offline cache: pre-projection feats `[K, C_pre]` fp16 + `caption_to_idx` `[K]` — reuses the Part-B-verified build path. |
+| `experiments/configs/nR1_textbank_pilot.py` | pilot A/B **treatment** (control = `pilot_10k_r1.py`); only diff is `criterion.text_bank`. |
+
+**Run:** COMMANDS **§3.3.1** — build the cache, then the A/B (`nR1_textbank_pilot` vs `pilot_10k_r1`,
+matched steps). Startup logs `[R1] text bank ON: …`.
+
+**Verified on CPU here:** the `_text_bank_nll` math (positives, dedup drops exactly the near-dup
+false-negatives, fp16 round-trip) against an inline reference; all files parse; `caption_to_idx` in the
+cache builder is byte-identical to the training `dataset.pt_dataset` one (bank idx = training idx);
+`projection_layer` is a direct trainable attr of `text_encoder`. **GPU-unverified (disclosed):**
+end-to-end forward wiring, buffer dtype/device movement under deepspeed, and the cache encode pass
+(its build path is the one Part B already ran). If the run errors, paste the traceback.
+
+**Report BOTH directions** (v2t hardened directly, t2v indirect — §1); apply the kill criterion (§5).

@@ -2258,5 +2258,5 @@ scp -r ~/.cache/huggingface/hub/models--hfl--minirbt-h288    rby@101vector:~/.ca
 之后在服务器重跑前必须清掉"GDINO 缺席"时代的旧判定（验真按 video 续跑，不清则永不重验）：
 
 ```bash
-rm -f outputs/audit_10k/pipe_verified.jsonl outputs/audit_10k/pipe_fused_verified.jsonl
+rm -f outputs/audit_10k/pipe*_verified.jsonl   # 覆盖 A/B 两臂与直融/投票各版
 ```

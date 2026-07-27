@@ -23,29 +23,120 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
-## 2026-07-27 (36) — pipeline-sample 判读 + 三条新指令已落地:浓缩=最终字幕、覆盖优先、评审包精简
+## 2026-07-27 (39) — 「LLM 直接融合」已落地,且按最新指令改为与投票浓缩**双版并出**(§5.7 v2)
+
+**指令已落地**:让 LLM 直接读 3/5 遍独立重述,一次调用完成「语义数票(≥2 遍支持才写)+
+压缩成 2-5 条 ≤28 字短句」——参考 ASID(arXiv 2602.13013, 南开+字节+清华)的
+Verify-refine 思路;模型必须**自报 dropped**(被排除的单源细节,落盘可查),GDINO/OCR
+验真照旧是硬性后置门。**v2 更新(维护者:都出一版,要对比)**:不再设 FUSE_IMPL 二选一——
+**每次同时产两版**:直融(`*_fused_d.*`) + 投票浓缩(`*_fused_v.*`),各自验真;
+单臂评审包并排「直融|投票浓缩」两列,A/B 对比包每片并排**四版**:
+A直融|A投票|B直融|B投票 + 四选一「最佳浓缩」。
+
+```bash
+git pull origin main
+rm -f outputs/audit_10k/pipe_fused*.jsonl outputs/audit_10k/pipe_st_fused*.jsonl  # 清旧命名的融合产物
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare   # A/B 双臂 × 直融/投票 四版一次出
+tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
+# 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/compare.tgz . && tar xzf compare.tgz
+# 只跑单臂: N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample (A) 或 RECAP_STYLE=struct 同命令 (B)
+```
+
+**Then report back** in from-server.md: bundle_compare 四选一统计(50 片里 A直融/A投票/
+B直融/B投票/都不行 各多少——多数版本即生产配方)+ 随手抽一片看
+`outputs/audit_10k/pipe_fused_d.0.jsonl` 里 `verdict.dropped` 的自报淘汰是否合理。
+
+## 2026-07-27 (38) — R1 池代码已落地(2.4c):建缓存 + 跑 A/B 一条龙
+
+**GO 之后的池代码写完并推上来了,默认关=逐位不变。** 改动:`models/criterions.py`(池损失
+`vtc_loss_sigmoid(text_bank=…)` + `_text_bank_nll`)、`models/mobileviclip_small.py`(`_init_text_bank`/
+`_sample_text_bank`/forward 接线,**每步用当前 projection_layer 重投影 = 精确池**)、
+`text_encoder.py`(`return_pre_proj` 暴露投影前特征)、`experiments/r1_build_textbank.py`(离线缓存)、
+`experiments/configs/nR1_textbank_pilot.py`(A/B 处理臂,对照 = `pilot_10k_r1`)。
+
+**池的数学我这边已 CPU 单测**(正例识别、去重恰好丢近重复假负例、fp16 往返都对齐参考实现);
+`caption_to_idx` 与训练用的 `dataset.pt_dataset` 逐字节一致(池 idx = 训练 idx)。
+**端到端前向/缓存只能你那边验**——建模型走的是 Part B 已跑通的同一条路。
+
+**服务器一条龙(pull 后):**
+```bash
+cd ~/mobileclip && git pull origin main
+export MVC_DATA_DIR=/home/vca1/datasets
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+# ① 建缓存(投影前文本特征 + idx;单卡纯前向,几分钟):
+python experiments/r1_build_textbank.py \
+    --anno anno_downstream/internvid_zh_10k_pilot.json \
+    --ckpt checkpoints/mobileviclip_small.pt \
+    --out-feats experiments/cache/textbank_pilot_feats.fp16.npy \
+    --out-idx   experiments/cache/textbank_pilot_idx.npy
+# ② A/B 处理臂(启动日志应有一行 `[R1] text bank ON: ...`):
+bash experiments/run_pretrain.sh experiments/configs/nR1_textbank_pilot.py 8
+# 对照臂若没跑过:bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8
+```
+判读:处理 vs 对照 held-out R@1,**两个方向都报**(池硬化 v2t=txt_r1;t2v=img_r1 只间接受益)。
+kill 判据:池 vs 无池 < 0.5 R-Sum ⇒ 停。细节见 [`notes/r1-implementation-plan.md`](../r1-implementation-plan.md) §8 / COMMANDS §3.3.1。
+
+**报告回来:** ① 缓存的 `feats.shape` 与 distinct idx 数;② 两臂逐 epoch 的 `txt_r1 / img_r1`(以及有没有报错 / `[R1]` 那行)。
+若 ① 建模型报错,贴完整 traceback。
+
+---
+
+## 2026-07-27 (37) — Part B 跑通,近重复密度**低** → **GO(建 R1)**;下一步 2.4c 建池
+
+**Part B 这次跑通了(路径修好、模型建起来、encode_text 形状正常,4998 条字幕全编码)。近重复密度低:**
+| 余弦 ≥ | 平均近邻/条 | 有≥1近邻占比 | 每对概率 | ⇒ K=65k 时每查询假负例 |
+|---|---|---|---|---|
+| 0.90 | 0.166 | 7.3% | 3.3e-5 | ~2.2 |
+| 0.95 | 0.040 | 2.0% | 8.0e-6 | ~0.5 |
+| 0.99 | 0.002 | 0.14% | 4.0e-7 | ~0.03 |
+
+**判定 = GO(建 R1)。** 对照 (35):`maxneg` 在 512 仍涨(+0.2/翻倍),而 Part B 说这些高相似负例里
+**几乎都是真难负例、不是假负例**(≥0.95「基本同一句」的只占 2%)。这正是「仍涨 + 近重复低」那一行 ⇒ **建**。
+去重掩码定 `dedup_cos=0.90`(保守),而且**近乎免费**——65k 池每查询才 ~2 对被标(0.95 时 ~0.5),稀疏掩码,预算算好即用。
+
+**这不是「R1 一定有效」,是「前提成立,值得建臂 + 跑 A/B」。** kill 判据不变:512→65k 负例 <0.5 R-Sum ⇒ 停。
+
+**下一步 2.4c 建池(方案 [`notes/r1-implementation-plan.md`](../r1-implementation-plan.md) §2 / §7.6):**
+离线缓存**投影前**文本特征 + idx → `forward` 接入 bank → 扩 `get_mask`(把 bank 里同 idx 的当正例、
+按 `dedup_cos` 掩近重复)→ fp32/分块算扩展 logits → 默认关的开关配置 `nR1_textbank.py`。
+**默认关 = 逐位不变**(和探针同样的纪律)。这步是新代码,我会像探针那样尽量 CPU 单测池的数学、并标注哪些只能在服务器验。
+
+**暂时不用在服务器跑任何东西**——等我把 2.4c 的代码写好推上来,再给你一条「建缓存 + 跑 A/B」的命令。
+(校准注意:这是单个 InternVid 分片、zh 试点文本分布;建缓存那趟会在**真实池**上顺带复测一次密度。)
+
+---
+
+## 2026-07-27 (36) — pipeline-sample 判读 + 四条指令已落地:浓缩=最终字幕、覆盖优先、评审包精简、OwlCap 结构化=平行B臂(A/B对比)
 
 **你贴的运行读完了。全绿**:重述/派生/浓缩全部按 video 秒级续跑(#274 的早退生效)、
 多样性健康(Jaccard 0.226 无坍缩)、评审包 50/50 已打好。
 **但 ④b 暴露真问题**:`34 fallback / 50` —— 68% 的片投不出任何 ≥3/5 票单元,浓缩列
 退化成保底单句(重述被刻意做得多样,同一细节要 3/5 独立出现太严)。
 
-**三条指令全部已实现并入库,pull 即生效**:
+**四条指令全部已实现并入库,pull 即生效**:
 
 1. **浓缩短句 = 最终训练字幕**(生产主配方;RECAPTION 桶训练 `captions` 即浓缩短句
    去 ✗;G2 消融降级为验证性对照)——主计划 §5.5「定位更新」;
 2. **不过度浓缩、覆盖优先**:投票门默认 3→**2**、全淘保底从留 1 条改**留前 3 条**、
    浓缩输出 2-4→**2-5 条**且 prompt 明令"宁多一条、不丢单元信息";
 3. **评审包只显示四样**:英文en / 原zh(黄) / 重述×5(⟨SigLIP分⟩+★A−) / **浓缩**
-   (+两道单选:重述质量、浓缩质量)。全景各阶段列仍在 `recap_pipeline.tsv`。
+   (+两道单选:重述质量、浓缩质量)。全景各阶段列仍在 `recap_pipeline.tsv`;
+4. **OwlCap 式结构化重述 = 方案B 平行备选(§5.6,不覆盖方案A)**:每遍一次解码产
+   **5-8 条带属性短句**(subject/action/scene/text,≤28 字+内联 gloss),**独立跑 3 遍**
+   (temp0.9+帧抖动),派生步裁撤;**产物全部 `_st` 后缀隔离,方案A(稠密×5)主线不动**。
+   为什么不能只跑一遍:一遍产的条目共享上下文、彼此不独立,一个幻觉会连贯污染整组,
+   票数变假信号。新增 `pipeline-compare`:同批 50 片双跑 A/B,出并排对比包。
 
 ```bash
-# ① pull 后重跑(必须先清旧门槛/旧 prompt 的浓缩产物;其余全缓存,增量几分钟)
+# ① pull 后一键 A/B 对比。A 臂重述/派生全缓存秒过;A 的浓缩因 prompt 更新要清一次
+#   (只清 A,不碰 _st);B 臂全新但只有 3 遍×50 片。总计 ~20-30 分钟:
 git pull origin main
 rm -f outputs/audit_10k/pipe_fused*.jsonl
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
-tar czf outputs/audit_10k/pipeline.tgz -C outputs/audit_10k bundle_pipeline
-# 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/pipeline.tgz . && tar xzf pipeline.tgz
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
+# 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/compare.tgz . && tar xzf compare.tgz
+#       打开 bundle_compare/index.html —— 每片并排: en源|原zh|A重述|A浓缩|B重述|B浓缩 + 单选
+# 顺手贴回 B 臂 JSON 健康度: grep -o '"n_samples": [0-9]*' outputs/audit_10k/recap_struct.*.jsonl | sort | uniq -c
 ```
 
 **② GDINO + MiniRBT:这台机连 hf-mirror 也不通,只能本地下载后 scp 缓存**。不装的话
@@ -70,9 +161,9 @@ tar czf outputs/audit_10k/pipeline.tgz -C outputs/audit_10k bundle_pipeline
 (另:上次末尾那行 `-bash: 重述/派生/打分...: No such file or directory` 是把注释行
 当命令贴进终端了,无害。)
 
-**Then report back** in from-server.md: 新 ④b 的 `[done]` 行(kept/dropped/fallback
-三个数,回退应大降)+ 目检两判:**重述质量**(重述 vs 旧译,方案成立与否的直接证据)、
-**浓缩质量**(浓缩短句可否直接当该视频的训练字幕——信息够不够、有无幻觉、会不会太瘦)。
+**Then report back** in from-server.md: A/B 两臂各自 ④b 的 `[done]` 行(kept/dropped/
+fallback)+ **bundle_compare 四选一统计**(见块 (39):A直融/A投票/B直融/B投票/都不行)
++ B 臂 `n_samples` 分布(3 遍齐不齐)。
 
 ## 2026-07-27 (35) — 新指标读完:池杠杆在 512 **没饱和** → 倾向「建」,只差 Part B(其路径 bug 已修)
 
