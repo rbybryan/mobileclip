@@ -12,12 +12,15 @@ saved `idx` is `caption_to_idx(caption)`, the same id space the dataset uses und
 caption loading + caption_to_idx + save logic is self-tested. If the build errors, paste the
 full traceback.
 
-Usage (training env, single GPU, forward-only):
-    python experiments/r1_build_textbank.py \
-        --anno anno_downstream/internvid_zh_10k_pilot.json \
-        --ckpt checkpoints/mobileviclip_small.pt \
-        --out-feats experiments/cache/textbank_pilot_feats.fp16.npy \
-        --out-idx   experiments/cache/textbank_pilot_idx.npy
+Usage (training env, single GPU, forward-only) — ONE line, no backslash-continuation
+(a wrapped backslash-continuation line is exactly what got dropped on paste, silently building
+the cache at the default path with the wrong name):
+    python experiments/r1_build_textbank.py --anno anno_downstream/internvid_zh_10k_pilot.json --out-feats experiments/cache/textbank_pilot_feats.fp16.npy --out-idx experiments/cache/textbank_pilot_idx.npy
+
+`--ckpt` is irrelevant to the cached feature: the pre-projection EOT feature is produced by the
+frozen text base loaded from the eval config's `text_ckpt_path` (mobileclip_s2.pt) during model
+construction; `--ckpt` only overrides vision + the trained projection_layer, which sit AFTER the
+returned pre-projection feature. So the default `--ckpt` is fine.
 
 Self-test (no model/data):
     python experiments/r1_build_textbank.py --self-test

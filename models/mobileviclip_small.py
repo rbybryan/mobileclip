@@ -178,6 +178,18 @@ class MobileViCLIP_Small(nn.Module):
         if not self.text_bank_enabled:
             return
         import numpy as np
+        import os
+        for _p in (cfg["path"], cfg["idx_path"]):
+            if not os.path.exists(_p):
+                raise FileNotFoundError(
+                    f"[R1] text bank cache missing: {_p!r}. Build it FIRST (single line, no "
+                    f"backslash-continuation — that is what mangles when pasted):\n"
+                    f"    python experiments/r1_build_textbank.py --anno "
+                    f"anno_downstream/internvid_zh_10k_pilot.json --out-feats {cfg['path']} "
+                    f"--out-idx {cfg['idx_path']}\n"
+                    f"See COMMANDS.md §3.4. (--ckpt is irrelevant here: the pre-projection "
+                    f"feature comes from the frozen text base in the eval config, not --ckpt.)"
+                )
         feats = np.load(cfg["path"])          # [K, C_pre] pre-projection text features
         bidx = np.load(cfg["idx_path"])       # [K] caption_to_idx
         self.register_buffer("text_bank_feats", torch.from_numpy(feats), persistent=False)

@@ -2260,3 +2260,43 @@ scp -r ~/.cache/huggingface/hub/models--hfl--minirbt-h288    rby@101vector:~/.ca
 ```bash
 rm -f outputs/audit_10k/pipe*_verified.jsonl   # 覆盖 A/B 两臂与直融/投票各版
 ```
+
+## 服务器 `git pull origin main` 报 `fatal: Need to specify how to reconcile divergent branches`
+
+### Symptom
+
+```
+   c9206d8..9883bd0  main       -> origin/main
+hint: You have divergent branches and need to specify how to reconcile them.
+...
+fatal: Need to specify how to reconcile divergent branches.
+```
+
+`git pull` 抓下了新提交但**没合进来**——本地工作区还是旧代码,后续照 md 跑的东西可能对不上。
+
+### Cause
+
+服务器本地 `main` 上出现了 origin 上没有的提交(本地多了 commit ⇒ 与 origin/main "分叉")。
+本仓库约定**服务器只读、只 `git pull`**(见 CLAUDE.md 运行模型),正常不该在服务器上产生本地
+提交;一旦产生,`pull` 因不知该 merge 还是 rebase 而拒绝。gitignore 的 `checkpoints/`、
+`data/`、`experiments/cache/` 等资产不参与,不受影响。
+
+### Fix
+
+服务器是只读端,直接把本地 `main` 对齐到远端(丢弃本地那几个多出来的提交):
+
+```bash
+cd ~/mobileclip
+git fetch origin
+git reset --hard origin/main        # 只动被 git 跟踪的文件;缓存/权重/数据都是 gitignore,安全
+git log --oneline -3                # 确认 HEAD == origin/main
+```
+
+之后 `git pull origin main` 恢复正常。要长期免掉这个交互提示,可一次性设默认合并策略:
+
+```bash
+git config pull.rebase false        # pull = merge;或 `--ff-only` 强制只快进
+```
+
+> 若本地那几个提交是**有意**改的(不是误产生),先 `git log origin/main..HEAD --oneline`
+> 看清是什么,别盲目 `reset --hard`。按约定服务器不该改代码,所以默认就是丢弃对齐。

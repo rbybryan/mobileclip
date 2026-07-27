@@ -23,6 +23,38 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-27 (40) — R1 A/B 崩因是**粘贴把建缓存命令折断**,不是代码;缓存本身是对的,改名即可
+
+**收到的输出说明两件事,都不是 bug:**
+
+1. **`git pull origin main` 报 `divergent branches`**,pull 没生效(但 R1 代码更早那次已进来,
+   所以 `_init_text_bank` 在;错在缓存缺文件)。修法见 TROUBLESHOOTING 新增节
+   「服务器 git pull 报 divergent」——服务器只读,`git fetch && git reset --hard origin/main`。
+
+2. **建缓存命令的 `\` 续行被粘贴拆断** → `--ckpt/--out-feats/--out-idx` 全丢,脚本用默认名把缓存
+   建到了 `experiments/cache/textbank_feats.fp16.npy`(配置要 `..._pilot_...`),于是 A/B
+   `FileNotFoundError`。**但那份缓存内容是对的**:投影前特征只由 eval 配置里的**冻结文本底座**
+   (`mobileclip_s2.pt`,建模型时加载)决定,与 `--ckpt` 无关——`--ckpt` 只覆盖视觉 + 训练过的
+   `projection_layer`,都在返回的「投影前特征」之后。所以 `--ckpt` 丢了不影响。缓存已是 `(8999,512)`、
+   distinct idx 8999,正是要的。
+
+**这就干(不必重建,改个名再跑处理臂):**
+```bash
+cd ~/mobileclip
+git fetch origin && git reset --hard origin/main       # 修 divergent;缓存/权重是 gitignore,安全
+cp experiments/cache/textbank_feats.fp16.npy experiments/cache/textbank_pilot_feats.fp16.npy
+cp experiments/cache/textbank_idx.npy        experiments/cache/textbank_pilot_idx.npy
+bash experiments/run_pretrain.sh experiments/configs/nR1_textbank_pilot.py 8   # 启动应打 `[R1] text bank ON: pool=(8999, 512) K'=8999 dedup_cos=0.9`
+# 对照臂(若还没跑): bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8
+```
+> 顺手加固已推:① `_init_text_bank` 缺缓存时不再抛 8 条 numpy traceback,而是一行提示 + 正确的
+> **单行**建缓存命令;② `r1_build_textbank.py` 文档串改成单行(别再用反斜杠折行——就是它被粘贴拆断的)。
+> 下次真要重建,用 COMMANDS §3.3.1 里那条一行的命令。
+
+**Then report back** in from-server.md:两臂逐 epoch 的 `txt_r1 / img_r1`(文本池硬化 v2t=txt_r1
+直接、t2v=img_r1 间接),以及 `[R1]` 那行有没有出现。**kill 判据不变**:池 vs 无池 < 0.5 R-Sum ⇒
+(d) 误判,停。
+
 ## 2026-07-27 (39) — 「LLM 直接融合」已落地,且按最新指令改为与投票浓缩**双版并出**(§5.7 v2)
 
 **指令已落地**:让 LLM 直接读 3/5 遍独立重述,一次调用完成「语义数票(≥2 遍支持才写)+

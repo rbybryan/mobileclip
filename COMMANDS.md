@@ -361,18 +361,27 @@ python experiments/r1_fn_density.py --anno anno_downstream/InternVid/InternVid-1
 `experiments/configs/nR1_textbank_pilot.py` 臂配置)。**默认关 = 逐位不变**(不设 `criterion.text_bank`
 的配置完全不受影响)。池的数学已 CPU 单测;端到端前向/缓存只能在服务器验。
 
+> ⚠️ **建缓存的命令必须一行写完,别用反斜杠折行。** 2026-07-27 那次粘贴时 `\` 续行被拆断,
+> `--ckpt/--out-feats/--out-idx` 全被丢掉,脚本用**默认**输出名把缓存建到了
+> `experiments/cache/textbank_feats.fp16.npy`(而配置要的是 `..._pilot_...`),A/B 于是
+> `FileNotFoundError`。**好消息:那份缓存本身是对的**——投影前特征只由 eval 配置里的冻结文本
+> 底座(`mobileclip_s2.pt`)决定,与 `--ckpt` 无关,所以 `--ckpt` 丢了也没影响。**直接改名即可,不必重建:**
+>
+> ```bash
+> cd ~/mobileclip
+> cp experiments/cache/textbank_feats.fp16.npy experiments/cache/textbank_pilot_feats.fp16.npy
+> cp experiments/cache/textbank_idx.npy        experiments/cache/textbank_pilot_idx.npy
+> bash experiments/run_pretrain.sh experiments/configs/nR1_textbank_pilot.py 8   # 启动日志应出现 `[R1] text bank ON: pool=(8999, 512) ...`
+> ```
+
 ```bash
-cd ~/mobileclip && git pull origin main
+cd ~/mobileclip && git pull origin main      # 若报 "divergent branches",见下方 TROUBLESHOOTING
 export MVC_DATA_DIR=/home/vca1/datasets
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
-# ① 建缓存(投影前文本特征 + caption_to_idx;单卡、纯前向、几分钟)。
+# ① 建缓存(投影前文本特征 + caption_to_idx;单卡、纯前向、几分钟)。一行,勿折行。
 #    建模型走的是 Part B 已验证的同一条路;若报错把完整 traceback 贴回。
-python experiments/r1_build_textbank.py \
-    --anno anno_downstream/internvid_zh_10k_pilot.json \
-    --ckpt checkpoints/mobileviclip_small.pt \
-    --out-feats experiments/cache/textbank_pilot_feats.fp16.npy \
-    --out-idx   experiments/cache/textbank_pilot_idx.npy
+python experiments/r1_build_textbank.py --anno anno_downstream/internvid_zh_10k_pilot.json --out-feats experiments/cache/textbank_pilot_feats.fp16.npy --out-idx experiments/cache/textbank_pilot_idx.npy
 
 # ② A/B(等步数、同数据):对照 = pilot_10k_r1(无池),处理 = nR1_textbank_pilot(有池)。
 #    对照通常已有(§3.3);只需再跑处理臂。启动日志应出现一行 `[R1] text bank ON: ...`。
