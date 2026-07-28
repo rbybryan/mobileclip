@@ -666,8 +666,11 @@ OwlCap 则是自由集合（motion+detail 平衡）。**判断：固定槽位对
 **设计要点**：槽 = 主体（≤2 行）/ 动作（≤2 行）/ 场景（1 行）/ 文字（1 行）；
 **空槽必须写「无」、不许编**（固定槽诱导硬填是主要幻觉风险，ASID 未写明、我们写死）；
 每行 ≤28 字 + 尾随 `[gloss]`；fuse_condense 投票加同槽约束；直融照旧读全文。
-落地面：STRUCT_SLOT_PROMPT + 行式解析器（vlm_audit_hf）+ fuse_condense attr 约束，
-`RECAP_STYLE=slot` 第三臂或直接替换 struct——**待维护者拍板后实施**。
+**已实施（维护者批「做」，2026-07-28）**：`SLOT_RECAP_PROMPT` + `parse_slot_lines`
+行式解析（零 JSON；「无」/超额行/杂话行全部规则化处理）+ `--mode recap-slot`
+（解析空→0.3 温重试→dense 兜底，`n_dense_fallback` 落盘）+ fuse_condense **同槽约束**
+（主体绝不与场景并组）。**pipeline-compare 的 B 臂已切换为 slot**（产物 `_sl` 后缀，
+`recap_slot.*`）；旧 struct 臂保留 `RECAP_STYLE=struct` 手动可用、产物互不覆盖。
 
 ### 5.7 直接 LLM 融合：语义投票+压缩一步到位（维护者指令，2026-07-27 深夜）
 

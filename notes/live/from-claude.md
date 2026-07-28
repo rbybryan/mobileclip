@@ -23,6 +23,28 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-28 (46) — B 臂已切换为固定槽位(§5.6b 落地):行式免 JSON、空槽写「无」、同槽投票
+
+**维护者批「做」,已实施合并**:compare 的 **B 臂 = slot 固定槽位×3 遍**(旧 struct 臂
+保留 `RECAP_STYLE=struct` 手动可用,产物互不覆盖)。每遍输出四栏行式(主体≤2/动作≤2/
+场景/文字,行尾 `[gloss]`,空栏写「无」不许编),正则解析零 JSON;投票加了同槽约束
+(主体绝不与场景并组);解析空仍有 0.3 温重试+dense 兜底。预期:解析失败趋零、
+B 单遍解码 token 降 ~40-50%、按槽数票更准。
+
+```bash
+git pull origin main
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+# B 臂全新产物 recap_slot.* / pipe_sl_*——无需 rm 任何旧文件;A 臂全缓存秒过
+# (要连计时一起测: SAMPLE_OFFSET=200 N_SAMPLE=50 ... pipeline-compare)
+tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
+# 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/compare.tgz . && tar xzf compare.tgz
+```
+
+**Then report back**: ① B 臂 ①段耗时(对比 struct 的 14.46 s/片——验证降 40-50% 的预期);
+② `grep -o '"n_dense_fallback": [0-9]*' outputs/audit_10k/recap_slot.*.jsonl | sort | uniq -c`
+(预期几乎全 0);③ ④b 的 `[done]` 行(同槽投票后 units/回退,对比 struct 的 3.0/9);
+④ compare 包目检四版结论(现在 B=slot 版)。
+
 ## 2026-07-28 (45) — ⏱ 计时收到已记档(§5.1c):B 慢因=解码 token 数;分片后 A/B 全量成本打平(~12h)
 
 **你贴的两张 ⏱ 表读完,实测数已写进主计划 §5.1c。** 三个结论:
