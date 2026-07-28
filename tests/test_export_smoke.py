@@ -72,6 +72,31 @@ def test_missing_transitive_dep_is_skip_not_fail():
     assert r["ops"] == []
 
 
+def test_backend_api_mismatch_is_skip_not_fail():
+    """回归:ai-edge-torch 改名 litert-torch 后 `ai_edge_torch.convert` 不存在,
+    第一版记成了 fail —— 又一次假 P9 触发(实测 2026-07-27 于 101vector)。
+    """
+    def boom(*_):
+        raise es.BackendUnavailable("litert_torch / ai_edge_torch 都没有 convert 入口")
+    r = _run(boom)
+    assert r["status"] == "skip"
+    assert "后端 API 不匹配" in r["reason"]
+    assert r["ops"] == []
+
+
+def test_missing_deps_accepts_either_name():
+    """`a|b` 形式表示装其一即可 —— 包改名时不该整列变 skip。"""
+    assert es.missing_deps(["os|definitely_not_installed_xyz"]) == []
+    assert es.missing_deps(["definitely_not_installed_xyz|also_not_installed_abc"]) \
+        == ["definitely_not_installed_xyz|also_not_installed_abc"]
+
+
+def test_tflite_route_declares_both_package_names():
+    """声明依赖必须同时接受新旧包名,否则装了 litert-torch 反而报缺依赖。"""
+    deps = next(d for n, _, _, d in es.ROUTES if n == "tflite")
+    assert any("litert_torch" in s and "ai_edge_torch" in s for s in deps)
+
+
 def test_real_export_failure_is_fail_with_ops():
     """真的导不出必须记 fail 并带算子名 —— 否则漏掉真的 P9 触发。"""
     def boom(*_):

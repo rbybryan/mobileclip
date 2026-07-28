@@ -147,13 +147,37 @@ def route_onnx(model, example, out_path, opset: int):
             "bytes": os.path.getsize(out_path)}
 
 
-def route_tflite(model, example, out_path, opset: int):
-    """torch -> tflite 走 Google 官方 ai-edge-torch。"""
-    import ai_edge_torch
+class BackendUnavailable(Exception):
+    """后端装了但入口对不上(改名/换 API)—— 是环境问题,**不是导不出**。
 
-    edge = ai_edge_torch.convert(model, (example,))
-    edge.export(out_path)
-    return {"bytes": os.path.getsize(out_path)}
+    必须与真正的导出失败区分开:两者都会让那一列变红,但只有后者是 P9 的证据。
+    """
+
+
+def route_tflite(model, example, out_path, opset: int):
+    """torch -> tflite。
+
+    ⚠️ 包名迁移过:`ai-edge-torch` 已废弃并**改名为 `litert-torch`**;pip 装
+    `ai-edge-torch` 只会拿到一个 1.8 kB 的空壳,`ai_edge_torch.convert` 不存在
+    (实测 2026-07-27 在 101vector 上就是这么炸的)。所以两个名字都试,
+    都找不到入口就抛 BackendUnavailable ⇒ 记 skip 而不是 fail。
+    """
+    mod = None
+    for name in ("litert_torch", "ai_edge_torch"):
+        try:
+            mod = __import__(name)
+        except ImportError:
+            continue
+        if hasattr(mod, "convert"):
+            break
+        mod = None
+    if mod is None:
+        raise BackendUnavailable(
+            "litert_torch / ai_edge_torch 都没有 convert 入口。"
+            "`ai-edge-torch` 已改名 `litert-torch`,试 `pip install litert-torch`。"
+        )
+    mod.convert(model, (example,)).export(out_path)
+    return {"backend": mod.__name__, "bytes": os.path.getsize(out_path)}
 
 
 def route_coreml(model, example, out_path, opset: int):
@@ -175,14 +199,20 @@ ROUTES = (
     # onnxscript:torch>=2.6 的 dynamo ONNX 导出器需要它,缺了会在导出中途抛
     # ModuleNotFoundError —— 声明在这里,以免变成一条看起来像"导不出"的 fail。
     ("onnx", route_onnx, "onnx", ("onnx", "onnxruntime", "onnxscript")),
-    ("tflite", route_tflite, "tflite", ("ai_edge_torch",)),
+    # 两个名字任一即可(ai-edge-torch 已改名 litert-torch);具体入口由 route 再验。
+    ("tflite", route_tflite, "tflite", ("litert_torch|ai_edge_torch",)),
     ("coreml", route_coreml, "mlpackage", ("coremltools",)),
 )
 
 
 def missing_deps(mods):
+    """哪些声明依赖没装。条目里的 `a|b` 表示两者装其一即可(包改名的情况)。"""
     import importlib.util
-    return [m for m in mods if importlib.util.find_spec(m) is None]
+
+    def present(spec):
+        return any(importlib.util.find_spec(m) is not None for m in spec.split("|"))
+
+    return [m for m in mods if not present(m)]
 
 
 def run_one(name, fn, ext, deps, model, example, outdir, t, opset):
@@ -204,6 +234,8 @@ def run_one(name, fn, ext, deps, model, example, outdir, t, opset):
         return {"status": "skip",
                 "reason": f"缺传递依赖 {exc.name}(装上再跑,别读成 fail)",
                 "ops": []}
+    except BackendUnavailable as exc:                         # 后端入口对不上 != 导不出
+        return {"status": "skip", "reason": f"后端 API 不匹配:{exc}", "ops": []}
     except Exception as exc:                                  # noqa: BLE001 - 就是要全兜住
         tb = traceback.format_exc()
         return {

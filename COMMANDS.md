@@ -481,7 +481,7 @@ python experiments/frame_select_diag.py             # 全量 1000 条
 ```bash
 # 装多少跑多少;缺哪条依赖那一列就记 skip,不影响另外两条
 pip install onnx onnxruntime onnxscript      # ONNX 路线(torch>=2.6 需要 onnxscript)
-pip install ai-edge-torch                    # TFLite 路线(Google 官方 torch->tflite)
+pip install litert-torch                     # TFLite 路线(ai-edge-torch 已改名,旧包是空壳)
 pip install coremltools                      # Core ML 路线
 
 python experiments/export_smoke.py --mini    # 先自检脚本本身(秒级)

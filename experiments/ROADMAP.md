@@ -97,10 +97,18 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       **测试** `tests/test_export_smoke.py`(17 项)。三条路线互相独立,缺依赖记 skip 不崩。
       ⚠️ **skip ≠ fail**:脚本把「缺依赖」「缺传递依赖」都归 skip —— 把环境问题记成 fail
       会产生**假的 P9 触发**(实测踩过:torch≥2.6 的 ONNX 导出器需 `onnxscript`)。
-      **本机 CPU 预跑(torch 2.12)**:全尺寸 **ONNX 路线 T=2 / T=4 pass**
-      (导出 + `onnx.checker` + onnxruntime 加载推理全过)⇒ 联合注意力在 ONNX 这条路上
-      **暂无导出障碍**。T=8/16 本机未跑完,TFLite / Core ML 两路本机无依赖未测 ——
-      **这两点是 P9 判据的缺口,101vector 上补齐即可结案。**
+      **101vector 实测(2026-07-27,全尺寸 `[1,T,3,256,256]`,torch 2.5.1)**:
+      **ONNX 与 Core ML 在 T∈{2,4,8,16} 上全部 pass**(ONNX 走完导出 +
+      `onnx.checker` + onnxruntime 加载推理三步;Core ML 约 4343 个 MIL op 全过)
+      ⇒ **联合注意力不构成导出障碍,P9 暂不触发**,弹性模型可按现形态训练。
+      **TFLite 待补**:`ai-edge-torch` 已改名 `litert-torch`,旧包只是空壳 ⇒
+      本轮无有效结论(**不是导不出**,已修为 skip);`pip install litert-torch` 后重跑即可结案。
+      落档 [`export_smoke_results.md`](export_smoke_results.md)。
+      ⚠️ **对 C2 部署叙事的观察**:trace 显示 **T 被烘成常量**(`int(t)`、reshape、
+      以及 `temporal_embedding` 走不走插值那个 `if`)⇒ "帧数即部署旋钮"在**权重层面**
+      成立(单 checkpoint),**产物层面是 1 份权重 → N 张图**。
+      **未验证**:ONNX `dynamic_axes` 能否一张图服务所有 T —— 便宜且直接影响 C4 端侧表,
+      建议在真机延迟档之前搞清楚。
 - [x] **1.6 B0 多 T 退化曲线(U2)** —— ✅ 2026-07-24 V100 实测完成(官方
       `mobileviclip_small.pt`,MSR-VTT 1K,fp32,middle 采样;from-claude (18)):
 
