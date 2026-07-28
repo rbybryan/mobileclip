@@ -23,6 +23,32 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-28 (59) — 属性表 v2:按 ASID 分开 人物/物体 → 五槽定版; B臂重述缓存失效须重跑(徽标v20260728f)
+
+按你指令把 Character/Object 像 paper 那样分开。**定版 v2(取代 (58) 的四槽版):
+人物≤2 / 物体≤2 / 动作≤2 / 场景 1 / 文字 1**(动作/场景本就分开,不变;文字是我们补的
+OCR 可验槽,保留)。要点:
+
+- 分开后每行修饰**仍内嵌行内**((58) 说的绑定错误是针对单列「属性槽」的,人物/物体分栏
+  不触发);投票同槽约束现在人物对人物、物体对物体精确对齐;专设物体栏=显式回忆线索。
+- 新登记风险:物体栏清单式堆琐碎物件——prompt 写死「只写对内容有意义的主要物品」+「无」
+  纪律,目检加第三查。每遍行数上限 6→8,解码约 +10-15%。
+- Camera/Speech/Emotion/Narrative 落选结论与三条重开条件维持((58))。
+- 旧 slot/struct 缓存在评审页仍按【主体】正常渲染(legacy 映射),不会花屏。
+
+**槽位 prompt 变了 → B 臂重述及其下游全部失效,须重跑**(A 臂重述/投票缓存不受影响;
+若 (57) 还没跑,直接跑本块,总约 45-60 分钟;跑过 (57) 则约 30-40 分钟):
+```bash
+cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
+git log --oneline -1        # ← 必须比 #324 新; 还是旧号就贴回来
+rm -f outputs/audit_10k/recap_slot.*.jsonl outputs/audit_10k/pipe_sl_*.jsonl \
+      outputs/audit_10k/pipe_sl_timing.tsv outputs/audit_10k/pipe*fused_d*.jsonl
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+grep -c v20260728f outputs/audit_10k/bundle_compare/index.html   # ← 必须 ≥1
+tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
+```
+页面徽标这次是 **v20260728f**;B重述应出现【人物】【物体】蓝徽标。**GDINO scp 仍最高优先**。
+
 ## 2026-07-28 (58) — 属性表定版:四槽维持并冻结, Camera 终审不加(无新服务器操作, (57) 照跑)
 
 你让我定最终方案。**定版:四槽不动、随冻结令冻结——主体≤2 / 动作≤2 / 场景 1 / 文字 1。**

@@ -104,8 +104,8 @@ function jumpNext(){
   if(i>=0)document.getElementById("c"+i).scrollIntoView({behavior:"smooth",block:"center"});
 }
 addEventListener("keydown",e=>{if(e.key==="n"&&!/INPUT|TEXTAREA/.test(e.target.tagName))jumpNext()});
-// 方案B固定槽位的【属性】前缀渲染成小徽标（主体/动作/场景/文字）
-const deco=s=>String(s).replace(/【(主体|动作|场景|文字)】/g,'<span class="slot">$1</span>');
+// 方案B固定槽位的【属性】前缀渲染成小徽标（人物/物体/动作/场景/文字；主体=旧缓存兼容）
+const deco=s=>String(s).replace(/【(人物|物体|主体|动作|场景|文字)】/g,'<span class="slot">$1</span>');
 const app=document.getElementById("app");
 ROWS.forEach((r,i)=>{
   const d=document.createElement("div");d.className="card";d.id="c"+i;
@@ -161,8 +161,8 @@ HINTS = {
              "<b>幻觉</b>=融合稿说了任何一条候选都没提、且画面里也没有的东西（y=有，最要紧）；"
              "<b>更全</b>=融合稿比其中写得最好的那一条候选含更多<b>真实</b>细节（y=更全）。",
     "compare": "A/B 两方案对比（同一批片、同一融合 prompt）：<b>A</b>=稠密重述×5（每遍"
-               "一段，一遍一个编号）；<b>B</b>=固定槽位×3（每遍带蓝色属性徽标：主体/动作/"
-               "场景/文字，空槽已省略）。每方案两稿：<b>长稿</b>=判断式融合先写的段落"
+               "一段，一遍一个编号）；<b>B</b>=固定槽位×3（每遍带蓝色属性徽标：人物/物体/"
+               "动作/场景/文字，空槽已省略）。每方案两稿：<b>长稿</b>=判断式融合先写的段落"
                "（不限字数，保留全部通过取舍的细节，目检参考）；<b>直融</b>=另一次调用"
                "从长稿提炼的<b>一条 ≤30 字训练字幕</b>（32-token 文本编码器上限内）。"
                "对着画面做一道单选："
@@ -223,7 +223,7 @@ def main():
     # bump when the template changes: the header badge lets the reviewer
     # instantly tell a stale index.html (server not updated / old tgz / browser
     # cache) from the current one
-    BUILD_TAG = "20260728e"
+    BUILD_TAG = "20260728f"
     page = (PAGE.replace("__ROWS__", json.dumps(rows, ensure_ascii=False))
                 .replace("__COLS__", json.dumps(cols, ensure_ascii=False))
                 .replace("__QS__", json.dumps(qs, ensure_ascii=False))

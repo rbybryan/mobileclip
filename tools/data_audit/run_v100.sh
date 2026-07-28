@@ -549,7 +549,7 @@ recap)
     exit 0
   fi
   echo "[model] S2_MODEL=$S2_MODEL"
-  echo "[recap] style=$RECAP_STYLE, 每片 $N_RECAP 遍独立采样$( [ "$RECAP_STYLE" = struct ] && echo '(每遍 5-8 条带属性短句)'; [ "$RECAP_STYLE" = slot ] && echo '(固定槽位: 主体≤2/动作≤2/场景/文字, 空槽写无)' ), temp=$RECAP_TEMP, top_p=0.9, 帧抖动开, 看 $S2_FRAMES 帧"
+  echo "[recap] style=$RECAP_STYLE, 每片 $N_RECAP 遍独立采样$( [ "$RECAP_STYLE" = struct ] && echo '(每遍 5-8 条带属性短句)'; [ "$RECAP_STYLE" = slot ] && echo '(固定槽位: 人物≤2/物体≤2/动作≤2/场景/文字, 空槽写无)' ), temp=$RECAP_TEMP, top_p=0.9, 帧抖动开, 看 $S2_FRAMES 帧"
   echo "[input] $RECAP_INPUT （$(wc -l < "$RECAP_INPUT") 片）"
   for i in $(seq 0 $((NGPU-1))); do
     CUDA_VISIBLE_DEVICES=$i nohup python tools/data_audit/vlm_audit_hf.py \

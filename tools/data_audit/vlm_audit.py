@@ -273,17 +273,22 @@ FUSE_SHORT_PROMPT = """下面是一段视频的完整中文描述。请把它提
 {long}"""
 
 # --mode recap-slot (§5.6b, maintainer 2026-07-28): ASID-style FIXED-SLOT
-# output — line format instead of JSON. Slots: 主体(<=2)/动作(<=2)/场景(1)/
-# 文字(1); empty slot MUST be 「无」 (fixed slots invite fill-in hallucination
-# -- the 无-discipline is the guardrail ASID leaves implicit). Line grammar is
-# regex-parseable, so no extract_json, near-zero parse failure, and ~40-50%
-# fewer decode tokens than the JSON caption-set. Prompt used RAW (no .format).
+# output — line format instead of JSON. Slots v2 (maintainer directive
+# 2026-07-28 "像 paper 那样分开"): 人物(<=2)/物体(<=2)/动作(<=2)/场景(1)/
+# 文字(1) — Character and Object split as ASID's top-level attributes;
+# modifiers stay INLINE per line (no separate attribute slot -> no cross-
+# slot binding errors). Empty slot MUST be 「无」 (fixed slots invite
+# fill-in hallucination -- the 无-discipline is the guardrail ASID leaves
+# implicit). Line grammar is regex-parseable, so no extract_json, near-zero
+# parse failure, and far fewer decode tokens than the JSON caption-set.
+# Prompt used RAW (no .format).
 SLOT_RECAP_PROMPT = """你是一个严谨的视频画面描述助手。下面是从同一段视频中按时间先后均匀抽取的若干帧画面。
-请按下面四个固定栏目描述画面，每行一条，格式为「栏目名：描述 [gloss]」。
+请按下面五个固定栏目描述画面，每行一条，格式为「栏目名：描述 [gloss]」。
 
 栏目与行数：
-主体：视频里的人/物及其外观特征（最多 2 行；有几个主要主体写几个）
-动作：主体的动作及其先后（最多 2 行；先后用"先""随后""最后"表达）
+人物：视频里的人或动物等活动主体及其外观特征（最多 2 行；没有就写「无」）
+物体：画面中对内容有意义的主要物品及其特征（最多 2 行；只写主要的，没有就写「无」）
+动作：人物或物体的动作及其先后（最多 2 行；先后用"先""随后""最后"表达）
 场景：场景与背景环境（1 行）
 文字：画面上清晰可辨的文字，用中文引号“”原样照抄（1 行）
 
@@ -297,18 +302,21 @@ SLOT_RECAP_PROMPT = """你是一个严谨的视频画面描述助手。下面是
 7. 只输出这些行，不要任何解释、编号、标题或空行。
 
 输出示例：
-主体：一名穿红色围裙的中年男子 [man,apron]
-主体：案板上放着一把菜刀 [knife]
+人物：一名穿红色围裙的中年男子 [man,apron]
+物体：案板上放着一把菜刀 [knife]
 动作：先把黄瓜切成薄片，随后装进盘中 []
 场景：明亮的家用厨房操作台 [kitchen]
 文字：无"""
 
-SLOT_ATTRS = {"主体": "subject", "动作": "action", "场景": "scene",
-              "文字": "text"}
+SLOT_ATTRS = {"人物": "character", "物体": "object", "动作": "action",
+              "场景": "scene", "文字": "text"}
 SLOT_ATTRS_ZH = {v: k for k, v in SLOT_ATTRS.items()}
-SLOT_CAPS = {"subject": 2, "action": 2, "scene": 1, "text": 1}
+# legacy display names: v1 slot caches carry attr="subject" (merged 主体),
+# struct-arm caches also use "subject" -- keep them renderable forever
+SLOT_ATTRS_ZH["subject"] = "主体"
+SLOT_CAPS = {"character": 2, "object": 2, "action": 2, "scene": 1, "text": 1}
 SLOT_LINE = re.compile(
-    r"^\s*(主体|动作|场景|文字)\s*[:：]\s*(.+?)\s*(?:\[([^\[\]]*)\])?\s*$")
+    r"^\s*(人物|物体|动作|场景|文字)\s*[:：]\s*(.+?)\s*(?:\[([^\[\]]*)\])?\s*$")
 
 
 def parse_slot_lines(text):
