@@ -23,6 +23,29 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-28 (48) — 直融改双稿(长稿+浓缩)、评审页短句改编号分行——需 rm 直融缓存重跑
+
+**两条指令已实施合并**:
+
+1. **直融一次调用出两版**:`long` 长稿(60-120 字连贯段落,主体→动作→场景→文字组织,
+   不受 28 字限制,仍只写 ≥2 段支持的信息)+ `views` 浓缩短句(现行 2-5 条;**训练
+   captions 仍用短句版**——32-token 墙不变,长稿是目检参考/后备产物)。评审包与
+   对比包新增「直融长稿 / A长稿 / B长稿」列;
+2. **页面显示**:多条短句一律 1. 2. 3. 编号分行(弃 ‖ 竖线;重述/直融/投票各列通用)。
+
+```bash
+git pull origin main
+# 直融 prompt 变了 → 全部直融缓存作废必清(投票版/重述/派生缓存不受影响):
+rm -f outputs/audit_10k/pipe_fused_d*.jsonl outputs/audit_10k/pipe_sl_fused_d*.jsonl \
+      outputs/audit_10k/pipe_st_fused_d*.jsonl
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
+# 增量 = B 臂 slot 重述(首次, ~5-8min) + 两臂直融重产(~2min) + 验真修复(~2min)
+```
+
+**Then report back**(并入 (46) 四项): 长稿目检感受——长稿是否明显比浓缩短句信息更全、
+有没有超出重述范围的编造(它与短句同源共享投票约束,但不单独过验真,先靠目检把关)。
+
 ## 2026-07-28 (47) — R1 A/B 判完:**池赢了 kill 判据,ΔR-Sum=+11.0** → GO(试点级)
 
 对照臂 `pilot_10k_r1`(无池、seed42、同 10 epoch)跑通。两臂并排见

@@ -60,6 +60,11 @@ def recap_cell(rec):
     return SEP.join(flat(c) for c in caps if isinstance(c, str) and c.strip())
 
 
+def long_cell(raw_rec):
+    """§5.7 双稿: the fuse-direct long caption lives only in the raw output."""
+    return flat(((raw_rec or {}).get("verdict") or {}).get("long") or "")
+
+
 def condensed_cell(verified_rec, raw_rec):
     """Final condensed views: verified file preferred (drop status=fail);
     raw condense output as fallback (no verification ran -> keep all)."""
@@ -100,7 +105,8 @@ def main():
     db, drb = load_jsonl(args.dfused_b), load_jsonl(args.dfused_b_raw)
 
     hdr = ["video", "video_path", "英文en", "原zh",
-           "A重述", "A直融", "A投票", "B重述", "B直融", "B投票",
+           "A重述", "A长稿", "A直融", "A投票",
+           "B重述", "B长稿", "B直融", "B投票",
            "最佳浓缩[A直融/A投票/B直融/B投票/都不行]", "note"]
     n = 0
     with open(args.output, "w", encoding="utf-8-sig", newline="") as fout:
@@ -123,9 +129,11 @@ def main():
                     flat(task.get("en")),
                     flat(task.get("zh_old") or task.get("zh")),
                     recap_cell(ra.get(vid)),
+                    long_cell(dra.get(vid)),
                     condensed_cell(da.get(vid), dra.get(vid)),
                     condensed_cell(fa.get(vid), fra.get(vid)),
                     recap_cell(rb.get(vid)),
+                    long_cell(drb.get(vid)),
                     condensed_cell(db.get(vid), drb.get(vid)),
                     condensed_cell(fb.get(vid), frb.get(vid)),
                     "", ""]) + "\n")
