@@ -94,7 +94,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       算子),分走 ONNX / TFLite / coremltools 转换,按 T∈{2,4,8,16} 各出静态图;
       记录每路 pass/fail + 失败算子。产出决定 P9 是否提前触发(真机延迟档仍在第 8 周)。
       **脚本** `experiments/export_smoke.py`,**命令** `COMMANDS.md` §3.6,
-      **测试** `tests/test_export_smoke.py`(17 项)。三条路线互相独立,缺依赖记 skip 不崩。
+      **测试** `tests/test_export_smoke.py`(22 项)。三条路线互相独立,缺依赖记 skip 不崩。
       ⚠️ **skip ≠ fail**:脚本把「缺依赖」「缺传递依赖」都归 skip —— 把环境问题记成 fail
       会产生**假的 P9 触发**(实测踩过:torch≥2.6 的 ONNX 导出器需 `onnxscript`)。
       **101vector 实测(2026-07-27,全尺寸 `[1,T,3,256,256]`,torch 2.5.1)**:

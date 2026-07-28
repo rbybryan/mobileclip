@@ -1,7 +1,7 @@
 # 导出冒烟结果(ROADMAP 1.5 / 评审 U1)
 
 **状态:** 🟡 ONNX / Core ML 已结论(全 pass),TFLite 受 torch 版本阻塞待独立 venv 补测 · **日期:** 2026-07-27 · **机器:** 101vector(CPU)
-**脚本:** `experiments/export_smoke.py` · **命令:** [`COMMANDS.md`](../COMMANDS.md) §3.5
+**脚本:** `experiments/export_smoke.py` · **命令:** [`COMMANDS.md`](../COMMANDS.md) §3.6
 **环境:** torch 2.5.1+cu118 · onnx 1.22 / onnxruntime 1.23.2 / onnxscript 0.7.1 · coremltools 9.0
 
 导出对象:**视觉塔**(`FastViT`,架构参数与 `build_vision_encoder` 逐项一致 ⇒ 含
