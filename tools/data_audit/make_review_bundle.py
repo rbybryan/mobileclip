@@ -107,8 +107,8 @@ ROWS.forEach((r,i)=>{
   const d=document.createElement("div");d.className="card";d.id="c"+i;
   const CAPRE=/^(原zh|候选\\d|英文en|融合稿|重述\\d|A′视图|✓视图|·视图|✗视图|投票单元|淘汰单元|✓浓缩|·浓缩|✗浓缩|浓缩|直融长稿|直融|投票浓缩|A重述|B重述|A长稿|B长稿|A浓缩|B浓缩|A直融|A投票|B直融|B投票)$/;
   const caps=COLS.filter(c=>CAPRE.test(c)&&r[c])
-    .map(c=>{const parts=String(r[c]).split(" ‖ ");
-      const body=parts.length>1?parts.map((p,j)=>`${j+1}. ${p}`).join("<br>"):r[c];
+    .map(c=>{const parts=String(r[c]).split(/\\s*‖\\s*|；/).filter(p=>p.trim());
+      const body=parts.length>1?parts.map((p,j)=>`${j+1}. ${p.trim()}`).join("<br>"):r[c];
       return `<div class="cap ${c==="原zh"?"orig":(c==="融合稿"||c[0]==="✓")?"fused":(c[0]==="✗"||c==="淘汰单元")?"filt":""}"><span class="lbl">${c}</span>${body}</div>`;}).join("");
   const other=COLS.filter(c=>!CAPRE.test(c)&&!/^(video|video_path)$/.test(c)&&r[c])
     .map(c=>`${c}=<b>${r[c]}</b>`).join(" · ");

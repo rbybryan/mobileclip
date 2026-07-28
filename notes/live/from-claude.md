@@ -23,6 +23,34 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-28 (51) — 融合改判断式(弃硬投票) + 页面小点/长稿两个显示问题的修法
+
+**三件事已实施合并**:
+
+1. **判断式融合(§5.7 v3)**:直融 prompt 弃「≥2 段支持才写」的机械票规,改三步编辑
+   判断——抓重点(核心内容优先)→ 辨真伪(跨版本一致=证据非铁律;矛盾取多数或模糊化;
+   单源细节按类型裁:动作/位置可留,数字/画面文字/人名/意图无旁证即舍或模糊化;引号
+   文字仍须多段一致才照抄)→ 成稿(先长稿后短句)。dropped 每条现附括号取舍理由;
+   规则投票照跑作对照、GDINO/OCR 验真+修复仍是硬门。
+2. **页面小点**:渲染改为按 ‖ **和「；」**双重切分编号——重述里"；"连接的短句现在
+   会 1. 2. 3. 分行。
+3. **长稿不显示的成因**:多半是**直融缓存没清**(旧输出里没有 long 字段)或浏览器缓存了
+   旧 index.html。照下面跑并强刷(Ctrl+F5):
+
+```bash
+# 你的 checkout 已 divergent(见块 50)——服务器按约定只读,直接硬对齐最干净:
+cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
+# prompt 又变了 → 直融缓存再次全部作废必清:
+rm -f outputs/audit_10k/pipe_fused_d*.jsonl outputs/audit_10k/pipe_sl_fused_d*.jsonl \
+      outputs/audit_10k/pipe_st_fused_d*.jsonl
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
+# 本地: scp 解包后打开 index.html, 若样式仍旧务必强刷 Ctrl+F5 (浏览器会缓存同名页面)
+```
+
+**Then report back**: 长稿/短稿是否都显示、小点是否分行;目检重点=判断式融合的
+dropped 理由是否合理(它现在是编辑判断的唯一透明窗口)、长稿有无超出重述范围的编造。
+
 ## 2026-07-28 (50) — pull **失败了**(divergent),所以还是没 pull → 同样的 `config.debug` 崩
 
 这次 `git pull origin main` 报了

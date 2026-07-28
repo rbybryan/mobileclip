@@ -219,28 +219,38 @@ RECAP_PROMPT = """你是一个严谨的视频画面描述助手。下面是从�
 6. 覆盖以下方面（只写真实可见的）：主体（人/物的外观、服装、颜色等特征）、主体的动作及其先后、场景与背景环境、屏幕上的文字。如果某一方面在画面中不存在，就完全不要提它。
 7. 输出一段连贯、信息密集的中文，不要分点、不要标题、不要开场白或结束语，只输出这段描述本身。"""
 
-# --mode fuse-direct (§5.7, maintainer 2026-07-27; ASID-Verify-style LLM
-# refine, arXiv 2602.13013): ONE text-only call reads the N independent
-# recaptions and does the semantic vote + condense in a single step. Replaces
-# the n-gram clustering as the DEFAULT condense implementation because the
-# LLM judges "same fact" far better than character overlap (measured: 34/50
-# clips found no cross-pass match under the rule clustering). The vote is no
-# longer auditable, so (a) the model must self-report dropped single-source
-# details, (b) the rule vote keeps running as a diagnostic, (c) Panel-V
-# remains the hallucination backstop. Consumed via .format -> doubled braces.
+# --mode fuse-direct (§5.7 v3, maintainer 2026-07-28): ONE text-only call
+# reads the N independent recaptions and performs EDITORIAL JUDGMENT — find
+# the core content, weigh each detail (cross-version agreement is evidence,
+# not a hard rule: hard-to-fabricate single-source details may stay;
+# easy-to-hallucinate types — numbers, on-screen text, names, intent — are
+# dropped or blurred without corroboration; contradictions take the majority
+# or get blurred), then write long (60-120 chars) and condense views. The
+# old hard ">=2-of-N" vote rule is retired per maintainer; auditability is
+# preserved by (a) reason-annotated dropped list, (b) the rule vote still
+# running as a diagnostic, (c) Panel-V verify+refine as the hard gate.
+# Consumed via .format -> doubled braces.
 FUSE_DIRECT_KEYS = {"views"}
-FUSE_DIRECT_PROMPT = """下面是同一段视频的 {n} 段互相独立的中文描述。它们各自可能包含错误，但被多段独立提到的信息更可靠。
+FUSE_DIRECT_PROMPT = """下面是同一段视频的 {n} 段互相独立的中文描述。它们出自对同一段视频的多次独立观看，各自都可能有错漏；多段一致的信息通常更可信，但一致与否只是证据、不是铁律——请你像资深字幕编辑一样综合判断。
 
-请你逐条核对哪些信息被至少两段描述支持（措辞不同但意思相同也算支持），然后只用这些可靠信息，先写一段完整的长描述，再压缩成 2-5 条互补的检索短句。
+请在心里分三步完成编辑，最后只输出结果 JSON：
 
-规则：
-1. long（长稿）：把全部可靠信息整合成一段 60-120 字、连贯自然的中文描述——按"主体→动作先后→场景→画面文字"组织，不受 28 字限制，但同样只准用被 ≥2 段支持的信息，绝不新增。
-2. views（短句版）：每条不超过 28 个字，语法完整、可独立成句，不用"他/她/它/这"开头；把能自然合并的信息浓缩进同一条（如同一主体的外观+动作+位置）；可靠信息要全部覆盖，宁可多写一条也不要丢；条与条不要互相复述。
-3. 只被一段描述提到的细节：长稿和短句都不写，放进 dropped 列表；绝不新增任何描述之外的内容。
-4. 引号“”内的画面文字只有在至少两段描述中出现且一致时才保留，且原样照抄、不改一字。
-5. gloss：该短句里能在画面中被检测到的具体名词的英文（小写，1-4 个），如 ["man", "kitchen"]；抽象概念、动词不要放。
-6. 只输出一个 JSON 对象，不要任何解释：
-{{"long": "一段 60-120 字的完整长描述", "views": [{{"text": "短句一", "gloss": ["..."]}}, {{"text": "短句二", "gloss": []}}], "dropped": ["被排除的单源细节", "..."]}}
+第一步·抓重点：先确定这段视频的核心内容——主要的人/物是谁、正在发生什么。核心信息必须保留；边缘细节在放不下时让位。
+
+第二步·辨真伪，对每个细节做取舍：
+- 多段独立提到且不矛盾 → 可信，保留；
+- 各段互相矛盾（颜色、数量、动作不一致）→ 取多数说法；没有多数就舍弃，或改用更模糊但稳妥的说法（如把存疑的"两名男子"写成"男子"）；
+- 只有一段提到 → 看类型：具体的动作、位置这类"难凭空编造"的细节可酌情保留；数字、画面文字内容、品牌/人名、身份、情绪意图这类"易幻觉"的细节一律舍弃或模糊化；
+- 引号“”内的画面文字：多段一致才保留且必须原样照抄、不改一字；只有一段提到或各段不一致，就完全不写这段文字。
+
+第三步·成稿（先长后短）：
+- long（长稿）：把保留的信息写成一段 60-120 字、连贯自然的中文描述，按"主体→动作先后→场景→画面文字"组织；只写你判定保留的信息，绝不新增任何描述之外的内容。
+- views（短句版）：把长稿压缩成 2-5 条互补的检索短句——每条不超过 28 个字，语法完整、可独立成句，不用"他/她/它/这"开头；能自然合并的信息装进同一条（如同一主体的外观+动作+位置）；保留的信息要全部覆盖，宁可多写一条也不要丢；条与条不要互相复述。
+- gloss：每条短句里能在画面中被检测到的具体名词的英文（小写，1-4 个），如 ["man", "kitchen"]；抽象概念、动词不要放。
+- dropped：被你舍弃或模糊化的细节清单，每条在括号里附一句取舍理由，如 "墙上挂着三幅画（仅一段提及，数字类易幻觉）"。
+
+只输出一个 JSON 对象，不要任何解释：
+{{"long": "一段 60-120 字的完整长描述", "views": [{{"text": "短句一", "gloss": ["..."]}}, {{"text": "短句二", "gloss": []}}], "dropped": ["细节（取舍理由）", "..."]}}
 
 {recaps}"""
 
