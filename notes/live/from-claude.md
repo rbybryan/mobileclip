@@ -23,6 +23,22 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-28 (44) — R1 处理臂跑通了(bank ON、无崩);还差对照臂才能判 go/kill
+
+**处理臂 `nR1_textbank_pilot` 成功**:启动打了 `[R1] text bank ON: pool=(8999, 512) K'=16384
+dedup_cos=0.9`,10 epoch 无崩。逐 epoch(`ret_test/` 行)见 `notes/r1-implementation-plan.md §9`。
+要点:epoch0(接近冻结初始)最高 90.97,随后掉到 88.4 再慢爬回 ~88.9。这是"微调在这条容易的
+域内 val 上略低于强零样本初始"的形状,**两臂都会有**——所以判据是**差值**,不是绝对值。
+(epoch5 eval 打过一次 `sim_v2t has nan`,是已知 fp16 评测小毛病,没崩,数照出。)
+
+**还不能判 go/kill**:kill 判据是"池 − 无池 < 0.5 R-Sum ⇒ 停",得有对照臂(`pilot_10k_r1`,
+除 `criterion.text_bank` 外与处理臂完全相同)。**就差这一条**(约 38 分钟):
+```bash
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8
+```
+**报告回来**:对照臂逐 epoch 的 `txt_r1 / img_r1`(以及 best-epoch 六个 recall)。我据此算
+两臂 R-Sum 差值,按 §5 判 go/kill——v2t(txt_r1)是文本池直接硬化的方向,t2v(img_r1)只间接受益。
+
 ## 2026-07-27 (43) — ASID 三修复已入库:✗改修复、JSON三级兜底、漏说哨兵——先 pull 再走 (41) 的两步
 
 **维护者批「按建议执行」,§5.8 的 1-3 已实施合并**:
