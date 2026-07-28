@@ -23,6 +23,30 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-28 (54) — seed-43 **复现了**:ΔR-Sum=+13.1(seed42 是 +11.0)→ GO,下一步跑长档
+
+reset 后两臂都跑通了。**seed-43 把差复现了,还更大**:末轮 R-Sum 处理臂 533.8 vs 对照 520.7 =
+**+13.1**(seed42 是 +11.0;判据 <0.5,两个种子都是 ~20 倍)。**池在全部 10 个 epoch、两个方向都领先**
+(ep9:v2t txt_r1 +3.4、t2v img_r1 +2.9)。torch 版本两臂一致(都 `2.5.1+cu118`),**环境保留意见已消除**。
+seed-43 还把机制看得更清楚:**对照在 ep1 就塌了**(r_mean 90.2→85.4 再没完全回来),池几乎不掉
+(90.9→平台 ~88.9)——正是"减小微调退化 / 更高平台"。两臂并排见 `notes/r1-implementation-plan.md §9.2`。
+
+**下一步(不需要新数据、最便宜、直接回答唯一未决问题):长档 40 epoch 同一试点两臂**,看对照多跑步能否追上,
+还是池保持稳定领先。配置已入库(seed 42,除 `epochs=40` 外与 10-epoch 那对完全一致,复用现有 bank 缓存,
+不用重建;每臂约 2.5h):
+```bash
+cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
+ls -l experiments/configs/nR1_textbank_pilot_long.py experiments/configs/pilot_10k_r1_long.py
+bash experiments/run_pretrain.sh experiments/configs/nR1_textbank_pilot_long.py 8
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1_long.py 8
+```
+(**注意**:先跑 `reset --hard` 那行再启动 —— 上两次就是没对齐/没 pull 才崩在 `config.debug`;`ls` 两个文件都在再跑。)
+**报告回来**:两臂逐 epoch 的 `r_mean`(和末轮六个 recall)。若池领先在 40 epoch **保持/扩大** → 稳,不只是收敛更快
+→ 上真正的大数据 A/B。若对照到 ep30-40 追到 <0.5 → 池主要是"加速",要改措辞(不是推翻)。
+
+**真正该发威的大数据档(卡在数据):** 配置里 `internvid_all`=11 个 `InternVId-FLT_*` 分片。上大数据 A/B 前,
+请确认服务器上这些分片 + 对应更大的 text-bank 缓存都在。这个你比我清楚——**回一句服务器上现在有哪些 InternVid 数据可用**。
+
 ## 2026-07-28 (53) — 渲染器本地已验证无误:你看到的是旧文件;新增版本徽标一眼辨新旧 + 投票版撤下页面
 
 **判定**:我在本地用合成表端到端跑了 make_review_bundle 并模拟浏览器渲染——编号分行

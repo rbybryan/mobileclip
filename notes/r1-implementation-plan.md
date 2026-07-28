@@ -20,12 +20,13 @@ GO means "premise holds, build the arm + run the A/B", not "R1 works" — kill c
 (512→65k < 0.5 R-Sum ⇒ stop) still governs. Trail: §7.1 (probe mis-spec, fixed) → §7.5
 (corrected metrics) → §7.6 (Part B → GO).
 
-**A/B RUN + VERDICT (2026-07-28): the pool WINS its kill criterion — ΔR-Sum = +11.0** (treatment
-533.2 vs control 522.2; bank ahead at all 10 epochs, both directions; scale-invariant metric).
-R1 is validated **at pilot scale**. Caveat: both arms sit below the frozen-init epoch-0 peak, so at
-9000 clips the bank acts as *reduced-degradation / higher-plateau* rather than absolute gain over
-init — see §9/§9.1 for the full table, why it's trustworthy, and the seed-43 confirmation before
-scaling.
+**A/B RUN + VERDICT (2026-07-28): the pool WINS its kill criterion, CONFIRMED across two seeds —
+ΔR-Sum = +11.0 (seed 42) and +13.1 (seed 43)**, bank ahead at all 10 epochs both directions on both
+seeds, scale-invariant metric, env parity confirmed (both `torch 2.5.1+cu118`). R1 is validated **at
+pilot scale**. Caveat: both arms sit below the frozen-init epoch-0 peak, so at 9000 clips the bank
+acts as *reduced-degradation / higher-plateau* rather than absolute gain over init (the control
+collapses at ep1, the bank protects it) — see §9/§9.1/§9.2 for the full tables and why it's
+trustworthy. **Verdict: GO, scale up** (§9.3 = longer schedule; true payoff regime = more data).
 
 ---
 
@@ -462,3 +463,63 @@ criterion decisively.**
 **Next (recommended before any scale-up):** one **seed-43 confirmation** of both arms
 (`nR1_textbank_pilot_s43.py` vs `pilot_10k_r1_s43.py`, committed) to rule out nondeterminism; if the
 gap reproduces, scale the A/B to more InternVid data / more steps — the setting R1 actually targets.
+
+### 9.2 Seed-43 confirmation (2026-07-28) → **reproduced, ΔR-Sum = +13.1 (seed-42 was +11.0)**
+
+Both seed-43 twins ran to completion (env parity **confirmed**: both logged `torch 2.5.1+cu118`).
+The bank arm again logged `[R1] text bank ON: pool=(8999, 512) K'=16384 dedup_cos=0.9`; the control
+carried no `criterion.text_bank`. Per-epoch `ret_test/` `r_mean` (T = treatment/bank, C = control):
+
+| ep | T r_mean | C r_mean | Δ |
+|----|----------|----------|-----|
+| 0  | 90.85 | 90.20 | +0.65 |
+| 1  | 89.52 | 85.43 | **+4.09** |
+| 2  | 89.23 | 84.92 | +4.31 |
+| 3  | 88.82 | 85.37 | +3.45 |
+| 4  | 88.68 | 86.13 | +2.55 |
+| 5  | 88.65 | 86.47 | +2.18 |
+| 6  | 88.78 | 86.30 | +2.48 |
+| 7  | 88.93 | 86.82 | +2.11 |
+| 8  | 88.92 | 86.72 | +2.20 |
+| 9  | 88.97 | 86.78 | +2.19 |
+
+Final-epoch **R-Sum** (txt r1/r5/r10 + img r1/r5/r10):
+T `75.8+92.1+95.3+79.5+93.8+97.3 = 533.8`; C `72.4+90.0+93.3+76.6+92.5+95.9 = 520.7` → **ΔR-Sum
+= +13.1** (kill criterion is < 0.5; both seeds clear it by ~20×). ep9 directional deltas: v2t
+txt_r1 **+3.4**, t2v img_r1 **+2.9**.
+
+**Two seeds now agree** (Δ = +11.0 and +13.1), and seed-43 makes the *mechanism* visually explicit:
+the **control collapses at ep1** (90.20 → 85.43 r_mean) and never fully recovers, while the bank arm
+barely dips (90.85 → plateau ~88.9). This is exactly the "reduced fine-tuning degradation / higher,
+faster plateau" story from §9.1's honest caveat — the bank protects the frozen-init separation that
+naive fine-tuning erodes. The env-parity caveat is now **closed**; the "does no-pool catch up with
+more steps" question is addressed by the next experiment (§9.3, longer schedule on the same pilot),
+and the genuine payoff regime (more data) still needs the maintainer to confirm what larger InternVid
+subset is staged on the server.
+
+**Verdict stands: GO, scale up.** See [`notes/live/from-claude.md`](live/from-claude.md) for the
+next server step.
+
+### 9.3 Next experiment — longer schedule (does the control catch up with more steps?)
+
+The cheapest well-scoped follow-up that needs **no new data** (whose staging on the server is
+unconfirmed): re-run the matched pair on the **same 9000-clip pilot** with a **40-epoch** cosine
+schedule (4× the pilot). This isolates the one open question — whether the control's slow climb
+eventually closes the bank's lead, or whether the bank keeps a durable edge. Committed configs
+(seed 42, identical to the 10-epoch pair except `scheduler.epochs = 40`):
+
+| arm | config | output_dir |
+|-----|--------|------------|
+| treatment (bank) | `experiments/configs/nR1_textbank_pilot_long.py` | `experiments/runs/nR1_textbank_pilot_long` |
+| control (no bank) | `experiments/configs/pilot_10k_r1_long.py` | `experiments/runs/pilot_10k_r1_long` |
+
+Reuses the existing `textbank_pilot_*` cache — no rebuild. ~4× the ~38-min pilot wall-clock per arm
+(~2.5 h each). **Read:** track per-epoch `r_mean` Δ. If the bank's lead **persists or widens** at 40
+epochs → durable, not just faster convergence → proceed to the true scale-up (more data). If the
+control **closes to < 0.5 R-Sum** by ep~30-40 → the bank mainly *accelerates* and the pilot-scale win
+is a convergence-speed effect, which reframes (not kills) the claim.
+
+**True payoff regime (blocked on data):** the setting R1 actually targets is more InternVid data (so
+in-batch negatives become genuinely information-limiting). The config already defines `internvid_all`
+(11 `InternVId-FLT_*` shards); before wiring a large-data A/B, confirm those shards + a matching
+larger text-bank cache are staged on the server.
