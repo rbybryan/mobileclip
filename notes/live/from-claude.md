@@ -23,6 +23,32 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-28 (52) — 全案复审出 3 红:GDINO 必须装了(5 分钟)、直融上限已修 640、长稿不过修复
+
+**复审记录在主计划 §0.9(当前定版一页图,与旧段冲突以它为准)。服务器只有一件必办**:
+
+🔴 **装 GDINO**——判断式融合放宽了单源细节,外部幻觉门现在实际只剩 OCR 查引号。
+这台机连 hf-mirror 也不通,只能**本地下载后 scp**(第四次给出,请务必执行):
+
+```bash
+# 你【本地能上网的机器】:
+pip install -U huggingface_hub
+huggingface-cli download IDEA-Research/grounding-dino-base   # ~700MB
+huggingface-cli download hfl/minirbt-h288                    # ~40MB
+ssh rby@101vector 'mkdir -p ~/.cache/huggingface/hub'
+scp -r ~/.cache/huggingface/hub/models--IDEA-Research--grounding-dino-base rby@101vector:~/.cache/huggingface/hub/
+scp -r ~/.cache/huggingface/hub/models--hfl--minirbt-h288    rby@101vector:~/.cache/huggingface/hub/
+# scp 完成后在服务器(清掉"GDINO 缺席"时代的旧验真判定让它重验):
+rm -f outputs/audit_10k/pipe*_verified.jsonl outputs/audit_10k/pipe*_final.jsonl
+```
+
+其余两红已处理/登记:直融 512→**640** token(防 v3 长输出截断置空,本次已修——跑 (51)
+的命令时顺带生效);长稿不过验真/修复=已登记为"仅目检参考",下游要用长稿前必须补验。
+黄灯提醒:目检结论出来前**冻结 prompt 迭代**;§5.9 精简仍在等拍板。
+
+**Then report back**: 照 (51) 跑完后——四版目检结论 + 抽 20 条 dropped 看取舍理由
+是否服信 + GDINO 装好后 ✗ 数量变化(此前 OCR-only 的 ✗ 都是引号文字类)。
+
 ## 2026-07-28 (51) — 融合改判断式(弃硬投票) + 页面小点/长稿两个显示问题的修法
 
 **三件事已实施合并**:
