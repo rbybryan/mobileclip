@@ -519,7 +519,11 @@ epochs → durable, not just faster convergence → proceed to the true scale-up
 control **closes to < 0.5 R-Sum** by ep~30-40 → the bank mainly *accelerates* and the pilot-scale win
 is a convergence-speed effect, which reframes (not kills) the claim.
 
-**True payoff regime (blocked on data):** the setting R1 actually targets is more InternVid data (so
-in-batch negatives become genuinely information-limiting). The config already defines `internvid_all`
-(11 `InternVId-FLT_*` shards); before wiring a large-data A/B, confirm those shards + a matching
-larger text-bank cache are staged on the server.
+**True payoff regime — runs on the H100, not the V100:** the setting R1 actually targets is more
+InternVid data (so in-batch negatives become genuinely information-limiting). The config defines
+`internvid_all` (11 `InternVId-FLT_*` shards) — but **the V100 server (`101vector`) only has the 10k
+subsamples; the full InternVid dataset lives only on the H100 server.** So the large-data A/B is an
+**H100 experiment** (pointing `train_corpus = "internvid_all"` at the V100 would fail — data absent).
+Every pilot-scale run above, including §9.3's 40-epoch pair, stays on the V100. Before wiring the
+large-data A/B on the H100, build a matching larger text-bank cache there (the pilot cache
+`textbank_pilot_*` is 10k-only). All-server data split recorded in memory (`server-data-split`).
