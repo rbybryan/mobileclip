@@ -532,7 +532,10 @@ def main():
                                           "gloss": gloss, "src_recap": "fuse"})
                     dropped = [d.strip() for d in (obj or {}).get("dropped")
                                or [] if isinstance(d, str) and d.strip()]
-                    out["verdict"] = {"views": views, "dropped": dropped,
+                    long_c = (obj or {}).get("long")
+                    long_c = long_c.strip() if isinstance(long_c, str) else ""
+                    out["verdict"] = {"views": views, "long": long_c,
+                                      "dropped": dropped,
                                       "n_views": len(views),
                                       "n_recaps": len(recaps)}
                 elif args.mode == "refine":

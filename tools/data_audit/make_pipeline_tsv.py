@@ -132,8 +132,9 @@ def main():
               *[f"recap_{i + 1}" for i in range(5)], "A_minus_keep",
               "views_A_prime", "views_pass", "views_unverified", "views_fail",
               "fuse_units", "fuse_dropped", "fuse_pass", "fuse_unverified",
-              "fuse_fail", "direct_pass", "direct_unverified", "direct_fail",
-              "direct_dropped", "jaccard_med", "ident_pairs", "flags"]
+              "fuse_fail", "direct_long", "direct_pass", "direct_unverified",
+              "direct_fail", "direct_dropped", "jaccard_med", "ident_pairs",
+              "flags"]
 
     # review sheet: maintainer directive 2026-07-27 -- show ONLY the decision
     # chain (en source / old zh / 5 recaps / final condensed views); the full
@@ -142,7 +143,7 @@ def main():
                "版本对比[直融更好/投票更好/差不多/都不行]", "note"]
     sheet_hdr = (["video", "video_path", "英文en", "原zh"]
                  + [f"重述{i + 1}" for i in range(5)]
-                 + ["直融", "投票浓缩"] + SHEET_Q)
+                 + ["直融长稿", "直融", "投票浓缩"] + SHEET_Q)
     sheet_rows = []
 
     n_rows = 0
@@ -223,6 +224,8 @@ def main():
                 for v in dviews if v.get("status") == "fail")
             d_drop = SEP.join(flat(t) for t in ((dfused_raw.get(vid, {})
                               .get("verdict") or {}).get("dropped") or []))
+            d_long = flat(((dfused_raw.get(vid, {}) or {})
+                           .get("verdict") or {}).get("long") or "")
             drec = diag.get(vid, {})
             jmed = drec.get("jaccard_med")
             flags = []
@@ -250,7 +253,7 @@ def main():
                    SEP.join((aprime.get(vid, {}).get("views")) or []),
                    passes, unv, fails,
                    u_kept, u_drop, f_pass, f_unv, f_fail,
-                   d_pass, d_unv, d_fail, d_drop,
+                   d_long, d_pass, d_unv, d_fail, d_drop,
                    f"{jmed:.3f}" if isinstance(jmed, (int, float)) else "",
                    str(drec.get("n_identical_pairs", "")),
                    "|".join(flags)]
@@ -274,7 +277,7 @@ def main():
                      resolve(args.video_root or "", task, vid) if resolve else "",
                      flat(task.get("en")),
                      flat(task.get("zh_old") or task.get("zh")),
-                     *recap_cells, dir_c, vote_c]
+                     *recap_cells, d_long, dir_c, vote_c]
                     + [""] * len(SHEET_Q))
             n_rows += 1
             if args.limit and n_rows >= args.limit:

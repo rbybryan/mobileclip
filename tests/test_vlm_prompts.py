@@ -37,6 +37,7 @@ def test_fuse_direct_prompt_formats_cleanly():
     assert FUSE_DIRECT_KEYS == {"views"}
     filled = FUSE_DIRECT_PROMPT.format(n=3, recaps="描述1：x")
     assert '"views"' in filled and '"dropped"' in filled
+    assert '"long"' in filled          # §5.7 双稿: 长稿 + 浓缩短句
     assert "{" + "n}" not in filled  # no unfilled placeholder survives
 
 
