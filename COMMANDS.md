@@ -559,6 +559,66 @@ torchrun --nproc_per_node=8 --master_port=$((11000 + RANDOM % 20000)) \
     scripts/pretraining/clip/mobileviclip_tiny/config.py
 ```
 
+### 长跑运维:选空卡、后台挂、ETA、断点续训(b100 共用节点)
+
+**① 选卡:看 `Memory-Used` 挑 0 MiB 的,不要看 `GPU-Util`。** 共用节点上其他租户
+的进程在别的 PID namespace 里,`nvidia-smi` 进程表显示 `No running processes found`,
+但他们的显存/算力占用是真的。`0% util ≠ 空闲`(util 只是采样瞬间有没有 kernel);
+`0 MiB used` 才是真空。挑最空的 N 张:
+
+```bash
+nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv
+CUDA_VISIBLE_DEVICES=<挑出来的空卡,如 4,5,6,7>   # 传给下面的启动命令
+```
+
+**共用/争抢的判据(很重要):** 训练日志里的 `time:` 每步耗时,若对 4×H100 明显
+偏慢(这个小模型正常应 ~1–3 s/step,出现 ~10 s/step 就是异常),同时 `data:` 接近 0
+(排除数据瓶颈),多半是**你和别的租户共用了同几张卡**。对照证据:日志 `max mem`
+是你单卡的占用,若远小于 `nvidia-smi` 在那几张卡上显示的总显存,差额就是别人的。
+→ 停掉,挪到确认 `0 MiB` 的卡重跑,`time:` 通常大幅下降(实测 ~10 s → 目标 1–3 s,
+总时长从 ~15 天降到 ~1.5–4.5 天)。
+
+**② 后台挂 + 记 PID(共用 root 账号,停止只能按 PID,严禁 `pkill`/`killall`):**
+
+```bash
+mkdir -p experiments/runs
+CUDA_VISIBLE_DEVICES=4,5,6,7 nohup bash experiments/run_pretrain.sh \
+    experiments/configs/r0_baseline.py 4 \
+    use_bf16 True bf16 True \
+    > experiments/runs/r0_baseline.log 2>&1 &
+echo "R0 PID = $!"          # 记牢这个 PID
+```
+
+**③ 看 loss / ETA(注意 `it/s` 是加载标注的假信号,真步速看带 `eta:` 的行):**
+
+```bash
+grep -E "eta:|loss:" experiments/runs/r0_baseline.log | tail -5
+# 估算:time/step × (约 41591 步/epoch,batch64×4卡) × epochs
+```
+`lr: 0.000000` 开头几百步是正常的(warmup);`video-loss_vtc` 在 ~0.6–1.3 抖动、
+整体趋降即健康。
+
+**④ 断点续训:进度一直在存,但裸重跑不会续、会覆盖。** 每 `save_iter`(500)步存
+`ckpt_iter<step>.pth`,每个 epoch 末存 `ckpt_<epoch>.pth`,都是含
+`model/optimizer/scheduler/scaler/epoch/global_step` 的完整快照,落在 `output_dir`
+(默认 `experiments/runs/r0_baseline`)。要**接着**练必须加 `auto_resume True`、且用
+**同一个 output_dir**:
+
+```bash
+CUDA_VISIBLE_DEVICES=<空卡> nohup bash experiments/run_pretrain.sh \
+    experiments/configs/r0_baseline.py 4 \
+    use_bf16 True bf16 True auto_resume True \
+    > experiments/runs/r0_baseline.log 2>&1 &
+```
+
+它会自动扫 `output_dir` 挑步数最大的 ckpt,恢复优化器/scheduler/步数接着跑。
+
+> **⚠️ 陈旧 ckpt 陷阱:** `auto_resume` 若在 `output_dir` 里扫到某个 `ckpt_<E>.pth`
+> 且 `(E+1)` ≥ 总 epoch 数,会令 `start_epoch = E+1`,训练循环 `range(start,epochs)`
+> 直接为空 → **误判「已训完」立刻退出、什么都不做**。所以**开新一轮 R0 前,若旧
+> `output_dir` 里残留上一次跑的 `ckpt_00/01/02.pth`,要么先挪走,要么换一个干净的
+> `output_dir`**(如 `output_dir experiments/runs/r0_baseline_v2`,可作为覆盖项传入)。
+
 ---
 
 ## 5. Git workflow (this repo)
