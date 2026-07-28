@@ -23,6 +23,36 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-28 (57) — 直融改两次调用:长稿不限字数→短稿一条; ASID属性对照答复(徽标v20260728e)
+
+三条回复(前两条已实施合入 main, 第三条是答复+待拍板):
+
+1. **长稿去字数上限**:融合调用 1 只做判断+写长稿(**长度不设限制**, 以完整覆盖过审细节为准,
+   禁流水账/禁新增)+带理由 dropped。
+2. **长短稿分开生成**:调用 2 **只读长稿**提炼一条 ≤30 字训练短字幕(闭集, 判断不重做)。
+   每片 +1 次小调用(~2-4s); 调用 1 失败时短稿降级用原始重述(`short_src` 落盘)。
+   `--max-new-tokens` 640→768。
+3. **B 臂 4 属性 vs 参考文献**:ASID(2602.13013)用 **8 个核心属性**(项目页确认):
+   Scene/Object/Character/Action/Emotion/Camera/Narrative Element/Speech, 每视频 8 条单属性字幕。
+   映射:Object+Character→我们的主体(≤2 行); Action→动作; Scene→场景; Speech(音频)→不适用
+   (只看帧无音频; 我们的「文字」=画面文字, ASID 没这个顶层属性、是我们补的且 OCR 可验);
+   Emotion/Narrative→被反幻觉规则明令排除(情绪/前因后果=易幻觉, 不该进检索训练字幕);
+   **Camera(镜头运动)=唯一真正缺席的候选**。**判断:对 32-token 检索字幕 4 槽够用**;
+   要不要加可选第 5 槽「镜头」(1 行空写无; 代价: GDINO/OCR 验不了镜头运动, 8 帧判运动偏弱)
+   ——**待你拍板, 默认不加**。详见主计划 §5.6b 属性对照段。
+
+**融合 prompt 又变了 → 直融缓存再清一次重融**(重述/投票缓存照旧复用; 若 (56) 还没跑, 直接跑本块,
+约 35-45 分钟):
+```bash
+cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
+git log --oneline -1        # ← 必须比 #320 新; 还是旧号就贴回来
+rm -f outputs/audit_10k/pipe*fused_d*.jsonl
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+grep -c v20260728e outputs/audit_10k/bundle_compare/index.html   # ← 必须 ≥1
+tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
+```
+页面徽标这次是 **v20260728e**。**GDINO scp 仍是最高优先待办**((52) 块步骤)。
+
 ## 2026-07-28 (56) — 直融短稿改为一条≤30字训练字幕 + B臂属性徽标 + 每条caption一个编号(徽标v20260728d)
 
 按你三条指令改完(已合入 main):

@@ -219,27 +219,28 @@ RECAP_PROMPT = """你是一个严谨的视频画面描述助手。下面是从�
 6. 覆盖以下方面（只写真实可见的）：主体（人/物的外观、服装、颜色等特征）、主体的动作及其先后、场景与背景环境、屏幕上的文字。如果某一方面在画面中不存在，就完全不要提它。
 7. 输出一段连贯、信息密集的中文，不要分点、不要标题、不要开场白或结束语，只输出这段描述本身。"""
 
-# --mode fuse-direct (§5.7 v4, maintainer 2026-07-28): ONE text-only call
-# reads the N independent recaptions and performs EDITORIAL JUDGMENT — find
-# the core content, weigh each detail (cross-version agreement is evidence,
-# not a hard rule: hard-to-fabricate single-source details may stay;
-# easy-to-hallucinate types — numbers, on-screen text, names, intent — are
-# dropped or blurred without corroboration; contradictions take the majority
-# or get blurred), then write TWO drafts: long (60-120 chars, keeps detail,
-# review/KD reference) and short (ONE caption <=30 chars — the training
-# caption, sized for the 32-token CLIP text-encoder window: [CLS] + ~30
-# Chinese chars + [SEP]). v4 retires the 2-5-view condense per maintainer
-# ("condense 应该是一条在 text encoder 字数限制下的短 caption"); the hard
-# ">=2-of-N" vote was already retired in v3. Auditability is preserved by
-# (a) reason-annotated dropped list, (b) the rule vote still running as a
-# diagnostic, (c) Panel-V verify+refine as the hard gate.
-# Consumed via .format -> doubled braces.
-FUSE_DIRECT_KEYS = {"short"}
-FUSE_DIRECT_PROMPT = """下面是同一段视频的 {n} 段互相独立的中文描述。它们出自对同一段视频的多次独立观看，各自都可能有错漏；多段一致的信息通常更可信，但一致与否只是证据、不是铁律——请你像资深字幕编辑一样综合判断。
+# --mode fuse-direct (§5.7 v5, maintainer 2026-07-28): TWO text-only calls
+# per clip, decoupled per maintainer ("短稿长稿可以分开生成；长稿不用字数
+# 限制"). Call 1 (FUSE_LONG) reads the N independent recaptions and performs
+# EDITORIAL JUDGMENT — find the core content, weigh each detail
+# (cross-version agreement is evidence, not a hard rule: hard-to-fabricate
+# single-source details may stay; easy-to-hallucinate types — numbers,
+# on-screen text, names, intent — are dropped or blurred without
+# corroboration; contradictions take the majority or get blurred) — then
+# writes ONE detail-preserving long draft with NO length cap + the
+# reason-annotated dropped list. Call 2 (FUSE_SHORT) sees ONLY the long
+# draft (closed set — judgment already happened) and distills THE training
+# caption: one natural sentence <=30 chars (32-token CLIP text-encoder
+# window: [CLS] + ~30 Chinese chars + [SEP]). Auditability: dropped
+# reasons on call 1, rule vote as diagnostic, Panel-V verify+refine on the
+# short caption as the hard gate. Both consumed via .format -> doubled
+# braces.
+FUSE_LONG_KEYS = {"long"}
+FUSE_LONG_PROMPT = """下面是同一段视频的 {n} 段互相独立的中文描述。它们出自对同一段视频的多次独立观看，各自都可能有错漏；多段一致的信息通常更可信，但一致与否只是证据、不是铁律——请你像资深字幕编辑一样综合判断。
 
 请在心里分三步完成编辑，最后只输出结果 JSON：
 
-第一步·抓重点：先确定这段视频的核心内容——主要的人/物是谁、正在发生什么。核心信息必须保留；边缘细节在放不下时让位。
+第一步·抓重点：先确定这段视频的核心内容——主要的人/物是谁、正在发生什么。
 
 第二步·辨真伪，对每个细节做取舍：
 - 多段独立提到且不矛盾 → 可信，保留；
@@ -247,16 +248,29 @@ FUSE_DIRECT_PROMPT = """下面是同一段视频的 {n} 段互相独立的中文
 - 只有一段提到 → 看类型：具体的动作、位置这类"难凭空编造"的细节可酌情保留；数字、画面文字内容、品牌/人名、身份、情绪意图这类"易幻觉"的细节一律舍弃或模糊化；
 - 引号“”内的画面文字：多段一致才保留且必须原样照抄、不改一字；只有一段提到或各段不一致，就完全不写这段文字。
 
-第三步·成稿（先长后短，两版各司其职）：
-- long（长稿）：把保留的信息写成一段 60-120 字、连贯自然的中文描述，按"主体→动作先后→场景→画面文字"组织；尽量保留通过取舍的全部细节，绝不新增任何描述之外的内容。
-- short（短稿）：在长稿基础上再提炼成**一条不超过 30 个字**的中文短字幕——这是最终训练用字幕，必须是一句自然通顺的话（核心主体+核心动作，放得下再加最有辨识度的一个外观或场景细节），不要罗列、不要分号顿号堆砌、不用"他/她/它/这"开头；引号内的画面文字放不下就不写（长稿里已有）；超过 30 字宁可舍弃次要细节。
-- gloss：短稿里能在画面中被检测到的具体名词的英文（小写，1-4 个），如 ["man", "kitchen"]；抽象概念、动词不要放。
-- dropped：被你舍弃或模糊化的细节清单，每条在括号里附一句取舍理由，如 "墙上挂着三幅画（仅一段提及，数字类易幻觉）"。
+第三步·成长稿：把**全部**通过取舍的信息写成一段连贯自然的中文描述，按"主体→动作先后→场景→画面文字"组织。**长度不设限制**——以完整覆盖保留信息为准，宁全勿缺；但只写你判定保留的信息，绝不新增任何描述之外的内容，也不要逐帧流水账式复述。
+
+另外输出 dropped：被你舍弃或模糊化的细节清单，每条在括号里附一句取舍理由，如 "墙上挂着三幅画（仅一段提及，数字类易幻觉）"。
 
 只输出一个 JSON 对象，不要任何解释：
-{{"long": "一段 60-120 字的完整长描述", "short": {{"text": "一条不超过30字的训练短字幕", "gloss": ["..."]}}, "dropped": ["细节（取舍理由）", "..."]}}
+{{"long": "一段完整的长描述（不限字数）", "dropped": ["细节（取舍理由）", "..."]}}
 
 {recaps}"""
+
+FUSE_SHORT_KEYS = {"short"}
+FUSE_SHORT_PROMPT = """下面是一段视频的完整中文描述。请把它提炼成**一条不超过 30 个字**的中文短字幕——这是最终训练用字幕。
+
+要求：
+1. 必须是一句自然通顺的话：核心主体+核心动作，放得下再加最有辨识度的一个外观或场景细节；不要罗列、不要分号顿号堆砌、不用"他/她/它/这"开头。
+2. 只能使用描述里已有的信息，绝不新增任何细节；引号内的画面文字放不下就不写（长描述里已有）。
+3. 超过 30 个字就舍弃次要细节，直到放得下为止。
+4. gloss：短字幕里能在画面中被检测到的具体名词的英文（小写，1-4 个），如 ["man", "kitchen"]；抽象概念、动词不要放。
+
+只输出一个 JSON 对象，不要任何解释：
+{{"short": {{"text": "一条不超过30字的训练短字幕", "gloss": ["..."]}}}}
+
+完整描述：
+{long}"""
 
 # --mode recap-slot (§5.6b, maintainer 2026-07-28): ASID-style FIXED-SLOT
 # output — line format instead of JSON. Slots: 主体(<=2)/动作(<=2)/场景(1)/

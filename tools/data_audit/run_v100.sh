@@ -743,11 +743,12 @@ PY
     --scores "${P}_scores.*.jsonl" --output "${P}_units.jsonl" \
     --min-support "${FUSE_MIN_SUPPORT:-2}" \
     || echo "[warn] 投票段失败——投票浓缩与诊断列将为空，其余照常"
-  # 版本一「直融」(§5.7 v4, ASID-Verify 式): LLM 判断式融合两稿并出 ——
-  # 长稿(60-120字, 保留细节) + 短稿(一条≤30字训练字幕, 32-token 墙内), 自报 dropped
+  # 版本一「直融」(§5.7 v5, ASID-Verify 式): 长短稿分开两次调用 ——
+  # 调用1 判断式融合出长稿(不限字数, 保留全部过审细节)+带理由 dropped;
+  # 调用2 只读长稿提炼短稿(一条≤30字训练字幕, 32-token 墙内)
   CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
     --input "${P}_recaps.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
-    --mode fuse-direct --max-new-tokens 640 --num-shards 1 --shard-id 0 \
+    --mode fuse-direct --max-new-tokens 768 --num-shards 1 --shard-id 0 \
     --output "${P}_fused_d.{shard}.jsonl" \
     || echo "[warn] 直融段失败（常见: 卡被占 OOM）——重跑本命令会按 video 续跑补齐"
   # 版本二「投票浓缩」(§5.5): 规则跨遍计票 -> LLM 只打包过票单元
@@ -821,7 +822,7 @@ PY
   echo ""
   echo "✅ 产物[$RECAP_STYLE]: $BUNDLE/（index.html+videos/） · $TSVF"
   echo "   每片一卡(维护者指令精简): 视频 | en源 | zh旧译(黄) | 重述(每遍一个编号,B臂带属性徽标) |"
-  echo "             直融长稿(60-120字,保留细节) | 直融(一条≤30字训练字幕) + 判读单选, 可导出 TSV"
+  echo "             直融长稿(不限字数,保留细节) | 直融(一条≤30字训练字幕) + 判读单选, 可导出 TSV"
   echo "             (投票版不再上页面, 数据仍在全景 TSV 作对照诊断)"
   echo "   全景各阶段列(A′/✓·✗视图/投票·淘汰单元)仍在 $TSVF"
   echo "   诊断摘要: ${P}_diag.txt"
@@ -860,7 +861,7 @@ pipeline-compare)
   done
   echo ""
   echo "✅ A/B 对比包: $OUT/bundle_compare/（每片: en源|原zh|A重述|A长稿|A直融|B重述(属性徽标)|B长稿|B直融 + 单选;"
-  echo "   直融=一条≤30字训练字幕, 长稿=60-120字细节参考; 投票版不上页面）"
+  echo "   直融=一条≤30字训练字幕, 长稿=不限字数细节参考; 投票版不上页面）"
   echo "   打包: tar czf $OUT/compare.tgz -C $OUT bundle_compare"
   echo "   本地: scp rby@101vector:~/mobileclip/$OUT/compare.tgz . && tar xzf compare.tgz"
   ;;
