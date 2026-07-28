@@ -24,14 +24,20 @@ Source paper: arXiv:2508.07312 (ICCV 2025). Original repo: MCG-NJU/MobileViCLIP.
 > yet → prefer no-training / data work first). Reviewed against a 2025–2026
 > literature sweep ([`../docs/clip-2025-progress-report.md`](../docs/clip-2025-progress-report.md)).
 
-**Cross-cutting blocker — Step 0 for anything on-device.** There is no working
-on-device export of the temporal model: `models/convert_model.py` is a
-non-canonical, spatial-only WIP (no 1D temporal conv / `temporal_embedding`,
-mean-pool only) and is wired into nothing; the canonical train/eval model
-(`MobileViCLIP_Small`) is temporal. Any on-device direction (latency, quant,
-streaming) must first produce a Core ML / TFLite export of the temporal model —
-non-trivial (hard-coded 8-frame reshapes, depthwise `Conv1d`, joint T·H·W
-attention op coverage).
+**~~Cross-cutting blocker — Step 0 for anything on-device.~~ ⚠️ CLEARED 2026-07-28.**
+This entry said no on-device export of the temporal model existed and that
+producing one was non-trivial (hard-coded 8-frame reshapes, depthwise `Conv1d`,
+joint T·H·W attention op coverage). **That was an inference from
+`models/convert_model.py` being spatial-only, and U1 measured it to be wrong**:
+the full temporal vision tower exports to **ONNX and Core ML at T∈{2,4,8,16}, all
+pass** (`experiments/export_smoke_results.md`, 2026-07-27). `convert_model.py`
+sidesteps the temporal ops because it is an abandoned WIP built from
+`mobileclip_s0`, not because those ops cannot be lowered.
+
+**What still blocks on-device work:** TFLite/Android is **unevaluated** (toolchain,
+not model), and **exportable ≠ fast** — no real-device latency has been measured.
+Quantization and streaming therefore lose their export prerequisite but keep the
+latency question. Re-ranking: [`c2-vs-alternatives.md`](c2-vs-alternatives.md) §1.
 
 - [ ] **1. Data-pipeline upgrade — do first.** ReSpec-style relevance+specificity
       filtering + MLLM recaptioning on `internvid_all`. Data-side only (hooks in
