@@ -93,9 +93,21 @@ class Config(object):
         args = parser.parse_args()
 
         cfg = EasyDict(BASE_CONFIG)
-        if osp.isfile(args.config_file):
-            cfg_from_file = cls.from_file(args.config_file)
-            cfg = merge_a_into_b(cfg_from_file, cfg)
+        # A missing config path used to be silently skipped, leaving `cfg` as the
+        # empty BASE_CONFIG. The run then died far downstream with a cryptic
+        # `AttributeError: 'EasyDict' object has no attribute 'debug'` (the first
+        # field any config code touches). The usual real cause: the config file was
+        # never pulled onto the server. Fail loudly and point at the fix instead.
+        if not osp.isfile(args.config_file):
+            raise FileNotFoundError(
+                f"config file not found: {args.config_file!r}. If this is a newly "
+                f"added experiment config, run `git pull origin main` on the server "
+                f"first (the file is committed but not present here). If the path is "
+                f"a typo, fix it. (Previously this was skipped silently and crashed "
+                f"later at `config.debug`.)"
+            )
+        cfg_from_file = cls.from_file(args.config_file)
+        cfg = merge_a_into_b(cfg_from_file, cfg)
         cfg = cls.merge_list(cfg, args.opts)
         cfg = eval_dict_leaf(cfg)
 

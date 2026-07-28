@@ -23,6 +23,30 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-28 (49) — seed-43 崩在 `config.debug` = **没 pull**,配置文件不在服务器上
+
+**不是 bug,是没拉代码。** 你直接跑了 `bash experiments/run_pretrain.sh ...s43.py`,
+**跳过了 (47) 那行 `git pull origin main`**,所以 `nR1_textbank_pilot_s43.py` /
+`pilot_10k_r1_s43.py` **根本不在服务器上**。`Config.get_config()` 旧逻辑对不存在的
+配置**静默跳过**→ 配置为空 `{}` → 第一句 `if config.debug` 就抛
+`AttributeError: 'EasyDict' object has no attribute 'debug'`。`debug` 是障眼法,配置是空的。
+(已核实:入库的 s43 文件本身没问题,`debug=False`、`seed=43` 都能正确收集。)
+
+**已修**:`utils/config.py` 现在遇到不存在的配置路径直接报清楚的
+`FileNotFoundError: config file not found: '<path>'. … run 'git pull origin main' …`,
+下次不会再伪装成 `config.debug`。也补了 TROUBLESHOOTING 一节。
+
+**现在这样做(pull 和跑分行,但先跑 pull 那行,别再跳)**:
+```bash
+cd ~/mobileclip && git pull origin main
+ls -l experiments/configs/nR1_textbank_pilot_s43.py experiments/configs/pilot_10k_r1_s43.py
+bash experiments/run_pretrain.sh experiments/configs/nR1_textbank_pilot_s43.py 8
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1_s43.py 8
+```
+`ls` 那行确认两个文件都在再启动。顺手 10 秒确认 torch 一致:`python -c "import torch;print(torch.__version__)"`。
+**报告回来**:两臂逐 epoch 的 `txt_r1 / img_r1`。seed43 也复现 +8~+11 的 R-Sum 差 → 放大到更多
+InternVid 数据/更多步;塌到 <2 → seed42 走运,回头审。
+
 ## 2026-07-28 (48) — 直融改双稿(长稿+浓缩)、评审页短句改编号分行——需 rm 直融缓存重跑
 
 **两条指令已实施合并**:
