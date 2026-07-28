@@ -23,6 +23,30 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-28 (50) — pull **失败了**(divergent),所以还是没 pull → 同样的 `config.debug` 崩
+
+这次 `git pull origin main` 报了
+`fatal: Need to specify how to reconcile divergent branches`,**pull 没生效**,
+s43 配置和那个"报清楚错误"的修复都没进服务器,于是又崩在旧的 `config.debug`。
+(fetch 是成功的:`cddee56..e9cbbbd`,只是本地分支和 origin/main 岔开了,merge 被拒。)
+
+**服务器按约定是只读的**(不该有本地代码改动,缓存/权重/数据都 gitignore),
+所以直接对齐 origin/main 最干净、最安全 —— 用 `reset --hard`,不要纠结怎么 merge:
+
+```bash
+cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
+ls -l experiments/configs/nR1_textbank_pilot_s43.py experiments/configs/pilot_10k_r1_s43.py
+```
+`ls` 两个文件都在(非空)再启动。然后:
+```bash
+bash experiments/run_pretrain.sh experiments/configs/nR1_textbank_pilot_s43.py 8
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1_s43.py 8
+```
+对齐后 `utils/config.py` 已是新版:哪怕配置真缺,也会报
+`FileNotFoundError: config file not found …`,不会再伪装成 `config.debug`。
+详见 TROUBLESHOOTING「服务器 git pull 报 divergent」+「`config.debug` AttributeError」两节。
+**报告回来**:两臂逐 epoch 的 `txt_r1 / img_r1`。
+
 ## 2026-07-28 (49) — seed-43 崩在 `config.debug` = **没 pull**,配置文件不在服务器上
 
 **不是 bug,是没拉代码。** 你直接跑了 `bash experiments/run_pretrain.sh ...s43.py`,

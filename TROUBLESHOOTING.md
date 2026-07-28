@@ -2273,6 +2273,9 @@ fatal: Need to specify how to reconcile divergent branches.
 ```
 
 `git pull` 抓下了新提交但**没合进来**——本地工作区还是旧代码,后续照 md 跑的东西可能对不上。
+**这会级联**:新加的 `experiments/configs/*.py` 因此没落地,紧接着的训练就崩在
+`AttributeError: 'EasyDict' object has no attribute 'debug'`(空配置,见下节)。看到那个 debug
+报错时,先往上翻确认 `git pull` 是不是也 divergent 失败了。
 
 ### Cause
 
