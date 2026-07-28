@@ -10,14 +10,14 @@ from vlm_audit import (SLOT_RECAP_PROMPT, parse_slot_lines,  # noqa: E402
 
 def test_happy_path():
     out = parse_slot_lines(
-        "主体：一名穿红色围裙的中年男子 [man,apron]\n"
-        "主体：案板上放着一把菜刀 [knife]\n"
+        "人物：一名穿红色围裙的中年男子 [man,apron]\n"
+        "物体：案板上放着一把菜刀 [knife]\n"
         "动作：先切黄瓜，随后装盘 []\n"
         "场景：明亮的家用厨房 [kitchen]\n"
         "文字：无")
     assert [(v["attr"], v["text"]) for v in out] == [
-        ("subject", "一名穿红色围裙的中年男子"),
-        ("subject", "案板上放着一把菜刀"),
+        ("character", "一名穿红色围裙的中年男子"),
+        ("object", "案板上放着一把菜刀"),
         ("action", "先切黄瓜，随后装盘"),
         ("scene", "明亮的家用厨房")]
     assert out[0]["gloss"] == ["man", "apron"]
@@ -36,9 +36,10 @@ def test_none_slots_and_garbage_skipped():
 
 def test_slot_caps_enforced():
     out = parse_slot_lines(
-        "主体：主体一 [a]\n主体：主体二 [b]\n主体：主体三 [c]\n"
+        "人物：人物一 [a]\n人物：人物二 [b]\n人物：人物三 [c]\n"
         "场景：场景一 [x]\n场景：场景二 [y]\n")
-    assert [v["text"] for v in out] == ["主体一", "主体二", "场景一"]
+    assert [v["text"] for v in out] == ["人物一", "人物二", "场景一"]
+    assert parse_slot_lines("主体：旧栏目名不再解析 [x]") == []  # v2 词表
 
 
 def test_fullwidth_colon_and_missing_brackets():
@@ -49,13 +50,15 @@ def test_fullwidth_colon_and_missing_brackets():
 
 def test_prompt_is_raw_lines_not_json():
     assert "{" not in SLOT_RECAP_PROMPT
-    for slot in ("主体", "动作", "场景", "文字"):
+    for slot in ("人物", "物体", "动作", "场景", "文字"):
         assert slot in SLOT_RECAP_PROMPT
+    assert "主体：" not in SLOT_RECAP_PROMPT  # v2: Character/Object 分开
     assert "无" in SLOT_RECAP_PROMPT
 
 
 def test_slot_recap_cells_rebuilds_labels_per_pass():
-    # display-side 【属性】 rebuild from cached views (no re-run needed)
+    # display-side 【属性】 rebuild from cached views (no re-run needed);
+    # attr="subject" here is the v1/struct LEGACY name -> must still render 主体
     verdict = {
         "recaps": ["男子切菜；明亮厨房", "男子随后装盘"],
         "views": [
@@ -85,3 +88,13 @@ def test_slot_recap_cells_none_for_dense_mode():
     assert slot_recap_cells({"recaps": ["x"], "views": [
         {"text": "融合句", "src_recap": "fuse"}]}) is None
     assert slot_recap_cells(None) is None
+
+
+def test_slot_recap_cells_v2_character_object_labels():
+    verdict = {
+        "recaps": ["x"],
+        "views": [
+            {"text": "一名男子", "attr": "character", "src_recap": 0},
+            {"text": "一把菜刀", "attr": "object", "src_recap": 0},
+        ]}
+    assert slot_recap_cells(verdict) == ["【人物】一名男子 【物体】一把菜刀"]
