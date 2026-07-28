@@ -2300,3 +2300,54 @@ git config pull.rebase false        # pull = merge;或 `--ff-only` 强制只快�
 
 > 若本地那几个提交是**有意**改的(不是误产生),先 `git log origin/main..HEAD --oneline`
 > 看清是什么,别盲目 `reset --hard`。按约定服务器不该改代码,所以默认就是丢弃对齐。
+
+## 训练一启动就 `AttributeError: 'EasyDict' object has no attribute 'debug'`
+
+### Symptom
+
+All ranks die immediately at config load — before the model builds, before any
+data touches a GPU:
+
+```
+File ".../tasks_clip/pretrain.py", line 399, in <module>
+    cfg = setup_main()
+File ".../utils/config_utils.py", line 20, in setup_config
+    if config.debug:
+AttributeError: 'EasyDict' object has no attribute 'debug'
+```
+
+### Cause
+
+**The config file passed to `run_pretrain.sh` does not exist on the server** —
+almost always because a newly added `experiments/configs/*.py` was committed by
+Claude but the server ran the training command **without `git pull origin main`
+first**. (Confirmed 2026-07-28 for the seed-43 A/B twins `nR1_textbank_pilot_s43.py`
+/ `pilot_10k_r1_s43.py`: `from-claude (47)` prefixed the pull, the paste skipped it.)
+
+Why it fails so cryptically instead of "file not found": `Config.get_config()`
+loaded the file only under `if osp.isfile(args.config_file)`. A missing path fell
+through, leaving `cfg` = the empty `BASE_CONFIG` (`{}`). The very first field any
+config code reads is `config.debug` (in `setup_config`), so an **empty** config
+surfaces as a missing-`debug` `AttributeError`. `debug` is a red herring — the
+config is simply empty. The committed config file itself is fine (verified: it
+collects `debug=False` and `seed` correctly once present).
+
+### Fix
+
+**Pull first, then run.** From the repo root:
+
+```bash
+cd ~/mobileclip && git pull origin main
+bash experiments/run_pretrain.sh experiments/configs/<your_config>.py 8
+```
+
+Sanity check the file is actually there before launching:
+
+```bash
+ls -l experiments/configs/<your_config>.py    # must exist, non-empty
+```
+
+As of `utils/config.py` (this fix), a missing config path now raises a clear
+`FileNotFoundError: config file not found: '<path>'. … run 'git pull origin main' …`
+instead of the `config.debug` AttributeError, so the next occurrence names its own
+cause. If you still see the *old* message, the server is on pre-fix code — pull.
