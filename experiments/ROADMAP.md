@@ -55,7 +55,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 1.2 数据审查流水线 | `tools/data_audit/SETUP_V100.md`:§1 冒烟 → §2 S0 → §3 S1(§3.5/3.6 体检)→ §4 S2(4.2 主力 / 4.3 裁判 / 4.5 体检)→ §5 S3 报告;§6.5 一条命令看全状态 |
 | 1.3 10k 试点(✅ 已关闭) | `experiments/README.md` §2b 全套(anno 生成、`export MVC_DATA_DIR`、r0/r1、pytest);结论见 `pilot_10k_results.md`(#199) |
 | 1.4 B0 锁基线 | `experiments/README.md` §3.0 预检 → §3.2 路径对上 → §3.3 跑 B0 + `collect_results.py`;已锁数字在 §3.4 |
-| 1.5 导出冒烟(U1) | 任务与验收:`notes/plan-review-upgrades.md` U1。**具体脚本待写**——落地时命令按约定补进 `COMMANDS.md` |
+| 1.5 导出冒烟(U1) | 任务与验收:`notes/plan-review-upgrades.md` U1;**脚本 `experiments/export_smoke.py`,命令 `COMMANDS.md` §3.6,测试 `tests/test_export_smoke.py`(22 项)**;结果 `experiments/export_smoke_results.md`。TFLite 补测用独立 venv(结果文档 §3) |
 | 1.6 B0 多 T 曲线(U2) | 任务与验收:`notes/plan-review-upgrades.md` U2;2.1 已落地 ⇒ 用既有零样本 eval 脚本对官方权重覆盖 `num_frames_test <T>`(T∈{2,4,8,16})即可,模型侧自动插值 |
 | 2.1 C2 T 无关化(✅ 代码落地) | 单测 `python -m pytest tests/test_t_agnostic.py -v`(README §2);V100 冒烟命令见本文件 2.1;per-T BN 工具 `experiments/per_t_bn.py`;设计准绳 `paper-plan-zh.md` §七.3 |
 | 2.2 R2 教师管线 | 设计决策清单:本文件 2.2 + `paper-plan-zh.md` §六.9 + 评审 U7;**提取脚本待写** |
@@ -102,10 +102,30 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 - [ ] **1.4 B0 锁基线**(1.1 完成后,README §3):官方权重跑已到位的
       基准 → `collect_results.py --out experiments/BASELINE.md`。
       核对 MSR-VTT DSL 口径 t2v R@1 ≈ 42.5;**论文主口径 = raw(`_emb/`)**。
-- [ ] **1.5 导出冒烟(U1,零训练权重,CPU 可做,立即)**:随机权重实例化
-      `MobileViCLIP_Small`(带全部时序算子),分走 ONNX / TFLite / coremltools
-      转换,按 T∈{2,4,8,16} 各出静态图;记录每路 pass/fail + 失败算子。
-      产出决定 P9 是否提前触发(真机延迟档仍在第 8 周)。
+- [~] **1.5 导出冒烟(U1,零训练权重,CPU 可做)—— 脚本已就绪,待在 101vector 上跑全量**:
+      随机权重实例化视觉塔(架构参数与 `build_vision_encoder` 逐项一致 ⇒ 带全部时序
+      算子),分走 ONNX / TFLite / coremltools 转换,按 T∈{2,4,8,16} 各出静态图;
+      记录每路 pass/fail + 失败算子。产出决定 P9 是否提前触发(真机延迟档仍在第 8 周)。
+      **脚本** `experiments/export_smoke.py`,**命令** `COMMANDS.md` §3.6,
+      **测试** `tests/test_export_smoke.py`(22 项)。三条路线互相独立,缺依赖记 skip 不崩。
+      ⚠️ **skip ≠ fail**:脚本把「缺依赖」「缺传递依赖」都归 skip —— 把环境问题记成 fail
+      会产生**假的 P9 触发**(实测踩过:torch≥2.6 的 ONNX 导出器需 `onnxscript`)。
+      **101vector 实测(2026-07-27,全尺寸 `[1,T,3,256,256]`,torch 2.5.1)**:
+      **ONNX 与 Core ML 在 T∈{2,4,8,16} 上全部 pass**(ONNX 走完导出 +
+      `onnx.checker` + onnxruntime 加载推理三步;Core ML 约 4343 个 MIL op 全过)
+      ⇒ **联合注意力不构成导出障碍,P9 暂不触发**,弹性模型可按现形态训练。
+      **TFLite 受 torch 版本阻塞,本机不评估**:两轮报错都是工具链问题而非导不出
+      —— ① `ai-edge-torch` 已改名 `litert-torch`(旧包是空壳);② `litert-torch` 需
+      **torch>=2.6** 的 `torch.int1`,而 101vector 锁 **2.5.1+cu118** 是为了 V100 的
+      **sm_70 内核**(换版本会让 8 卡在第一个 barrier 全崩,见 TROUBLESHOOTING 末节)。
+      ⇒ **别为一格导出结论动训练环境的 torch**;导出是 CPU-only + 随机权重,
+      开独立 venv 补测即可(配方见结果文档 §3)。两轮都已修为 skip 而非 fail。
+      落档 [`export_smoke_results.md`](export_smoke_results.md)。
+      ⚠️ **对 C2 部署叙事的观察**:trace 显示 **T 被烘成常量**(`int(t)`、reshape、
+      以及 `temporal_embedding` 走不走插值那个 `if`)⇒ "帧数即部署旋钮"在**权重层面**
+      成立(单 checkpoint),**产物层面是 1 份权重 → N 张图**。
+      **未验证**:ONNX `dynamic_axes` 能否一张图服务所有 T —— 便宜且直接影响 C4 端侧表,
+      建议在真机延迟档之前搞清楚。
 - [x] **1.6 B0 多 T 退化曲线(U2)** —— ✅ 2026-07-24 V100 实测完成(官方
       `mobileviclip_small.pt`,MSR-VTT 1K,fp32,middle 采样;from-claude (18)):
 
@@ -335,7 +355,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | R2 教师管线 | ⬜ | ← 第二线 2.2(含 U7/U9 设计项) |
 | 全量数据(H100 真 A/B + 终训) | 🟡 | b100 §0–§5 全绿(#225):数据=全量 10.6M 确认、11 片预检 `[OK ]`、权重在位;§6 冒烟→R0 命令已交接,等首光回报 |
 | 计划评审 + 文献网扫(U1–U10) | ✅ | `notes/plan-review-upgrades.md`;C2 按 FluxViT 收窄、导出冒烟=1.5、多 T 曲线=1.6 |
-| 导出冒烟(U1) | ⬜ | ← 第一线 1.5,零权重即可,决定 P9 触发 |
+| 导出冒烟(U1) | 🟡 **两路已结论** | 2026-07-27 于 101vector 实测:**ONNX + Core ML 在 T∈{2,4,8,16} 全 pass** ⇒ **联合注意力不是导出障碍,P9 暂不触发**;TFLite 受 `litert-torch` 需 torch≥2.6 阻塞(本机锁 2.5.1 是为 V100 sm_70),**独立 venv 补测**即闭环。⚠️ trace 显示 **T 被烘成常量** ⇒ 部署是「1 份权重 → N 张图」,`dynamic_axes` 能否一图多 T **未验证**。见 [`export_smoke_results.md`](export_smoke_results.md) |
 | B0 多 T 曲线(U2/1.6) | ✅ | 2026-07-24 实测:emb r_mean 55.4/60.0/61.6/62.3 @ T=2/4/8/16;T8-DSL t2v=42.5 复现 B0 锚点(2.1 零回归);T16 免训练反超;表在 1.6 + from-claude (18) |
 | 顺序敏感基准(RTime/SSv2) | ⏸ **暂缓** | GATE-0 三条证据都说模型没有方向信息 ⇒ **不买**(省掉一整轮视频抓取)。只有要证 R2 的**下游收益**时才回收。见 [`notes/order-sensitive-eval.md`](../notes/order-sensitive-eval.md) |
 | **GATE-0 时间维容量审计** | ✅ | **已结案**:三条独立证据(行为 shuffle≈0 / 核反对称 0.5011=随机 null / 时序闸门仅空间的 6.1% 且同初值)一致 ⇒ 模型不编码时间方向。见 [`experiments/gate0_results.md`](gate0_results.md) §8 |
@@ -351,6 +371,15 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 
 ## 进展日志(实时,倒序;每个会话在此加一行,格式:日期:事件(出处))
 
+- 2026-07-28:**U1 导出冒烟合入主干(此前完工但滞留在 `claude/export-smoke` 未合)+ U1–U10 落地状态复核**
+  (见 [`notes/plan-review-upgrades.md`](../notes/plan-review-upgrades.md) §6 的逐条审计表):
+  **1.5 从「脚本待写」改为「两路已结论」** —— 101vector 2026-07-27 实测 **ONNX + Core ML 在 T∈{2,4,8,16} 全 pass**
+  ⇒ **P9 暂不触发**;TFLite 卡在 `litert-torch` 需 torch≥2.6(本机锁 2.5.1 为 V100 sm_70),**独立 venv** 补测即闭环。
+  ⚠️ **对 C2 部署叙事的限定**:trace 显示 **T 被烘成常量** ⇒「帧数即部署旋钮」在**权重层**成立(单 checkpoint),
+  **产物层是 1 份权重 → N 张图**;`dynamic_axes` 能否一图服务所有 T **未验证**(便宜,且直接影响 C4 端侧表)。
+  复核同时点出两个真缺口:**U8 的 EMA 至今不在 `tasks_clip/pretrain.py`**、**U10-1 的 bootstrap CI 不在 `collect_results.py`**;
+  以及一处**判据冲突**:U10-3 预注册的非劣边际 **δ=0.3 R@1** 落在 README §6.1 实测噪声带(阳性需 |Δ|>2.4)**之下约 8 倍**,
+  R3 头条主张前必须重定。
 - 2026-07-28:**R1 文本负例库 A/B 判 GO —— 两个种子都清过 kill 判据约 20×**(#305 / #315,
   [`r1-implementation-plan.md`](../notes/r1-implementation-plan.md) §9.1/§9.2):seed-42 末轮 R-Sum
   **533.2 vs 522.2 = ΔR-Sum +11.0**;seed-43 **复现且更大,+13.1**(ep9:v2t txt_r1 +3.4、t2v img_r1 +2.9),
