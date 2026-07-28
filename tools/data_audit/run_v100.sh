@@ -820,7 +820,8 @@ PY
   echo ""
   echo "✅ 产物[$RECAP_STYLE]: $BUNDLE/（index.html+videos/） · $TSVF"
   echo "   每片一卡(维护者指令精简): 视频 | en源 | zh旧译(黄) | 重述(⟨SigLIP分⟩,★A−) |"
-  echo "             直融(§5.7 LLM一步融合) | 投票浓缩(§5.5 规则票后打包) + 判读单选, 可导出 TSV"
+  echo "             直融长稿(60-120字参考) | 直融(2-5条训练短句) + 判读单选, 可导出 TSV"
+  echo "             (投票版不再上页面, 数据仍在全景 TSV 作对照诊断)"
   echo "   全景各阶段列(A′/✓·✗视图/投票·淘汰单元)仍在 $TSVF"
   echo "   诊断摘要: ${P}_diag.txt"
   echo "   A/B 双臂对比(方案A稠密 vs 方案B结构化 并排一页): bash $0 pipeline-compare"
@@ -857,7 +858,7 @@ pipeline-compare)
       END{printf "   %-34s %6ds (%.2f s/片)\n","合计",tot,tot/n}' "$tf"
   done
   echo ""
-  echo "✅ A/B 对比包: $OUT/bundle_compare/（每片: en源|原zh|A重述|A直融|A投票|B重述|B直融|B投票 + 四选一单选）"
+  echo "✅ A/B 对比包: $OUT/bundle_compare/（每片: en源|原zh|A重述|A长稿|A直融|B重述|B长稿|B直融 + 单选; 投票版不上页面）"
   echo "   打包: tar czf $OUT/compare.tgz -C $OUT bundle_compare"
   echo "   本地: scp rby@101vector:~/mobileclip/$OUT/compare.tgz . && tar xzf compare.tgz"
   ;;

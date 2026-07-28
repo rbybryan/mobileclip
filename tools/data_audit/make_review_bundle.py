@@ -77,7 +77,7 @@ PAGE = """<!doctype html>
        border-radius:6px;padding:10px 14px}
 </style>
 <header>
-  <b>抽检 · __TITLE__</b>
+  <b>抽检 · __TITLE__</b> <span style="color:#999;font-size:12px">v__BTAG__</span>
   <span id="prog"></span><span id="vstat"></span><span class="sp"></span>
   <button onclick="jumpNext()">跳到下一条未填 (n)</button>
   <button class="p" onclick="dump()">导出 TSV</button>
@@ -156,13 +156,12 @@ HINTS = {
     "merge": "对着画面看 <b>3 条候选</b> 和绿色的 <b>融合稿</b>："
              "<b>幻觉</b>=融合稿说了任何一条候选都没提、且画面里也没有的东西（y=有，最要紧）；"
              "<b>更全</b>=融合稿比其中写得最好的那一条候选含更多<b>真实</b>细节（y=更全）。",
-    "compare": "A/B×两种融合的四版对比（同一批片、同一 prompt/门槛）：<b>A</b>=稠密重述×5，"
-               "<b>B</b>=固定槽位×3（§5.6b：主体/动作/场景/文字 四栏、空栏写「无」）；"
-               "<b>直融</b>=LLM 直接读 N 遍重述、语义数票+压缩一步"
-               "（ASID 式，自报淘汰）；<b>投票</b>=规则跨遍计票后 LLM 只打包过票单元。"
-               "对着画面做一道单选：<b>A直融/A投票/B直融/B投票</b> 哪版最适合当这段视频的"
-               "训练字幕（信息覆盖、真实性、句子质量一起权衡）；全都差选「都不行」并在 "
-               "note 写差在哪。",
+    "compare": "A/B 两方案对比（同一批片、同一融合 prompt）：<b>A</b>=稠密重述×5，"
+               "<b>B</b>=固定槽位×3（主体/动作/场景/文字四栏、空栏写「无」）。每方案两稿："
+               "<b>长稿</b>=判断式融合先写的 60-120 字完整段落（目检参考）；<b>直融</b>="
+               "压缩出的 2-5 条训练短句。对着画面做一道单选：<b>A直融/B直融</b> 哪版更适合"
+               "当训练字幕（信息覆盖、真实性、句子质量一起权衡）；顺带看长稿有无编造。"
+               "全都差选「都不行」并在 note 写差在哪。",
     "pipeline_st": "（方案B 结构化臂）对着画面依次读：英文en → 黄色原zh（旧译）→ 重述"
                    "（每遍 5-8 条带属性短句，⟨⟩为 SigLIP 分）→ <b>直融</b>（LLM 一步语义"
                    "投票+压缩）与<b>投票浓缩</b>（规则计票后打包）。两道单选：重述质量、"
@@ -216,13 +215,18 @@ def main():
             r["__has"] = False; miss.append(r.get("video"))
 
     base = os.path.basename(args.sheet).replace("review_", "").replace(".tsv", "")
+    # bump when the template changes: the header badge lets the reviewer
+    # instantly tell a stale index.html (server not updated / old tgz / browser
+    # cache) from the current one
+    BUILD_TAG = "20260728c"
     page = (PAGE.replace("__ROWS__", json.dumps(rows, ensure_ascii=False))
                 .replace("__COLS__", json.dumps(cols, ensure_ascii=False))
                 .replace("__QS__", json.dumps(qs, ensure_ascii=False))
                 .replace("__KEY__", json.dumps(base))
                 .replace("__FNAME__", json.dumps(os.path.basename(args.sheet)))
                 .replace("__TITLE__", html.escape(base))
-                .replace("__HINT__", HINTS.get(base, "按表头提示填写。")))
+                .replace("__HINT__", HINTS.get(base, "按表头提示填写。"))
+                .replace("__BTAG__", BUILD_TAG))
     idx = os.path.join(args.out_dir, "index.html")
     with open(idx, "w", encoding="utf-8") as f:
         f.write(page)
