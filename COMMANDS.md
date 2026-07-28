@@ -573,10 +573,49 @@ CUDA_VISIBLE_DEVICES=<挑出来的空卡,如 4,5,6,7>   # 传给下面的启动�
 
 **共用/争抢的判据(很重要):** 训练日志里的 `time:` 每步耗时,若对 4×H100 明显
 偏慢(这个小模型正常应 ~1–3 s/step,出现 ~10 s/step 就是异常),同时 `data:` 接近 0
-(排除数据瓶颈),多半是**你和别的租户共用了同几张卡**。对照证据:日志 `max mem`
-是你单卡的占用,若远小于 `nvidia-smi` 在那几张卡上显示的总显存,差额就是别人的。
-→ 停掉,挪到确认 `0 MiB` 的卡重跑,`time:` 通常大幅下降(实测 ~10 s → 目标 1–3 s,
-总时长从 ~15 天降到 ~1.5–4.5 天)。
+(排除数据瓶颈),就是那几张卡被**超额占用**了。两种来源,同一个「慢 + 显存对不上」
+的征兆:
+
+- **别的租户共用了同几张卡**,或
+- **你自己把同一个 R0 启动了两遍**(最常见!),或上一次崩溃残留的 dataloader 孤儿进程。
+
+对照证据:日志 `max mem` 是你**单个 job 单卡**的占用(如 ~22 GiB),若远小于
+`nvidia-smi` 在那几张卡上显示的总显存(如 ~56 GiB ≈ 2×),差额就是「多出来的那份」。
+日志里若同一 step 号出现**两行、eta/时间不同**,几乎坐实是两个 job 在写同一个日志。
+
+**先数一下到底有几个 job 在跑**,按进程组 PGID 归并。注意 `torch.distributed.run`
+把**每个 rank 放进各自的进程组**,每个 rank 带 6 个 dataloader worker = 一组 **7 个**;
+所以一个 4 卡 job = **4 个「7」的 rank 组 + 1 个「1」的 launcher 组**:
+
+```bash
+ps -eo pgid,etime,cmd | grep '[t]asks_clip/pretrain.py' | grep -v grep \
+  | awk '{print $1}' | sort | uniq -c | sort -rn
+# 典型输出:8 个「7」+ 2 个「1」= 两个 4 卡 job(按 PID 段分两簇,如 21189xx / 21194xx)
+```
+
+**⚠️ 共用 root 账号 → `ps`/user 分不出「谁的」(全是 root)。** 动手前必须按「在干什么」
+正面确认每一簇是你的 R0,而不是别人的进程:
+
+```bash
+ps -eo pgid,pid,lstart,cmd | grep '[t]asks_clip/pretrain.py' | grep -v grep | sort -k1
+ls -l /proc/<某簇一个PID>/cwd                 # 应是 .../rby/mobileclip
+ls -l /proc/<该PID>/fd | grep -E 'runs/|\.log' # 看它写的是不是你的 output_dir/日志
+```
+最硬的证据:两簇是否都在写**同一个你的** `r0_baseline.log`(日志里同一 step 出现两行、
+eta 不同即是)——别人的 job 不会往你的 output 里写。**任一簇的 cwd/config 不是你的就别碰。**
+
+**确认是你的之后,只停其中一个 job**(该 job 的全部 PGID 一起停;负号 = 整个进程组;
+不用 `pkill`,也别碰没确认的簇):
+
+```bash
+for g in <launcherPGID> <rank1PGID> <rank2PGID> <rank3PGID> <rank4PGID>; do
+    kill -TERM -$g            # 注意每个 PGID 前的负号
+done
+```
+
+→ 停掉多余的一个后,存活 job 不再分卡,`time:` 通常大幅下降(实测两 job 挤 4 卡
+~10 s/step;砍到一个约 ~5 s;换到确认 `0 MiB` 的空卡跑单个 job 更快)。总时长从
+~15 天降到个位数天。**教训:R0 只需一个 job,启动后务必记下唯一 PID,别重复启动。**
 
 **② 后台挂 + 记 PID(共用 root 账号,停止只能按 PID,严禁 `pkill`/`killall`):**
 
