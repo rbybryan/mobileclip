@@ -39,9 +39,10 @@ from vlm_audit import (CONDENSE_KEYS, CONDENSE_PROMPT, DERIVE_KEYS,  # noqa: E40
                        DERIVE_PROMPT, FUSE_DIRECT_KEYS, FUSE_DIRECT_PROMPT,
                        GRAN_KEYS, GRAN_PROMPT, MERGE_KEYS, MERGE_PROMPT,
                        PROMPT, RECAP_PROMPT, REFINE_KEYS, REFINE_PROMPT,
-                       STRUCT_KEYS, STRUCT_RECAP_PROMPT, TRANS_KEYS,
-                       TRANS_PROMPT, VERDICT_KEYS, extract_json,
-                       resolve_video_path, salvage_struct_items)
+                       SLOT_RECAP_PROMPT, STRUCT_KEYS, STRUCT_RECAP_PROMPT,
+                       TRANS_KEYS, TRANS_PROMPT, VERDICT_KEYS, extract_json,
+                       parse_slot_lines, resolve_video_path,
+                       salvage_struct_items)
 
 
 def sample_frames_pil(path, num_frames, max_side, phase=0.5):
@@ -142,8 +143,8 @@ def main():
                          "variance for the temperature ablation (§6.4).")
     ap.add_argument("--mode", default="full",
                     choices=["full", "trans", "gran", "merge", "recap",
-                             "recap-struct", "derive", "condense",
-                             "fuse-direct", "refine"],
+                             "recap-struct", "recap-slot", "derive",
+                             "condense", "fuse-direct", "refine"],
                     help="'full' = combined video rubric (default). 'recap' = write "
                          "N independent Chinese captions FROM the frames (RECAPTION "
                          "bucket front-end for the fusion scheme; RECAP_PROMPT, "
@@ -328,6 +329,62 @@ def main():
                         # joined per-pass strings keep every dense-mode consumer
                         # working (SigLIP per-pass scoring, diversity diag, TSV
                         # recap columns, A' split)
+                        "recaps": [st_["text"] for st_ in sets_],
+                        "views": views, "n_samples": len(sets_),
+                        "n_views": len(views),
+                        "n_dense_fallback": sum(1 for st_ in sets_
+                                                if not st_["caps"])}
+                elif args.mode == "recap-slot":
+                    # §5.6b fixed-slot passes (ASID-style): line format, regex
+                    # parse -- no JSON, near-zero parse failure, shorter decode.
+                    # Passes stay independent (temp + jitter) for the vote.
+                    path = resolve_video_path(args.video_root, rec, rec["video"])
+                    sets_ = []
+                    for s in range(args.n_captions):
+                        phase = (0.5 if args.no_frame_jitter
+                                 else (s + 0.5) / args.n_captions)
+                        frames = sample_frames_pil(path, args.frames,
+                                                   args.max_side, phase=phase)
+                        caps = []
+                        try:
+                            text = generate(model, processor, frames,
+                                            SLOT_RECAP_PROMPT,
+                                            args.max_new_tokens,
+                                            temperature=args.temperature,
+                                            top_p=args.top_p)
+                            caps = parse_slot_lines(text)
+                        except torch.cuda.OutOfMemoryError:
+                            torch.cuda.empty_cache()
+                        if not caps:
+                            try:  # one mild-sampling retry, then dense fallback
+                                text = generate(model, processor, frames,
+                                                SLOT_RECAP_PROMPT,
+                                                args.max_new_tokens,
+                                                temperature=0.3,
+                                                top_p=args.top_p)
+                                caps = parse_slot_lines(text)
+                            except Exception:  # noqa: BLE001
+                                caps = []
+                        pass_text = "；".join(v["text"] for v in caps)
+                        if not caps:
+                            # §5.8-2b discipline: a pass must never end empty
+                            try:
+                                pass_text = clean_caption(generate(
+                                    model, processor, frames, RECAP_PROMPT,
+                                    args.max_new_tokens,
+                                    temperature=args.temperature,
+                                    top_p=args.top_p))
+                            except Exception:  # noqa: BLE001
+                                pass_text = ""
+                        if pass_text:
+                            sets_.append({"text": pass_text, "caps": caps})
+                    views, seen = [], set()
+                    for i, st_ in enumerate(sets_):
+                        for v in st_["caps"]:
+                            if v["text"] not in seen:
+                                seen.add(v["text"])
+                                views.append({**v, "src_recap": i})
+                    out["verdict"] = {
                         "recaps": [st_["text"] for st_ in sets_],
                         "views": views, "n_samples": len(sets_),
                         "n_views": len(views),
@@ -577,8 +634,8 @@ def main():
                     prompt = PROMPT.format(n_frames=args.frames,
                                            en=(rec.get("en") or "(无)"),
                                            zh=(rec.get("zh") or "(空)"))
-                if args.mode not in ("recap", "recap-struct", "derive",
-                                     "condense", "fuse-direct",
+                if args.mode not in ("recap", "recap-struct", "recap-slot",
+                                     "derive", "condense", "fuse-direct",
                                      "refine"):  # these built their verdict above
                     try:
                         text = generate(model, processor, frames, prompt,

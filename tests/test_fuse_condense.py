@@ -67,6 +67,18 @@ def test_empty_and_blank_views():
     assert cluster_views([V("", 0), V("  ", 1)]) == []
 
 
+def test_slot_attr_constraint_blocks_cross_slot_merge():
+    # §5.6b: identical wording in different slots must NOT merge; same slot
+    # across passes still merges normally
+    a = {"text": "男子在厨房切菜", "src_recap": 0, "gloss": ["man", "kitchen"],
+         "attr": "subject"}
+    b = {**a, "src_recap": 1, "attr": "action"}
+    assert len(cluster_views([a, b])) == 2
+    c = {**a, "src_recap": 1}          # same slot -> merges, support 2
+    units = cluster_views([a, c])
+    assert len(units) == 1 and units[0]["support"] == 2
+
+
 def test_tiebreak_prefers_more_detectable_nouns():
     # all-tied support: the unit with more gloss nouns (more verifiable, likely
     # the subject fact) must sort first -- it becomes the fallback keeper

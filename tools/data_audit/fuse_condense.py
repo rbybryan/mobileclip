@@ -56,7 +56,11 @@ def same_fact(v1, v2, jac_th, gloss_th, jac_lo):
     or their detected-object glosses agree (>=2 shared nouns -- one shared noun
     must not merge two different facts about the same object) while the softer
     2-gram overlap clears a low floor (zh paraphrases often share almost no
-    3-gram but plenty of 2-grams)."""
+    3-gram but plenty of 2-grams). §5.6b: when both views carry a slot attr,
+    the vote aligns within the same slot only (主体 never merges with 场景)."""
+    a1, a2 = v1.get("attr"), v2.get("attr")
+    if a1 and a2 and a1 != a2:
+        return False
     if jaccard(v1["_ng"], v2["_ng"]) >= jac_th:
         return True
     g1 = {g for g in (v1.get("gloss") or [])}

@@ -244,6 +244,67 @@ FUSE_DIRECT_PROMPT = """下面是同一段视频的 {n} 段互相独立的中文
 
 {recaps}"""
 
+# --mode recap-slot (§5.6b, maintainer 2026-07-28): ASID-style FIXED-SLOT
+# output — line format instead of JSON. Slots: 主体(<=2)/动作(<=2)/场景(1)/
+# 文字(1); empty slot MUST be 「无」 (fixed slots invite fill-in hallucination
+# -- the 无-discipline is the guardrail ASID leaves implicit). Line grammar is
+# regex-parseable, so no extract_json, near-zero parse failure, and ~40-50%
+# fewer decode tokens than the JSON caption-set. Prompt used RAW (no .format).
+SLOT_RECAP_PROMPT = """你是一个严谨的视频画面描述助手。下面是从同一段视频中按时间先后均匀抽取的若干帧画面。
+请按下面四个固定栏目描述画面，每行一条，格式为「栏目名：描述 [gloss]」。
+
+栏目与行数：
+主体：视频里的人/物及其外观特征（最多 2 行；有几个主要主体写几个）
+动作：主体的动作及其先后（最多 2 行；先后用"先""随后""最后"表达）
+场景：场景与背景环境（1 行）
+文字：画面上清晰可辨的文字，用中文引号“”原样照抄（1 行）
+
+严格遵守：
+1. 每行描述不超过 28 个字，语法完整、可独立成句，不用"他/她/它/这"开头。
+2. 只写画面中清晰可见的内容；看不清、被遮挡、需要推测的一律省略。某栏目在画面中不存在时，该行写「无」——绝不为了填满栏目而编造。
+3. 不写画面之外的信息：不推断地点名称、人物身份、情绪动机、前因后果；禁止出现帧号、秒数、时间戳或"第几张图/第几帧/视频/画面"这类词。
+4. 文字栏只在清晰可辨时原样照抄，不翻译、不补全、不猜测残缺文字；辨认不出就写「无」。
+5. 数量只有很少且能数清时才给具体数字，否则用"几""一些""一群"等模糊量词。
+6. 行尾方括号内给该行能在画面中被检测到的具体名词的英文（小写，逗号分隔，0-4 个）；没有可检测名词写 []；「无」行不加方括号。
+7. 只输出这些行，不要任何解释、编号、标题或空行。
+
+输出示例：
+主体：一名穿红色围裙的中年男子 [man,apron]
+主体：案板上放着一把菜刀 [knife]
+动作：先把黄瓜切成薄片，随后装进盘中 []
+场景：明亮的家用厨房操作台 [kitchen]
+文字：无"""
+
+SLOT_ATTRS = {"主体": "subject", "动作": "action", "场景": "scene",
+              "文字": "text"}
+SLOT_CAPS = {"subject": 2, "action": 2, "scene": 1, "text": 1}
+SLOT_LINE = re.compile(
+    r"^\s*(主体|动作|场景|文字)\s*[:：]\s*(.+?)\s*(?:\[([^\[\]]*)\])?\s*$")
+
+
+def parse_slot_lines(text):
+    """(§5.6b) Parse fixed-slot line output -> [{text, gloss, attr}].
+    「无」 slots are skipped, per-slot caps enforced, non-matching lines
+    ignored (the model sometimes prefixes chatter -- lines without a slot
+    name simply don't parse)."""
+    out, counts = [], {}
+    for line in (text or "").splitlines():
+        m = SLOT_LINE.match(line)
+        if not m:
+            continue
+        attr = SLOT_ATTRS[m.group(1)]
+        body = m.group(2).strip()
+        if not body or body.strip("。 ") == "无":
+            continue
+        if counts.get(attr, 0) >= SLOT_CAPS[attr]:
+            continue
+        gloss = [g.strip().lower() for g in (m.group(3) or "").split(",")
+                 if g.strip()]
+        out.append({"text": body, "gloss": gloss, "attr": attr})
+        counts[attr] = counts.get(attr, 0) + 1
+    return out
+
+
 # --mode refine (§5.8-1, ASID-style selective refinement, arXiv 2602.13013):
 # ONE minimal-edit repair call for views that FAILED Panel-V. Repair-then-
 # reverify replaces delete-on-fail -- a failed check loses one phrase, not the
