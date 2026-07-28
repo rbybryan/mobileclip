@@ -23,6 +23,17 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-28 (55) — 数据分工已明确:V100 只有 10k,全量 InternVid 在 H100 → 大数据 A/B 是 H100 的活
+
+维护者答复:**V100(101vector)只有 10k 子样本;全量 InternVid 只在 H100 上。** 所以:
+- **现在在 V100 上跑的**:仍是 (54) 的 40-epoch 长档两臂(同一 10k 试点,复用 bank 缓存)。这是 V100 能做的
+  下一个、也是最后一个纯试点级实验(回答"对照多跑步能否追上")。
+- **大数据 A/B(R1 真正发威的档)= H100 实验**,不是 V100。把 `train_corpus="internvid_all"` 指到 V100 会因
+  数据缺失而失败。等挪到 H100 时,要在 H100 上**重建更大的 text-bank 缓存**(现有 `textbank_pilot_*` 只覆盖 10k)。
+
+已把这条服务器数据分工写进 `notes/r1-implementation-plan.md §9.3` 和记忆(`server-data-split`)。V100 这边就按
+(54) 的命令跑长档、报逐 epoch `r_mean` 即可;H100 的大数据 A/B 等你说何时上、用哪几个分片再单独设计配置。
+
 ## 2026-07-28 (54) — seed-43 **复现了**:ΔR-Sum=+13.1(seed42 是 +11.0)→ GO,下一步跑长档
 
 reset 后两臂都跑通了。**seed-43 把差复现了,还更大**:末轮 R-Sum 处理臂 533.8 vs 对照 520.7 =
