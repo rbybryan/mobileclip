@@ -20,6 +20,13 @@ GO means "premise holds, build the arm + run the A/B", not "R1 works" — kill c
 (512→65k < 0.5 R-Sum ⇒ stop) still governs. Trail: §7.1 (probe mis-spec, fixed) → §7.5
 (corrected metrics) → §7.6 (Part B → GO).
 
+**A/B RUN + VERDICT (2026-07-28): the pool WINS its kill criterion — ΔR-Sum = +11.0** (treatment
+533.2 vs control 522.2; bank ahead at all 10 epochs, both directions; scale-invariant metric).
+R1 is validated **at pilot scale**. Caveat: both arms sit below the frozen-init epoch-0 peak, so at
+9000 clips the bank acts as *reduced-degradation / higher-plateau* rather than absolute gain over
+init — see §9/§9.1 for the full table, why it's trustworthy, and the seed-43 confirmation before
+scaling.
+
 ---
 
 ## 0. The one arm, in order of what actually matters
@@ -407,3 +414,51 @@ quirk, see TROUBLESHOOTING; it did not crash and the epoch produced numbers).
 (`pilot_10k_r1`, identical setup minus `criterion.text_bank`) has not run. Next: run the control (matched
 10 epochs, ~38 min), then compare per-epoch `txt_r1`/`img_r1` and best-epoch R-Sum. Kill if
 pool − no-pool < 0.5 R-Sum.
+
+### 9.1 Control measured (2026-07-28) → **A/B verdict: GO, kill criterion cleared**
+
+`pilot_10k_r1` (no bank, seed 42, same 10 epochs) ran clean. Side-by-side `ret_test/`:
+
+| ep | txt_r1 T | txt_r1 C | img_r1 T | img_r1 C | r_mean T | r_mean C | Δr_mean |
+|----|---------|---------|---------|---------|---------|---------|--------|
+| 0  | 79.1 | 77.7 | 80.7 | 79.6 | 90.97 | 89.83 | +1.14 |
+| 1  | 75.9 | 70.2 | 78.5 | 75.4 | 89.00 | 85.35 | +3.65 |
+| 2  | 75.3 | 69.7 | 77.7 | 74.8 | 88.40 | 85.08 | +3.32 |
+| 3  | 75.4 | 69.7 | 79.1 | 75.3 | 88.62 | 85.52 | +3.10 |
+| 4  | 74.9 | 70.7 | 78.6 | 75.3 | 88.58 | 86.12 | +2.46 |
+| 5  | 74.8 | 71.6 | 79.3 | 75.5 | 88.65 | 86.57 | +2.08 |
+| 6  | 75.0 | 71.8 | 79.4 | 76.4 | 88.67 | 86.70 | +1.97 |
+| 7  | 75.4 | 72.9 | 79.1 | 77.3 | 88.88 | 87.12 | +1.76 |
+| 8  | 75.1 | 72.3 | 79.5 | 77.1 | 88.80 | 86.98 | +1.82 |
+| 9  | 75.4 | 72.6 | 79.5 | 77.1 | 88.87 | 87.03 | +1.84 |
+
+**Final-epoch R-Sum** (txt r1/5/10 + img r1/5/10): T = 75.4+91.8+95.4+79.5+93.9+97.2 = **533.2**;
+C = 72.6+90.3+93.6+77.1+92.6+96.0 = **522.2** → **ΔR-Sum = +11.0**. Kill criterion (§5) was
+*pool − no-pool < 0.5 R-Sum ⇒ stop*. We are at **+11.0 (~22×)**, and the bank leads at **every
+epoch in both directions** (v2t +2.8, t2v +2.4 at ep9). **Verdict: GO — R1 clears its kill
+criterion decisively.**
+
+**Why this is trustworthy (not a temperature/noise artifact):**
+- Retrieval R@k ranks by **cosine on L2-normalized features** → **invariant to logit_scale /
+  logit_bias**. The bank's extra gradient on the SigLIP temperature therefore *cannot* manufacture
+  the gap; it reflects genuinely better-separated embeddings.
+- The gap is **systematic** (bank ahead all 10 epochs, both directions) — noise fluctuates sign.
+- The bank marks each query's own caption (present in the pool) as a **positive** and drops near-dups
+  (cos ≥ 0.90), so the model is not being pushed away from its own/paraphrase captions.
+
+**Honest caveats (carry into any writeup):**
+- **Both arms sit below their epoch-0 (frozen-init) peak** on this easy in-domain 1k val. At pilot
+  scale the bank's effect manifests as *reduced fine-tuning degradation / a higher, faster plateau*,
+  **not** an absolute gain over the zero-shot init. The regime where R1 is designed to pay off
+  (large data, many steps, in-batch negatives genuinely information-limiting) is **not** what a
+  9000-clip / 17-batch pilot tests.
+- **Env line to confirm:** the control log printed `torch 2.5.1+cu118` (deepspeed "Skipping import
+  of cpp extensions"); confirm the treatment ran the **same** torch (`python -c "import torch;
+  print(torch.__version__)"`) so the A/B isn't confounded by an env change between the two runs.
+- **Convergence-vs-plateau open question:** control is still climbing at ep9 (85.08→87.03) while the
+  bank plateaus flatter/higher (88.87); the LR schedule has decayed to ~0, so neither gains much
+  more, but "does no-pool catch up with more steps" is untested.
+
+**Next (recommended before any scale-up):** one **seed-43 confirmation** of both arms
+(`nR1_textbank_pilot_s43.py` vs `pilot_10k_r1_s43.py`, committed) to rule out nondeterminism; if the
+gap reproduces, scale the A/B to more InternVid data / more steps — the setting R1 actually targets.

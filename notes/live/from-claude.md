@@ -23,6 +23,28 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-28 (47) — R1 A/B 判完:**池赢了 kill 判据,ΔR-Sum=+11.0** → GO(试点级)
+
+对照臂 `pilot_10k_r1`(无池、seed42、同 10 epoch)跑通。两臂并排见
+`notes/r1-implementation-plan.md §9.1`。要点:**池在全部 10 个 epoch、两个方向都领先**
+(ep9:v2t txt_r1 +2.8、t2v img_r1 +2.4;末轮 R-Sum 533.2 vs 522.2 = **+11.0**,判据是 <0.5 就停,
+现在是 22 倍)。**为何可信**:检索 R@k 按归一化余弦排序,**与 logit_scale/bias 无关**——池对温度的
+额外梯度造不出这个差,差来自更分得开的嵌入;而且差是**系统性**的(每 epoch 都领先,不是噪声抖动)。
+
+**诚实的保留**:两臂都**低于 epoch0(冻结初始)峰值**——在这条 9000 片的易域内 val 上,池的作用是
+**减小微调退化 / 更高更快的平台**,不是相对初始的绝对增益。R1 真正该发威的大数据/多步/批内负例真受限
+的场景,这个试点测不到。
+
+**建议先做一个 seed-43 复现(两臂),排除随机性**(配置已入库,paste-proof):
+```bash
+git pull origin main
+bash experiments/run_pretrain.sh experiments/configs/nR1_textbank_pilot_s43.py 8
+bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1_s43.py 8
+```
+顺手 10 秒确认两臂同一 torch(对照日志打了 `torch 2.5.1+cu118`):`python -c "import torch;print(torch.__version__)"`。
+**报告回来**:两臂逐 epoch 的 `txt_r1 / img_r1`。若 seed43 也复现出 +8~+11 的 R-Sum 差,就把 A/B 放大到更多
+InternVid 数据 / 更多步(R1 真正针对的设置)。若 seed43 差塌到 <2,那说明 seed42 是走运,得回头审。
+
 ## 2026-07-28 (46) — B 臂已切换为固定槽位(§5.6b 落地):行式免 JSON、空槽写「无」、同槽投票
 
 **维护者批「做」,已实施合并**:compare 的 **B 臂 = slot 固定槽位×3 遍**(旧 struct 臂
