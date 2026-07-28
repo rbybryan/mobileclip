@@ -746,7 +746,7 @@ PY
   # 版本一「直融」(§5.7, ASID-Verify 式): LLM 直接读 N 遍重述, 语义数票+压缩一步, 自报 dropped
   CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
     --input "${P}_recaps.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
-    --mode fuse-direct --max-new-tokens 512 --num-shards 1 --shard-id 0 \
+    --mode fuse-direct --max-new-tokens 640 --num-shards 1 --shard-id 0 \
     --output "${P}_fused_d.{shard}.jsonl" \
     || echo "[warn] 直融段失败（常见: 卡被占 OOM）——重跑本命令会按 video 续跑补齐"
   # 版本二「投票浓缩」(§5.5): 规则跨遍计票 -> LLM 只打包过票单元
