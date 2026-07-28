@@ -380,6 +380,41 @@ CKA(Qwen,字幕文本)≥CKA(IV2,字幕文本) → 建行;层扫 {18,24,30,36}+�
 待服务器/后续会话:U1 导出冒烟执行、U2 依赖 2.1 代码、U3 诊断脚本、
 U7 随 2.2 落地、U8/U9/U10 随对应配置与评测器改动落地。
 
+### 6.1 逐条落地复核(2026-07-28;**本节为准**,上面那份是 07-23 提案当天的状态)
+
+复核方法:每条按**代码/文档实际存在性**核,不按"计划里写了"算。
+
+| # | 落地状态 | 证据 / 缺口 |
+|---|---|---|
+| **U1** 导出冒烟 | 🟡 **两路已结论,一路待补** | `experiments/export_smoke.py` + `tests/test_export_smoke.py`(22 项)+ `COMMANDS.md` §3.6 + `export_smoke_results.md`。101vector 2026-07-27 实测:**ONNX / Core ML 在 T∈{2,4,8,16} 全 pass ⇒ P9 暂不触发**;TFLite 卡 `litert-torch` 需 torch≥2.6(本机 2.5.1 锁给 V100 sm_70)⇒ **独立 venv 补测**。⚠️ 该工作 07-27 就完工,却**滞留 `claude/export-smoke` 未合入 main 至 07-28**,期间 ROADMAP 一直写着"脚本待写" |
+| **U2** 多 T 退化曲线 | ✅ **闭环** | ROADMAP 1.6:emb r_mean 55.4/60.0/61.6/62.3 @ T=2/4/8/16;T=8 DSL t2v=42.5 复现 B0 锚点 |
+| **U3** per-T BN | 🟡 **工具齐,真 ckpt 未诊断** | `experiments/per_t_bn.py`(snapshot / recalibrate / drift report / per-T bank)+ 单测 + `README.md` §2b 矩阵行。**缺**:对真 ckpt 跑一次漂移诊断(判据联动"校准后口径"还没有数据支撑) |
+| **U4** T 采样课程 fallback | ⬜ **计划级(按设计如此)** | 只在 `paper-plan-zh.md` §七.4;`utils/elastic_t.py` 无 sandwich / 分层采样。**这是触发型 fallback,R3 未跑就不该落代码** —— 不算缺口 |
+| **U5** 全局 batch 512 | 🟡 **文档已改,未验** | `SETUP_B100.md` §6 建议 `batch_size 128`(4×128=512);**首光显存验证要等 R0 起跑** |
+| **U6** 预算阶梯 | ✅ **规则已写死** | `SETUP_B100.md` §6 指针 + 本文 §U6 表;按首日单 epoch 墙钟触发,R0 未跑 |
+| **U7** C1 三则 | ⬜ **随 2.2 未动** | ROADMAP 2.2 仍未勾;教师提取脚本未写。**已补**:U7-4 教师身份定案(IV2-stage2;Qwen 搭车否决,`caption-kd-review-2026-07.md`) |
+| **U8** 便宜标准项 | 🟡 **三分之二** | ✅ `CHECKPOINTS.md` 已补 `apple/MobileCLIP2-S2`;✅ 训练内 held-out 评测可用(R1 A/B 逐 epoch `ret_test/` 出数即证);❌ **EMA 至今不在 `tasks_clip/pretrain.py`**(全仓 grep 无 `model_ema`/`ExponentialMovingAverage`)—— **U8 里唯一真缺口,R1 起本应默认开** |
+| **U9** 相对 KD 单一所有权 | ⬜ **设计级** | `kd_geo` 仅存在于 `neural-inspired-implementation.md`,`vtc_kd` 仅存在于 `data-quality-caprl-scheme.md`,**两边都无代码、也没互加交叉引用行**。R2 未开工,按序不算迟到,但那行交叉引用**是零成本的,应当补** |
+| **U10** 统计口径三件套 | 🟡 **一实践、一缺、一冲突** | ❌ (1) **bootstrap CI 不在 `collect_results.py`**(grep 无);🟡 (2) 双种子**已实践**(R1 A/B 跑了 seed 42/43),但未写成"胜者必须双种子"的硬规则;⚠️ (3) **δ=0.3 与实测噪声带冲突** —— 见下 |
+
+**⚠️ 必须重定的一条:U10-3 的 δ=0.3 R@1 非劣边际已被后来的实测推翻。**
+本文 07-23 提议 R3 头条「每 T 点非劣」预注册 **δ=0.3 R@1**。但 2026-07-27 的 1.8 选帧基线
+测出:MSR-VTT 1K 上两条**采样时刻只差 3.1%** 的臂能拉开 **raw 2.40 R@1**,据此
+`experiments/README.md` §6.1 把仓库级规则定为「±1.6 是**下界**;阳性主张要求 |Δ| 明显
+大于 **2.4**」。**δ=0.3 比该噪声地板低约 8 倍 ⇒ 按它预注册的"非劣"在 1K 测试集上根本
+不可测**。三条出路(R3 头条主张成形前必须选一条并写死):
+① 把非劣边际抬到噪声带以上(≥2.4 量级,但那样"非劣"就很宽松);
+② 改用**多基准聚合 R-Sum + 两口径同向**(README §6 既有纪律)而不是单点 R@1;
+③ 换更大的评测集把 SE 压下去(成本最高)。
+**在选定之前,`paper-plan-zh.md` §七.249 里的 δ=0.3 应视为待重定,不得直接引用。**
+
+**本次(2026-07-28)据此复核所做的修改**:
+- [x] 合入滞留的 `claude/export-smoke`(U1 完工件),ROADMAP 1.5 由「脚本待写」改为
+      「两路已结论 / P9 暂不触发 / TFLite 独立 venv 补」,状态表与命令索引同步
+- [x] 本节 §6.1 逐条审计表 + U10-3 冲突登记
+- [ ] **待办**:U8 的 EMA 接线(R1 起默认开)、U10-1 的 bootstrap CI 进 `collect_results.py`、
+      U9 的两文档交叉引用行、U3 真 ckpt 漂移诊断、U1 的 TFLite 补测 + `dynamic_axes` 一图多 T 验证
+
 ---
 
 *代码行号与配置以 2026-07-23 仓库状态为准;文献结论以 §3 的网扫日期为准,
