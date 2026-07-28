@@ -28,18 +28,37 @@ A code review resolved an ambiguity that changes the framing:
   returns `None`, loads `mobileclip_s0.pt` for both towers). Its blocks are
   **purely spatial + mean-pool** — no 1D temporal conv, no `temporal_embedding`.
   It is wired into no config and no `__init__`.
-- **⇒ There is no working on-device export of the temporal model.** The only
+- ~~**⇒ There is no working on-device export of the temporal model.** The only
   export script sidesteps every temporal op — which plausibly means those ops
   (hard-coded 8-frame reshapes, depthwise `Conv1d`, joint T·H·W attention) are
-  **hard to lower to Core ML / TFLite**. Producing that export is therefore
-  **Step 0 for any on-device plan**, and it is non-trivial. A model-level
-  `reparameterize_model` util exists (`tasks_clip/shared_utils.py`, off by
-  default) and helps on the GPU side, but does not solve mobile op-coverage.
+  **hard to lower to Core ML / TFLite**.~~ **⚠️ REFUTED 2026-07-28 — see §0-bis.**
+  A model-level `reparameterize_model` util exists (`tasks_clip/shared_utils.py`,
+  off by default) and helps on the GPU side.
 
-**Consequence:** any direction whose payoff is *on-device* (quantization,
-streaming) inherits Step 0 as a prerequisite and risk. Directions that pay off on
-the **server/training** side (data, temporal negatives) do not — which is part of
-why they now rank higher.
+### §0-bis — the "hard to lower" inference was wrong (measured 2026-07-27)
+
+The struck-through claim above was an **inference**, not a measurement: it went from
+"`convert_model.py` sidesteps the temporal ops" to "those ops are hard to lower",
+hedged with *plausibly*. **U1's export smoke tested it directly and it does not hold**
+(`experiments/export_smoke_results.md`; 101vector, full size `[1,T,3,256,256]`):
+
+| Route | T ∈ {2,4,8,16} | Detail |
+|---|---|---|
+| **ONNX** | ✅ **all pass** | export + `onnx.checker` + onnxruntime load & inference |
+| **Core ML** | ✅ **all pass** | `jit.trace` → `ct.convert(mlprogram)`, ~4343 MIL ops, all 5 stages |
+| TFLite | ⏭️ not evaluated | toolchain only (`litert-torch` needs torch ≥ 2.6; box pinned to 2.5.1 for V100 sm_70) |
+
+The exported object is the **vision tower** with architecture params matching
+`build_vision_encoder` — i.e. **it contains every temporal op**. `convert_model.py`
+sidesteps them because it is an abandoned WIP built from `mobileclip_s0` whose
+`forward` returns `None` and which is wired into no config — **not** because the ops
+cannot be lowered.
+
+**Consequence — Step 0 is cleared, and the table below is re-scored:** directions
+gated on "needs on-device export" (quantization, streaming) **lose that prerequisite**.
+Two caveats survive: **TFLite/Android is still unknown**, and **exportable ≠ fast** —
+no on-device latency has been measured, so the NPU-realization question (§3) is
+untouched. Re-ranking rationale: [`c2-vs-alternatives.md`](c2-vs-alternatives.md) §1.
 
 ---
 
@@ -53,9 +72,9 @@ into the training they are already standing up) are immediately actionable.
 |---|---|---|---|---|---|---|
 | 1 | **Data-pipeline upgrade** (ReSpec + recaption) | High | Low | folds into training | No | **Do first** |
 | 2 | **Temporal hard-negative fine-tuning** | Med-High | Low | temporal branch only | No | **Do early** |
-| 3 | **W8A8 retrieval-aware quantization** (was Plan A) | Med | Med | No (PTQ) | Yes, for latency | Parallel, **gated by a kill-criterion** |
-| 4 | **Frame-selection long-video retrieval** (reframed Plan B) | Med | Med | Yes | Optional | Later |
-| — | ~~Causal streaming (v1 Plan B)~~ | Low | High | Yes | Yes | **Drop** |
+| 3 | **W8A8 retrieval-aware quantization** (was Plan A) | **Med→High** | Med | No (PTQ) | ~~Yes~~ **cleared (§0-bis)**; latency still unmeasured | **Promoted** — now a "pillar 2" candidate paired with AC5 reparam; still kill-criterion gated |
+| 4 | **Frame-selection long-video retrieval** (reframed Plan B) | Med | Med | Yes | Optional | Later — and see `frame_select_results.md`: at K=2 selection *does* matter (uniform − random +3.4/+3.9) but greedy k-center ≈ no selection |
+| — | ~~Causal streaming (v1 Plan B)~~ | Low | High | Yes | ~~Yes~~ cleared | **Still drop** — Step 0 is gone but **GATE-0 replaces it**: the model does not encode temporal direction, so causal vs non-causal is unmeasurable on the current suite |
 
 ---
 
