@@ -101,8 +101,12 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       **ONNX 与 Core ML 在 T∈{2,4,8,16} 上全部 pass**(ONNX 走完导出 +
       `onnx.checker` + onnxruntime 加载推理三步;Core ML 约 4343 个 MIL op 全过)
       ⇒ **联合注意力不构成导出障碍,P9 暂不触发**,弹性模型可按现形态训练。
-      **TFLite 待补**:`ai-edge-torch` 已改名 `litert-torch`,旧包只是空壳 ⇒
-      本轮无有效结论(**不是导不出**,已修为 skip);`pip install litert-torch` 后重跑即可结案。
+      **TFLite 受 torch 版本阻塞,本机不评估**:两轮报错都是工具链问题而非导不出
+      —— ① `ai-edge-torch` 已改名 `litert-torch`(旧包是空壳);② `litert-torch` 需
+      **torch>=2.6** 的 `torch.int1`,而 101vector 锁 **2.5.1+cu118** 是为了 V100 的
+      **sm_70 内核**(换版本会让 8 卡在第一个 barrier 全崩,见 TROUBLESHOOTING 末节)。
+      ⇒ **别为一格导出结论动训练环境的 torch**;导出是 CPU-only + 随机权重,
+      开独立 venv 补测即可(配方见结果文档 §3)。两轮都已修为 skip 而非 fail。
       落档 [`export_smoke_results.md`](export_smoke_results.md)。
       ⚠️ **对 C2 部署叙事的观察**:trace 显示 **T 被烘成常量**(`int(t)`、reshape、
       以及 `temporal_embedding` 走不走插值那个 `if`)⇒ "帧数即部署旋钮"在**权重层面**

@@ -1,6 +1,6 @@
 # 导出冒烟结果(ROADMAP 1.5 / 评审 U1)
 
-**状态:** 🟡 两路已结论,TFLite 待补 · **日期:** 2026-07-27 · **机器:** 101vector(CPU)
+**状态:** 🟡 ONNX / Core ML 已结论(全 pass),TFLite 受 torch 版本阻塞待独立 venv 补测 · **日期:** 2026-07-27 · **机器:** 101vector(CPU)
 **脚本:** `experiments/export_smoke.py` · **命令:** [`COMMANDS.md`](../COMMANDS.md) §3.5
 **环境:** torch 2.5.1+cu118 · onnx 1.22 / onnxruntime 1.23.2 / onnxscript 0.7.1 · coremltools 9.0
 
@@ -37,20 +37,37 @@
 
 ## 3. TFLite 那一格为什么没有结论
 
-**是工具链改名,不是导不出。** `ai-edge-torch` 已废弃并**改名为 `litert-torch`**;
-`pip install ai-edge-torch` 只会装到一个 1.8 kB 的空壳,`ai_edge_torch.convert`
-不存在,报 `AttributeError`。
+**两次都是工具链问题,都不是模型导不出。**
 
-第一版脚本把它记成了 **fail** —— 那正是**假 P9 触发**:让"环境问题"伪装成
-"导不出",进而让架构决策建立在不存在的证据上。已修:两个包名都试,都没有
-convert 入口就抛 `BackendUnavailable` ⇒ 记 **skip**,并在原因里写明该装什么。
+| 轮次 | 报错 | 真实原因 |
+|---|---|---|
+| 1 | `module 'ai_edge_torch' has no attribute 'convert'` | `ai-edge-torch` 已废弃**改名** `litert-torch`,旧包只是 1.8 kB 空壳 |
+| 2 | `module 'torch' has no attribute 'int1'` | `litert-torch` 需要 **torch ≥ 2.6** 的次字节 dtype;本机是 **2.5.1+cu118** |
 
-**补测命令:**
+第二条是**硬约束,不建议在 101vector 上解**:那台机器的 torch 版本是为 V100 的
+**sm_70 内核**锁定的(见 `TROUBLESHOOTING.md` 末节 —— 换成 cu126/cu128/CUDA-13
+构建会让 8 卡在第一个 barrier 就全部报 `no kernel image is available`)。
+**为了一格导出结论去动训练环境的 torch,风险远大于收益。**
+
+同一轮日志里还有一条印证:`Skipping import of cpp extensions due to incompatible
+torch version. Please upgrade to torch >= 2.11.0`。
+
+### 怎么把这格补上(不碰训练环境)
+
+导出是 **CPU-only + 随机权重**,不需要 decord / 数据集 / CUDA,所以开一个**独立
+venv** 就行:
 
 ```bash
-pip install litert-torch
-python experiments/export_smoke.py            # 只有 tflite 那列会变
+python -m venv /tmp/tflite-export && source /tmp/tflite-export/bin/activate
+pip install torch timm numpy litert-torch      # torch 取最新即可,不影响主环境
+cd ~/mobileclip && python experiments/export_smoke.py --ts 2,16
+deactivate
 ```
+
+只需跑 T=2 与 T=16 两端 —— 中间两个 T 在另外两条路线上都与两端同结论,
+没有理由单独在 TFLite 上分叉。
+
+**在补上之前,P9 的结论只能写「ONNX / Core ML 两路无障碍,TFLite 未评估」。**
 
 ## 4. ⚠️ 一个对 C2 部署叙事有影响的观察
 

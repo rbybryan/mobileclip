@@ -237,6 +237,16 @@ def run_one(name, fn, ext, deps, model, example, outdir, t, opset):
     except BackendUnavailable as exc:                         # 后端入口对不上 != 导不出
         return {"status": "skip", "reason": f"后端 API 不匹配:{exc}", "ops": []}
     except Exception as exc:                                  # noqa: BLE001 - 就是要全兜住
+        # `module 'X' has no attribute 'Y'` 只可能是**库版本/API 不匹配**,
+        # 不可能是「这个算子导不出」——后者一律走 NotImplementedError /
+        # torch.onnx.errors.* / 后端自己的 "not implemented" 文案。
+        # 实测两次都栽在这:`ai_edge_torch.convert` 缺失(包改名)、
+        # `torch.int1` 缺失(litert-torch 要 torch>=2.6,本机锁 2.5.1 给 V100 的 sm_70)。
+        # 归 fail 就是**假 P9 触发**,所以这里必须归 skip。
+        if isinstance(exc, AttributeError) and \
+                re.search(r"module '[^']+' has no attribute", str(exc)):
+            return {"status": "skip",
+                    "reason": f"库版本/API 不匹配:{exc}(不是导出失败)", "ops": []}
         tb = traceback.format_exc()
         return {
             "status": "fail",

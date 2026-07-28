@@ -84,6 +84,27 @@ def test_backend_api_mismatch_is_skip_not_fail():
     assert r["ops"] == []
 
 
+def test_module_attribute_error_is_skip_not_fail():
+    """回归三:litert-torch 需要 torch>=2.6 的 torch.int1,本机锁 2.5.1(V100 sm_70)。
+
+    `module 'X' has no attribute 'Y'` 只可能是库版本/API 不匹配 —— 真的导不出
+    一律走 NotImplementedError / onnx.errors / 后端的 "not implemented" 文案。
+    """
+    def boom(*_):
+        raise AttributeError("module 'torch' has no attribute 'int1'")
+    r = _run(boom)
+    assert r["status"] == "skip"
+    assert "库版本/API 不匹配" in r["reason"]
+    assert "int1" in r["reason"]
+
+
+def test_unrelated_attribute_error_still_fails():
+    """不是「模块缺属性」的 AttributeError 仍算真失败,别把规则放得太宽。"""
+    def boom(*_):
+        raise AttributeError("'NoneType' object has no attribute 'shape'")
+    assert _run(boom)["status"] == "fail"
+
+
 def test_missing_deps_accepts_either_name():
     """`a|b` 形式表示装其一即可 —— 包改名时不该整列变 skip。"""
     assert es.missing_deps(["os|definitely_not_installed_xyz"]) == []
