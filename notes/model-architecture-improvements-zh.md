@@ -11,8 +11,10 @@
 - `notes/whitespace-directions.md` —— 数据管线、时序难负例、量化、帧选择(模型*外围*);
 - `notes/data-quality-caprl-scheme.md` —— 字幕/数据质量;
 - **本报告 —— 模型本体**:架构、token 混合、池化、训练目标(P1–P10);
-- `notes/model-architecture-improvements-round3-zh.md` —— **第三轮新增架构方向**(C1–C9),
-  两位专家合并去重、含明确死路清单;本报告是其前置背景。
+- `notes/model-architecture-improvements-round3-zh.md` —— **第三轮新增架构方向 · 最终稿**
+  (C1–C9,逐点源码核查版):改正了 3 处过时前提(T=8 已解硬编码、冻结 bug 已修、
+  temporal_pool 已实现)+ 2 处机制错误(C1 联合注意力无法塞进时序卷积、C2 与全局
+  set_num_frames 冲突)+ 1 处表述不准(C6 温度已被 R1a 覆盖);含明确死路清单。本报告是其前置背景。
 
 ---
 
