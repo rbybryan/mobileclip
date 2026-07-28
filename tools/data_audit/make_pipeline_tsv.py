@@ -140,10 +140,10 @@ def main():
     # chain (en source / old zh / 5 recaps / final condensed views); the full
     # per-stage panorama stays in --output for analysis
     SHEET_Q = ["重述质量[重述更好/差不多/旧译更好]",
-               "版本对比[直融更好/投票更好/差不多/都不行]", "note"]
+               "直融质量[可直接用/信息不足/含幻觉]", "note"]
     sheet_hdr = (["video", "video_path", "英文en", "原zh"]
                  + [f"重述{i + 1}" for i in range(5)]
-                 + ["直融长稿", "直融", "投票浓缩"] + SHEET_Q)
+                 + ["直融长稿", "直融"] + SHEET_Q)
     sheet_rows = []
 
     n_rows = 0
@@ -277,7 +277,7 @@ def main():
                      resolve(args.video_root or "", task, vid) if resolve else "",
                      flat(task.get("en")),
                      flat(task.get("zh_old") or task.get("zh")),
-                     *recap_cells, d_long, dir_c, vote_c]
+                     *recap_cells, d_long, dir_c]
                     + [""] * len(SHEET_Q))
             n_rows += 1
             if args.limit and n_rows >= args.limit:

@@ -23,6 +23,34 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-28 (53) — 渲染器本地已验证无误:你看到的是旧文件;新增版本徽标一眼辨新旧 + 投票版撤下页面
+
+**判定**:我在本地用合成表端到端跑了 make_review_bundle 并模拟浏览器渲染——编号分行
+(‖ 与「；」双切)、长稿独立成块、投票列移除,**全部正常**。你反复看到旧样式的根因
+= checkout divergent(块 50),`git pull` 一直没真正生效,页面是旧代码产的。
+
+**三个变更已合并**:① 页面左上角新增**版本徽标 `v20260728c`**——打开先看它,没有
+=旧文件;② **投票版从所有页面撤下**(compare 单选改 A直融/B直融 二选;单臂页只显示
+直融长稿+直融;投票数据仍在全景 TSV 作诊断);③ compare 提示语同步更新。
+
+**防呆执行序(每步都有可验证输出)**:
+
+```bash
+cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
+git log --oneline -1        # ← 必须看到 #314 或更新;还是旧号=对齐失败,贴回来
+rm -f outputs/audit_10k/pipe_fused_d*.jsonl outputs/audit_10k/pipe_sl_fused_d*.jsonl \
+      outputs/audit_10k/pipe_st_fused_d*.jsonl
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+grep -c v20260728c outputs/audit_10k/bundle_compare/index.html   # ← 必须 ≥1
+tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
+# 本地: scp 解包 → 打开 index.html → 左上角看到 v20260728c 徽标才算新页
+```
+
+(GDINO scp 仍是最高优先,命令在块 (52)。)
+
+**Then report back**: `git log --oneline -1` 输出 + 徽标是否出现 + 四版目检结论
++ 20 条 dropped 理由抽查。
+
 ## 2026-07-28 (52) — 全案复审出 3 红:GDINO 必须装了(5 分钟)、直融上限已修 640、长稿不过修复
 
 **复审记录在主计划 §0.9(当前定版一页图,与旧段冲突以它为准)。服务器只有一件必办**:
