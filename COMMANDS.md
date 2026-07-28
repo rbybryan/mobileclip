@@ -524,6 +524,32 @@ python experiments/export_smoke.py --inference-mode   # 重参数化后的部署
 
 ---
 
+### 3.7 未见过的 T 泛化(ROADMAP 1.9)—— 零训练,答「C2 能不能无上限 T」
+
+分析与判读见 [`notes/c2-arbitrary-t.md`](notes/c2-arbitrary-t.md)。官方权重上评**训练
+从没见过的 T**:内插 T∈{3,5,6,12}(16 帧锚点内)、外推 T∈{24,32}(锚点外)。
+单卡串行、可续跑;每个 T 就是一次普通 MSR-VTT 零样本评测。
+
+```bash
+cd ~/mobileclip
+export CUDA_VISIBLE_DEVICES=0
+for T in 3 5 6 12 24 32; do
+  out=experiments/evals/c2_unseenT/msrvtt_T${T}
+  [[ -f ${out}/eval_res.json ]] && { echo "skip T=${T} (done)"; continue; }
+  bash experiments/run_eval.sh small msrvtt ./checkpoints/mobileviclip_small.pt \
+       ${out} num_frames_test ${T}
+done
+```
+
+**读法**(判据沿用 `experiments/README.md` §6.1):
+
+- 主指标 **t2v R@1**,`ret_test/`(DSL)与 `ret_test_emb/`(raw)**两口径同向**才算数;
+  阴性用 ±1.6 带(保守,照用),**阳性主张要求 |Δ| 明显大于 2.4**;`r_mean` 仅描述性。
+- **参照行**:ROADMAP 1.6 已锁 T=2/4/8/16 的 raw r_mean = 55.4/60.0/61.6/62.3。
+  新的 T 应当落在这条曲线上 —— **落在线上 = 泛化成立**;某个 T 明显掉出线 = 那里有问题。
+- ⚠️ **T=24/32 可能 OOM**:stage-4 联合注意力是 O(T²)(N=64·T)。评测 batch 小,
+  大概率放得下;**崩了也是结果** —— 那就是 `c2-arbitrary-t.md` 墙 1 的直接证据,照样记账,
+  别去调 batch 硬扛。
 ## 4. Training (pretraining)
 
 **Preflight — run this before every pretraining launch, not just the first:**
