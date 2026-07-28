@@ -98,7 +98,7 @@ s1_lines() { { cat "$OUT"/s1_scores.*.jsonl 2>/dev/null || true; } | wc -l; }
 s2_lines() { { cat "$OUT"/s2_verdicts.*.jsonl 2>/dev/null || true; } | wc -l; }
 trans_lines() { { cat "$OUT"/s2_trans.*.jsonl 2>/dev/null || true; } | wc -l; }
 merged_lines() { { cat "$OUT"/s2_merged.*.jsonl 2>/dev/null || true; } | wc -l; }
-recap_lines() { { cat "$OUT"/recap5.*.jsonl "$OUT"/recap_struct.*.jsonl 2>/dev/null || true; } | wc -l; }
+recap_lines() { { cat "$OUT"/recap5.*.jsonl "$OUT"/recap_struct.*.jsonl "$OUT"/recap_slot.*.jsonl 2>/dev/null || true; } | wc -l; }
 
 case "${1:-}" in
 # ---------------------------------------------------------------- ① 冒烟
@@ -217,7 +217,8 @@ status)
     echo "---- S2-merge（候选融合 better_zh→1 条）: $(merged_lines) / $s2  存活进程: $mg_alive ----"
     echo "  （总行数达 $s2 即全部处理完；只有 ≥2 候选的片真调模型，<2 候选秒过。落地: bash $0 s4-merged）"
   fi
-  if ls "$OUT"/recap5.*.jsonl >/dev/null 2>&1 || ls "$OUT"/recap_struct.*.jsonl >/dev/null 2>&1; then
+  if ls "$OUT"/recap5.*.jsonl >/dev/null 2>&1 || ls "$OUT"/recap_struct.*.jsonl >/dev/null 2>&1 \
+     || ls "$OUT"/recap_slot.*.jsonl >/dev/null 2>&1; then
     rc_alive=$(pgrep -fc "vlm_audit_hf.py.*--mode recap" || true)
     rc_in=${RECAP_INPUT:-$OUT/v0_2/recaption_tasks.jsonl}
     rc_want=$( [ -f "$rc_in" ] && wc -l < "$rc_in" || echo '?')
@@ -532,6 +533,9 @@ recap)
   RECAP_STYLE=${RECAP_STYLE:-dense}
   if [ "$RECAP_STYLE" = struct ]; then
     RC_MODE=recap-struct; RC_PREFIX=recap_struct; N_RECAP=${N_RECAP:-3}
+  elif [ "$RECAP_STYLE" = slot ]; then
+    # §5.6b 固定槽位(ASID 式): 行式输出免 JSON, 空槽写「无」, 主体/动作≤2 行
+    RC_MODE=recap-slot; RC_PREFIX=recap_slot; N_RECAP=${N_RECAP:-3}
   else
     RC_MODE=recap; RC_PREFIX=recap5; N_RECAP=${N_RECAP:-5}
   fi
@@ -545,7 +549,7 @@ recap)
     exit 0
   fi
   echo "[model] S2_MODEL=$S2_MODEL"
-  echo "[recap] style=$RECAP_STYLE, 每片 $N_RECAP 遍独立采样$( [ "$RECAP_STYLE" = struct ] && echo '(每遍 5-8 条带属性短句)' ), temp=$RECAP_TEMP, top_p=0.9, 帧抖动开, 看 $S2_FRAMES 帧"
+  echo "[recap] style=$RECAP_STYLE, 每片 $N_RECAP 遍独立采样$( [ "$RECAP_STYLE" = struct ] && echo '(每遍 5-8 条带属性短句)'; [ "$RECAP_STYLE" = slot ] && echo '(固定槽位: 主体≤2/动作≤2/场景/文字, 空槽写无)' ), temp=$RECAP_TEMP, top_p=0.9, 帧抖动开, 看 $S2_FRAMES 帧"
   echo "[input] $RECAP_INPUT （$(wc -l < "$RECAP_INPUT") 片）"
   for i in $(seq 0 $((NGPU-1))); do
     CUDA_VISIBLE_DEVICES=$i nohup python tools/data_audit/vlm_audit_hf.py \
@@ -612,14 +616,19 @@ pipeline-sample)
   # SAMPLE_OFFSET=k 从队列第 k+1 片开始取样。测真实耗时用：前 50 片各段已有缓存，
   # 计时会虚低——SAMPLE_OFFSET=200 取一批冷片才是全量成本的真实样本。
   sed -n "$(( ${SAMPLE_OFFSET:-0} + 1 )),$(( ${SAMPLE_OFFSET:-0} + N_SAMPLE ))p" "$QUEUE" > "$SAMPLE"
-  # 重述风格（§5.6）：方案A dense(默认/主线) = 5 遍稠密段→派生→投票浓缩；
-  # 方案B struct(平行备选) = OwlCap 式 caption-set, 3 遍独立 × 每遍 5-8 条带属性短句,
-  # 派生步跳过。两臂产物完全隔离(B 一律带 _st 后缀), 互不覆盖——对比用 pipeline-compare。
+  # 重述风格：方案A dense(默认/主线) = 5 遍稠密段→派生→融合；
+  # 方案B slot(§5.6b, compare 的 B 臂) = ASID 式固定槽位行输出, 3 遍独立, 免 JSON 免派生;
+  # struct(§5.6, 旧 B 臂备选, 手动可用) = OwlCap 式 JSON caption-set。
+  # 三种风格产物完全隔离(_sl / _st 后缀), 互不覆盖——A/B 对比用 pipeline-compare。
   RECAP_STYLE=${RECAP_STYLE:-dense}
   if [ "$RECAP_STYLE" = struct ]; then
     RC_MODE=recap-struct; RC_PREFIX=recap_struct; RC_N=${N_RECAP:-3}
     P="$OUT/pipe_st"; TSVF="$OUT/recap_pipeline_st.tsv"
     SHEET="$OUT/review_pipeline_st.tsv"; BUNDLE="$OUT/bundle_pipeline_st"
+  elif [ "$RECAP_STYLE" = slot ]; then
+    RC_MODE=recap-slot; RC_PREFIX=recap_slot; RC_N=${N_RECAP:-3}
+    P="$OUT/pipe_sl"; TSVF="$OUT/recap_pipeline_sl.tsv"
+    SHEET="$OUT/review_pipeline_sl.tsv"; BUNDLE="$OUT/bundle_pipeline_sl"
   else
     RC_MODE=recap; RC_PREFIX=recap5; RC_N=${N_RECAP:-5}
     P="$OUT/pipe"; TSVF="$OUT/recap_pipeline.tsv"
@@ -631,7 +640,7 @@ pipeline-sample)
     printf '%s\t%d\n' "$1" "$((now - PIPE_TLAST))" >> "${P}_timing.tsv"
     echo "   ⏱ $1: $((now - PIPE_TLAST))s"; PIPE_TLAST=$now; }
   echo "== ⓪ 样本 = 队列第 $(( ${SAMPLE_OFFSET:-0} + 1 ))-$(( ${SAMPLE_OFFSET:-0} + N_SAMPLE )) 片 -> $SAMPLE （重述 style=$RECAP_STYLE）=="
-  echo "[model] 全链唯一 LLM = $S2_MODEL（① 重述 temp0.9 独立采样$( [ "$RECAP_STYLE" = struct ] && echo '，短句+gloss 内联，② 派生步跳过' || echo ' / ② 派生 temp0 贪心' )；"
+  echo "[model] 全链唯一 LLM = $S2_MODEL（① 重述 temp0.9 独立采样$( [ "$RECAP_STYLE" != dense ] && echo '，短句+gloss 内联，② 派生步跳过' || echo ' / ② 派生 temp0 贪心' )；"
   echo "        ③ SigLIP2 打分与 ⑤ GDINO/OCR 验真均为非 LLM 小模型，SigLIP 已在 s1 轮缓存）"
 
   echo "== ① S0 重述 ×$RC_N 遍（复用 recap 子命令: 8 卡后台 + 按 video 续跑去重）=="
@@ -687,8 +696,8 @@ with open(f"{sys.argv[4]}_recaps.jsonl", "w", encoding="utf-8") as fo:
 print(f"pipe_recaps: {len(seen)} clips")
 PY
 
-  if [ "$RECAP_STYLE" = struct ]; then
-    echo "== ② A_llm 派生：跳过（struct 重述已内联短句+gloss，D8 随重述产出）=="
+  if [ "$RECAP_STYLE" != dense ]; then
+    echo "== ② A_llm 派生：跳过（$RECAP_STYLE 重述已内联短句+gloss，D8 随重述产出）=="
     VIEWS_GLOB="${P}_recaps.jsonl"
   else
     echo "== ② A_llm 派生（D5: 每条重述 2-3 条短视图 + en_gloss；文本-only, GPU$PIPE_GPU 前台）=="
@@ -823,26 +832,26 @@ pipeline-compare)
   N_SAMPLE=${N_SAMPLE:-50}
   echo "==== [A] 方案A 稠密×5(主线) ===="
   RECAP_STYLE=dense  N_SAMPLE="$N_SAMPLE" ${PIPE_GPU:+PIPE_GPU=$PIPE_GPU} bash "$0" pipeline-sample
-  echo "==== [B] 方案B OwlCap 结构化×3(平行备选) ===="
-  RECAP_STYLE=struct N_SAMPLE="$N_SAMPLE" ${PIPE_GPU:+PIPE_GPU=$PIPE_GPU} bash "$0" pipeline-sample
+  echo "==== [B] 方案B 固定槽位×3(§5.6b; 旧 struct 臂仍可 RECAP_STYLE=struct 手动跑) ===="
+  RECAP_STYLE=slot N_SAMPLE="$N_SAMPLE" ${PIPE_GPU:+PIPE_GPU=$PIPE_GPU} bash "$0" pipeline-sample
   echo "==== [A/B] 并排对比表 + 评审包 ===="
   python tools/data_audit/make_style_compare.py \
     --tasks "$OUT/v0_2/pipeline_sample.jsonl" --video-root "$CLIPS" \
     --recaps-a "$OUT/pipe_recaps.jsonl" \
     --dfused-a "$OUT/pipe_fused_d_final.jsonl" --dfused-a-raw "$OUT/pipe_fused_d.*.jsonl" \
     --fused-a "$OUT/pipe_fused_v_final.jsonl" --fused-a-raw "$OUT/pipe_fused_v.*.jsonl" \
-    --recaps-b "$OUT/pipe_st_recaps.jsonl" \
-    --dfused-b "$OUT/pipe_st_fused_d_final.jsonl" --dfused-b-raw "$OUT/pipe_st_fused_d.*.jsonl" \
-    --fused-b "$OUT/pipe_st_fused_v_final.jsonl" --fused-b-raw "$OUT/pipe_st_fused_v.*.jsonl" \
+    --recaps-b "$OUT/pipe_sl_recaps.jsonl" \
+    --dfused-b "$OUT/pipe_sl_fused_d_final.jsonl" --dfused-b-raw "$OUT/pipe_sl_fused_d.*.jsonl" \
+    --fused-b "$OUT/pipe_sl_fused_v_final.jsonl" --fused-b-raw "$OUT/pipe_sl_fused_v.*.jsonl" \
     --output "$OUT/review_compare.tsv"
   python tools/data_audit/make_review_bundle.py \
     --sheet "$OUT/review_compare.tsv" --out-dir "$OUT/bundle_compare" \
     || echo "[warn] 对比包生成失败（review_compare.tsv 仍可用）"
   echo ""
-  echo "== ⏱ A/B 两臂分段耗时（原始表: pipe_timing.tsv / pipe_st_timing.tsv）=="
-  for tf in "$OUT/pipe_timing.tsv" "$OUT/pipe_st_timing.tsv"; do
+  echo "== ⏱ A/B 两臂分段耗时（原始表: pipe_timing.tsv / pipe_sl_timing.tsv）=="
+  for tf in "$OUT/pipe_timing.tsv" "$OUT/pipe_sl_timing.tsv"; do
     [ -s "$tf" ] || continue
-    case "$(basename "$tf")" in pipe_timing.tsv) arm="方案A(dense×5)";; *) arm="方案B(struct×3)";; esac
+    case "$(basename "$tf")" in pipe_timing.tsv) arm="方案A(dense×5)";; *) arm="方案B(slot固定槽×3)";; esac
     echo "-- $arm:"
     awk -F'\t' -v n="$N_SAMPLE" '{tot+=$2; printf "   %-34s %6ds (%.2f s/片)\n",$1,$2,$2/n}
       END{printf "   %-34s %6ds (%.2f s/片)\n","合计",tot,tot/n}' "$tf"

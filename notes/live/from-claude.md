@@ -23,7 +23,7 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
-## 2026-07-28 (45) — R1 A/B 判完:**池赢了 kill 判据,ΔR-Sum=+11.0** → GO(试点级)
+## 2026-07-28 (47) — R1 A/B 判完:**池赢了 kill 判据,ΔR-Sum=+11.0** → GO(试点级)
 
 对照臂 `pilot_10k_r1`(无池、seed42、同 10 epoch)跑通。两臂并排见
 `notes/r1-implementation-plan.md §9.1`。要点:**池在全部 10 个 epoch、两个方向都领先**
@@ -44,6 +44,43 @@ bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1_s43.py 8
 顺手 10 秒确认两臂同一 torch(对照日志打了 `torch 2.5.1+cu118`):`python -c "import torch;print(torch.__version__)"`。
 **报告回来**:两臂逐 epoch 的 `txt_r1 / img_r1`。若 seed43 也复现出 +8~+11 的 R-Sum 差,就把 A/B 放大到更多
 InternVid 数据 / 更多步(R1 真正针对的设置)。若 seed43 差塌到 <2,那说明 seed42 是走运,得回头审。
+
+## 2026-07-28 (46) — B 臂已切换为固定槽位(§5.6b 落地):行式免 JSON、空槽写「无」、同槽投票
+
+**维护者批「做」,已实施合并**:compare 的 **B 臂 = slot 固定槽位×3 遍**(旧 struct 臂
+保留 `RECAP_STYLE=struct` 手动可用,产物互不覆盖)。每遍输出四栏行式(主体≤2/动作≤2/
+场景/文字,行尾 `[gloss]`,空栏写「无」不许编),正则解析零 JSON;投票加了同槽约束
+(主体绝不与场景并组);解析空仍有 0.3 温重试+dense 兜底。预期:解析失败趋零、
+B 单遍解码 token 降 ~40-50%、按槽数票更准。
+
+```bash
+git pull origin main
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+# B 臂全新产物 recap_slot.* / pipe_sl_*——无需 rm 任何旧文件;A 臂全缓存秒过
+# (要连计时一起测: SAMPLE_OFFSET=200 N_SAMPLE=50 ... pipeline-compare)
+tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
+# 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/compare.tgz . && tar xzf compare.tgz
+```
+
+**Then report back**: ① B 臂 ①段耗时(对比 struct 的 14.46 s/片——验证降 40-50% 的预期);
+② `grep -o '"n_dense_fallback": [0-9]*' outputs/audit_10k/recap_slot.*.jsonl | sort | uniq -c`
+(预期几乎全 0);③ ④b 的 `[done]` 行(同槽投票后 units/回退,对比 struct 的 3.0/9);
+④ compare 包目检四版结论(现在 B=slot 版)。
+
+## 2026-07-28 (45) — ⏱ 计时收到已记档(§5.1c):B 慢因=解码 token 数;分片后 A/B 全量成本打平(~12h)
+
+**你贴的两张 ⏱ 表读完,实测数已写进主计划 §5.1c。** 三个结论:
+
+1. **B 重述 3 遍比 A 5 遍慢的定因**:单遍 4.8s vs 1.3s(3.6×)——struct 每遍吐 5-8 条
+   JSON(键名+脚手架+gloss ≈300-450 token) vs dense 一段 ≈130 token,V100 逐 token 解码
+   是瓶颈;JSON 失败遍还付重试且常顶满 512 上限。看帧成本两臂一样。
+2. **全桶 2,532 片排期**:照现在拓扑(下游单卡)A≈62h / B≈27h;**②派生④b融合⑤验真改
+   8 卡分片后 A≈11.7h、B≈12.9h——两臂打平**,A/B 取舍回归纯质量(等你 compare 包目检)。
+3. **降本序**:分片(免费)→ struct max_new_tokens 512→384 → 全量只产目检胜者那版融合
+   (④b 减半)。这三项都等目检结论一起定,现在不用动。
+
+**无需新操作**——就差 compare 包目检四版的结论(A直融|A投票|B直融|B投票 哪版能当训练
+字幕),回一句即可,我按胜者定全量生产配方并落 §5 排期。
 
 ## 2026-07-28 (44) — R1 处理臂跑通了(bank ON、无崩);还差对照臂才能判 go/kill
 

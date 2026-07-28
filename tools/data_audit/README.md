@@ -138,7 +138,12 @@ N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
   A′句切视图 | ✓过验真视图[gloss] | ·未验(保守留) | ✗被滤视图[gdino/ocr] |
   投票单元(票数) | 淘汰单元 | ✓/·/✗浓缩 | 坍缩旗标`——
   这就是主计划 G2 各臂（A_llm/A−/C_v/**C_fuse**）的样本级预览。
-- **结构化重述 = 方案B 平行备选（§5.6；默认仍是方案A `RECAP_STYLE=dense`）**：
+- **固定槽位重述 = 方案B（§5.6b，pipeline-compare 的 B 臂）**：`RECAP_STYLE=slot`——
+  `--mode recap-slot` 每遍输出四栏行式（主体≤2/动作≤2/场景/文字，行尾 `[gloss]`，
+  **空栏写「无」不许编**），正则解析零 JSON、解码 token 比 struct 降 ~40-50%，投票带
+  同槽约束；解析空→0.3 温重试→dense 兜底（`n_dense_fallback`）。产物 `recap_slot.*` /
+  `pipe_sl_*`，与 dense/struct 完全隔离。
+- **结构化重述 = 旧 B 臂备选（§5.6；手动 `RECAP_STYLE=struct` 可用）**：
   `RECAP_STYLE=struct` 启用——`--mode recap-struct` 每遍一次解码产 5-8 条带属性
   （subject/action/scene/text）≤28 字短句 + 内联 en_gloss，**独立跑 N=3 遍**
   （temp0.9+帧抖动）保住跨遍投票；② 派生步自动跳过。**两臂产物完全隔离**：B 臂重述写
