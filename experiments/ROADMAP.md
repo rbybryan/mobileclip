@@ -1,6 +1,6 @@
 # ROADMAP — 当前该做什么(总入口,随进度勾选更新)
 
-**日期:** 2026-07-24(**实时进展看文末「进展日志」+「状态速览」**,每个会话更新)
+**日期:** 2026-07-28(**实时进展看文末「进展日志」+「状态速览」**,每个会话更新)
 **分工:** 战略层(为什么/判据)看 `notes/paper-plan-zh.md`;每条命令看
 `experiments/README.md`;本文件回答"现在轮到哪一步"。
 **第 0 步(任何时候)**:`python experiments/check_readiness.py`
@@ -23,7 +23,9 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
   单一模型;目标是每个预算点的 Pareto 曲线都胜过固定 T 基线。
 - **C3 · 配方组件(出消融表)** — ① sigmoid 多正例损失(可学习 t/b,SigLIP 初始化,
   `caption_idx` 掩码解决共享字幕假负例);② 时间维注意力池化头(**零初始化,
-  step-0 严格等价 mean,不退化**)。两者默认关闭,基线路径与原 repo 逐位一致。
+  step-0 严格等价 mean,不退化**);③ **R1 精确文本负例库**(文本塔冻结 ⇒ 缓存特征、每步用当前投影重算
+  ⇒ 数学上精确、零陈旧、无需动量编码器)—— **试点级 A/B 已判 GO,两个种子 ΔR-Sum +11.0 / +13.1,
+  清过 kill 判据(<0.5)约 20×**,详见下方 2.4。三者默认关闭,基线路径与原 repo 逐位一致。
 - **C4 · 结果** — 多帧数零样本检索(MSR-VTT/DiDeMo/ANet)+ 零样本分类/多选
   (K400/UCF101/HMDB51/SSv2-MC)+ **端侧延迟表**,对比 MobileViCLIP /
   InternVideo2-S/B / **FluxViT-S(GFLOPs 对齐行)**;TempMe 属微调协议,
@@ -58,6 +60,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 2.1 C2 T 无关化(✅ 代码落地) | 单测 `python -m pytest tests/test_t_agnostic.py -v`(README §2);V100 冒烟命令见本文件 2.1;per-T BN 工具 `experiments/per_t_bn.py`;设计准绳 `paper-plan-zh.md` §七.3 |
 | 2.2 R2 教师管线 | 设计决策清单:本文件 2.2 + `paper-plan-zh.md` §六.9 + 评审 U7;**提取脚本待写** |
 | 2.4/2.5 A1/A2/B1(#197) | `notes/neural-inspired-implementation.md` Tier A(配置模板 + 单测)/ Tier B(B1 接线与三臂);配置文件待创建 |
+| **2.4 R1 负例库(建缓存 + 跑 A/B + 长档)** | 探针 `COMMANDS.md` §3.2;建池与 A/B 一条龙 `notes/r1-implementation-plan.md` §8;结果 §9.1/§9.2;长档两臂配置 `experiments/configs/nR1_textbank_pilot_long.py` + `pilot_10k_r1_long.py`,启动命令 `notes/live/from-claude.md` (54) |
 | 3.1 H100 全量数据审查 | `tools/data_audit/SETUP_H100.md` §0 环境 → §1 冒烟 → §2 S0 → §3 S1 → §4 S2 → §5 S3 |
 | 3.2 R0→R1 全量起跑 | `experiments/SETUP_B100.md`(**文件顶部有进度标记清单,当前位置=§6 冒烟→R0**,§0–§5 已全绿):**§6 冒烟 / R0 / R1 启动命令**已随 `from-claude.md`「07-24 (5) §5 全绿」交接 → §7 两个坑 → §8 交回;预算阶梯 = 评审 U6 |
 | 汇总与判据 | `experiments/README.md` §5 汇总对比、§6 判据 |
@@ -77,6 +80,14 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       `tools/data_audit/DATA_ISSUES.md`,统计细节 `notes/audit-10k-findings.md`。
       后续 s4-merged 重字幕落地走 `notes/recaption-master-plan.md`
       (v1.1,#223;V100 Stage 0 命令见 from-claude「07-24 (4)」)。
+      **🟡 重字幕线当前定版见该文件 §0.9(2026-07-28 全案复审,与旧段冲突以它为准)**:
+      流水线定为 **①独立多遍(A dense×5 / B 固定槽位×3)→ ②判断式直融(§5.7 v3,弃硬投票)
+      → ③验真+✗修复复验 → ④训练 captions = 直融短句版**。复审 **3 红 / 4 黄 / 4 绿**:
+      🔴 **GDINO 至今未装**(服务器连不上 HF,scp 方案已给四次未执行)⇒ 外部幻觉门只剩 OCR,
+      **当前最大裸露面**;🔴 直融 token 上限 512→**640 已修**(#313,防 v3 长输出截断→JSON 不闭合→整片置空);
+      🔴 长稿不过验真/修复 ⇒ **仅作目检参考**,下游(KD/EN 线)消费长稿前必须先补长稿验真。
+      🟡 **迭代快于证据**(判断式/slot/双稿均零目检,"caption→检索增益"因果链零训练证据)⇒ **冻结 prompt,先目检再小训练**。
+      **该线不在 EN 论文主关键路径上(D2)**,不占 R0–R3 主时钟。
 - [x] **1.3 10k 试点**(README §2b,GPU 空档)—— ✅ 2026-07-23 关闭:
       `make_pilot_anno.py`(记下共享字幕比例)→ `export MVC_DATA_DIR` →
       `pilot_10k_r0` 冒烟 + 正跑 → `pilot_10k_r1`;
@@ -194,7 +205,8 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       并入同一消融表(U9)。
 - [ ] **2.3(条件项)** H5 评测分片(大基准评测前)、P1 torch 升级
       (仅当显存/速度真卡住)。
-- [ ] **2.4 R1 精确文本负例库**(`notes/neural-inspired-round2.md` §3 R1;**不依赖 GATE-0,
+- [~] **2.4 R1 精确文本负例库 —— 🟢 试点级 A/B 已判 GO(两个种子),下一步 40-epoch 长档**
+      (`notes/neural-inspired-round2.md` §3 R1;**不依赖 GATE-0,
       期望收益最高**):文本塔冻结 ⇒ 投影前特征全程恒定 ⇒ 缓存后每步用**当前**投影重算,
       负例库**数学上精确、零陈旧**(无需动量编码器)。全局 batch 512 距 SigLIP 饱和点约
       30–60×,是目前最大的未开采杠杆。顺带一并定:**温度**(固定 1/100 偏锐,最优值随负例
@@ -206,6 +218,26 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       精确性只因文本支路 dropout 全为 0(train 态 dropout 仍开)且草图的 `cross_entropy(arange)` 必须改成
       `get_mask` 多正例否则注入假负例;30–60× 那个杠杆是**从头训练**制度下测的,本项目是对齐初始化的 3-epoch 微调,
       收益是**开放问题**。**先做零成本的离线假负例密度探针(`experiments/r1_fn_density.py`,命令见 `COMMANDS.md` §3.2),再按 SigLIP 制度(sigmoid+温度+池子)开一条臂。** **[A 已测 2026-07-27:精确重复 ≈0(4998/5000 distinct)⇒ 免精确去重;近重复(B)与 go/no-go(训练期饱和探针)仍未测。见 `notes/r1-examination.md` §7]** **落地方案见 [`notes/r1-implementation-plan.md`](../notes/r1-implementation-plan.md);Part B 现在一条命令(`r1_textfeat_dump.py`→`r1_fn_density.py --feats`)。**
+
+      **✅ 已完成(2026-07-27 → 07-28,详见 `r1-implementation-plan.md` §7.6/§8/§9):**
+      - **探针 Part B(近重复密度)= 低 ⇒ GO 建池**(§7.6);代码 2.4c 落地(建缓存 + 跑 A/B 一条龙,`r1_build_textbank.py`,默认关)。
+      - **A/B seed-42(§9.1)**:处理臂 `nR1_textbank_pilot`(bank ON,pool=(8999,512),K′=8999 ⇒ 每步整库当 sigmoid 负列)
+        vs 对照 `pilot_10k_r1`(同配置去掉 `criterion.text_bank`)。末轮 **R-Sum 533.2 vs 522.2 ⇒ ΔR-Sum = +11.0**,
+        kill 判据是 **< 0.5 ⇒ 停**,**清过 ~22×**;池在 **全部 10 个 epoch、两个方向**都领先。
+      - **A/B seed-43 复现(§9.2)**:**ΔR-Sum = +13.1**(ep9:v2t txt_r1 **+3.4**、t2v img_r1 **+2.9**);
+        两臂 torch 版本一致(`2.5.1+cu118`)⇒ **环境混淆保留意见已消除**。
+      - **机制**:检索 R@k 只看 L2 归一化余弦 ⇒ **对 `logit_scale`/`logit_bias` 免疫**,差不可能由温度制造;
+        seed-43 看得最清楚 —— **对照在 ep1 就塌**(r_mean 90.2→85.4 且没完全回来),池几乎不掉(90.9→平台 ~88.9)
+        ⇒ 收益形态是**减小微调退化 / 更高更快的平台**,不是相对零样本初始化的绝对增益。
+      - **⚠️ 诚实登记**:两臂都低于各自 epoch-0(冻结初始化)峰值 —— 9000 片 / 17 batch 的试点**测不到** R1 真正
+        针对的制度(大数据 + 多步 + 批内负例真的成为信息瓶颈)。**试点级 GO ≠ 论文级结论。**
+      **🔜 下一步(V100,已入库、命令见 `notes/live/from-claude.md` (54)):40-epoch 长档同一试点两臂**
+      (`nR1_textbank_pilot_long.py` / `pilot_10k_r1_long.py`,seed 42,除 `epochs=40` 外与 10-epoch 那对逐条一致,
+      复用现有 bank 缓存,每臂 ~2.5h)。**读法**:池领先**保持/扩大** ⇒ durable,上大数据档;对照到 ep30–40
+      **追到 < 0.5 R-Sum** ⇒ 池主要是"加速",**改措辞而非推翻**。
+      **⚠️ 大数据 A/B = H100 的活,不是 V100**(§9.3):`internvid_all`(11 个 `InternVId-FLT_*` 分片)只在 H100 上;
+      **V100(101vector)只有 10k 子样本**,把 `train_corpus="internvid_all"` 指过去会因数据缺失直接失败。
+      挪到 H100 时须**在 H100 重建更大的 text-bank 缓存**(现有 `textbank_pilot_*` 只覆盖 10k)。
 - [ ] **2.5 P1 逐帧轨迹外露 + R2 可恢复顺序的读出头**(§3 R2、§5 P1):
       `FastViT.forward:1377` 造出 `[T,B,C]`、`:1384` 只返回池化后的 `[B,C]`,损失层根本看不到
       —— 这一处一次性改动解锁 R2/R3 全家。R2 消融梯子:`mean / additive / slope / phase`,
@@ -223,6 +255,10 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       在位,#225),冒烟→R0 命令已交接(from-claude「07-24 (5) §5 全绿」)。
       等首光回报 → R0 起跑 → **首日实测单 epoch wall-clock**,据此触发
       U6 预算阶梯(超预算裁剪顺序 R0 > R2 > R3 > R3b > R1)。
+      **起跑前先读两条已归档的坑(2026-07-28,#316,`TROUBLESHOOTING.md`)**:
+      ① b100 `patch_embed` 秒级 OOM 而 `nvidia-smi` 显示 0% util —— 别等"空卡",按剩余显存裁 batch;
+      ② DDP + 梯度检查点崩 `Parameter ... layer_scale_2 has been marked as ready twice`
+      —— **已修**:两处 `checkpoint()` 调用点加 `use_reentrant=False`(`models/mobileviclip_small.py`)。
 
 ## 架构探索 backlog(第三轮最终稿落地顺序 · 条件项,不进 R0–R3 主关键路径)
 
@@ -306,10 +342,33 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | **选帧基线(C2 的平凡对照)** | ✅ | 9 臂跑完(2026-07-27),参照臂逐位复现 1.6。**K=2 选帧要紧**(uniform−random +3.4/+3.9)**但 divmax 是错判据**(−2.8/−2.4,且≈随机)⇒ **零训练选帧补不回 6.50 的低 T 缺口,C2 净增益无需扣减**。副产物:±1.6 带偏松。落档 [`frame_select_results.md`](frame_select_results.md) |
 | ~~GATE-0(旧状态)~~ | 🟡 | MSR-VTT 半边 ✅ 结案(**shuffle 不掉分、freeze 掉 13 点** ⇒ 顺序值≈0、帧多样性值 13);SSv2-MC 半边被**数据缺失**卡住。见 [`experiments/gate0_results.md`](gate0_results.md) |
 | 脑启发第二轮(F1–F4 + R1/R2/R3) | ✅ | `notes/neural-inspired-round2.md`(中文全文 `notes/neural-inspired-round2_zh.md`);四份独立评审收敛,含对第一轮 A1/B1 的修正 |
+| **R1 文本负例库(2.4)** | 🟢 **试点级 GO** | 探针 Part B 近重复密度低 ⇒ 建池(#290/2.4c);**A/B 两个种子都清过 kill 判据 ~20×**:ΔR-Sum **+11.0**(seed 42)/ **+13.1**(seed 43),池在全部 10 epoch、两方向领先;R@k 只看归一化余弦 ⇒ 与温度无关。机制=**减小微调退化**(对照 ep1 塌 90.2→85.4)。见 [`r1-implementation-plan.md`](../notes/r1-implementation-plan.md) §9.1/§9.2 |
+| R1 长档 40-epoch(对照能否追上) | 🟡 **待跑(V100)** | 配置已入库(#315),复用 bank 缓存,每臂 ~2.5h;读法:领先保持/扩大=durable,追到 <0.5=只是加速(改措辞不推翻)。§9.3 |
+| R1 大数据 A/B(真正发威档) | ⬜ **H100** | `internvid_all` 11 分片**只在 H100**,V100 仅 10k 子样本(#317,记忆 `server-data-split`);上机前须在 H100 重建更大 text-bank 缓存 |
+| 重字幕线定版(§0.9 全案复审) | 🟡 | 2026-07-28:判断式直融 v3 定版 + 供给取代旧段;**3 红**(GDINO 未装=最大裸露面 / 512→640 已修 / 长稿未验真)、4 黄(迭代快于证据 ⇒ 冻结 prompt)、4 绿。**不占 EN 主时钟(D2)**。见 [`recaption-master-plan.md`](../notes/recaption-master-plan.md) §0.9 |
+| b100 训练侧两个坑 | ✅ 已修/已档 | `patch_embed` 秒级 OOM(别等空卡,按剩余显存裁 batch)+ DDP×梯度检查点 `marked as ready twice` ⇒ 两处 `checkpoint()` 加 `use_reentrant=False`(#316,`TROUBLESHOOTING.md`) |
 | 架构探索 backlog(AC1–AC9,第三轮最终稿) | ⬜ | 顾问式,**均未 A/B、不占主时钟**;落地顺序在「架构探索 backlog」段;AC1a=可导出 P9 由 §1.5 触发、AC-b 是 AC2 前置、AC6′ 净新增仅文本塔 LoRA;死路 4 条已判。源码核查稿 #310 |
 
 ## 进展日志(实时,倒序;每个会话在此加一行,格式:日期:事件(出处))
 
+- 2026-07-28:**R1 文本负例库 A/B 判 GO —— 两个种子都清过 kill 判据约 20×**(#305 / #315,
+  [`r1-implementation-plan.md`](../notes/r1-implementation-plan.md) §9.1/§9.2):seed-42 末轮 R-Sum
+  **533.2 vs 522.2 = ΔR-Sum +11.0**;seed-43 **复现且更大,+13.1**(ep9:v2t txt_r1 +3.4、t2v img_r1 +2.9),
+  两臂 torch 版本一致(`2.5.1+cu118`)⇒ 环境保留意见消除。池在**全部 10 个 epoch、两个方向**领先;
+  R@k 只看 L2 归一化余弦 ⇒ **对 `logit_scale`/`logit_bias` 免疫**,差不可能由温度制造。
+  **机制**=减小微调退化:**对照 ep1 就塌**(r_mean 90.2→85.4 没完全回来),池几乎不掉(90.9→平台 ~88.9)。
+  ⚠️ 两臂都低于各自冻结初始化峰值 —— 9000 片试点**测不到** R1 真正针对的大数据制度,**试点级 GO ≠ 论文级结论**。
+  **下一步**:V100 跑 40-epoch 长档两臂(#315,答"对照多跑步能否追上");**大数据 A/B 是 H100 的活**
+  (#317:`internvid_all` 11 分片只在 H100,V100 只有 10k;上机前须在 H100 重建更大 text-bank 缓存)。
+- 2026-07-28:**b100 训练侧两个坑归档 + DDP 修复**(#316,`TROUBLESHOOTING.md`):
+  ① `patch_embed` 秒级 `torch.OutOfMemoryError` 而 `nvidia-smi` 显 0% util —— 别等"空卡",按**剩余显存**裁 batch;
+  ② DDP + 梯度检查点崩 `Parameter ... layer_scale_2 has been marked as ready twice`
+  —— **已修**:两处 `checkpoint()` 加 `use_reentrant=False`(`models/mobileviclip_small.py`)。
+- 2026-07-28:**重字幕线出定版一页图 + 全案复审(§0.9,3 红/4 黄/4 绿)**(#312/#313/#314):
+  融合从**硬投票改判断式**(§5.7 v3:抓重点 → 类型感知辨真伪 → 先长稿后短句 + 带理由 dropped),
+  B 臂改**固定槽位**(§5.6b),训练 captions 定为**直融短句版**;旧段 §5.5/§4-schema/D5-G2 阶梯/§5.7 v1-v2 **均被取代**。
+  🔴 **GDINO 仍未装**(scp 已给四次)= 外部幻觉门只剩 OCR,**当前最大裸露面**;🔴 直融 token 上限 512→**640 已修**;
+  🔴 长稿不过验真 ⇒ 仅目检参考。🟡 **迭代快于证据 ⇒ 冻结 prompt,先目检后小训练**。**不占 EN 主时钟(D2)**。
 - 2026-07-28:**第三轮架构最终稿落地顺序写入 ROADMAP(新增「架构探索 backlog」AC1–AC9)**:
   round-3 头脑风暴稿经逐点源码核查后(#310)出最终稿——改正 3 处过时前提(弹性 T/冻结 bug/
   temporal_pool 均已实现)+ 2 处机制错误(C1 联合注意力塞不进深度时序卷积→改可分离蒸馏=可导出 P9;
