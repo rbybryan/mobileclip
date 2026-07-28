@@ -2354,3 +2354,104 @@ As of `utils/config.py` (this fix), a missing config path now raises a clear
 `FileNotFoundError: config file not found: '<path>'. … run 'git pull origin main' …`
 instead of the `config.debug` AttributeError, so the next occurrence names its own
 cause. If you still see the *old* message, the server is on pre-fix code — pull.
+
+## `torch.OutOfMemoryError` immediately in `patch_embed` on b100 — but `nvidia-smi` shows 0% util
+
+### Symptom
+
+Training dies in the **first conv layer** (`patch_embed`, before any real compute),
+e.g. on `experiments/run_pretrain.sh experiments/configs/r0_baseline.py 2 ... debug True`:
+
+```
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 1.25 GiB.
+GPU 0 has a total capacity of 79.18 GiB of which 481.06 MiB is free.
+Process 3459960 has 70.42 GiB memory in use. ...
+```
+
+Yet `nvidia-smi` a moment later shows every GPU at **~71–73 GiB used, 0% GPU-Util**,
+and the process table says **`No running processes found`**.
+
+### Cause
+
+**b100 is a shared, multi-tenant node and all 8 H100s are already ~87% full.** The
+`No running processes found` line is PID-namespace isolation — your container can't
+see the other tenants' PIDs, but their ~71 GiB allocations (the `Process 34599xx has
+70.42 GiB` in the OOM trace) are real and persistent. Only **~8–10 GiB is actually
+free per card**, and there is usually **no idle card to move to**.
+
+`Memory-Usage` and `GPU-Util` measure different things and routinely disagree:
+`Memory-Usage` is VRAM *reserved right now* (weights + optimizer state + PyTorch's
+caching-allocator blocks stay resident even when idle); `GPU-Util` is only the
+fraction of the *last sampling instant* a kernel was running. A card can be fully
+committed on memory yet show 0% util between kernels. **0% util does NOT mean the
+card is free** — do not treat a 0%-util card as available.
+
+### Fix — fit inside the free headroom; don't wait for a "free" GPU
+
+The real training batch size is `config.inputs.batch_size.video` (`tasks_clip/pretrain.py`
+reads `config.inputs.batch_size[media_type]`), **not** the top-level `batch_size: 64`
+— overriding `batch_size` alone silently does nothing. Nested dotted overrides work
+(`utils/config.py` `merge_list`), so shrink the real knob:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 bash experiments/run_pretrain.sh \
+    experiments/configs/r0_baseline.py 2 \
+    use_bf16 True bf16 True deepspeed.enable False debug True \
+    inputs.batch_size.video 4 inputs.batch_size_test.video 4
+```
+
+`batch=4` fits in ~8 GiB and is sufficient for a plumbing/smoke check (batch size is
+irrelevant to the data→model→loss go/no-go). Drop to `2` if 4 still OOMs. For real
+throughput you need genuinely free cards — check `nvidia-smi` for one near **0 MiB
+used**, not merely 0% util.
+
+Note: `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` prints
+`expandable_segments not supported on this platform` on this driver and is a no-op —
+the batch-size reduction is what unblocks it, not that flag.
+
+## DDP crash: `Parameter ... layer_scale_2 has been marked as ready twice` (gradient checkpointing)
+
+### Symptom
+
+Past the OOM, the run loads data, builds the model, and completes the forward pass,
+then dies at the **first `loss.backward()`**:
+
+```
+RuntimeError: Expected to mark a variable ready only once. ...
+Parameter at index 1307 with name vision_encoder.network.7.3.layer_scale_2
+has been marked as ready twice. ...
+```
+
+Preceded by:
+
+```
+UserWarning: torch.utils.checkpoint: the use_reentrant parameter should be passed
+explicitly. ... use_reentrant=False is recommended ...
+```
+
+Seen on b100 (2026-07-28), 2-GPU `r0_baseline.py` smoke test with `gradient_checkpointing`
+on (the default). Because forward + loss complete, the data/model/loss pipeline is
+already validated — this is a pure DDP config bug, not a data or memory problem.
+
+### Cause
+
+**DDP + *reentrant* activation checkpointing are incompatible.** The stage-4 joint
+T·H·W attention blocks (`network.7.x`) wrap their forward in
+`torch.utils.checkpoint.checkpoint(_inner_forward, x)` (`models/mobileviclip_small.py`).
+The old default `use_reentrant=True` re-runs the forward during backward, which
+re-fires DDP's per-parameter gradient-reduction hooks — so those params
+(`layer_scale_2`) get marked ready a second time and DDP aborts.
+
+### Fix — `use_reentrant=False` at both checkpoint call sites
+
+PyTorch's documented requirement for DDP + activation checkpointing. Both call sites
+in `models/mobileviclip_small.py` (RepMixer block ~1085, AttentionBlock ~1180) now pass
+it explicitly:
+
+```python
+return checkpoint.checkpoint(_inner_forward, x, use_reentrant=False)
+```
+
+This is a behavior-preserving change (only *how* activations are recomputed in
+backward changes, not the numerics). No config flag is needed — pull `main` and rerun.
+If you still hit "marked ready twice" after pulling, the server is on pre-fix code.
