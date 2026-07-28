@@ -486,6 +486,44 @@ python experiments/frame_select_diag.py             # 全量 1000 条
 
 ---
 
+### 3.6 导出冒烟(ROADMAP 1.5 / 评审 U1)—— 零 GPU,零训练,随机权重
+
+**产出决定 P9(分离注意力变体)是否提前触发**,进而决定弹性模型要不要直接用
+可导出形态训练(免得第 8 周再单独微调一个部署变体)。**本表不含延迟** —— 真机
+延迟档仍在第 8 周。
+
+```bash
+# 装多少跑多少;缺哪条依赖那一列就记 skip,不影响另外两条
+pip install onnx onnxruntime onnxscript      # ONNX 路线(torch>=2.6 需要 onnxscript)
+pip install litert-torch                     # TFLite 路线(ai-edge-torch 已改名,旧包是空壳)
+pip install coremltools                      # Core ML 路线
+
+python experiments/export_smoke.py --mini    # 先自检脚本本身(秒级)
+python experiments/export_smoke.py           # 全尺寸,T∈{2,4,8,16}
+python experiments/export_smoke.py --inference-mode   # 重参数化后的部署形态
+```
+
+导出的是**视觉塔**(`FastViT`,架构参数与 `build_vision_encoder` 逐项一致 ⇒ 含全部
+时序算子);输入签名 `[B,T,C,H,W]` 与 `encode_vision` 对齐(脚本内做同一行 permute)。
+文本塔不导 —— 端侧文本 embedding 通常离线算好。
+
+产出:`experiments/exports/export_smoke.{json,md}`。按 U1 验收,把 md 那张表贴进
+`notes/live/from-claude.md` 或 `TROUBLESHOOTING.md`。
+
+**读表三条规则:**
+
+- 三路全 **pass** ⇒ P9 **不触发**,弹性模型按现形态训练;
+- **联合注意力导不出**(失败算子指向 attention / `temporal_embedding`)⇒ P9
+  **提前进入 R3 架构决策视野**;
+- **skip 不是结论**。脚本把「缺依赖」与「缺传递依赖」都归为 skip 而非 fail ——
+  把环境问题记成 fail 会产生**假的 P9 触发**。别把 skip 读成 pass,也别读成 fail。
+
+**已知(本机 CPU 预跑,torch 2.12)**:全尺寸 ONNX 路线 T=2 / T=4 **pass**
+(导出 + `onnx.checker` + onnxruntime 加载推理全过)。TFLite / Core ML 两路本机
+无依赖未测。
+
+---
+
 ## 4. Training (pretraining)
 
 **Preflight — run this before every pretraining launch, not just the first:**

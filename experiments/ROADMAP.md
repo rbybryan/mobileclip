@@ -102,10 +102,30 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 - [ ] **1.4 B0 锁基线**(1.1 完成后,README §3):官方权重跑已到位的
       基准 → `collect_results.py --out experiments/BASELINE.md`。
       核对 MSR-VTT DSL 口径 t2v R@1 ≈ 42.5;**论文主口径 = raw(`_emb/`)**。
-- [ ] **1.5 导出冒烟(U1,零训练权重,CPU 可做,立即)**:随机权重实例化
-      `MobileViCLIP_Small`(带全部时序算子),分走 ONNX / TFLite / coremltools
-      转换,按 T∈{2,4,8,16} 各出静态图;记录每路 pass/fail + 失败算子。
-      产出决定 P9 是否提前触发(真机延迟档仍在第 8 周)。
+- [~] **1.5 导出冒烟(U1,零训练权重,CPU 可做)—— 脚本已就绪,待在 101vector 上跑全量**:
+      随机权重实例化视觉塔(架构参数与 `build_vision_encoder` 逐项一致 ⇒ 带全部时序
+      算子),分走 ONNX / TFLite / coremltools 转换,按 T∈{2,4,8,16} 各出静态图;
+      记录每路 pass/fail + 失败算子。产出决定 P9 是否提前触发(真机延迟档仍在第 8 周)。
+      **脚本** `experiments/export_smoke.py`,**命令** `COMMANDS.md` §3.6,
+      **测试** `tests/test_export_smoke.py`(22 项)。三条路线互相独立,缺依赖记 skip 不崩。
+      ⚠️ **skip ≠ fail**:脚本把「缺依赖」「缺传递依赖」都归 skip —— 把环境问题记成 fail
+      会产生**假的 P9 触发**(实测踩过:torch≥2.6 的 ONNX 导出器需 `onnxscript`)。
+      **101vector 实测(2026-07-27,全尺寸 `[1,T,3,256,256]`,torch 2.5.1)**:
+      **ONNX 与 Core ML 在 T∈{2,4,8,16} 上全部 pass**(ONNX 走完导出 +
+      `onnx.checker` + onnxruntime 加载推理三步;Core ML 约 4343 个 MIL op 全过)
+      ⇒ **联合注意力不构成导出障碍,P9 暂不触发**,弹性模型可按现形态训练。
+      **TFLite 受 torch 版本阻塞,本机不评估**:两轮报错都是工具链问题而非导不出
+      —— ① `ai-edge-torch` 已改名 `litert-torch`(旧包是空壳);② `litert-torch` 需
+      **torch>=2.6** 的 `torch.int1`,而 101vector 锁 **2.5.1+cu118** 是为了 V100 的
+      **sm_70 内核**(换版本会让 8 卡在第一个 barrier 全崩,见 TROUBLESHOOTING 末节)。
+      ⇒ **别为一格导出结论动训练环境的 torch**;导出是 CPU-only + 随机权重,
+      开独立 venv 补测即可(配方见结果文档 §3)。两轮都已修为 skip 而非 fail。
+      落档 [`export_smoke_results.md`](export_smoke_results.md)。
+      ⚠️ **对 C2 部署叙事的观察**:trace 显示 **T 被烘成常量**(`int(t)`、reshape、
+      以及 `temporal_embedding` 走不走插值那个 `if`)⇒ "帧数即部署旋钮"在**权重层面**
+      成立(单 checkpoint),**产物层面是 1 份权重 → N 张图**。
+      **未验证**:ONNX `dynamic_axes` 能否一张图服务所有 T —— 便宜且直接影响 C4 端侧表,
+      建议在真机延迟档之前搞清楚。
 - [x] **1.6 B0 多 T 退化曲线(U2)** —— ✅ 2026-07-24 V100 实测完成(官方
       `mobileviclip_small.pt`,MSR-VTT 1K,fp32,middle 采样;from-claude (18)):
 
