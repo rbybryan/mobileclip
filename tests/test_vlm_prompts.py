@@ -34,10 +34,12 @@ def test_salvage_struct_items_empty_on_garbage():
 
 def test_fuse_direct_prompt_formats_cleanly():
     # .format-consumed: doubled braces + exactly the {n}/{recaps} slots
-    assert FUSE_DIRECT_KEYS == {"views"}
+    assert FUSE_DIRECT_KEYS == {"short"}
     filled = FUSE_DIRECT_PROMPT.format(n=3, recaps="描述1：x")
-    assert '"views"' in filled and '"dropped"' in filled
-    assert '"long"' in filled          # §5.7 双稿: 长稿 + 浓缩短句
+    assert '"short"' in filled and '"dropped"' in filled
+    assert '"long"' in filled       # §5.7 v4 双稿: 长稿保细节 + 短稿一条
+    assert "30 个字" in filled      # 32-token 文本编码器墙 -> ≤30 字硬上限
+    assert '"views"' not in filled  # 多条视图形态已退役 (maintainer 2026-07-28)
     assert "{" + "n}" not in filled  # no unfilled placeholder survives
 
 

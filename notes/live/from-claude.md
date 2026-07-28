@@ -23,6 +23,31 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-28 (56) — 直融短稿改为一条≤30字训练字幕 + B臂属性徽标 + 每条caption一个编号(徽标v20260728d)
+
+按你三条指令改完(已合入 main):
+
+1. **B 方案重述的属性** = 固定四栏:**主体≤2 行 / 动作≤2 行 / 场景 1 行 / 文字 1 行**(空栏写「无」,
+   struct 变体同一套四属性、每遍 5-8 条)。现在评审页 B重述每行行首渲染蓝色小徽标
+   【主体】【动作】【场景】【文字】——从已缓存的 `views.attr` 显示端重建,**重述缓存不用重跑**。
+2. **分点改法**:每条 caption(每遍重述)一个编号,不再按「;」把一条切成多点。
+3. **直融两稿定版**:**短稿 = 一条 ≤30 字**的自然短句(32-token 文本编码器墙内,[CLS]+30字+[SEP])
+   ——这条就是最终训练字幕;**长稿 = 60-120 字**尽量保留全部过审细节(目检参考/后备)。
+   融合 prompt 输出键改 `short`,验真/refine/TSV 全链兼容(views 单元素),REFINE 上限同步 28→30 字。
+
+**融合 prompt 变了 → 直融缓存必须清掉重融**(重述/SigLIP/投票缓存全部复用,约 25-35 分钟):
+```bash
+cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
+git log --oneline -1        # ← 必须比 #318 新(本块对应 PR 见提交信息);还是旧号就贴回来
+rm -f outputs/audit_10k/pipe*fused_d*.jsonl
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+grep -c v20260728d outputs/audit_10k/bundle_compare/index.html   # ← 必须 ≥1
+tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
+```
+本地解包后页面左上角看 **v20260728d** 徽标;B重述应出现蓝色属性徽标,A重述 5 条=5 个编号,
+直融=一条短句、直融长稿=一段。**GDINO scp 仍是最高优先待办**((52) 块的下载+scp 步骤,5 分钟)——
+判断式融合放宽单源细节后,外部验真门现在实际只剩 OCR。
+
 ## 2026-07-28 (55) — 数据分工已明确:V100 只有 10k,全量 InternVid 在 H100 → 大数据 A/B 是 H100 的活
 
 维护者答复:**V100(101vector)只有 10k 子样本;全量 InternVid 只在 H100 上。** 所以:

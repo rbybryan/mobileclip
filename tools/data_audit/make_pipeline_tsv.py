@@ -108,9 +108,10 @@ def main():
                     help="resolve video_path for the review sheet")
     args = ap.parse_args()
 
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from vlm_audit import slot_recap_cells  # noqa: E402
     resolve = None
     if args.sheet_output:
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from vlm_audit import resolve_video_path  # noqa: E402
         resolve = resolve_video_path
 
@@ -158,7 +159,10 @@ def main():
             r = recaps.get(vid)
             if r is None:
                 continue
-            caps = [c for c in ((r.get("verdict") or {}).get("recaps") or [])
+            # slot/struct arms show 【属性】-labelled lines rebuilt from views
+            # (maintainer 2026-07-28); dense arm keeps plain recap strings
+            vd = r.get("verdict") or {}
+            caps = [c for c in (slot_recap_cells(vd) or vd.get("recaps") or [])
                     if isinstance(c, str)]
             # recap columns, with SigLIP score when available
             cap_cols = []
