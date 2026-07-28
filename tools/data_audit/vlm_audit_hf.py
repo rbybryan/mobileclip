@@ -484,12 +484,14 @@ def main():
                 elif args.mode == "fuse-direct":
                     # §5.7 direct LLM fusion (ASID-Verify-style refine, arXiv
                     # 2602.13013): ONE text-only greedy call reads the N
-                    # independent recaptions and does semantic vote + condense
-                    # in a single step. The LLM judges "same fact" far better
-                    # than n-gram clustering (measured: 34/50 no-match), at the
-                    # price of an unauditable vote -- so it must self-report
-                    # dropped single-source details, the rule vote stays as a
-                    # diagnostic, and Panel-V remains the backstop.
+                    # independent recaptions and does editorial judgment +
+                    # two-draft writing in a single step. v4: verdict.long =
+                    # 60-120-char detail draft (reference), verdict.views =
+                    # exactly ONE <=30-char short caption (THE training
+                    # caption, 32-token text-encoder wall) kept in the views
+                    # schema so verify/refine/TSV machinery is unchanged.
+                    # The LLM must self-report dropped details, the rule vote
+                    # stays as a diagnostic, and Panel-V remains the backstop.
                     recaps = [c for c in ((rec.get("verdict") or {})
                                           .get("recaps") or [])
                               if isinstance(c, str) and c.strip()]
@@ -518,18 +520,24 @@ def main():
                             obj = extract_json(text, FUSE_DIRECT_KEYS)
                         except Exception:  # noqa: BLE001
                             obj = None
-                    views, seen = [], set()
-                    for v in (obj or {}).get("views") or []:
-                        if isinstance(v, dict) and isinstance(v.get("text"),
-                                                              str) \
-                                and v["text"].strip() \
-                                and v["text"].strip() not in seen:
-                            seen.add(v["text"].strip())
-                            gloss = [g.strip().lower()
-                                     for g in (v.get("gloss") or [])
-                                     if isinstance(g, str) and g.strip()]
-                            views.append({"text": v["text"].strip(),
-                                          "gloss": gloss, "src_recap": "fuse"})
+                    # v4 short -> single-element views list; accept a bare
+                    # string short, and fall back to legacy v3 views[0] so a
+                    # stale cache line never yields an empty caption.
+                    short = (obj or {}).get("short")
+                    if isinstance(short, str):
+                        short = {"text": short}
+                    if not isinstance(short, dict):
+                        legacy = (obj or {}).get("views") or []
+                        short = legacy[0] if legacy \
+                            and isinstance(legacy[0], dict) else {}
+                    views = []
+                    if isinstance(short.get("text"), str) \
+                            and short["text"].strip():
+                        gloss = [g.strip().lower()
+                                 for g in (short.get("gloss") or [])
+                                 if isinstance(g, str) and g.strip()]
+                        views = [{"text": short["text"].strip(),
+                                  "gloss": gloss, "src_recap": "fuse"}]
                     dropped = [d.strip() for d in (obj or {}).get("dropped")
                                or [] if isinstance(d, str) and d.strip()]
                     long_c = (obj or {}).get("long")

@@ -4,7 +4,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
                                 "tools", "data_audit"))
-from vlm_audit import SLOT_RECAP_PROMPT, parse_slot_lines  # noqa: E402
+from vlm_audit import (SLOT_RECAP_PROMPT, parse_slot_lines,  # noqa: E402
+                       slot_recap_cells)
 
 
 def test_happy_path():
@@ -51,3 +52,36 @@ def test_prompt_is_raw_lines_not_json():
     for slot in ("主体", "动作", "场景", "文字"):
         assert slot in SLOT_RECAP_PROMPT
     assert "无" in SLOT_RECAP_PROMPT
+
+
+def test_slot_recap_cells_rebuilds_labels_per_pass():
+    # display-side 【属性】 rebuild from cached views (no re-run needed)
+    verdict = {
+        "recaps": ["男子切菜；明亮厨房", "男子随后装盘"],
+        "views": [
+            {"text": "一名男子在切菜", "attr": "subject", "src_recap": 0},
+            {"text": "明亮的家用厨房", "attr": "scene", "src_recap": 0},
+            {"text": "男子随后把菜装盘", "attr": "action", "src_recap": 1},
+        ]}
+    cells = slot_recap_cells(verdict)
+    assert cells == ["【主体】一名男子在切菜 【场景】明亮的家用厨房",
+                     "【动作】男子随后把菜装盘"]
+
+
+def test_slot_recap_cells_dense_fallback_pass_keeps_plain_text():
+    # a pass that fell back to the dense prompt has no attributed views;
+    # its cell must keep the plain recap paragraph instead of going empty
+    verdict = {
+        "recaps": ["【无属性】这遍是稠密兜底段落", "男子装盘"],
+        "views": [{"text": "男子把菜装盘", "attr": "action", "src_recap": 1}]}
+    cells = slot_recap_cells(verdict)
+    assert cells[0] == "【无属性】这遍是稠密兜底段落"
+    assert cells[1] == "【动作】男子把菜装盘"
+
+
+def test_slot_recap_cells_none_for_dense_mode():
+    # dense recaps carry no attr/src_recap-int views -> caller falls back
+    assert slot_recap_cells({"recaps": ["一段稠密描述"]}) is None
+    assert slot_recap_cells({"recaps": ["x"], "views": [
+        {"text": "融合句", "src_recap": "fuse"}]}) is None
+    assert slot_recap_cells(None) is None

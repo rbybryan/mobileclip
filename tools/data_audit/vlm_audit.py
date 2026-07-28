@@ -219,18 +219,22 @@ RECAP_PROMPT = """你是一个严谨的视频画面描述助手。下面是从�
 6. 覆盖以下方面（只写真实可见的）：主体（人/物的外观、服装、颜色等特征）、主体的动作及其先后、场景与背景环境、屏幕上的文字。如果某一方面在画面中不存在，就完全不要提它。
 7. 输出一段连贯、信息密集的中文，不要分点、不要标题、不要开场白或结束语，只输出这段描述本身。"""
 
-# --mode fuse-direct (§5.7 v3, maintainer 2026-07-28): ONE text-only call
+# --mode fuse-direct (§5.7 v4, maintainer 2026-07-28): ONE text-only call
 # reads the N independent recaptions and performs EDITORIAL JUDGMENT — find
 # the core content, weigh each detail (cross-version agreement is evidence,
 # not a hard rule: hard-to-fabricate single-source details may stay;
 # easy-to-hallucinate types — numbers, on-screen text, names, intent — are
 # dropped or blurred without corroboration; contradictions take the majority
-# or get blurred), then write long (60-120 chars) and condense views. The
-# old hard ">=2-of-N" vote rule is retired per maintainer; auditability is
-# preserved by (a) reason-annotated dropped list, (b) the rule vote still
-# running as a diagnostic, (c) Panel-V verify+refine as the hard gate.
+# or get blurred), then write TWO drafts: long (60-120 chars, keeps detail,
+# review/KD reference) and short (ONE caption <=30 chars — the training
+# caption, sized for the 32-token CLIP text-encoder window: [CLS] + ~30
+# Chinese chars + [SEP]). v4 retires the 2-5-view condense per maintainer
+# ("condense 应该是一条在 text encoder 字数限制下的短 caption"); the hard
+# ">=2-of-N" vote was already retired in v3. Auditability is preserved by
+# (a) reason-annotated dropped list, (b) the rule vote still running as a
+# diagnostic, (c) Panel-V verify+refine as the hard gate.
 # Consumed via .format -> doubled braces.
-FUSE_DIRECT_KEYS = {"views"}
+FUSE_DIRECT_KEYS = {"short"}
 FUSE_DIRECT_PROMPT = """下面是同一段视频的 {n} 段互相独立的中文描述。它们出自对同一段视频的多次独立观看，各自都可能有错漏；多段一致的信息通常更可信，但一致与否只是证据、不是铁律——请你像资深字幕编辑一样综合判断。
 
 请在心里分三步完成编辑，最后只输出结果 JSON：
@@ -243,14 +247,14 @@ FUSE_DIRECT_PROMPT = """下面是同一段视频的 {n} 段互相独立的中文
 - 只有一段提到 → 看类型：具体的动作、位置这类"难凭空编造"的细节可酌情保留；数字、画面文字内容、品牌/人名、身份、情绪意图这类"易幻觉"的细节一律舍弃或模糊化；
 - 引号“”内的画面文字：多段一致才保留且必须原样照抄、不改一字；只有一段提到或各段不一致，就完全不写这段文字。
 
-第三步·成稿（先长后短）：
-- long（长稿）：把保留的信息写成一段 60-120 字、连贯自然的中文描述，按"主体→动作先后→场景→画面文字"组织；只写你判定保留的信息，绝不新增任何描述之外的内容。
-- views（短句版）：把长稿压缩成 2-5 条互补的检索短句——每条不超过 28 个字，语法完整、可独立成句，不用"他/她/它/这"开头；能自然合并的信息装进同一条（如同一主体的外观+动作+位置）；保留的信息要全部覆盖，宁可多写一条也不要丢；条与条不要互相复述。
-- gloss：每条短句里能在画面中被检测到的具体名词的英文（小写，1-4 个），如 ["man", "kitchen"]；抽象概念、动词不要放。
+第三步·成稿（先长后短，两版各司其职）：
+- long（长稿）：把保留的信息写成一段 60-120 字、连贯自然的中文描述，按"主体→动作先后→场景→画面文字"组织；尽量保留通过取舍的全部细节，绝不新增任何描述之外的内容。
+- short（短稿）：在长稿基础上再提炼成**一条不超过 30 个字**的中文短字幕——这是最终训练用字幕，必须是一句自然通顺的话（核心主体+核心动作，放得下再加最有辨识度的一个外观或场景细节），不要罗列、不要分号顿号堆砌、不用"他/她/它/这"开头；引号内的画面文字放不下就不写（长稿里已有）；超过 30 字宁可舍弃次要细节。
+- gloss：短稿里能在画面中被检测到的具体名词的英文（小写，1-4 个），如 ["man", "kitchen"]；抽象概念、动词不要放。
 - dropped：被你舍弃或模糊化的细节清单，每条在括号里附一句取舍理由，如 "墙上挂着三幅画（仅一段提及，数字类易幻觉）"。
 
 只输出一个 JSON 对象，不要任何解释：
-{{"long": "一段 60-120 字的完整长描述", "views": [{{"text": "短句一", "gloss": ["..."]}}, {{"text": "短句二", "gloss": []}}], "dropped": ["细节（取舍理由）", "..."]}}
+{{"long": "一段 60-120 字的完整长描述", "short": {{"text": "一条不超过30字的训练短字幕", "gloss": ["..."]}}, "dropped": ["细节（取舍理由）", "..."]}}
 
 {recaps}"""
 
@@ -287,6 +291,7 @@ SLOT_RECAP_PROMPT = """你是一个严谨的视频画面描述助手。下面是
 
 SLOT_ATTRS = {"主体": "subject", "动作": "action", "场景": "scene",
               "文字": "text"}
+SLOT_ATTRS_ZH = {v: k for k, v in SLOT_ATTRS.items()}
 SLOT_CAPS = {"subject": 2, "action": 2, "scene": 1, "text": 1}
 SLOT_LINE = re.compile(
     r"^\s*(主体|动作|场景|文字)\s*[:：]\s*(.+?)\s*(?:\[([^\[\]]*)\])?\s*$")
@@ -315,12 +320,39 @@ def parse_slot_lines(text):
     return out
 
 
+def slot_recap_cells(verdict):
+    """(maintainer 2026-07-28) Rebuild per-pass ATTRIBUTE-LABELLED recap
+    strings from an attribute-style verdict (recap-slot OR recap-struct):
+    views carry {attr, src_recap}, while verdict.recaps strips the labels.
+    Returns a list aligned with verdict.recaps ("【主体】... 【动作】..."),
+    or None when the verdict has no attributed views (dense mode) -- caller
+    falls back to verdict.recaps. Display-side only, so it works on cached
+    jsonl with zero re-run. Caveat: views were deduped across passes at
+    generation time, so a line repeated verbatim in a later pass shows only
+    in its first pass; such passes fall back to the unlabelled recap text
+    when they end up with no attributed line at all."""
+    vd = verdict or {}
+    recaps = [c if isinstance(c, str) else "" for c in (vd.get("recaps") or [])]
+    by_pass = {}
+    for v in vd.get("views") or []:
+        if not (isinstance(v, dict) and isinstance(v.get("src_recap"), int)):
+            continue
+        zh = SLOT_ATTRS_ZH.get(v.get("attr"))
+        t = v.get("text")
+        if zh and isinstance(t, str) and t.strip():
+            by_pass.setdefault(v["src_recap"], []).append(f"【{zh}】{t.strip()}")
+    if not by_pass:
+        return None
+    return [" ".join(by_pass[i]) if by_pass.get(i) else recaps[i]
+            for i in range(len(recaps))]
+
+
 # --mode refine (§5.8-1, ASID-style selective refinement, arXiv 2602.13013):
 # ONE minimal-edit repair call for views that FAILED Panel-V. Repair-then-
 # reverify replaces delete-on-fail -- a failed check loses one phrase, not the
 # whole view. Consumed via .format -> doubled braces.
 REFINE_KEYS = {"views"}
-REFINE_PROMPT = """下面每条中文短句是同一段视频的候选字幕，括号内标注了它未通过画面检验的原因（画面中检测不到某物体，或找不到某段文字）。请逐条做最小修改：删去或改写未通过检验的部分，其余用词尽量原样保留；改后每条仍不超过 28 个字、语法完整。若删去问题部分后信息所剩无几，该条输出空字符串 ""。
+REFINE_PROMPT = """下面每条中文短句是同一段视频的候选字幕，括号内标注了它未通过画面检验的原因（画面中检测不到某物体，或找不到某段文字）。请逐条做最小修改：删去或改写未通过检验的部分，其余用词尽量原样保留；改后每条仍不超过 30 个字、语法完整。若删去问题部分后信息所剩无几，该条输出空字符串 ""。
 
 规则：
 1. 只修问题处，绝不新增任何画面细节。

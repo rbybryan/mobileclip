@@ -56,7 +56,12 @@ def load_jsonl(pattern):
 
 
 def recap_cell(rec):
-    caps = ((rec or {}).get("verdict") or {}).get("recaps") or []
+    """One pass per ‖-item. Slot/struct arms rebuild 【属性】-labelled lines
+    from verdict.views (maintainer 2026-07-28: 标属性); dense arms fall back
+    to the plain per-pass recap strings."""
+    from vlm_audit import slot_recap_cells
+    vd = (rec or {}).get("verdict") or {}
+    caps = slot_recap_cells(vd) or vd.get("recaps") or []
     return SEP.join(flat(c) for c in caps if isinstance(c, str) and c.strip())
 
 
