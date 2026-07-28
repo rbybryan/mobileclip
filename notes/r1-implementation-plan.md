@@ -370,3 +370,40 @@ end-to-end forward wiring, buffer dtype/device movement under deepspeed, and the
 (its build path is the one Part B already ran). If the run errors, paste the traceback.
 
 **Report BOTH directions** (v2t hardened directly, t2v indirect — §1); apply the kill criterion (§5).
+
+---
+
+## 9. A/B — treatment arm measured (2026-07-27), control still pending
+
+`nR1_textbank_pilot` (bank ON) ran clean: startup logged
+`[R1] text bank ON: pool=(8999, 512) K'=16384 dedup_cos=0.9`, 10 epochs, no crash. Because the
+pool holds all 8999 distinct captions and `K'=min(16384, 8999)=8999`, **every step appends the entire
+bank** as sigmoid negative columns — the intended "big pool" stress. (Absolute `video-loss_vtc` ≈ 11–14
+is *not* comparable to a no-pool run: the bank adds 8999 extra per-row sigmoid terms. Only held-out
+recall is comparable.)
+
+Treatment `ret_test/` per epoch:
+
+| ep | txt_r1 | img_r1 | r_mean |
+|----|--------|--------|--------|
+| 0  | 79.1 | 80.7 | 90.97 |
+| 1  | 75.9 | 78.5 | 89.00 |
+| 2  | 75.3 | 77.7 | 88.40 |
+| 3  | 75.4 | 79.1 | 88.62 |
+| 4  | 74.9 | 78.6 | 88.58 |
+| 5  | 74.8 | 79.3 | 88.65 |
+| 6  | 75.0 | 79.4 | 88.67 |
+| 7  | 75.4 | 79.1 | 88.88 |
+| 8  | 75.1 | 79.5 | 88.80 |
+| 9  | 75.4 | 79.5 | 88.87 |
+
+Shape: epoch-0 (post-warmup, near the frozen init) is the peak at 90.97, then a dip to 88.4 (ep2) and a
+slow climb back to ~88.9. This "fine-tune slightly below the strong zero-shot init on an easy in-domain
+val" shape is expected to appear in **both** arms — which is exactly why the decision is the *delta*, not
+the absolute. `sim_v2t/sim_t2v has nan` printed once during the epoch-5 eval (known benign fp16 eval
+quirk, see TROUBLESHOOTING; it did not crash and the epoch produced numbers).
+
+**Cannot call go/kill yet.** The kill criterion (§5) is defined on **pool − no-pool**; the control
+(`pilot_10k_r1`, identical setup minus `criterion.text_bank`) has not run. Next: run the control (matched
+10 epochs, ~38 min), then compare per-epoch `txt_r1`/`img_r1` and best-epoch R-Sum. Kill if
+pool − no-pool < 0.5 R-Sum.
