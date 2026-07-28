@@ -1082,7 +1082,11 @@ class RepMixerBlock(nn.Module):
             return x
 
         if self.with_cp:
-            return checkpoint.checkpoint(_inner_forward, x)
+            # use_reentrant=False is required for DDP + activation checkpointing:
+            # the old reentrant path reruns forward during backward, re-firing DDP's
+            # grad-reduction hooks and crashing with "marked ready twice" on the
+            # stage-4 attention params (network.7.x.layer_scale_2). See TROUBLESHOOTING.md.
+            return checkpoint.checkpoint(_inner_forward, x, use_reentrant=False)
         else:
             return _inner_forward(x)
 
@@ -1177,7 +1181,11 @@ class AttentionBlock(nn.Module):
             return x
 
         if self.with_cp:
-            return checkpoint.checkpoint(_inner_forward, x)
+            # use_reentrant=False is required for DDP + activation checkpointing:
+            # the old reentrant path reruns forward during backward, re-firing DDP's
+            # grad-reduction hooks and crashing with "marked ready twice" on the
+            # stage-4 attention params (network.7.x.layer_scale_2). See TROUBLESHOOTING.md.
+            return checkpoint.checkpoint(_inner_forward, x, use_reentrant=False)
         else:
             return _inner_forward(x)
 
