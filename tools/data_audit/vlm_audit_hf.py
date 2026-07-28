@@ -36,7 +36,8 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vlm_audit import (CONDENSE_KEYS, CONDENSE_PROMPT, DERIVE_KEYS,  # noqa: E402
-                       DERIVE_PROMPT, FUSE_DIRECT_KEYS, FUSE_DIRECT_PROMPT,
+                       DERIVE_PROMPT, FUSE_LONG_KEYS, FUSE_LONG_PROMPT,
+                       FUSE_SHORT_KEYS, FUSE_SHORT_PROMPT,
                        GRAN_KEYS, GRAN_PROMPT, MERGE_KEYS, MERGE_PROMPT,
                        PROMPT, RECAP_PROMPT, REFINE_KEYS, REFINE_PROMPT,
                        SLOT_RECAP_PROMPT, STRUCT_KEYS, STRUCT_RECAP_PROMPT,
@@ -483,15 +484,16 @@ def main():
                                       "n_units": len(units)}
                 elif args.mode == "fuse-direct":
                     # §5.7 direct LLM fusion (ASID-Verify-style refine, arXiv
-                    # 2602.13013): ONE text-only greedy call reads the N
-                    # independent recaptions and does editorial judgment +
-                    # two-draft writing in a single step. v4: verdict.long =
-                    # 60-120-char detail draft (reference), verdict.views =
-                    # exactly ONE <=30-char short caption (THE training
-                    # caption, 32-token text-encoder wall) kept in the views
-                    # schema so verify/refine/TSV machinery is unchanged.
-                    # The LLM must self-report dropped details, the rule vote
-                    # stays as a diagnostic, and Panel-V remains the backstop.
+                    # 2602.13013). v5: TWO decoupled text-only calls per clip
+                    # (maintainer 2026-07-28). Call 1 = editorial judgment
+                    # over the N independent recaptions -> verdict.long
+                    # (detail draft, NO length cap) + reason-annotated
+                    # dropped. Call 2 = distill the long draft (closed set)
+                    # -> exactly ONE <=30-char short caption (THE training
+                    # caption, 32-token text-encoder wall), kept in the
+                    # views schema so verify/refine/TSV machinery is
+                    # unchanged. Rule vote stays as a diagnostic, Panel-V
+                    # remains the backstop.
                     recaps = [c for c in ((rec.get("verdict") or {})
                                           .get("recaps") or [])
                               if isinstance(c, str) and c.strip()]
@@ -501,35 +503,44 @@ def main():
                         fout.write(json.dumps(out, ensure_ascii=False) + "\n")
                         fout.flush(); n_done += 1
                         continue
+
+                    def _fuse_call(prompt, keys, max_new):
+                        try:
+                            return extract_json(
+                                generate(model, processor, [], prompt,
+                                         max_new), keys)
+                        except (ValueError,
+                                torch.cuda.OutOfMemoryError) as ex:
+                            if isinstance(ex, torch.cuda.OutOfMemoryError):
+                                torch.cuda.empty_cache()
+                            try:  # one retry with mild sampling
+                                return extract_json(
+                                    generate(model, processor, [], prompt,
+                                             max_new, temperature=0.3), keys)
+                            except Exception:  # noqa: BLE001
+                                return None
                     rlist = "\n".join(f"描述{i + 1}：{c.strip()}"
                                       for i, c in enumerate(recaps))
-                    prompt = FUSE_DIRECT_PROMPT.format(n=len(recaps),
-                                                       recaps=rlist)
-                    obj = None
-                    try:
-                        text = generate(model, processor, [], prompt,
-                                        args.max_new_tokens)
-                        obj = extract_json(text, FUSE_DIRECT_KEYS)
-                    except (ValueError, torch.cuda.OutOfMemoryError) as ex:
-                        if isinstance(ex, torch.cuda.OutOfMemoryError):
-                            torch.cuda.empty_cache()
-                        try:  # one retry with mild sampling
-                            text = generate(model, processor, [], prompt,
-                                            args.max_new_tokens,
-                                            temperature=0.3)
-                            obj = extract_json(text, FUSE_DIRECT_KEYS)
-                        except Exception:  # noqa: BLE001
-                            obj = None
-                    # v4 short -> single-element views list; accept a bare
-                    # string short, and fall back to legacy v3 views[0] so a
-                    # stale cache line never yields an empty caption.
-                    short = (obj or {}).get("short")
+                    obj_l = _fuse_call(
+                        FUSE_LONG_PROMPT.format(n=len(recaps), recaps=rlist),
+                        FUSE_LONG_KEYS, args.max_new_tokens)
+                    long_c = (obj_l or {}).get("long")
+                    long_c = long_c.strip() if isinstance(long_c, str) else ""
+                    dropped = [d.strip() for d in (obj_l or {}).get("dropped")
+                               or [] if isinstance(d, str) and d.strip()]
+                    # short distills the judged long draft; if call 1 died,
+                    # degrade to the raw recaps so the clip still gets a
+                    # caption (flagged via short_src for the TSV/diag)
+                    short_src = "long" if long_c else "recaps"
+                    obj_s = _fuse_call(
+                        FUSE_SHORT_PROMPT.format(long=long_c or rlist),
+                        FUSE_SHORT_KEYS,
+                        min(192, args.max_new_tokens))
+                    short = (obj_s or {}).get("short")
                     if isinstance(short, str):
                         short = {"text": short}
                     if not isinstance(short, dict):
-                        legacy = (obj or {}).get("views") or []
-                        short = legacy[0] if legacy \
-                            and isinstance(legacy[0], dict) else {}
+                        short = {}
                     views = []
                     if isinstance(short.get("text"), str) \
                             and short["text"].strip():
@@ -538,12 +549,9 @@ def main():
                                  if isinstance(g, str) and g.strip()]
                         views = [{"text": short["text"].strip(),
                                   "gloss": gloss, "src_recap": "fuse"}]
-                    dropped = [d.strip() for d in (obj or {}).get("dropped")
-                               or [] if isinstance(d, str) and d.strip()]
-                    long_c = (obj or {}).get("long")
-                    long_c = long_c.strip() if isinstance(long_c, str) else ""
                     out["verdict"] = {"views": views, "long": long_c,
                                       "dropped": dropped,
+                                      "short_src": short_src,
                                       "n_views": len(views),
                                       "n_recaps": len(recaps)}
                 elif args.mode == "refine":
