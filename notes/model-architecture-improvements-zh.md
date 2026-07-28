@@ -10,7 +10,9 @@
 与既有笔记的分工:
 - `notes/whitespace-directions.md` —— 数据管线、时序难负例、量化、帧选择(模型*外围*);
 - `notes/data-quality-caprl-scheme.md` —— 字幕/数据质量;
-- **本报告 —— 模型本体**:架构、token 混合、池化、训练目标。
+- **本报告 —— 模型本体**:架构、token 混合、池化、训练目标(P1–P10);
+- `notes/model-architecture-improvements-round3-zh.md` —— **第三轮新增架构方向**(C1–C9),
+  两位专家合并去重、含明确死路清单;本报告是其前置背景。
 
 ---
 
