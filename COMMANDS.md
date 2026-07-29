@@ -612,6 +612,38 @@ grep -E "Load pretrained model from|training from scratch|自动解析到" \
 - 各臂的 `output_dir` 是隔离的,别把 s42/s43 的结果写进同一个 `--out`;
 - 补评的是**训练内 held-out 的替代**,和论文主表用的零样本评测是同一套脚本,口径一致。
 
+### 3.9 配对 bootstrap 比较两条臂(评审 U10-1 / ROADMAP 自查 G4)—— 零 GPU
+
+**为什么不能直接拿 ±1.6 判 A/B**:那是**无配对**带(「一个绝对 R@1 的抽样误差」)。
+两条臂评的是**同一批**查询,做差会抵消共享方差。实测差距极大 —— 同一对臂:
+
+| R-Sum 的 95% CI 半宽 | |
+|---|---|
+| **配对** | **±1.5 量级** |
+| 无配对 | ±17 量级 |
+
+⇒ **约 11 倍分辨率**。这就是为什么 1M 层非它不可:`sub1m_r0_s42` 显示「10× 数据」
+的效应只有 **+0.82 r_mean**,不配对根本分辨不出来(见 `notes/verification-tier-1m-zh.md` §6)。
+
+```bash
+cd ~/mobileclip
+# raw 主口径
+python experiments/collect_results.py --compare \
+       experiments/evals/sub1m/sub1m_r1a_s42 \
+       experiments/evals/sub1m/sub1m_r0_s42
+# DSL 口径(两口径同向的纪律照旧)
+python experiments/collect_results.py --compare \
+       experiments/evals/sub1m/sub1m_r1a_s42 \
+       experiments/evals/sub1m/sub1m_r0_s42 --prefix 'ret_test/'
+```
+
+**判读:以 95% CI 是否含 0 为准**,不要再套 ±1.6。可选 `--n-boot`(默认 10000)、
+`--seed`(默认 0,可复现)、`--out <md>`。
+
+⚠️ **需要 `ranks_*.npz`** —— 评测时自动落盘(每条臂 ~8KB),但**逐查询 rank 是
+2026-07-29 才开始存的**。在那之前评过的臂(如首版 `sub1m_r0_s42`)没有,
+**重跑一次评测即可**(纯前向,MSR-VTT 1k 约 1 分钟,命令见 §3.8)。
+
 ## 4. Training (pretraining)
 
 **Preflight — run this before every pretraining launch, not just the first:**

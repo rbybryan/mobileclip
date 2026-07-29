@@ -23,6 +23,62 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-29 (64) — 配对 bootstrap 写好了(G4 结案):**分辨率提升约 11 倍**,判据换掉 ±1.6
+
+昨天那个"MSR-VTT 排不出臂序"的问题解决了。
+
+**核心**:两条臂评的是**同一批**查询 ⇒ **配对**比较。同一次重采样里两臂用**同一组下标**,
+共享方差被抵消。实测同一对臂,R-Sum 的 95% CI 半宽:
+
+| | 半宽 |
+|---|---|
+| **配对** | **±1.5** |
+| 无配对 | ±17 |
+
+⇒ **约 11 倍**。一个 **+0.80 的 R@1 差可以判显著**,而用无配对带永远判不出来。
+
+### 你要做的两件事
+
+**① 重跑一次 `sub1m_r0_s42` 的评测**(纯前向,~1 分钟)——
+逐查询 rank 是**今天才开始存的**,那条臂评的时候还没有,所以现在没法比。
+(往后跑的臂都会自动存,不用管。)
+
+```bash
+cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
+source experiments/env_b100.sh
+export CUDA_VISIBLE_DEVICES=3
+bash experiments/run_eval.sh small msrvtt \
+     experiments/runs/sub1m_r0_s42/ckpt_02.pth \
+     experiments/evals/sub1m/sub1m_r0_s42 num_frames_test 8 batch_size_test 32
+ls -l experiments/evals/sub1m/sub1m_r0_s42/ranks_*.npz   # ← 应该看到两个(raw + DSL)
+```
+
+**② 等某条臂跑完,直接出带 CI 的对比表**(零 GPU):
+
+```bash
+python experiments/collect_results.py --compare \
+       experiments/evals/sub1m/sub1m_r1a_s42 \
+       experiments/evals/sub1m/sub1m_r0_s42
+```
+
+输出长这样(判定列直接给结论):
+
+```
+| 指标   |   臂  | 基线  |   Δ   |     95% CI     | 判定 |
+| txt_r1 | 39.80 | 39.00 | +0.80 | [+0.30, +1.40] | 显著 |
+| R_sum  |247.30 |245.10 | +2.20 | [+0.90, +3.90] | 显著 |
+```
+
+### 判据变更(重要,请记一下)
+
+- **A/B 比较:以 95% CI 是否含 0 为准,不再套 ±1.6。**
+- `README.md` §6.1 的 ±1.6 **仍然适用**于「单臂绝对值」的阴性结论(如 GATE-0 判 reverse 是噪声),
+  只是**不再用于 A/B**。
+- **两口径同向**(`ret_test/` 与 `ret_test_emb/`)的纪律**不变** —— 加 `--prefix 'ret_test/'` 跑第二遍。
+
+实现:`experiments/paired_bootstrap.py`(纯 numpy,不依赖 torch)+ `collect_results.py --compare`,
+11 项单测本地全过。命令详见 `COMMANDS.md` §3.9。
+
 ## 2026-07-29 (63) — ✅ 数字出来了,而且**1M 就追平了官方全量**;但同一组数字暴露出更要紧的问题
 
 **权重这次真加载上了**(日志有 `自动解析到 .../mp_rank_00_model_states.pt` + `Load pretrained model from`)。

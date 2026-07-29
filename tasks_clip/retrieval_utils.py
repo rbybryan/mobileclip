@@ -71,7 +71,8 @@ def extract_vision_feats(data_loader, model, device, config):
 
 
 @torch.no_grad()
-def evaluation_wrapper(model, data_loader, tokenizer, device, config, data_type, prefix=""):
+def evaluation_wrapper(model, data_loader, tokenizer, device, config, data_type,
+                       prefix="", dump_ranks_dir=None):
     with torch.cuda.amp.autocast(enabled=config.use_half_precision, dtype=data_type):
         if "MobileViCLIP" in config.model.model_cls:
             i2t_x, t2i_x, i2t_emb, t2i_emb = evaluation_video_clip(
@@ -88,7 +89,17 @@ def evaluation_wrapper(model, data_loader, tokenizer, device, config, data_type,
         if i2t is not None:
             txt2img_ids = data_loader.dataset.txt2img
             img2txt_ids = data_loader.dataset.img2txt
-            res[name] = itm_eval(i2t, t2i, txt2img_ids, img2txt_ids)
+            # 逐查询 rank 每条臂只有 ~8KB,默认一直存 —— 缺了它就没法做配对比较,
+            # 而补存要重跑一次评测。见 experiments/paired_bootstrap.py 的模块说明。
+            ranks_out = {} if dump_ranks_dir else None
+            res[name] = itm_eval(i2t, t2i, txt2img_ids, img2txt_ids, ranks_out=ranks_out)
+            if dump_ranks_dir and "i2t" in ranks_out and "t2i" in ranks_out:
+                try:
+                    from experiments.paired_bootstrap import save_ranks
+                    path = save_ranks(dump_ranks_dir, name, ranks_out["i2t"], ranks_out["t2i"])
+                    logger.info(f"逐查询 rank 已存(配对 bootstrap 用):{path}")
+                except Exception as e:   # 存 rank 失败绝不能弄崩评测
+                    logger.warning(f"逐查询 rank 落盘失败(不影响本次评测结果):{e}")
     return res
 
 
@@ -460,7 +471,9 @@ def evaluation(model, data_loader, tokenizer, device, config):
 
 
 @torch.no_grad()
-def itm_eval(scores_i2t, scores_t2i, txt2img, img2txt):
+def itm_eval(scores_i2t, scores_t2i, txt2img, img2txt, ranks_out=None):
+    # `ranks_out`(可选 dict):把**逐查询 rank** 也交出来,给配对 bootstrap 用
+    # (评审 U10-1 / G4,见 experiments/paired_bootstrap.py)。聚合返回值形状不变。
     # Images->Text
     ranks = np.zeros(scores_i2t.shape[0])
     for index, score in enumerate(scores_i2t):
@@ -476,6 +489,9 @@ def itm_eval(scores_i2t, scores_t2i, txt2img, img2txt):
                 if tmp < rank:
                     rank = tmp
             ranks[index] = rank
+
+    if ranks_out is not None:
+        ranks_out["i2t"] = ranks.copy()
 
     # Compute metrics
     tr1 = 100.0 * len(np.where(ranks < 1)[0]) / len(ranks)
@@ -498,6 +514,9 @@ def itm_eval(scores_i2t, scores_t2i, txt2img, img2txt):
                 if tmp < rank:
                     rank = tmp
             ranks[index] = rank
+
+    if ranks_out is not None:
+        ranks_out["t2i"] = ranks.copy()
 
     # Compute metrics
     ir1 = 100.0 * len(np.where(ranks < 1)[0]) / len(ranks)
