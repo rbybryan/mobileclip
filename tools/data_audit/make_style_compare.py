@@ -109,7 +109,7 @@ def main():
                    load_jsonl(args.fused_b_raw))
     db, drb = load_jsonl(args.dfused_b), load_jsonl(args.dfused_b_raw)
 
-    hdr = ["video", "video_path", "英文en", "原zh",
+    hdr = ["video", "video_path", "英文en", "原zh", "判错原因",
            "A重述", "A长稿", "A直融",
            "B重述", "B长稿", "B直融",
            "最佳版本[A直融/B直融/差不多/都不行]", "note"]
@@ -133,6 +133,7 @@ def main():
                     resolve_video_path(args.video_root, task, vid),
                     flat(task.get("en")),
                     flat(task.get("zh_old") or task.get("zh")),
+                    flat("; ".join(task.get("reasons") or [])),
                     recap_cell(ra.get(vid)),
                     long_cell(dra.get(vid)),
                     condensed_cell(da.get(vid), dra.get(vid)),
