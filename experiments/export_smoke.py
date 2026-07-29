@@ -37,7 +37,7 @@ onnx 的机器上也能拿到 ONNX 那一列的结论。
 依赖(装多少跑多少):
 
     pip install onnx onnxruntime          # ONNX 路线
-    pip install ai-edge-torch             # TFLite 路线(Google 官方 torch->tflite)
+    pip install litert-torch              # TFLite 路线(旧名 ai-edge-torch 已是空壳;需 torch>=2.6)
     pip install coremltools               # Core ML 路线
 """
 import argparse

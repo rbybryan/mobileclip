@@ -61,7 +61,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 1.2 数据审查流水线 | `tools/data_audit/SETUP_V100.md`:§1 冒烟 → §2 S0 → §3 S1(§3.5/3.6 体检)→ §4 S2(4.2 主力 / 4.3 裁判 / 4.5 体检)→ §5 S3 报告;§6.5 一条命令看全状态 |
 | 1.3 10k 试点(✅ 已关闭) | `experiments/README.md` §2b 全套(anno 生成、`export MVC_DATA_DIR`、r0/r1、pytest);结论见 `pilot_10k_results.md`(#199) |
 | 1.4 B0 锁基线 | `experiments/README.md` §3.0 预检 → §3.2 路径对上 → §3.3 跑 B0 + `collect_results.py`;已锁数字在 §3.4 |
-| 1.5 导出冒烟(U1) | 任务与验收:`notes/plan-review-upgrades.md` U1;**脚本 `experiments/export_smoke.py`,命令 `COMMANDS.md` §3.6,测试 `tests/test_export_smoke.py`(22 项)**;结果 `experiments/export_smoke_results.md`。TFLite 补测用独立 venv(结果文档 §3) |
+| 1.5 导出冒烟(U1,✅ 已关闭) | **脚本 `experiments/export_smoke.py`,命令 `COMMANDS.md` §3.6,测试 `tests/test_export_smoke.py`(22 项)**;结果 `experiments/export_smoke_results.md`(ONNX/Core ML 全 pass ⇒ P9 不触发;TFLite 顺延第 8 周部署档,配方见结果文档 §3) |
 | 1.6 B0 多 T 曲线(U2) | 任务与验收:`notes/plan-review-upgrades.md` U2;2.1 已落地 ⇒ 用既有零样本 eval 脚本对官方权重覆盖 `num_frames_test <T>`(T∈{2,4,8,16})即可,模型侧自动插值 |
 | 2.1 C2 T 无关化(✅ 代码落地) | 单测 `python -m pytest tests/test_t_agnostic.py -v`(README §2);V100 冒烟命令见本文件 2.1;per-T BN 工具 `experiments/per_t_bn.py`;设计准绳 `paper-plan-zh.md` §七.3 |
 | 2.2 R2 教师管线 | **提取脚本 `experiments/extract_teacher.py` 已落地(2026-07-29)**,命令 `COMMANDS.md` §3.10,单测 `tests/test_extract_teacher.py`(44 项);教师权重条目 `CHECKPOINTS.md`;设计决策清单:本文件 2.2 + `paper-plan-zh.md` §六.9 + 评审 U7 |
@@ -108,7 +108,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 - [ ] **1.4 B0 锁基线**(1.1 完成后,README §3):官方权重跑已到位的
       基准 → `collect_results.py --out experiments/BASELINE.md`。
       核对 MSR-VTT DSL 口径 t2v R@1 ≈ 42.5;**论文主口径 = raw(`_emb/`)**。
-- [~] **1.5 导出冒烟(U1,零训练权重,CPU 可做)—— 脚本已就绪,待在 101vector 上跑全量**:
+- [x] **1.5 导出冒烟(U1,零训练权重,CPU 可做)—— ONNX / Core ML 已结论;TFLite 顺延第 8 周**:
       随机权重实例化视觉塔(架构参数与 `build_vision_encoder` 逐项一致 ⇒ 带全部时序
       算子),分走 ONNX / TFLite / coremltools 转换,按 T∈{2,4,8,16} 各出静态图;
       记录每路 pass/fail + 失败算子。产出决定 P9 是否提前触发(真机延迟档仍在第 8 周)。
@@ -120,12 +120,16 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       **ONNX 与 Core ML 在 T∈{2,4,8,16} 上全部 pass**(ONNX 走完导出 +
       `onnx.checker` + onnxruntime 加载推理三步;Core ML 约 4343 个 MIL op 全过)
       ⇒ **联合注意力不构成导出障碍,P9 暂不触发**,弹性模型可按现形态训练。
-      **TFLite 受 torch 版本阻塞,本机不评估**:两轮报错都是工具链问题而非导不出
-      —— ① `ai-edge-torch` 已改名 `litert-torch`(旧包是空壳);② `litert-torch` 需
-      **torch>=2.6** 的 `torch.int1`,而 101vector 锁 **2.5.1+cu118** 是为了 V100 的
-      **sm_70 内核**(换版本会让 8 卡在第一个 barrier 全崩,见 TROUBLESHOOTING 末节)。
-      ⇒ **别为一格导出结论动训练环境的 torch**;导出是 CPU-only + 随机权重,
-      开独立 venv 补测即可(配方见结果文档 §3)。两轮都已修为 skip 而非 fail。
+      **TFLite 受 torch 版本阻塞,本机不评估,顺延至第 8 周部署档**:`litert-torch`
+      需 **torch>=2.6**,而 101vector 锁 **2.5.1+cu118** 是为了 V100 的 **sm_70 内核**
+      (换版本会让 8 卡在第一个 barrier 全崩,见 TROUBLESHOOTING 末节)。
+      2026-07-29 试过在旁路环境补测,三轮未果 —— 根因是**旁路环境没真的建起来**
+      (pip 一直在往系统 python 装,而 `~/.local` 会盖住训练环境的 torch),
+      原委与「每步先验」的配方见结果文档 §3。三轮报错**没有一条**指向模型导不出。
+      **顺延不阻塞任何当前决策**:P9 的触发条件很窄 ——「联合注意力导不出」。
+      联合注意力就是标准 SDPA / matmul+softmax,已过两条独立路线,且 Core ML 的 MIL
+      算子集比 TFLite 还窄。TFLite 若真挂,大概率挂在 5D reshape 上,那是**部署工程
+      问题而非 P9**,不影响 R3 的架构决策。第 8 周做真机延迟时顺手补即可。
       落档 [`export_smoke_results.md`](export_smoke_results.md)。
       ⚠️ **对 C2 部署叙事的观察**:trace 显示 **T 被烘成常量**(`int(t)`、reshape、
       以及 `temporal_embedding` 走不走插值那个 `if`)⇒ "帧数即部署旋钮"在**权重层面**

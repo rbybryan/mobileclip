@@ -524,7 +524,7 @@ python experiments/frame_select_diag.py             # 全量 1000 条
 ```bash
 # 装多少跑多少;缺哪条依赖那一列就记 skip,不影响另外两条
 pip install onnx onnxruntime onnxscript      # ONNX 路线(torch>=2.6 需要 onnxscript)
-pip install litert-torch                     # TFLite 路线(ai-edge-torch 已改名,旧包是空壳)
+pip install litert-torch                     # TFLite 路线;需 torch>=2.6,见下方 ⚠️
 pip install coremltools                      # Core ML 路线
 
 python experiments/export_smoke.py --mini    # 先自检脚本本身(秒级)
@@ -547,9 +547,19 @@ python experiments/export_smoke.py --inference-mode   # 重参数化后的部署
 - **skip 不是结论**。脚本把「缺依赖」与「缺传递依赖」都归为 skip 而非 fail ——
   把环境问题记成 fail 会产生**假的 P9 触发**。别把 skip 读成 pass,也别读成 fail。
 
-**已知(本机 CPU 预跑,torch 2.12)**:全尺寸 ONNX 路线 T=2 / T=4 **pass**
-(导出 + `onnx.checker` + onnxruntime 加载推理全过)。TFLite / Core ML 两路本机
-无依赖未测。
+**101vector 实测(2026-07-27,全尺寸,torch 2.5.1)**:**ONNX 与 Core ML 在
+T∈{2,4,8,16} 上全部 pass** ⇒ P9 不触发。落档 `experiments/export_smoke_results.md`。
+
+⚠️ **TFLite 那条已顺延至第 8 周部署档,别再在 101vector 上折腾**:`litert-torch` 要
+**torch≥2.6**,而本机锁 `2.5.1+cu118` 是为了 V100 的 sm_70 内核(动了 8 卡全崩)。
+2026-07-29 试过旁路环境,三轮未果 —— 完整配方与三个坑见结果文档 §3。要点三条:
+
+- **`conda create --clone` 之后必须 `python -c "import sys; print(sys.prefix)"` 验一遍。**
+  `(env)` 提示符会骗人 —— venv 目录被删后 PS1 残留,pip 会静默回落到系统 python。
+- **`export PYTHONNOUSERSITE=1`。** `~/.local/lib/python3.10/site-packages` 按 python
+  版本共享、不按环境隔离,且**排在 conda 环境自己的 site-packages 之前** —— 往那儿
+  装 torch 会盖住训练环境的 2.5.1。
+- **CPU-only 轮子 + `torch==2.12.1`**(`litert-torch` 声明 `torch<2.13.0`)。
 
 ---
 
