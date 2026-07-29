@@ -115,7 +115,20 @@ def run_compare(arm_dir, base_dir, prefix, n_boot, seed, out_path=None):
         "**配对买到了多少分辨率**(R-Sum 的 95% CI 半宽):",
         f"- 配对:**±{half_paired:.2f}**",
         f"- 无配对:±{half_unpaired:.2f}",
-        f"- ⇒ 配对把可分辨的最小差异缩到约 **1/{half_unpaired / max(half_paired, 1e-9):.1f}**。",
+    ]
+    if half_paired < 1e-9:
+        # 自比对(臂 == 基线)时共享方差被完全抵消,半宽恰为 0 —— 这正是
+        # 配对生效的判据本身,算比值只会打印一个无意义的大数。
+        lines.append(
+            "- ⇒ 配对半宽为 **0**:两侧逐次抽到同一组下标、差值恒等于 0。"
+            "若这是自比对(臂目录 == 基线目录),说明配对链路正确;"
+            "若这是两条**不同**的臂,说明两次评测产出了逐查询完全相同的 rank,先查是不是比错了目录。"
+        )
+    else:
+        lines.append(
+            f"- ⇒ 配对把可分辨的最小差异缩到约 **1/{half_unpaired / half_paired:.1f}**。"
+        )
+    lines += [
         "",
         "判读:**以 CI 是否含 0 为准**,不要再套 `README.md` §6.1 的 ±1.6 —— 那是无配对带,",
         "用在 A/B 上过于保守。两口径同向(`ret_test/` 与 `ret_test_emb/` 都跑一遍)的纪律照旧。",
