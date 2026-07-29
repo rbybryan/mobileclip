@@ -26,6 +26,7 @@
 #   bash tools/data_audit/run_v100.sh recap        # ⑧f RECAPTION 桶前端：每片五样本独立重述（融合方案 S0）
 #   bash tools/data_audit/run_v100.sh recap-tsv    # ⑧g 重述检验 TSV：源caption/翻译/5重述/A′视图 并排目检（CPU 秒级）
 #   bash tools/data_audit/run_v100.sh pipeline-sample # ⑧h 完整优化流水线小样本端到端：重述→派生→打分→验真→全景 TSV（单卡 ~1h）
+#   bash tools/data_audit/run_v100.sh summary-table # ⑧i 表格版总结：GIF|en源|原zh|A/B 重述+长稿+短稿 九列静态页（compare 之后跑）
 #   JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge  # ⑥ 云端裁判（可选，需 API key）
 #   bash tools/data_audit/run_v100.sh judge-agree # ⑥b 一致率+Cohen's κ（可对外来裁判文件独立重算）
 #   bash tools/data_audit/run_v100.sh xling-check # ⑥c 裁决 xling 阈值（s3 前必做）
@@ -876,6 +877,18 @@ pipeline-compare)
   echo "   直融=一条≤30字训练字幕, 长稿=不限字数细节参考; 投票版不上页面）"
   echo "   打包: tar czf $OUT/compare.tgz -C $OUT bundle_compare"
   echo "   本地: scp rby@101vector:~/mobileclip/$OUT/compare.tgz . && tar xzf compare.tgz"
+  echo "   表格版总结(GIF+九列): bash $0 summary-table"
+  ;;
+# ------------------------------- ⑧i 表格版总结（维护者 2026-07-28）：GIF + 九列静态表
+# review_compare.tsv 直接再呈现, 零重算; GIF 有缓存, 重跑只补缺的
+summary-table)
+  [ -f "$OUT/review_compare.tsv" ] || \
+    { echo "缺 $OUT/review_compare.tsv —— 先跑: bash $0 pipeline-compare"; exit 1; }
+  python tools/data_audit/make_summary_table.py \
+    --sheet "$OUT/review_compare.tsv" --out-dir "$OUT/table_compare"
+  echo "✅ 表格总结: $OUT/table_compare/table.html（每行: GIF|en源|原zh|A重述|A长稿|A短稿|B重述|B长稿|B短稿）"
+  echo "   打包: tar czf $OUT/table.tgz -C $OUT table_compare"
+  echo "   本地: scp rby@101vector:~/mobileclip/$OUT/table.tgz . && tar xzf table.tgz && 打开 table_compare/table.html"
   ;;
 # ------------------------------- ⑨b 粒度重判结果分析 + n_info=0 归因
 gran-check)

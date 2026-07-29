@@ -23,6 +23,29 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-29 (64) — 表格版总结页就位:GIF + 九列(en源|原zh|A/B 重述+长稿+短稿), compare 之后一条命令
+
+按你要的形式做好了(注:R1 线 07-29 的块把 (58)-(60) 编号复用了,与我 07-28 的 (58)-(60)
+是不同内容,按日期区分;为避混我直接跳到 (64))。
+
+**用法(pipeline-compare 跑完后, CPU ~1-2 分钟):**
+```bash
+bash tools/data_audit/run_v100.sh summary-table
+tar czf outputs/audit_10k/table.tgz -C outputs/audit_10k table_compare
+# 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/table.tgz . && tar xzf table.tgz
+#       打开 table_compare/table.html
+```
+
+- 每行 = 一片:**循环 GIF**(16 帧×150ms, 最长边 300px, 用管线同款 decord 解码, 单片失败
+  只缺那一格不拖死整表) | 源caption(en) | 源翻译(黄) | **方案A** 重述(1.2.3. 编号)/直融
+  长稿/直融短稿(绿底加粗) | **方案B** 同三列(重述带【人物】【物体】蓝徽标)。
+- 数据直接读 review_compare.tsv,**零重算**;GIF 有缓存,重跑只补缺的。右上角版本角标
+  **vT20260728a**(旧文件识别用)。50 片的包约 25-75MB。
+- 表格页是给"看结果/给人展示"用的静态页;要边看边填单选仍用卡片包 bundle_compare。
+
+顺序建议:先跑 (60) 块(07-28 那个五槽重跑序列, 含 PIPE_LEAN=1 变体见 (62)) → 再跑本块
+两行。**GDINO scp 仍最高优先**。
+
 ## 2026-07-29 (60) — 别取消 `sub1m_r1a_s42`:训练是好的,只是环内评测会空;后面 6 个臂正常
 
 **回答:不用取消。** 三条:
