@@ -23,6 +23,38 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-29 (60) — 别取消 `sub1m_r1a_s42`:训练是好的,只是环内评测会空;后面 6 个臂正常
+
+**回答:不用取消。** 三条:
+
+1. **训练本身没问题** —— 坏的只是「环内评测被跳过」这一步,loss / ckpt 全部正常存。
+2. **数字能离线拿回来**(和 `r0_s42` 一样的路子,`COMMANDS.md` §3.8),取消只会白丢已经跑掉的小时数。
+3. **不冲突** —— 它在 GPU 0-3,你补评用的是 GPU 4,可以并行。
+
+### 但有三件事要有心理准备
+
+**① `r1a_s42` 会和 `r0_s42` 一样出 `Empty DataFrame` —— 预期之内,别慌。**
+它 `START 01:13:46 UTC`,而修复(#334)是 `01:47:10 UTC` 落地的 —— **早了 33 分钟**,
+所以它进程里load 的是旧 config。按 r0 的 15:11:58 推算,**约 07-29 16:25 UTC 跑完**,跑完照 §3.8 补评。
+
+**② 从 `sub1m_r1b_s42` 开始的 6 个臂是好的。**
+runner 每个臂都重新 `bash experiments/run_pretrain.sh` ⇒ **重读磁盘上的 config**,
+而你 02:07 UTC 那次 `git reset --hard` 已经把 config 更新了。所以只有 r0/r1a 两个臂需要补评。
+(顺带确认:那次 pull **没有动 `run_verify_1m.sh`** ⇒ 不存在「bash 读到一半脚本被改」的风险。)
+
+**③ 默认清单是 8 臂 ≈ 5 天,#335 新增的 4 个臂不在里面。**
+`CONFIGS` 默认只有 r0/r1a/r1b/nA1 × seed{42,43}。#335 的 `sub1m_nR1_*` / `sub1m_r1both_*`
+**要显式指定才会跑**(加上就是 12 臂 ≈ 7.6 天,所以没给你悄悄塞进去):
+
+```bash
+bash experiments/run_verify_1m.sh 0,1,2,3 \
+     sub1m_nR1_s42 sub1m_r1both_s42 sub1m_nR1_s43 sub1m_r1both_s43
+```
+
+### 你现在只要做一件事
+
+等 (59) 的补评命令跑出 `r0_s42` 的两行数字贴回来。**别动那个正在跑的 r1a。**
+
 ## 2026-07-29 (59) — `termcolor` 不是真问题:裸 `torchrun` 把评测跑到**系统 python** 去了(已全仓修)
 
 **先看你贴的栈,不是看报错**:venv 是 `mvc_env310`,可栈里全是
