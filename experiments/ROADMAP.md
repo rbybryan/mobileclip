@@ -64,7 +64,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 1.5 导出冒烟(U1) | 任务与验收:`notes/plan-review-upgrades.md` U1;**脚本 `experiments/export_smoke.py`,命令 `COMMANDS.md` §3.6,测试 `tests/test_export_smoke.py`(22 项)**;结果 `experiments/export_smoke_results.md`。TFLite 补测用独立 venv(结果文档 §3) |
 | 1.6 B0 多 T 曲线(U2) | 任务与验收:`notes/plan-review-upgrades.md` U2;2.1 已落地 ⇒ 用既有零样本 eval 脚本对官方权重覆盖 `num_frames_test <T>`(T∈{2,4,8,16})即可,模型侧自动插值 |
 | 2.1 C2 T 无关化(✅ 代码落地) | 单测 `python -m pytest tests/test_t_agnostic.py -v`(README §2);V100 冒烟命令见本文件 2.1;per-T BN 工具 `experiments/per_t_bn.py`;设计准绳 `paper-plan-zh.md` §七.3 |
-| 2.2 R2 教师管线 | 设计决策清单:本文件 2.2 + `paper-plan-zh.md` §六.9 + 评审 U7;**提取脚本待写** |
+| 2.2 R2 教师管线 | **提取脚本 `experiments/extract_teacher.py` 已落地(2026-07-29)**,命令 `COMMANDS.md` §3.10,单测 `tests/test_extract_teacher.py`(44 项);教师权重条目 `CHECKPOINTS.md`;设计决策清单:本文件 2.2 + `paper-plan-zh.md` §六.9 + 评审 U7 |
 | 2.4/2.5 A1/A2/B1(#197) | `notes/neural-inspired-implementation.md` Tier A(配置模板 + 单测)/ Tier B(B1 接线与三臂);配置文件待创建 |
 | **2.4 R1 负例库(建缓存 + 跑 A/B + 长档)** | 探针 `COMMANDS.md` §3.2;建池与 A/B 一条龙 `notes/r1-implementation-plan.md` §8;结果 §9.1/§9.2;长档两臂配置 `experiments/configs/nR1_textbank_pilot_long.py` + `pilot_10k_r1_long.py`,启动命令 `notes/live/from-claude.md` (54) |
 | 3.1 H100 全量数据审查 | `tools/data_audit/SETUP_H100.md` §0 环境 → §1 冒烟 → §2 S0 → §3 S1 → §4 S2 → §5 S3 |
@@ -254,14 +254,30 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       loss 全程有限,T=16 峰值显存 23.3GB(V100 32GB 内)⇒ **C2 链路 ✅**。
       观察项:epoch3 评测一次性 `sim has nan`(fp16 评测侧上溢,非训练发散,
       见 TROUBLESHOOTING 末节);真 ckpt 的 BN 漂移诊断(per_t_bn.py)待跑。
-- [ ] **2.2 R2 教师管线**(1.2 的报告出来后设计更准):InternVideo2
-      embedding 离线提取脚本,先在 10k 上试点实测每 clip 耗时/存储,
-      同时敲定审核修正 9 的三个设计细节(教师维度投影、帧索引记录、
-      低 T KD 加权)。用 10k 成本外推 10M,决定教师用 L 还是 1B。
-      **U7 三项一并定**:教师语料 curated 2–3M 先行 vs 全量 10M(等步对照);
-      ~1M 子集加存 per-frame 教师 CLS(≈45GB,解锁低 T 可达性消融/时序显著性
-      蒸馏/R4 复用);合成字幕 K≥2。相对 KD(`vtc_kd`/`kd_geo`)单一所有权
-      并入同一消融表(U9)。
+- [x] **2.2a 教师提取脚本** —— ✅ **2026-07-29 落地**:`experiments/extract_teacher.py`
+      (教师 = IV2-stage2,U7-4 定案)。分片 + 定长块 + **原子落盘 ⇒ 断点续跑**;
+      解码失败**保留占位行不删**(删行会让 `rows` 与嵌入静默错位),单块失败率超
+      `--fail-rate-abort` 直接抛错;`merge` / `verify` / `self-test` 三个子命令。
+      单测 `tests/test_extract_teacher.py` **44 项全过**(纯 CPU,不需要权重与视频;
+      含一个用极小真 `InternVideo2` 验证 token 布局与读出头假设的接口层)。
+      命令见 `COMMANDS.md` §3.10,权重条目见 `CHECKPOINTS.md`。
+      **修正 9 的三个设计细节落点**:① 教师维度不投影、原样存 D 并写进 manifest
+      (投影是训练侧的事);② 逐条存 `frame_indices` + 协议进 manifest,
+      采样默认 `middle`(**确定性**,不依赖种子);③ 低 T 可达性 → `--per-frame`
+      的 `subset_emb`。⚠️ **口径**:`subset_emb` 是「教师**读出**只看这些帧的 token」,
+      **不等于**「教师**只看**这些帧重跑一遍」(主干注意力仍跨全 16 帧),
+      manifest 记作 `readout_restricted`;要后者得按子集重跑主干(需 pos-embed 插值)。
+      另:`--per-frame` 只多几次极廉价池化,**不是 T× 成本**;按 IV2-1B 的 D=768 算
+      ≈ **24 KB/片**(U7 原文的 ~45KB 是按更大的 D 估的)。
+- [ ] **2.2b 跑起来 + 定语料范围**(**这才是 G1 的实体,脚本只是让它可跑**):
+      先跑 `--limit 100000` 成本切片拿实测 `clip/s`,再按它外推决定
+      **curated 2–3M 先行 vs 全量 10M**(U7-1,等步对照)。教师用 1B 还是 6B
+      同法先试再定(U7-4)。合成字幕 K≥2 由 CapRL 产出侧保证(U7-3);
+      相对 KD(`vtc_kd`/`kd_geo`)单一所有权并入同一消融表(U9)——
+      ⚠️ U9 前先修 `loss_weight` 只是日志开关那个坑(round2 §5 P2)。
+- [ ] **2.2c 训练侧接线**(脚本不管这一段):教师嵌入读取 Dataset、
+      D→512 投影、`vtc_kd` 的 ~30 行新写(`data-quality-caprl-scheme.md` §6.2),
+      低 T KD 加权/课程。
 - [ ] **2.3(条件项)** H5 评测分片(大基准评测前)、P1 torch 升级
       (仅当显存/速度真卡住)。
 - [~] **2.4 R1 精确文本负例库 —— 🟢 试点级 A/B 已判 GO(两个种子),下一步 40-epoch 长档**
@@ -401,7 +417,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 
 | # | 缺口 | 严重度 | 现状 |
 |---|---|---|---|
-| **G1** | **C1(视频数据强化)被定为「主线、预期收益最大」,却是唯一零代码的贡献层** | 🔴 **最严重** | 2.2 R2 教师管线 ⬜、**提取脚本至今未写**;U7 的三个设计项(教师语料 2–3M vs 10M、per-frame 教师 CLS 保险、K≥2 合成字幕)全部未定。**已测的一切(R1/A1/sigmoid)都是 C3 配料,C2 只有基础设施** ⇒ 方案的重心与实际投入**反向** |
+| **G1** | **C1(视频数据强化)被定为「主线、预期收益最大」,却是唯一零代码的贡献层** | 🟡 **2026-07-29 降级:提取脚本已落地,但一条嵌入都还没抽** | ✅ **提取脚本已写**(`experiments/extract_teacher.py`,44 项单测,命令 §3.10,教师权重条目已补进 `CHECKPOINTS.md`)⇒「零代码」不再成立。**仍红的部分**:① **一条嵌入都还没抽** —— 下一步是 `--limit 100000` 成本切片;② **U7-1 语料范围(2–3M vs 10M)仍未定**,要等切片的实测吞吐;③ **训练侧接线整段未动**(教师嵌入 Dataset、D→512 投影、`vtc_kd` 那 ~30 行);④ 教师权重**是否已下载到机器上未确认**。⇒ 重心与投入仍然反向,只是不再卡在「没有工具」 |
 | **G2** | **U10-3 的非劣边际 δ=0.3 R@1 与实测噪声地板冲突** | 🟡 **2026-07-29 已定案,待填一个实测数** | **选出路 ②**,详见 `plan-review-upgrades.md` **§6.1.1**。要点:2.4 与 δ **量的不是同一种噪声** —— 2.4 来自**跨抽样**的绝对值比较(源:输入 nuisance),而每-T 非劣是**同 T、同抽帧、同 1000 查询**的配对比较,该 nuisance 与查询抽样噪声**都已抵消** ⇒ 拿 2.4 当 δ 下界是**标尺错配**(出路 ① 据此否决;出路 ③ 只压查询噪声、对种子无效,降为备选)。真正的地板是**训练种子方差**,**尚未实测**,但 1M 层「4 臂 × 2 seed」的**同臂双种子之差**就是它,**零额外算力**。⇒ 判据 = 多基准聚合 R-Sum + 两口径同向 + **配对 CI 不含 0**;**δ 由实测种子地板逐 T 重定,0.3 作废**。**不阻塞 R3 起跑**,只阻塞头条主张定稿 |
 | **G3** | **U8 的 EMA 至今不在 `tasks_clip/pretrain.py`** | 🟡 | 全仓 grep 无 `model_ema`;U8 原定「R1 起默认开」 |
 | ~~**G4**~~ | ~~U10-1 的 bootstrap CI~~ | ✅ **2026-07-29 已实现** | `experiments/paired_bootstrap.py`(纯 numpy,11 项单测)+ `collect_results.py --compare A B`;评测时自动落盘逐查询 rank(~8KB/臂)。**实测分辨率提升约 11 倍**:同一对臂 R-Sum 的 95% CI 半宽 配对 **±1.5** vs 无配对 ±17 ⇒ +0.8 的 R@1 差可判显著。**判读改为「CI 是否含 0」,不再套 ±1.6**(那是无配对带)。命令 `COMMANDS.md` §3.9。⚠️ rank 是 07-29 才开始存的,更早评过的臂需重跑一次评测(~1 min) |
@@ -450,6 +466,24 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 架构探索 backlog(AC1–AC9,第三轮最终稿) | ⬜ | 顾问式,**均未 A/B、不占主时钟**;落地顺序在「架构探索 backlog」段;AC1a=可导出 P9 由 §1.5 触发、AC-b 是 AC2 前置、AC6′ 净新增仅文本塔 LoRA;死路 4 条已判。源码核查稿 #310 |
 
 ## 进展日志(实时,倒序;每个会话在此加一行,格式:日期:事件(出处))
+
+- 2026-07-29:**C1 教师提取脚本落地 —— G1 由 🔴 降为 🟡**(`experiments/extract_teacher.py`,
+  命令 `COMMANDS.md` §3.10,单测 `tests/test_extract_teacher.py` 44 项全过)。
+  教师 = **IV2-stage2**(U7-4 定案),权重条目补进 `CHECKPOINTS.md`(原生 4 帧,
+  按 T=16 抽取时用 `interpolate_pos_embed(orig_t_size=4)`,与 `mobileviclip_small.py`
+  载 stage2 视觉塔同一套处理)。工程要点:分片 + 定长块 + 原子落盘 ⇒ **断点续跑**;
+  **解码失败保留占位行绝不删行**(删行 ⇒ `rows` 与嵌入静默错位 ⇒ 下游只表现为
+  「蒸馏没效果」,G10 同类事故);单块失败率超阈值**直接抛错**,不写半空的 shard;
+  载权重 `missing>20` 直接抛错(防 #344 那种「没加载却照跑」)。
+  **修正 9 的三条**各自落点见 2.2a。**per-frame(U7-2)实现方式与原设想不同**:
+  不按帧重跑教师(那是 T× 成本),而是 hook 住 `clip_projector` 的输入 token,
+  把**同一个读出头**作用在帧子集的 token 上 —— 单测证明「用全量 token 重放
+  = 模型自己的输出」逐位相等,所以这个口径是干净的;代价近乎为零,存储 ≈24 KB/片
+  (不是 U7 估的 45KB)。⚠️ 但它是 `readout_restricted`,**不等于**教师只看子集重跑,
+  拿它答 §六.9 决策 3 时必须按这个口径陈述。
+  单测过程中抓到一个真 bug:`pool()` 会重入 forward hook 把已捕获的 token 覆盖掉,
+  已改为池化期间冻结 hook,并加回归测试。
+  **下一步 = 2.2b**:`--limit 100000` 成本切片 → 实测 `clip/s` → 定 U7-1 语料范围。
 
 - 2026-07-29:**G2 定案 —— δ=0.3 作废,选出路 ②,δ 改由实测种子地板重定**
   (`plan-review-upgrades.md` **§6.1.1**)。核心诊断:**2.4 与 δ 量的不是同一种噪声**。

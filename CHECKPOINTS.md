@@ -12,7 +12,8 @@ checkpoints
 ├── mobileclip_s0.pt        # MobileCLIP base (image-text)
 ├── mobileclip_s2.pt        # MobileCLIP base (image-text)
 ├── mobileviclip_tiny.pt    # MobileViCLIP (video-text)
-└── mobileviclip_small.pt   # MobileViCLIP (video-text)
+├── mobileviclip_small.pt   # MobileViCLIP (video-text)
+└── InternVideo2-stage2_1b-224p-f4.pt   # C1 teacher (video-text) — see below
 ```
 
 | File | Source |
@@ -20,6 +21,7 @@ checkpoints
 | `mobileclip_s0.pt`, `mobileclip_s2.pt` | Apple MobileCLIP — https://github.com/apple/ml-mobileclip (mirror on Google Drive below) |
 | `mobileviclip_tiny.pt`, `mobileviclip_small.pt` | Authors' Google Drive |
 | `mobileclip2_s2.pt` (optional, U8 init swap) | Apple MobileCLIP2 — https://huggingface.co/apple/MobileCLIP2-S2 |
+| `InternVideo2-stage2_1b-224p-f4.pt` (**C1 teacher**) | OpenGVLab — https://huggingface.co/OpenGVLab/InternVideo2-Stage2_1B-224p-f4 |
 
 - **MobileViCLIP + MobileCLIP weights (Google Drive):** https://drive.google.com/drive/folders/1ROJYwQeO8lt4mEfNjEIAIDWj736WIQq7?usp=drive_link
 - **Apple MobileCLIP (official):** https://github.com/apple/ml-mobileclip
@@ -29,6 +31,22 @@ checkpoints
   `MobileCLIP-S2` OpenCLIP config), so it loads wherever `mobileclip_s2.pt` does after
   the same state-dict conversion. Improved arms use it as init; R0 keeps the original
   `mobileclip_s2.pt` to anchor reproduction.
+
+- **InternVideo2-stage2 1B (C1 teacher, required by `experiments/extract_teacher.py`):**
+  https://huggingface.co/OpenGVLab/InternVideo2-Stage2_1B-224p-f4 — **必须是 stage2**,
+  不是 stage1、不是 CLIP-only 变体。理由(评审 U7-4,2026-07-27 定案):stage2 是
+  InternVideo2 家族**最后一代保有真对比空间**的模型,`vtc_kd`(相似度矩阵 KD)才算得出来;
+  IV3 / IV2.5 / InternVideo-Next 均无对比空间,**不可**作 vtc_kd 教师。参考数字:
+  1B 版 ZS MSR-VTT T2V R@1 ≈ **51.9**(6B 版 ≈ 55.9),核验见
+  [`notes/caption-kd-review-2026-07.md`](notes/caption-kd-review-2026-07.md)。
+  - 该权重原生 **4 帧**;我们按 T=16 抽取,时间位置编码由脚本用
+    `interpolate_pos_embed(..., orig_t_size=4)` 插值(与 `mobileviclip_small.py` 载
+    stage2 视觉塔的那条分支同一套处理)。改用别的 ckpt 时记得同步 `--vision-ckpt-t-size`。
+  - 只有**视觉塔**是提取视频嵌入的必需件。文本塔(LLaMA 系,要 `peft`)只有跑
+    `--stage text`(为 `vtc_kd` 存教师文本嵌入)时才需要,见 `COMMANDS.md` §3.10。
+  - 载权重时脚本会打印 `missing/unexpected` 键数,`missing > 20` **直接抛错** ——
+    防的是「权重没对上但前向照跑、嵌入全是随机初始化」这类静默失败(先例:#344
+    目录式 ckpt 被静默跳过,评测跑在未加载的模型上)。
 
 ## Annotations
 
