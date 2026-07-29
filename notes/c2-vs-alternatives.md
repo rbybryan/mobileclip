@@ -111,8 +111,9 @@ AC2 有 X3D/MoViNet、AC5 有 RepVGG/MobileOne、AC1 有 attention→conv 蒸馏
 publishability §2 已经写死:① **每个 T 点干净 Pareto 胜过固定 T 基线**(只打平 ⇒ 故事塌一半);
 ② **说得清对 FluxViT-S 的胜点**(说不清 ⇒ 框架塌方)。这两条不因换不换柱子而改变。
 
-**低成本加固**(都已排进 ROADMAP):1.9 未见过的 T 泛化(零训练);R1 的 40-epoch 长档;
-per-T BN 真 ckpt 诊断。
+**低成本加固**(都已排进 ROADMAP):1.9 未见过的 T 泛化(零训练);per-T BN 真 ckpt 诊断。
+(R1 的 40-epoch 长档**已跑完** 2026-07-28:耐久 ΔR-Sum ≈ +3.9、试点级问题收尾 —— 见 ROADMAP 状态表
+与 [`r1-implementation-plan.md`](r1-implementation-plan.md) §9.4;不再是待办。)
 
 ### 柱 2(新增,推荐)· AC5 + AC9 合并成一条:**「时序轴上的结构重参数化:训练期免费,INT8 期收账」**
 
