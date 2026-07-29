@@ -387,7 +387,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | **G1** | **C1(视频数据强化)被定为「主线、预期收益最大」,却是唯一零代码的贡献层** | 🔴 **最严重** | 2.2 R2 教师管线 ⬜、**提取脚本至今未写**;U7 的三个设计项(教师语料 2–3M vs 10M、per-frame 教师 CLS 保险、K≥2 合成字幕)全部未定。**已测的一切(R1/A1/sigmoid)都是 C3 配料,C2 只有基础设施** ⇒ 方案的重心与实际投入**反向** |
 | **G2** | **U10-3 的非劣边际 δ=0.3 R@1 与实测噪声地板冲突** | 🔴 | README §6.1 实测阳性主张需 \|Δ\|>2.4,δ=0.3 低约 **8×** ⇒ 按它预注册的「非劣」在 1K 测试集上**不可测**。三条出路已写在 `plan-review-upgrades.md` §6.1,**尚未选**。**R3 头条主张成形前必须定** |
 | **G3** | **U8 的 EMA 至今不在 `tasks_clip/pretrain.py`** | 🟡 | 全仓 grep 无 `model_ema`;U8 原定「R1 起默认开」 |
-| **G4** | **U10-1 的 bootstrap CI 不在 `collect_results.py`** | 🟡 | 判据节要求 query-level 95% CI,评测器没实现 ⇒ 所有 Δ 都没有区间 |
+| **G4** | **U10-1 的 bootstrap CI 不在 `collect_results.py`** | 🔴 **2026-07-29 升级为红** | 判据节要求 query-level 95% CI,评测器没实现 ⇒ 所有 Δ 都没有区间。**首个 1M 结果把它从「锦上添花」变成「1M 层能不能用的前提」**:10× 数据的效应只有 +0.82 r_mean、落在无配对 ±1.6 带内,而各臂评的是**同一** 1000 条查询 ⇒ **配对** bootstrap 的方差远小于无配对带,是唯一能分辨 <1.0 差异的现成手段 |
 | **G5** | **柱 2(AC5+AC9)只有论证,没有可执行条目** | 🟡 | `c2-vs-alternatives.md` 判它是唯一值得补的架构线,但 backlog 里 AC5 仍只是一行描述,**无配置、无单测、无判据** |
 | **G6** | **U1 的 TFLite 那格 + `dynamic_axes` 一图多 T 未验** | 🟡 | 前者决定 Android 结论与 AC9 落点,后者直接影响 C4 端侧表;**都零 GPU**,却没有 owner 条目 |
 | **G7** | **GDINO 未装(重字幕线)** | 🟡 | scp 方案已给四次未执行 ⇒ 外部幻觉门只剩 OCR。**不占 EN 主时钟(D2)**,但那条线的验真是空的 |
@@ -425,7 +425,8 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | **C2 无上限 T?(1.9)** | 🟡 **已判:代码无上限,四堵墙有一堵是真墙** | 时序算子代码层面已支持任意 T(含奇数,单测覆盖 T=3);真墙 = **stage-4 联合注意力 O(T²)**(N=64·T;T=16 实测 23.3GB)⇒ **训练集合保持 {2,4,8,16}**,真要无上限先做 **AC1a**。**待跑(零训练)**:未见过的 T 泛化(内插 3/5/6/12、外推 24/32),`COMMANDS.md` §3.7。⚠️ 别改卖点为「任意 T」(FluxViT 地盘)。见 [`c2-arbitrary-t.md`](../notes/c2-arbitrary-t.md) |
 | **R1 文本负例库(2.4)** | 🟢 **试点级结案:GO,但幅度被修正** | 三个种子/档位都领先:10-epoch ΔR-Sum **+11.0**(s42)/ **+13.1**(s43);**40-epoch 长档修正为耐久 ΔR-Sum ≈ +3.9**(平台 88.57 vs 87.92,两条平台带**不重叠**,池在最后 10 epoch 每轮都领先,仍是 kill 阈值 0.5 的 ~8×)。机制=**挡住对照 ep0→ep1 的早塌**(90.0→85.2,**三次复现**),4× 步数让对照追回约 2/3。⇒ 诚实说法:**大幅早期稳定 + 温和耐久提升**。见 §9.1/§9.2/**§9.4** |
 | R1 长档 40-epoch(对照能否追上) | ✅ **已跑完(2026-07-28)** | 答案:**大部分追上但没追平**。**试点级问题就此收尾,V100 不需要再跑**;决定性检验仍是 H100 大数据 A/B(§9.3) |
-| **1M 验证层(`sub1m_*`,#329)** | 🟡 **配置已入库,待跑** | 填 10k 冒烟与 10M 论文数字之间的空档:**8 config = 4 臂(r0/r1a/r1b/nA1)× 2 seed**,`train_corpus=internvid_v1`(单个 1M 分片)、`batch_size=128`、epoch=3、**测试集仍是标准 MSR-VTT 1k**;runner `experiments/run_verify_1m.sh`。判法=同 seed 相减 + 两 seed 同向。**+4 config = R1 文本负例库自配对 A/B**(`sub1m_r1both`/`sub1m_nR1` × 2 seed,彼此相减,见下一行)。见 [`verification-tier-1m-zh.md`](../notes/verification-tier-1m-zh.md) |
+| **1M 验证层:首个结果(`sub1m_r0_s42`)** | ✅ **管线验证通过** / 🔴 **但仪器精度不够** | **1M(10% 数据)× 3 epoch 就追平官方全量**:raw t2v R@1 **41.8** vs 官方 41.3、DSL **42.7** vs 42.5(两口径同向、均在带内 ⇒ 打平);地板(骨干初始化+随机时序)raw r_mean 54.82 → 1M **60.65** → 全量 61.47。🔴 **10× 数据只买到 +0.82 raw r_mean,落在 ±1.6 噪声带以内** ⇒ **MSR-VTT 1k 排不出臂序**,必须先补配对 bootstrap(G4)+ 多基准聚合。见 [`verification-tier-1m-zh.md`](../notes/verification-tier-1m-zh.md) §6 |
+| 1M 验证层 其余 11 臂 | 🟡 **待跑** | 填 10k 冒烟与 10M 论文数字之间的空档:**8 config = 4 臂(r0/r1a/r1b/nA1)× 2 seed**,`train_corpus=internvid_v1`(单个 1M 分片)、`batch_size=128`、epoch=3、**测试集仍是标准 MSR-VTT 1k**;runner `experiments/run_verify_1m.sh`。判法=同 seed 相减 + 两 seed 同向。**+4 config = R1 文本负例库自配对 A/B**(`sub1m_r1both`/`sub1m_nR1` × 2 seed,彼此相减,见下一行)。见 [`verification-tier-1m-zh.md`](../notes/verification-tier-1m-zh.md) |
 | R1 大数据 A/B(真正发威档) | 🟡 **配置已入库(1M 子集档)** | 不等全量,**放到 1M 验证层跑**:处理 `sub1m_nR1_s42/s43`(+bank) vs 对照 `sub1m_r1both_s42/s43`(SigLIP 制度无 bank),**彼此相减**;需先建 1M 缓存 `textbank_1m_*`(命令 `COMMANDS.md` §3.3.2)。为何 1M 才发威:全局 batch 512 ≪ SigLIP 饱和 ~32k + 不过拟合 ⇒ 领先=真硬负例(非 10k 挡早塌伪影)。全量 10M=论文数字。设计见 [`r1-implementation-plan.md`](../notes/r1-implementation-plan.md) §10 |
 | 重字幕线定版(§0.9 全案复审) | 🟡 | 2026-07-28:判断式直融 v3 定版 + 供给取代旧段;**3 红**(GDINO 未装=最大裸露面 / 512→640 已修 / 长稿未验真)、4 黄(迭代快于证据 ⇒ 冻结 prompt)、4 绿。**不占 EN 主时钟(D2)**。见 [`recaption-master-plan.md`](../notes/recaption-master-plan.md) §0.9 |
 | b100 训练侧两个坑 | ✅ 已修/已档 | `patch_embed` 秒级 OOM(别等空卡,按剩余显存裁 batch)+ DDP×梯度检查点 `marked as ready twice` ⇒ 两处 `checkpoint()` 加 `use_reentrant=False`(#316,`TROUBLESHOOTING.md`) |
@@ -438,6 +439,17 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
   彼此相减)+ 1M 缓存构建命令(`textbank_1m_*`,`COMMANDS.md` §3.3.2)。为何 1M 才是正确尺度:全局 batch 512 ≪
   SigLIP 饱和 ~32k、1M×3ep 不过拟合 ⇒ 领先=真硬负例,而非 10k 的挡早塌伪影。全量 10M=论文数字,1M=决策门。
   设计见 `r1-implementation-plan.md` §10、`verification-tier-1m-zh.md`。
+- 2026-07-29:**1M 层首个真实数字到手 —— 管线验证通过,但仪器精度告急**
+  (`verification-tier-1m-zh.md` §6;权重加载已核实):**1M(10% 数据)× 3 epoch 就追平官方全量模型** ——
+  raw t2v R@1 **41.8** vs 官方 41.3、DSL **42.7** vs 42.5,两口径同向且都在 ±1.6 带内 ⇒ 判打平。
+  三点参照:地板(骨干初始化+**随机**时序算子)raw r_mean **54.82** → 1M **60.65** → 全量 **61.47**。
+  ✅ 复现管线端到端正确,`sub1m_*` 可当可信代理档。
+  🔴 **但同一组数字暴露了更要紧的问题:数据翻 10 倍只买到 +0.82 raw r_mean(DSL +0.80),
+  落在 ±1.6 噪声带以内** —— 连"10× 数据"这种巨大处理效应都测不出来,各臂的效应只会更小
+  ⇒ **MSR-VTT 1k 在 1M 尺度上排不出臂序**。这不是 1M 层设计错,是**测量仪器精度不够**。
+  ⇒ **G4(U10-1 的 query-level bootstrap CI)由 🟡 升为 🔴**:各臂评的是**同一** 1000 条查询,
+  属**配对**比较,配对差值方差远小于无配对 ±1.6 带 ⇒ **它是让 1M 层能用的前提,不是锦上添花**;
+  同时把 README §6 的「多基准聚合 + 两口径同向」从纪律升级为**必须**。
 - 2026-07-29:**1M 层首臂白跑 15 小时 —— 训练内评测被静默跳过;已修 + 加开跑即失败守卫**:
   `sub1m_r0_s42` 在 4×H100 上跑满 `Training time 15:11:58`,却只得到 `Empty DataFrame`。
   根因**不是评测代码**,而是 `test_file` 的键(基线写 `act_val`)与 `test_types=["ret_test"]` 对不上,
