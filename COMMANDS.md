@@ -644,6 +644,22 @@ python experiments/collect_results.py --compare \
 2026-07-29 才开始存的**。在那之前评过的臂(如首版 `sub1m_r0_s42`)没有,
 **重跑一次评测即可**(纯前向,MSR-VTT 1k 约 1 分钟,命令见 §3.8)。
 
+#### 自比对自检(拿到第一份 `ranks_*.npz` 后必做一次)
+
+把**同一个目录**同时当臂和基线传进去。配对正确时两侧逐 bootstrap 抽到的是同一组
+下标 ⇒ **每个指标 Δ 必须恰好 0.00,CI 必须是 `[0.00, 0.00]`**:
+
+```bash
+python experiments/collect_results.py \
+    --compare experiments/evals/sub1m/sub1m_r0_s42 \
+              experiments/evals/sub1m/sub1m_r0_s42 \
+    --prefix ret_test_emb/
+```
+
+出现任何非零 Δ 或非零宽 CI ⇒ 配对下标没对齐(npz 里 i2t/t2i 顺序被打乱、或两侧
+查询数不一致),**此时所有 A/B 结论作废**,先修再比。这一步零 GPU、约 10 秒,
+`tests/test_paired_bootstrap.py` 里也钉了同一条不变式。
+
 ## 4. Training (pretraining)
 
 **Preflight — run this before every pretraining launch, not just the first:**
