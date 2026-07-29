@@ -237,9 +237,17 @@ def cmd_gate5_fused(args) -> int:
 
     sd = load_state(args.ckpt)
     missing, unexpected = model.load_state_dict(sd, strict=False)
-    print(f"load_state_dict: missing={len(missing)} unexpected={len(unexpected)}")
-    if len(missing) > 50:
-        raise SystemExit(f"[FAIL] 权重没对上(missing={len(missing)});前 5: {list(missing)[:5]}")
+    # `text_encoder.*` **本来就不在** video ckpt 里 —— 构造函数已从 mobileclip_s2.pt 单独载入
+    # 文本塔(tasks_clip/retrieval.py 也照样报这 148 个 missing 然后正常跑完)。本闸只看视觉塔,
+    # 所以只对**非 text_encoder** 的缺失 fail-loud;否则会像 2026-07-29 那次一样自己把自己挡住。
+    vis_missing = [k for k in missing if not k.startswith("text_encoder.")]
+    print(f"load_state_dict: missing={len(missing)}"
+          f"(其中 text_encoder={len(missing) - len(vis_missing)},属预期)"
+          f" unexpected={len(unexpected)}")
+    if len(vis_missing) > 20:
+        raise SystemExit(
+            f"[FAIL] 视觉塔权重没对上(non-text missing={len(vis_missing)});"
+            f"前 5: {vis_missing[:5]}")
 
     model.eval()
     model = reparameterize_model(model)

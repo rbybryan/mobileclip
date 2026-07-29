@@ -16,7 +16,19 @@ plan's load-bearing premises did not survive contact with those numbers.
 
 ## §0. Two corrections that change the plan
 
-### 0.1 🔴 GATE-0's legs ② and ③ are probably confounded. Leg ① is fine.
+### 0.1 ~~🔴 GATE-0's legs ② and ③ are probably confounded.~~ ✅ **RESOLVED 2026-07-29 — not confounded**
+
+> ✅ **The decisive check below was run and the confound is ruled out.** Of the 80 comparable
+> spatial tensors, **0 are bit-identical** to MobileCLIP-S2's (0 name/shape mismatches). The
+> spatial tower **was** trained during the video stage, so the "same init, same optimization"
+> premise leg ③ needs **holds**, and legs ②③ stand as written. The analysis below is kept as
+> the audit record of a hypothesis that was tested and rejected — it was the right thing to
+> check, and checking it is what makes the legs quotable.
+>
+> ⚠️ **One number in leg ③ still does not reproduce.** `gate5` measures the temporal gate at
+> **2.42%** of the spatial gate (medians; 1.90% by p95/p95), not the **6.1%** quoted below.
+> The direction is unchanged and in fact *stronger*, but the 6.1% figure must have its
+> provenance found or be corrected before it appears in the paper.
 
 GATE-0 concluded "the model does not encode temporal direction" from three lines of evidence
 (`experiments/gate0_results.md` §8). ROADMAP, round 2, and several docs — including edits made
@@ -283,22 +295,59 @@ jitter and `W₂` learns to zero it. See §4 — this is the proposal the open d
 
 ## §3. The zero-GPU gate list
 
-> ⚠️ **First server run, 2026-07-29 — three of the four checkpoint gates failed, one *silently*.**
-> The released `mobileviclip_small.pt` is a **reparameterized (inference-mode)** checkpoint:
-> `RepMixer.reparameterize()` (`models/mobileviclip_small.py:753-824`) `__delattr__`s
-> `layer_scale` / `layer_scale_1d` / `mixer_1d` / `norm_1d` and folds them into
-> `reparam_conv_1d`. **Those keys do not exist in the released weights.** The `layer_scale_1d = 0`
-> ablation matched 0 keys and **still saved the checkpoint**, so the ablated file was
+> ⚠️ **First server run, 2026-07-29 — the gates silently no-oped, and my first root-cause call
+> was wrong.** The heredocs wrote `sd.get("model", sd)`; the released checkpoint's top-level
+> wrapper key is **not** `model`, so they fell through to the raw dict and iterated `epoch` /
+> `optimizer`. Gate 3 matched 0 keys **and still saved**, producing an `_ablate.pt` that was
 > byte-identical to the original — an eval would have "passed" having ablated nothing.
-> All checkpoint gates now go through **`experiments/gate_checks.py`**, which detects the
-> checkpoint's mode first and **raises rather than writing anything if a step matches 0 keys**.
+> ~~The checkpoint is reparameterized (inference-mode).~~ **Retracted**: `inspect` on the server
+> shows it is **training-mode** — 40 `layer_scale_1d`, 80 `layer_scale`, 4 `temporal_embedding`,
+> **0** `reparam_conv*`. All gates now go through **`experiments/gate_checks.py`**, which
+> probes the mode first and **raises rather than writing anything when a step matches 0 keys**.
 > Commands: `COMMANDS.md` §3.11.
 >
-> **Consequence for §2 P2:** the λ figures quoted there (temporal median 8e-4, spatial 1.3e-2)
-> **cannot have come from the released checkpoint** — those keys are absent. Treat them as
-> **unverified** until `gate_checks.py gate5` reproduces them from the fused kernels
-> (it measures `|w_1d − δ|` directly, which is the more direct quantity anyway). **P2's INT8
-> conclusion is pending that output.** — run these first (the GATE-0 idiom that already worked)
+> ✅ **λ retraction reversed.** The §2 P2 figures reproduce *exactly* from the released weights:
+> `layer_scale_1d` n=9920, **median 7.973e-04, p95 2.762e-03** vs the quoted 8e-4 / 2.8e-3.
+> They are verified, not unverified.
+
+### §3.0 Results, first complete run (2026-07-29)
+
+| Gate | Result | Verdict |
+|---|---|---|
+| ① spatial `layer_scale` vs MobileCLIP-S2 | 80 comparable tensors, **0 bit-identical**, 0 name/shape misses | Spatial tower **was** trained ⇒ GATE-0 legs ②③ keep their same-init premise. **Leg ① and the legs survive.** |
+| ③ `layer_scale_1d = 0` (40 tensors zeroed) | r_mean **61.95** raw / **61.12** DSL vs baseline 62.28 / 61.55 ⇒ branch worth **+0.33 / +0.43** | Keep-threshold was Δ > 1.0. **Fails by ~2.5×.** |
+| ④ `temporal_embedding = 0` (4 tensors, norms 0.107–0.150) | r_mean **62.95** raw / **62.25** DSL ⇒ deleting it **gains +0.67 / +0.70** | Keep-threshold was Δ > 0.5. Not merely free to delete — **removing it scores higher on both readouts.** |
+| ⑤ gate magnitudes | temporal median 7.973e-04, spatial median 3.296e-02, **ratio 0.0242** | See the ⚠ below. |
+| ⑤-fused (`λ·\|Δ\|` after `reparameterize_model()`) | **not yet run** — blocked by an over-strict missing-key guard of mine (it counted the 148 `text_encoder.*` keys, which the constructor loads separately from `mobileclip_s2.pt`; `retrieval.py` reports the same 148 and runs fine). Guard fixed. | **P2's INT8 claim still undecided.** |
+
+**Baseline reproduced to the decimal** (t2v R@1 42.5 / r_mean 61.55 on the `_emb` row), and
+`sample_type_test: middle` makes the eval deterministic — so these deltas carry no run-to-run
+model noise. The remaining uncertainty is sampling over the 1000 test videos, which is exactly
+what the paired bootstrap measures.
+
+⚠ **A number that did NOT reproduce.** §0's leg ③ states the temporal gate is at **6.1%** of the
+spatial gate. Measured: **2.42%** (medians; p95/p95 gives 1.90%). Neither ratio recovers 6.1%.
+The *direction* of leg ③ is unaffected and in fact strengthened — the temporal gate is smaller
+than advertised — but **the 6.1% figure needs its provenance found or corrected before it is
+quoted in the paper.**
+
+⚠ **The paired-bootstrap inputs were destroyed.** All three arms wrote
+`ranks_ret_test{,_emb}.npz` into the same `output_dir`, so only the last arm's ranks survive.
+Re-run with a per-arm `output_dir` (see `COMMANDS.md` §3.11) before claiming significance —
+Δ = 0.67 sits under the paired-bootstrap resolution reported for G4.
+
+**Reading of ③+④ together.** GATE-0 concluded the model encodes no temporal *direction*. Gate ④
+now shows the architecture's one explicit temporal-order parameter is not merely inert but
+slightly *counterproductive* on MSR-VTT, and gate ③ shows the temporal conv branch buys ~0.4
+r_mean while costing **27.8% of the ONNX graph** (§1) for **0.20% of MACs**. Those three
+measurements agree.
+
+**Two limits, stated before anyone over-reads this.** (a) Zeroing a gate in a *trained* model is
+not the same as *training without* the branch — the ablation upper-bounds what the branch does
+*in this checkpoint*, which is the right quantity for the deployment/P2 question but not a final
+architecture verdict. (b) MSR-VTT captions are largely appearance-driven and are a weak temporal
+probe; **`ssv2_mc_val` is the benchmark that can falsify "delete `temporal_embedding`"**, and it
+is already wired into `available_corpus`. Run it before ratifying.
 
 All on the **locked checkpoint**, all falsifiable, all cheap. Together they settle most of §2.
 
