@@ -887,6 +887,7 @@ summary-table)
   python tools/data_audit/make_summary_table.py \
     --sheet "$OUT/review_compare.tsv" --out-dir "$OUT/table_compare"
   echo "✅ 表格总结: $OUT/table_compare/table.html（每行: GIF|en源|原zh|A重述|A长稿|A短稿|B重述|B长稿|B短稿）"
+  echo "   同目录: table.csv（Excel/WPS 直开）· table.xlsx（openpyxl 装了才出, 首列 GIF 首帧缩略图）"
   echo "   打包: tar czf $OUT/table.tgz -C $OUT table_compare"
   echo "   本地: scp rby@101vector:~/mobileclip/$OUT/table.tgz . && tar xzf table.tgz && 打开 table_compare/table.html"
   ;;

@@ -33,3 +33,12 @@ def test_deco_legacy_subject_badge():
 
 def test_safe_name_flattens_paths():
     assert safe_name("videos/a b/c.mp4") == "videos_a_b_c.mp4.gif"
+
+
+def test_cell_caps_text_plain_numbered():
+    from make_summary_table import cell_caps_text
+    out = cell_caps_text("一名男子切菜；随后装盘 ‖ 男子先洗菜 ‖ 厨房明亮")
+    assert out == "1. 一名男子切菜；随后装盘\n2. 男子先洗菜\n3. 厨房明亮"
+    assert cell_caps_text("只有一条") == "只有一条"
+    assert cell_caps_text(None) == ""
+    assert "<" not in cell_caps_text("【人物】a ‖ b")   # 纯文本, 无 HTML
