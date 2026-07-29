@@ -489,18 +489,17 @@ python experiments/export_smoke.py           # 全尺寸,T∈{2,4,8,16}
 python experiments/export_smoke.py --inference-mode   # 重参数化后的部署形态
 ```
 
-⚠️ **TFLite 那条别在 101vector 主环境跑**:`litert-torch` 要 **torch≥2.6**,而本机锁
-`2.5.1+cu118` 是为了 V100 的 sm_70 内核(动了 8 卡全崩)。补测请用克隆环境:
+⚠️ **TFLite 那条已顺延至第 8 周部署档,别再在 101vector 上折腾**:`litert-torch` 要
+**torch≥2.6**,而本机锁 `2.5.1+cu118` 是为了 V100 的 sm_70 内核(动了 8 卡全崩)。
+2026-07-29 试过旁路环境,三轮未果 —— 完整配方与三个坑见
+[`export_smoke_results.md`](experiments/export_smoke_results.md) §3。要点只有三条:
 
-```bash
-conda create -y --name tflite-export --clone mobileviclip && conda activate tflite-export
-pip install -U pip && pip install "numpy==2.2.6" "torch==2.13.0" "torchvision==0.28.0"
-pip install litert-torch                     # 单独一步,别和 torch 同轮解析
-python experiments/export_smoke.py --ts 2,16
-```
-
-**别用裸 venv** —— 缺整条 InternVideo2 传递依赖,且 pip 会回溯到 numpy 1.19 源码编译。
-原委见 [`export_smoke_results.md`](experiments/export_smoke_results.md) §3。
+- **`conda create --clone` 之后必须 `python -c "import sys; print(sys.prefix)"` 验一遍。**
+  `(env)` 提示符会骗人 —— venv 目录被删后 PS1 残留,pip 会静默回落到系统 python。
+- **`export PYTHONNOUSERSITE=1`。** `~/.local/lib/python3.10/site-packages` 按 python
+  版本共享、不按环境隔离,且**排在 conda 环境自己的 site-packages 之前** —— 往那儿
+  装 torch 会盖住训练环境的 2.5.1。
+- **CPU-only 轮子 + `torch==2.12.1`**(`litert-torch` 声明 `torch<2.13.0`)。
 
 导出的是**视觉塔**(`FastViT`,架构参数与 `build_vision_encoder` 逐项一致 ⇒ 含全部
 时序算子);输入签名 `[B,T,C,H,W]` 与 `encode_vision` 对齐(脚本内做同一行 permute)。
