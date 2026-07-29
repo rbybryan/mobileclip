@@ -9,6 +9,11 @@
 # 只跑指定几个(短名,不带 .py),例如先出一个 seed 的四臂:
 #   bash experiments/run_verify_1m.sh 4,5,6,7 sub1m_r0_s42 sub1m_r1a_s42 sub1m_r1b_s42 sub1m_nA1_s42
 #
+# ⚠️ 下面的默认清单是 **8 臂**(r0/r1a/r1b/nA1 × seed{42,43}),按 r0 实测 15:11:58/臂
+# 约 **5 天**。#335 新增的 4 个臂 **不在默认清单里**(避免把在跑的排期悄悄拉长到 ~7.6 天),
+# 要跑请显式指定:
+#   bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_nR1_s42 sub1m_r1both_s42 sub1m_nR1_s43 sub1m_r1both_s43
+#
 # batch/输出目录/种子都写在各 config 里;这里不再传 batch。断点续训:给某个 config
 # 追加 `auto_resume True`(单独重跑那一条即可,output_dir 已隔离,不会互相覆盖)。
 set -euo pipefail
