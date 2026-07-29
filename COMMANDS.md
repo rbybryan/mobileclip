@@ -747,100 +747,100 @@ python experiments/extract_teacher.py verify --out experiments/teacher/iv2s2_ful
 3. **文本阶段(`--stage text`)依赖重** —— IV2-stage2 文本塔是 LLaMA 系,要 `peft`;
    仓库刻意不 eager import 它。视频阶段完全不碰这条链,先把视频跑完再说。
 
-### 3.11 架构第四轮 · 零 GPU 闸门清单(`notes/architecture-round4.md` §3)
+### 3.11 架构第四轮 · 零 GPU 闸门(`notes/architecture-round4.md` §3)
 
-八项全部在**锁定的 checkpoint** 上跑,最贵一项 12 GPU-h,能定掉 round4 大半提案。
-**按下面顺序做** —— 前两项决定后面还值不值得做。
+> ⚠️ **2026-07-29 首跑修订。** 本节最初给的是几段 heredoc,在服务器上**三条全废**,
+> 其中一条是**静默失败**:`layer_scale_1d = 0` 匹配到 0 个键却照样存了 ckpt ⇒ `_ablate.pt`
+> 与原文件逐位相同,评测会「通过」但什么都没消融。
+> **根因:发布的 `mobileviclip_small.pt` 是重参数化(推理态)权重** ——
+> `RepMixer.reparameterize()` 会 `__delattr__` 掉 `layer_scale/layer_scale_1d/mixer_1d/norm_1d`,
+> 折进 `reparam_conv_1d`,所以那些键**根本不存在**。
+> 现在全部走 `experiments/gate_checks.py`:**先探测形态,匹配到 0 个键立刻抛错、绝不落盘。**
 
-**① GATE-0 腿②③ 是否混淆(~1 分钟,零 GPU)—— 先做这个**
 ```bash
+# 0) 永远先跑这个 —— 看清 ckpt 是训练态还是推理态、各类键各有多少
+python experiments/gate_checks.py inspect --ckpt checkpoints/mobileviclip_small.pt
+
+# ⑤ INT8 会不会把融合核里的时序项抹掉(~10 s,零 GPU)
+python experiments/gate_checks.py gate5 --ckpt checkpoints/mobileviclip_small.pt
+
+# ③ 删时序分支 = 融合核置为单位核 δ、bias 置零(等价 layer_scale_1d=0,也是该支路的精确 INT8 模拟)
+python experiments/gate_checks.py gate3 \
+    --ckpt checkpoints/mobileviclip_small.pt --out checkpoints/_ablate_temporal.pt
+
+# ④ 置零 temporal_embedding
+python experiments/gate_checks.py gate4 \
+    --ckpt checkpoints/mobileviclip_small.pt --out checkpoints/_ablate_tempemb.pt
+
+# ① 空间参数是否与图像 ckpt 逐位相同(⇒ 骨干是否被冻 ⇒ GATE-0 腿②③ 是否混淆)
+python experiments/gate_checks.py gate1 \
+    --ckpt checkpoints/mobileviclip_small.pt --image-ckpt checkpoints/mobileclip_s2.pt
+
+# 自检(零依赖、合成权重,改完脚本先跑这个)
+python experiments/gate_checks.py self-test
+```
+
+③④ 产出的 ckpt 按本文件 §3 的零样本评测跑 MSR-VTT,与 **t2v 42.50 / r_mean 61.55** 对比。
+**判据**:③ Δr_mean > 1.0(raw 与 DSL 同向)才保留该支路;④ Δ > 0.5 才保留 embedding。
+
+> ⚠️ **`gate1` 可能给出「无法判定」** —— 若两份 ckpt 一份推理态一份训练态,键空间对不上。
+> 脚本会**如实报告并退出码 2**,而不是打印 `0 / 0` 假装成结论(首跑就踩了这个)。
+> 替代做法:服务器上按同一配置各自 build 模型、`reparameterize()` 后再比。
+
+> ⚠️ **`notes/architecture-round4.md` §2 P2 里的「λ 中位 8e-4 / 空间 1.3e-2」不可能来自这份
+> 发布权重**(键不存在)。在 `gate5` 复现出真实数字之前,那两个数按**未核实**处理,
+> P2 的 INT8 结论随之待定 —— `gate5` 的输出就是判它成立与否的直接证据。
+
+**② 训练是不是解码瓶颈(30 分钟,零 GPU 训练)** —— 三步,全部在 101vector/H100 上跑:
+
+```bash
+nproc                          # ← 先看核数;fix 是否为「调大 num_workers」取决于它
+nvidia-smi dmon -s u -c 60     # 真训练时看 sm 列;持续 <25% 基本坐实解码瓶颈
+
+# 单片解码耗时(把路径换成 anno 里任一条真实 clip)
 python - <<'EOF'
-import torch
-a = torch.load("checkpoints/mobileviclip_small.pt", map_location="cpu")
-b = torch.load("checkpoints/mobileclip_s2.pt",      map_location="cpu")
-a = a.get("model", a); b = b.get("model", b)
-ka = {k: v for k, v in a.items() if "layer_scale" in k and "_1d" not in k}
-hit = miss = 0
-for k, v in ka.items():
-    cand = [kk for kk in b if kk.endswith(k.split("vision_encoder.")[-1])]
-    if cand:
-        same = torch.equal(v.float(), b[cand[0]].float())
-        hit += same; miss += (not same)
-print(f"空间 layer_scale 与图像 ckpt 逐位相同: {hit} / 不同: {miss}")
-print("⇒ 若绝大多数相同 = 骨干被冻 = GATE-0 腿②③ 混淆,只有腿①(行为学)可用")
+import json, time
+from dataset.video_utils import read_frames_decord
+rec = json.loads(open("data/anno_pretrain/internvid_v1.jsonl").readline())
+p = rec.get("abs_path") or rec.get("video")
+t0 = time.time()
+for _ in range(20):
+    read_frames_decord(p, 8, sample="middle")
+print(f"{(time.time()-t0)/20*1000:.0f} ms/clip   (round4 预测 ~430)")
 EOF
 ```
 
-**② 训练到底是不是解码瓶颈(~30 分钟,零 GPU 训练)**
+纯 dataloader 吞吐(不建模型)用训练入口自己的构造函数,避免手搓配置:
+
 ```bash
-# (a) 空模型跑 dataloader,看纯数据吞吐
 python - <<'EOF'
-import time, torch
-from dataset import create_dataset, create_loader   # 按仓库实际入口调整
-# ... 构建与训练同配置的 train_loader ...
-t0=time.time(); n=0
-for i, _ in enumerate(train_loader):
-    n += train_loader.batch_size
+import time, torch.distributed as dist
+from utils.config_utils import setup_main          # 与训练同一套配置入口
+from tasks_clip.pretrain import setup_dataloaders
+cfg = setup_main()                                  # 传与 R0 相同的 config
+cfg.distributed = True
+train_loaders, _, _ = setup_dataloaders(cfg, mode="pt")[:3]
+dl = train_loaders[0]
+t0, n = time.time(), 0
+for i, _ in enumerate(dl):
+    n += dl.batch_size
     if i == 50: break
-print(f"loader-only: {n/(time.time()-t0):.1f} samples/s   (训练实测 55.8)")
-EOF
-# (b) 真训练时看 SM 利用率;<25% 基本坐实
-nvidia-smi dmon -s u -c 60
-# (c) 单片解码耗时
-python -c "
-import time; from dataset.video_utils import read_frames_decord
-p='<某个真实 clip 路径>'; t0=time.time()
-for _ in range(20): read_frames_decord(p, 8, sample='middle')
-print(f'{(time.time()-t0)/20*1000:.0f} ms/clip  (预测 ~430)')"
-nproc   # ⚠️ 先看核数再决定 num_workers 调多少
-```
-
-**③④ 删时序分支 / 删 temporal_embedding(各 ~75 秒)**
-```bash
-# ③ layer_scale_1d=0 等价于删掉时序分支,同时也是该分支的精确 INT8 模拟
-# ④ temporal_embedding=0
-python - <<'EOF'
-import torch
-sd = torch.load("checkpoints/mobileviclip_small.pt", map_location="cpu")
-m = sd.get("model", sd)
-for k in list(m):
-    if "layer_scale_1d" in k: m[k] = torch.zeros_like(m[k])      # ③
-    # if "temporal_embedding" in k: m[k] = torch.zeros_like(m[k])  # ④(单独跑一次)
-torch.save(sd, "checkpoints/_ablate.pt")
-EOF
-# 然后照 §3 的零样本评测跑 MSR-VTT,与 42.50 / r_mean 61.55 对比
-# 判据:③ Δr_mean > 1.0(raw 与 DSL 同向)才保留该分支;④ Δ > 0.5 才保留 embedding
-```
-
-**⑤ INT8 会不会把时序项抹掉(~10 分钟,零 GPU)**
-```bash
-python - <<'EOF'
-import torch
-m = torch.load("checkpoints/mobileviclip_small.pt", map_location="cpu"); m = m.get("model", m)
-THR = 1/127/2      # 每通道对称 INT8、尺度由 identity tap≈1 定 ⇒ 抹零阈值 3.9e-3
-for tag in ("layer_scale_1d", "layer_scale"):
-    v = torch.cat([x.flatten().abs() for k, x in m.items() if k.endswith(tag)])
-    print(f"{tag:16s} median={v.median():.2e}  p95={v.quantile(.95):.2e}  "
-          f"vs INT8 阈值 {THR:.2e}  ⇒ {'抹掉' if v.median()<THR else '存活'}")
+print(f"loader-only: {n/(time.time()-t0):.1f} samples/s    (训练实测 55.8)")
 EOF
 ```
 
-**⑥ 后期交互(~4 GPU-h)** —— `get_sim` 已支持 `ndim==3` 的 `agg_method ∈ {mean,max}`
-(`models/criterions.py:94-140`),只需让 `encode_vision` 别提前折叠 T,再扫 agg。
-判据:没有一种 agg 比 mean 高 >1.0 r_mean(raw 与 DSL 同向)就放弃 —— 注意 CLIP4Clip 的
-`seqTransf` 只给 +1.4,那是这条线的现实天花板。
+**判读**:loader-only ≈ 55.8 且 sm% < 25 ⇒ **坐实解码瓶颈**,
+则 `notes/architecture-round4.md` §0.2 成立、「6.6 天/轮」是可移除的,
+U6 预算阶梯与裁臂顺序都要重算。若 loader-only ≥ 3× 全步吞吐且 sm% > 70 ⇒ 确实算力瓶颈,
+是 round4 的 FLOP 模型错了 —— 那本身也是个结论。
 
-**⑦ 等像素前沿(~12 GPU-h)** —— 视觉塔**分辨率无关**(`RepCPE` 的 `spatial_shape` 是卷积核不是网格,
-头部是 `GlobalPool`),改 `img_size` **不需要插值、不需要重训**即可评测。
-扫 (256²,T=8) ≡ (181²,T=16) ≡ (128²,T=32) + 160²/192²/224²,配合 `experiments/per_t_bn.py` 重校 BN。
-判据:181² 在 T=8 下掉 >1.5 r_mean(BN 重校之后)则该轴很硬。
+**⑥⑦⑧** 仍见 `notes/architecture-round4.md` §3(⑥ 需让 `encode_vision` 别提前折叠 T,
+打分路径 `get_sim` 已支持;⑦ 视觉塔分辨率无关,改 `img_size` 免插值免重训;
+⑧ 随机权重即可导出计时,**延迟与权重无关**)。
 
-**⑧ 随机权重导出计时** —— **延迟与权重无关**,所以任何架构候选都能在**训练前**拿到端侧数字。
-建议立为常规:*效率类主张在拿到随机权重的实测延迟之前,不批准训练*。
-
-> ⚠️ **本节最重要的一句**:实测显示**时序分支 = 0.20% MACs 却占 27.8% 的 ONNX 图**、
-> 18% 的 CPU mixer 墙钟(约 75% 是 permute 而非算术)。**这个仓库以后判效率,数的是
-> 全特征图 transpose 的个数,不是 FLOPs。** 基线 117 个 Transpose,其中 80 个来自这一条支路。
+> ⚠️ 实测结论,值得单独记一句:**时序分支 = 0.20% MACs 却占 27.8% 的 ONNX 图**、
+> 18% 的 CPU mixer 墙钟(约 75% 是 permute 而非算术)。
+> **这个仓库以后判效率,数的是全特征图 transpose 的个数,不是 FLOPs。**
 
 ## 4. Training (pretraining)
 

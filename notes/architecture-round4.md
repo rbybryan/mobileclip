@@ -281,7 +281,24 @@ jitter and `W₂` learns to zero it. See §4 — this is the proposal the open d
 
 ---
 
-## §3. The zero-GPU gate list — run these first (the GATE-0 idiom that already worked)
+## §3. The zero-GPU gate list
+
+> ⚠️ **First server run, 2026-07-29 — three of the four checkpoint gates failed, one *silently*.**
+> The released `mobileviclip_small.pt` is a **reparameterized (inference-mode)** checkpoint:
+> `RepMixer.reparameterize()` (`models/mobileviclip_small.py:753-824`) `__delattr__`s
+> `layer_scale` / `layer_scale_1d` / `mixer_1d` / `norm_1d` and folds them into
+> `reparam_conv_1d`. **Those keys do not exist in the released weights.** The `layer_scale_1d = 0`
+> ablation matched 0 keys and **still saved the checkpoint**, so the ablated file was
+> byte-identical to the original — an eval would have "passed" having ablated nothing.
+> All checkpoint gates now go through **`experiments/gate_checks.py`**, which detects the
+> checkpoint's mode first and **raises rather than writing anything if a step matches 0 keys**.
+> Commands: `COMMANDS.md` §3.11.
+>
+> **Consequence for §2 P2:** the λ figures quoted there (temporal median 8e-4, spatial 1.3e-2)
+> **cannot have come from the released checkpoint** — those keys are absent. Treat them as
+> **unverified** until `gate_checks.py gate5` reproduces them from the fused kernels
+> (it measures `|w_1d − δ|` directly, which is the more direct quantity anyway). **P2's INT8
+> conclusion is pending that output.** — run these first (the GATE-0 idiom that already worked)
 
 All on the **locked checkpoint**, all falsifiable, all cheap. Together they settle most of §2.
 
