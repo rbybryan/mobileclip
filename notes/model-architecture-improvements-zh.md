@@ -7,12 +7,29 @@
 (b) **文献核查** —— 用 2024–2026 SOTA 论文核对外部证据。
 验证中发现的错误已修正,并在下文明确标注(共 1 处实质修正、1 处措辞收紧、1 处结论加强)。
 
+> ## ⚠️ 状态刷新(2026-07-29)—— 本表里**四条已经落地**,请勿当作待办
+>
+> 本报告写于 2026-07-15,自那以后未重新基线化。**P2 / P3 / P4 三条提案 + 冻结 bug 已经在代码里了**,
+> 下文各节应读作**设计理据**,不是工单。逐条对照(英文版同表):
+>
+> | 条目 | 本报告(07-15) | `main` 实况(07-29) |
+> |---|---|---|
+> | **P1** SDPA/Flash | 「优先做」 | ⬜ **唯一完全未动的一条**。全仓无 `scaled_dot_product_attention`,`MHSA` 仍显式 `attn.softmax`(`_tiny.py:425`);`use_flash_attn` 接进来了但**任何 forward 都不读**。仍卡在 torch 1.13.1;且 paper-plan §六.8 已把 P1 **降级为条件项** |
+> | **P2** 解 T=8 硬编码 | 提案 | ✅ **已落地** = C2 T 无关化(#222,ROADMAP 2.1)。11 处 reshape 全部动态化,`t_frames = get_num_frames()`;18 项单测 + 8 卡弹性 T 冒烟全过 |
+> | **P3** 时间维注意力池化 | 提案 | ✅ **已落地,默认关**。`TemporalAttentionPool`(`_tiny.py:1321` / `_small.py:1456`),query=mean、**proj 零初始化**(`:1338-1339`),与提案一致。开关 `temporal_pooling="attn"` |
+> | **P4** sigmoid 损失 + 可学习 t/b | 提案 | ✅ **已落地,默认关**。`vtc_loss_sigmoid`(`criterions.py:225`)**已被调用**(`_small.py:243`),受 `use_sigmoid_loss` 控制;本报告提的 `idx` 修正也实现了 —— 已改调 `get_mask(logits, idx=idx)`(`criterions.py:405`),`torch.eye` 仅作兜底。配置 `experiments/configs/r1a_sigmoid.py` |
+> | **冻结 bug** `hasattr(name,'_1d')` | 「强制卫生项」 | ✅ **已修**。改为 `name.startswith("head.")`,原 bug 以 NOTE 注释留档(`_tiny.py:62-66`) |
+> | **P5–P10** | 提案 | ⬜ 仍是提案。**P9 的前提已被推翻**:U1 导出冒烟(07-27)实测 ONNX + Core ML 在 T∈{2,4,8,16} 全 pass ⇒ 联合注意力**不是**导出障碍,P9 不触发。见 `experiments/export_smoke_results.md` |
+>
+> 全文行号早于 #222,普遍漂移 +7…+15,请按符号名重定位。第三轮的进一步更正见
+> [`model-architecture-improvements-round3-zh.md`](model-architecture-improvements-round3-zh.md) §0。
+
 与既有笔记的分工:
 - `notes/whitespace-directions.md` —— 数据管线、时序难负例、量化、帧选择(模型*外围*);
 - `notes/data-quality-caprl-scheme.md` —— 字幕/数据质量;
 - **本报告 —— 模型本体**:架构、token 混合、池化、训练目标(P1–P10);
 - `notes/model-architecture-improvements-round3-zh.md` —— **第三轮新增架构方向 · 最终稿**
-  (C1–C9,逐点源码核查版):改正了 3 处过时前提(T=8 已解硬编码、冻结 bug 已修、
+  (**AC1–AC9**,逐点源码核查版;该文正文沿用 `C1–C9`,与 paper-plan 的贡献层 C1–C4 撞车,ROADMAP 统一按 `AC*` 引用):改正了 3 处过时前提(T=8 已解硬编码、冻结 bug 已修、
   temporal_pool 已实现)+ 2 处机制错误(C1 联合注意力无法塞进时序卷积、C2 与全局
   set_num_frames 冲突)+ 1 处表述不准(C6 温度已被 R1a 覆盖);含明确死路清单。本报告是其前置背景。
 
@@ -43,22 +60,28 @@
 (`temp == temp_min == 0.01`,clamp 使其恒定),全局 batch 512(8×64,V100),
 InternVid-10M-FLT 上 3 个 epoch,LiT 式(视觉开放、文本锁定)。
 
-**代码中的隐性约束与"沉睡代码"(全部核实):**
+**代码中的隐性约束与"沉睡代码"(截至 2026-07-15 全部核实;⚠️ **其中三条已于 07-24 前后解除**,
+逐条标注如下,另见文首状态刷新表):**
 
-- `T = 8` **硬编码**在所有时序 reshape 中(`MHSA.forward`、`RepMixer.forward`、
-  `AttentionBlock.forward` 的 `x.reshape(8, ...)`)及 `temporal_embedding` 形状里。
+- ~~`T = 8` **硬编码**在所有时序 reshape 中(`MHSA.forward`、`RepMixer.forward`、
+  `AttentionBlock.forward` 的 `x.reshape(8, ...)`)及 `temporal_embedding` 形状里。~~
+  → **已解除(#222)**:全部改读 `t_frames = get_num_frames()`;`temporal_embedding` 参数
+  仍按宽度 8 分配,但运行时由 `resize_temporal_embedding` 插值,这正是 T=16 免训练可用的原因。
 - 注意力为**朴素实现**(显式 `softmax(q@kᵀ)@v`);`use_flash_attn` 等旗标一路传入
   `basic_blocks(...)` 后**被忽略**(grep 证实 forward 中无任何引用)。
-- 已实现但**从未被调用**的代码:完整的 SigLIP 式损失
+- ~~已实现但**从未被调用**的代码:完整的 SigLIP 式损失
   `VTC_VTM_Loss.vtc_loss_sigmoid`(`criterions.py:133`,含可学习 `t`/`b` 入参;
-  全仓库 grep 无调用点)、`get_sim_sigmoid`(`criterions.py:62`)、
+  全仓库 grep 无调用点)~~ → **已接线**:`vtc_loss_sigmoid`(现 `criterions.py:225`)
+  已由 `_small.py:243` 调用,受 `use_sigmoid_loss` 控制。仍确属沉睡的是:
+  `get_sim_sigmoid`(`criterions.py:62`)、
   规范模型中未实例化的 `AttentionPoolingBlock`(注意:InternVideo2 骨干用
   **自己的同名副本**作 `clip_projector` 头,`internvideo2.py:484` —— 这恰是该模式
-  在本仓库内可行的直接证据)、`open_text_lora` 配置旗标。
-- **冻结逻辑 bug**:`hasattr(name, '_1d')` 对字符串恒为 `False`
+  在本仓库内可行的直接证据)、`open_text_lora` 配置旗标(**仅 schema,全仓无代码消费**)。
+- ~~**冻结逻辑 bug**:`hasattr(name, '_1d')` 对字符串恒为 `False`
   (`mobileviclip_small.py:56` / `mobileviclip_tiny.py:55`),故
-  `open_vision_clip_projector` 的该分支永远不触发,仅
-  `"mixer_1d" in name ...` 分支有效。任何基于冻结的实验(如仅训时序分支)须先修此处。
+  `open_vision_clip_projector` 的该分支永远不触发。~~ → **已修**:改为
+  `name.startswith("head.")`,原 bug 以 NOTE 注释留档(`_tiny.py:62-66` / `_small.py:94-98`);
+  `temporal_embedding` 与 `temporal_pool` 现已显式解冻。
 
 **算力去向(解析估算,非实测):** 以 Small(256²、T=8)按 MACs 粗算,FastViT 设计使
 各 block 代价近似恒定(≈157M MACs/块/帧),阶段 1–4 的逐帧卷积/FFN 合计
@@ -77,12 +100,12 @@ InternVid-10M-FLT 上 3 个 epoch,LiT 式(视觉开放、文本锁定)。
 | P1 | SDPA/高效注意力 | ✅ 朴素注意力、旗标被忽略属实 | ⚠️ **修正** | **成立,但须先升级环境**:锁定环境为 PyTorch **1.13.1**(`mobileviclip.yml`),`F.scaled_dot_product_attention` 是 2.0 才有的 API;且 Flash 内核要求 sm80+,**V100(sm70)只能走 memory-efficient 内核**。收益仍真实(消除 N×N 显存物化 + 中等提速),但不是 Flash 级加速。可选路线:升 torch ≥2.0(需验证 DeepSpeed 兼容)或在 1.13 上用 `xformers.ops.memory_efficient_attention`。 |
 | P2 | 解除 T=8 硬编码、弹性帧数训练 | ✅ 三处 reshape + embedding 形状均核实;`interpolate_pos_embed` 已存在可复用 | ✅ FlexiViT / LiteFrame(2026) | 成立。另注:TimeSformer 报告联合注意力在 32 帧即 OOM——硬编码之外,**联合注意力本身也会限制帧数扩展**,与 P9 联动。 |
 | P3 | 帧维注意力池化替代均值 | ✅ `mean(0)` 属实;⚠️ 措辞收紧:`AttentionPoolingBlock` 在规范模型中未用,但 InternVideo2 骨干以同名副本作头部在用(仓库内证据);`Attention_global_residual` 的 proj 零初始化可用于"零回退"启动 | ✅ InternVideo2 / Perception Encoder 均用注意力池化头 | 成立,且比原稿更强:仓库内已有同模式的工作实现可参照。开销 ≈ 8 个 512 维 token 上的一次 cross-attention,总 FLOPs 占比 ~1e-5 量级。 |
-| P4 | SigLIP sigmoid 损失 + 可学习温度/偏置 | ✅ `vtc_loss_sigmoid` 完整存在、零调用;`temp==temp_min` 两个配置均属实;⚠️ 该实现用 `torch.eye` 忽略 `idx`;另查明 `idx` 即数据集样本下标(`pt_dataset.py __getitem__` 返回 `index`),故跨样本重复字幕在现有 softmax 版里同样是假负例 | ✅ SigLIP 原文:小 batch 下 sigmoid 优于 softmax;MobileCLIP2:温度调优值最高 ~2.8% | 成立,且工程量比预想更小(接线改动而非新码)。须把 `get_mask`(`criterions.py:270`)移植进 sigmoid 目标,SigLIP 初始化 t=log 10、b=−10。 |
+| P4 | SigLIP sigmoid 损失 + 可学习温度/偏置 | ✅ `vtc_loss_sigmoid` 完整存在、零调用;`temp==temp_min` 两个配置均属实;⚠️ 该实现用 `torch.eye` 忽略 `idx`;另查明 `idx` 即数据集样本下标(`pt_dataset.py __getitem__` 返回 `index`),故跨样本重复字幕在现有 softmax 版里同样是假负例 | ✅ SigLIP 原文:小 batch 下 sigmoid 优于 softmax;MobileCLIP2:温度调优值最高 ~2.8% ⚠️(**英文版写的是 ~1–2%,两版自 07-21 起不一致且都没引表号;疑与 §3.4 的 MobileCLIP2-S2 整体 IN-1k +2.8(77.2 vs 74.4)混淆 —— 那是整模型增益,不是温度消融**。两个数都按未核实处理,勿写进论文;P4 的理据由 SigLIP 小 batch 论证独立支撑) | 成立,且工程量比预想更小(接线改动而非新码)。须把 `get_mask`(`criterions.py:270`)移植进 sigmoid 目标,SigLIP 初始化 t=log 10、b=−10。 |
 | P5 | 视频版数据强化蒸馏(InternVideo2 教师) | ✅ `caption_augmentation` 钩子存在(`pt_dataset.py:40`);存储估算 512 维 fp16 ≈1KB/条 → 10M 条 ≈10–20GB 无误 | ✅ MobileCLIP(CVPR'24)/ MobileCLIP2(TMLR'25)DR 配方;InternVideo2-S/B 本身即从 1B 蒸馏 | 成立。**预期收益最大**的一项;图像侧同配方 +2–5 点。教师推理成本(InternVideo2-L 过 10M×8 帧,约 GPU-周量级)先在切片上实测。 |
 | P6 | 第 4 阶段时序 token 合并(TempMe 式) | ✅ 512 token / 8×8 空间尺寸核实;解析估算显示注意力仅占总 MACs ~8% → 原稿"收益有界"的诚实定位被证实 | ✅ TempMe(ICLR'25):−95% token、−51% GFLOPs、R-Sum +4.4%(参数高效)/+7.9%(全微调) | 成立,定位为**峰值内存 / 端侧导出收益**,GPU 总吞吐收益有限。依赖 P2。 |
 | P7 | 非对称帧编码(关键帧全路径 + 廉价路径) | ✅ ×T 逐帧代价主导总 FLOPs 由解析估算证实;时序 RepMixer 可作跨帧注入点属实 | ✅ DeltaCNN / Skip-Conv / SparseTem / LiteFrame / MeToM(CVPR'26) | 成立,**研究型赌注**(动作类基准可能掉点)。必须击败"均匀 T=4 采样"这一平凡基线才值得保留。依赖 P2,建议配合 P5 的自蒸馏损失做微调而非重训。 |
 | P8 | 文本塔瘦身(mct + 蒸馏) | ✅ S2 文本塔 63.4M > 视觉塔 35.7M(官方数字核实);mct 实现与分发均在仓库内(`modules/text/repmixer.py`;`text_encoder.py:116` `variant == "mct"`) | ✅ MobileCLIP-S0 证明 DR 训练下小文本塔掉点 ≤1–2;TinyCLIP 权重继承 | 成立。端侧**模型体积**最大杠杆(≈−45%),优于对视觉塔做 INT8。 |
-| P9 | 分离式时空注意力(可导出的第 4 阶段) | ✅ 联合注意力为导出阻塞点(引 whitespace 笔记 §0 的已核实结论) | ✅ **结论加强**:TimeSformer 消融显示分离式**精度更高且更省**(K400/SSv2 最优;联合式 32 帧 OOM) | 成立且证据比原稿更强:这不只是"省算力换掉点"的权衡,文献支持"可能不掉点甚至更好"。逐帧 64-token 注意力静态形状、可直接导出。 |
+| P9 | 分离式时空注意力(可导出的第 4 阶段) | ❌ **前提已被推翻(2026-07-27)**:~~联合注意力为导出阻塞点~~ —— U1 导出冒烟实测 ONNX + Core ML 在 T∈{2,4,8,16} **全 pass**,联合注意力**能导出**。whitespace §0 的旧结论(「唯一 Core ML 脚本跳过全部时序算子」)只说明**当时那个脚本**没接时序算子,不等于导不出。⇒ **P9 不触发**;见 `experiments/export_smoke_results.md` | ✅ **结论加强**:TimeSformer 消融显示分离式**精度更高且更省**(K400/SSv2 最优;联合式 32 帧 OOM) | 成立且证据比原稿更强:这不只是"省算力换掉点"的权衡,文献支持"可能不掉点甚至更好"。逐帧 64-token 注意力静态形状、可直接导出。 |
 | P10 | 套娃(Matryoshka)embedding 头 | ✅ 仅损失层改动,与 P4/P5 兼容 | ✅ MRL(NeurIPS'22)标准结论 | 成立,零推理开销,端侧 ANN 索引缩小 4–8×。 |
 
 **验证过程中另发现并核实的事实**(不改变结论,写入备查):

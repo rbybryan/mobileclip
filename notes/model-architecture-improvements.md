@@ -15,6 +15,27 @@ This note is the **model side**: architecture, token mixing, pooling, losses.
 Every claim below is anchored to a file/line in this repo (checked 2026-07-15;
 re-locate by symbol if files drift).
 
+> ## ⚠️ Status refresh 2026-07-29 — half of this backlog has already shipped
+>
+> This note was written 2026-07-15 as a *proposal* list and has not been re-baselined since.
+> Four of the ten proposals, plus the hygiene bug, are **now implemented in the tree**. Read
+> the per-proposal sections as design rationale, **not as work orders**, and check this table
+> first:
+>
+> | Item | 2026-07-15 status here | Reality on `main`, 2026-07-29 |
+> |---|---|---|
+> | **P1** SDPA/Flash attention | "do first" | ⬜ **Still open — the one item fully unstarted.** No `scaled_dot_product_attention` anywhere; `MHSA` still does an explicit `attn.softmax(dim=-1)` (`mobileviclip_tiny.py:425`). `use_flash_attn` is accepted and threaded (`:887`, `:974`, `:1218`) but **never read in any forward**. Still blocked by the torch 1.13.1 pin — and paper-plan §6.8 has since **demoted P1 to conditional**, so this is no longer "do first" |
+> | **P2** remove hard-coded T=8 | proposal | ✅ **LANDED** as C2 T-agnostic (PR #222, ROADMAP 2.1). All eleven `reshape(8,…)` sites are dynamic: `t_frames = get_num_frames()` (`:408`, `:597`, `:1031`), broadcast via `set_num_frames(T)` (`:1306`), `temporal_embedding` resized at runtime by `resize_temporal_embedding`. 18 unit tests + 8-GPU elastic-T smoke passed |
+> | **P3** temporal attention pool | proposal | ✅ **LANDED, default-off.** `TemporalAttentionPool` (`mobileviclip_tiny.py:1321`, `_small.py:1456`) — one cross-attention block, query = mean, **zero-init proj** (`:1338-1339`) exactly as proposed. Switch: `temporal_pooling="attn"` (default `"mean"`) |
+> | **P4** SigLIP sigmoid loss + learnable t/b | proposal | ✅ **LANDED, default-off.** `vtc_loss_sigmoid` (`criterions.py:225`) is now **called** (`mobileviclip_small.py:243`) behind `use_sigmoid_loss` (default `False`). The `idx` fix proposed here was implemented too: it calls `get_mask(logits, idx=idx)` (`criterions.py:405`), with `torch.eye` only as fallback. Config `experiments/configs/r1a_sigmoid.py` |
+> | **Freeze bug** `hasattr(name,'_1d')` | "mandatory hygiene" | ✅ **FIXED.** Replaced by `name.startswith("head.")`, with a NOTE comment preserving the old bug (`_tiny.py:62-66`, `_small.py:94-98`); `temporal_embedding` and `temporal_pool` are now explicitly unfrozen |
+> | **P5–P10** | proposals | ⬜ Still proposals. **P9's premise has since been falsified**: the U1 export smoke (2026-07-27) shows ONNX + Core ML both pass at T∈{2,4,8,16}, so joint attention is **not** an export blocker and P9 does not trigger. See `experiments/export_smoke_results.md` |
+>
+> **Line numbers throughout this note predate PR #222 and have drifted by roughly +7…+15.**
+> Re-verified mappings: `criterions.py:133`→**225**, `:270`→**405**; `_tiny.py:989`→**1026**,
+> `:1253-1263`→**~1312-1318**, `:1480`→**1569**, `:336-399`→**371-435**;
+> `shared_utils.py:186`→**201**; `pt_dataset.py:40`→**115**. Also drifted: `:62`→**141**, `:93`→**172**. Still exact: `internvideo2.py:484`, `text_encoder.py:116`. Re-locate by symbol.
+
 ---
 
 ## 1. What the model actually is (source-level recap)
@@ -49,26 +70,34 @@ three video-specific insertions:
 (`temp == temp_min == 0.01`, so the clamp makes it constant), global batch 512
 (8×64), 3 epochs on InternVid-10M-FLT, LiT-style (vision open, text locked).
 
-**Latent constraints baked into the code:**
+**Latent constraints baked into the code** *(as of 2026-07-15 — **three of the four have
+since been discharged**; struck text is no longer true of the tree, see the status refresh
+at the top):*
 
-- `T = 8` is **hard-coded** in every temporal reshape
+- ~~`T = 8` is **hard-coded** in every temporal reshape
   (`x.reshape(8, int(x.shape[0]/8), ...)` in `MHSA.forward`,
   `RepMixer.forward`, `AttentionBlock.forward`) and in
-  `temporal_embedding = nn.Parameter(torch.zeros(1, C, 8))`.
+  `temporal_embedding = nn.Parameter(torch.zeros(1, C, 8))`.~~
+  → **Discharged by PR #222.** All reshapes read `t_frames = get_num_frames()`; the
+  `temporal_embedding` parameter is still allocated at width 8 but is **resized at runtime**
+  via `resize_temporal_embedding`, which is what makes T=16 work training-free.
 - Attention is **naive** (explicit `softmax(q@kᵀ)@v`); the
   `use_flash_attn / use_fused_rmsnorm / use_fused_mlp` flags are plumbed
-  through `basic_blocks(...)` and then **ignored**.
-- Dead-but-present code that several proposals below can reuse:
+  through `basic_blocks(...)` and then **ignored**. → **Still true** (the only surviving
+  constraint of the four); this is P1.
+- ~~Dead-but-present code that several proposals below can reuse:
   a complete SigLIP-style loss `VTC_VTM_Loss.vtc_loss_sigmoid`
-  (`criterions.py:133`, with learnable `t`/`b` hooks — never called),
-  `get_sim_sigmoid` (`criterions.py:62`), `AttentionPoolingBlock` /
-  `AttentiveBlock` / `CrossAttention` (`mobileviclip_tiny.py:1396-1487`),
-  `open_text_lora` config flag.
-- A real **freeze-logic bug**: `hasattr(name, '_1d')` on a *string* is always
+  (`criterions.py:133`, with learnable `t`/`b` hooks — never called)~~
+  → **No longer dead:** `vtc_loss_sigmoid` (now `criterions.py:225`) is wired and called
+  behind `use_sigmoid_loss`. Still genuinely unused: `get_sim_sigmoid` (`criterions.py:62`),
+  `AttentionPoolingBlock` / `AttentiveBlock` / `CrossAttention`
+  (`mobileviclip_tiny.py:1434-1569`, superseded by the separate `TemporalAttentionPool`),
+  and the `open_text_lora` config flag (**schema only — no code consumes it**).
+- ~~A real **freeze-logic bug**: `hasattr(name, '_1d')` on a *string* is always
   `False` (`mobileviclip_tiny.py:55`, same in small), so
-  `open_vision_clip_projector` never unfreezes the projector via that branch —
-  only the `"mixer_1d" in name or ...` branch works. Any
-  freeze-based experiment (e.g. temporal-only fine-tuning) should fix this first.
+  `open_vision_clip_projector` never unfreezes the projector via that branch.~~
+  → **Fixed.** Now `name.startswith("head.")`; the original bug is preserved as a NOTE
+  comment at `_tiny.py:62-66` / `_small.py:94-98`.
 
 **Where the compute actually goes** (analytic, no measured profile yet):
 per-frame conv stages 1–3 dominate **total** video FLOPs (cost ∝ T = 8 full
@@ -89,7 +118,7 @@ repo's state (replication not yet finished; 8×V100 budget).
 | # | Proposal | Type | Inference cost | Expected effect | Risk |
 |---|----------|------|----------------|-----------------|------|
 | P1 | SDPA/Flash attention + fused kernels | eng. fix | ↓ (GPU) | faster train/eval, identical math | ~0 |
-| P2 | Un-hard-code T; frame-count-flexible training | eng.+train | = | variable-T eval, long-video, prereq for P5/P6 | low |
+| P2 | Un-hard-code T; frame-count-flexible training ✅ **landed, PR #222** | eng.+train | = | variable-T eval, long-video, prereq for **P6/P7** | low |
 | P3 | Attention-pool the frame axis (replace mean-over-T) | arch (head) | +ε | better temporal aggregation, biggest acc/FLOP ratio | low |
 | P4 | SigLIP sigmoid loss + learnable temp/bias | objective | = | better acc at batch 512; robust to noisy captions | low |
 | P5 | Video dataset-reinforcement: distill InternVideo2 (+MobileCLIP2 recipe) | objective | = | **largest expected accuracy jump** | med (storage/teacher infra) |
@@ -97,7 +126,7 @@ repo's state (replication not yet finished; 8×V100 budget).
 | P7 | Asymmetric frame encoding (keyframe full path, deltas cheap path) | arch | ↓↓ | attack the ×T cost directly | high (research bet) |
 | P8 | Text-tower rebalance (mct-style small text + KD) | arch (text) | ↓ size | −40–50M params model size | med |
 | P9 | Divided space-time attention (export-friendly stage 4) | arch | = / ↓ | unblocks on-device export | med |
-| P10 | Matryoshka embedding head | objective | = | cheap on-device ANN at 64–256 dims | low |
+| P10 | Matryoshka embedding head | objective | = | cheap on-device ANN at 64–128 dims | low |
 
 The sections below give the reasoning, code touchpoints, and eval for each.
 
@@ -196,6 +225,18 @@ Two objective-level facts about the current setup work against it:
    ViCLIP. CLIP/SigLIP learn temperature (and SigLIP a bias); MobileCLIP2's
    ablations show temperature tuning of contrastive+distillation losses is
    worth up to ~1–2% on its own.
+
+   > ⚠️ **Unresolved figure (flagged 2026-07-29).** The Chinese counterpart
+   > (`model-architecture-improvements-zh.md` P4 row) states this gain as
+   > **"~2.8%"**, not 1–2%. The two files have disagreed since 07-21 and neither
+   > cites a table number. **Likely cause: conflation.** `plan-review-upgrades.md`
+   > §3.4 records **+2.8 IN-1k (77.2 vs 74.4)** for MobileCLIP2-S2 — but that is
+   > the *whole model's* gain over its predecessor, **not** the temperature-tuning
+   > ablation. Treat **both numbers as unverified** until someone reads the
+   > MobileCLIP2 ablation table (TMLR 2025, arXiv 2508.20691) directly; do not
+   > quote either in the paper. Nothing in the plan depends on the exact value —
+   > P4 is justified by SigLIP's small-batch argument, which is independently
+   > sound.
 
 InternVid captions are noisy and near-duplicated (multiple clips of one video
 share captions — the `idx`-based `get_mask` in `criterions.py` already
@@ -308,6 +349,18 @@ TinyCLIP-style weight inheritance (drop alternating layers, then KD).
 
 ### P9. Export-friendly stage 4: divided space–time attention
 
+> ❌ **Premise falsified 2026-07-27 — P9 does not trigger.** The U1 export smoke test ran
+> the real thing: **ONNX and Core ML both export successfully at T∈{2,4,8,16}**
+> (`experiments/export_smoke_results.md`; ROADMAP 1.5). Joint T·H·W attention is therefore
+> **not** an export blocker. The `whitespace-directions.md §0` finding that this section rests
+> on — "the only Core ML export script silently drops all temporal ops" — showed only that
+> *that particular script* never wired the temporal ops up, which is not the same as their
+> being unexportable. Keep this section for the accuracy argument (TimeSformer's divided
+> attention is genuinely competitive) and for the peak-memory argument, but **the deployment
+> motivation is gone**. One caveat that survives: the export trace **bakes T in as a constant**,
+> so deployment is "one checkpoint → N graphs"; whether `dynamic_axes` can give one graph for
+> many T is **still unverified** (ROADMAP **G6**).
+
 Direct response to the deployment finding in `whitespace-directions.md §0`
 (the only export script silently drops all temporal ops). Joint T·H·W attention
 is the op that breaks Core ML/TFLite lowering. TimeSformer's ablation shows
@@ -344,7 +397,7 @@ Phase 0 (with replication):   P1 (SDPA) + freeze-bug fix           [days]
 Phase 1 (first improvements): P4 (sigmoid+temp) → P3 (attn pool)   [1-2 wks, one A/B each]
 Phase 2 (the big swing):      P5 (video DR distillation), with P10 folded in
 Phase 3 (efficiency track):   P2 (flex-T) → P9 (export) → P6 (merging) → P7 (bet)
-Phase 8 (size):               P8 whenever a deployment target demands it
+Phase 4 (size):               P8 whenever a deployment target demands it
 ```
 
 P3+P4+P5 are mutually compatible and share the same eval harness; the
