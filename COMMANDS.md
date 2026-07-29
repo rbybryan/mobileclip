@@ -752,9 +752,10 @@ python experiments/extract_teacher.py verify --out experiments/teacher/iv2s2_ful
 > ⚠️ **2026-07-29 首跑修订。** 本节最初给的是几段 heredoc,在服务器上**三条全废**,
 > 其中一条是**静默失败**:`layer_scale_1d = 0` 匹配到 0 个键却照样存了 ckpt ⇒ `_ablate.pt`
 > 与原文件逐位相同,评测会「通过」但什么都没消融。
-> **根因:发布的 `mobileviclip_small.pt` 是重参数化(推理态)权重** ——
-> `RepMixer.reparameterize()` 会 `__delattr__` 掉 `layer_scale/layer_scale_1d/mixer_1d/norm_1d`,
-> 折进 `reparam_conv_1d`,所以那些键**根本不存在**。
+> **根因(实测更正)**:~~发布权重是重参数化(推理态)~~ —— **错**。`inspect` 实测是
+> **训练态**(40 个 `layer_scale_1d`、80 个 `layer_scale`、4 个 `temporal_embedding`、
+> **0** 个 `reparam_conv*`)。真正的原因是 heredoc 写了 `sd.get("model", sd)`,而这份 ckpt
+> 的顶层包装键**不叫 `model`**,于是回退到原始 dict、去遍历 `epoch`/`optimizer` 了。
 > 现在全部走 `experiments/gate_checks.py`:**先探测形态,匹配到 0 个键立刻抛错、绝不落盘。**
 
 ```bash
@@ -780,16 +781,56 @@ python experiments/gate_checks.py gate1 \
 python experiments/gate_checks.py self-test
 ```
 
-③④ 产出的 ckpt 按本文件 §3 的零样本评测跑 MSR-VTT,与 **t2v 42.50 / r_mean 61.55** 对比。
-**判据**:③ Δr_mean > 1.0(raw 与 DSL 同向)才保留该支路;④ Δ > 0.5 才保留 embedding。
+③④ 产出的 ckpt 按下面的评测跑 MSR-VTT。**判据**:③ Δr_mean > 1.0(raw 与 DSL 同向)
+才保留该支路;④ Δ > 0.5 才保留 embedding。
+
+> 🔴 **每个臂必须给独立的 `output_dir`。** 首跑三个臂全写进同一个目录,
+> `ranks_ret_test{,_emb}.npz`(配对 bootstrap 的输入)被后一个臂覆盖,只剩最后一个臂的秩,
+> **配对 CI 因此做不了**。下面的命令已带 `output_dir` 覆盖。
+
+```bash
+export PYTHONPATH=${PYTHONPATH}:. ; export CUDA_VISIBLE_DEVICES=0
+C=scripts/evaluation/clip/zero_shot/mobileviclip_small/config_msrvtt.py
+run () {  # run <臂名> <ckpt>
+  python -m torch.distributed.run --nproc_per_node=1 --master_port=$((10000+RANDOM%20000)) \
+      tasks_clip/retrieval.py "$C" pretrained_path "$2" output_dir "eval_$1"
+}
+run base    ./checkpoints/mobileviclip_small.pt
+run gate3   ./checkpoints/_ablate_temporal.pt
+run gate4   ./checkpoints/_ablate_tempemb.pt
+```
+
+**首跑结果(2026-07-29,`r_mean` raw / DSL`_emb`):**
+
+| 臂 | r_mean raw | r_mean DSL | Δ vs base | 判定 |
+|---|---|---|---|---|
+| base | 62.28 | 61.55 | — | 与文档记载逐位一致 |
+| ③ 时序支路置零 | 61.95 | 61.12 | **−0.33 / −0.43** | 支路只值 0.4,判据要 >1.0 ⇒ **不保留** |
+| ④ `temporal_embedding` 置零 | **62.95** | **62.25** | **+0.67 / +0.70** | 删掉反而更高 ⇒ **不保留** |
+
+> ⚠️ Δ 都小于 G4 配对 bootstrap 的分辨率,**"删了更好"要等配对 CI 才能下结论**;
+> "不值得保留"则已成立(点估计离阈值差 2.5 倍以上)。
+> ⚠️ MSR-VTT 的字幕以外观为主,是弱时序探针。**`ssv2_mc_val` 才是能证伪「删 `temporal_embedding`」
+> 的基准**,批准前先跑它。
+
+```bash
+# ⑤-fused:重参数化之后量 |w_1d − δ| —— 这才是 P2 的 INT8 直接判据(λ 本身不是)
+python experiments/gate_checks.py gate5-fused \
+    --ckpt checkpoints/mobileviclip_small.pt --config "$C"
+```
 
 > ⚠️ **`gate1` 可能给出「无法判定」** —— 若两份 ckpt 一份推理态一份训练态,键空间对不上。
 > 脚本会**如实报告并退出码 2**,而不是打印 `0 / 0` 假装成结论(首跑就踩了这个)。
-> 替代做法:服务器上按同一配置各自 build 模型、`reparameterize()` 后再比。
+> 实测结果:80 个可比空间张量**逐位相同 0 个** ⇒ 空间塔确实训过 ⇒ GATE-0 腿②③ 前提成立。
 
-> ⚠️ **`notes/architecture-round4.md` §2 P2 里的「λ 中位 8e-4 / 空间 1.3e-2」不可能来自这份
-> 发布权重**(键不存在)。在 `gate5` 复现出真实数字之前,那两个数按**未核实**处理,
-> P2 的 INT8 结论随之待定 —— `gate5` 的输出就是判它成立与否的直接证据。
+> ✅ **λ 的「未核实」标记已撤回**:`gate5` 从发布权重里逐位复现出
+> `layer_scale_1d` median **7.973e-04** / p95 **2.762e-03**,与 §2 P2 引用的 8e-4 / 2.8e-3 吻合。
+> 但 **λ 本身不是 INT8 判据**(融合核是 `δ + λ·Δ`,要比的是 `λ·|Δ|`),所以 P2 仍待
+> `gate5-fused` 判决。
+>
+> ⚠️ **对不上的数**:GATE-0 腿③ 写的「时序 gate 是空间的 **6.1%**」,实测中位比值是
+> **2.42%**(p95/p95 为 1.90%),两种算法都回不到 6.1%。结论方向不变(而且更强),
+> 但**这个数字进论文前必须找到出处或改正**。
 
 **② 训练是不是解码瓶颈(30 分钟,零 GPU 训练)** —— 三步,全部在 101vector/H100 上跑:
 
