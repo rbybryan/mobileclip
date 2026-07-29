@@ -1,5 +1,52 @@
 # Troubleshooting
 
+## 粘贴的命令「什么都没发生」:`cd ~/mobileclip` 失败让 `&&` 整条链短路
+
+### Symptom
+
+粘贴一段以 `cd ~/mobileclip && git fetch ... && git reset ...` 开头的命令,
+只看到一行:
+
+```
+-bash: cd: /root/mobileclip: No such file or directory
+```
+
+**后面的命令看起来"跑了"**(因为你本来就在仓库里,后续 `bash experiments/...` 是独立行,
+照常执行),但 **`git fetch` / `git reset` 一条都没执行** ⇒ 仓库还停在旧 commit,
+于是"我明明 pull 了却没有新功能"。
+
+**实例**:2026-07-29 补评 `sub1m_r0_s42` 时,新加的逐查询 rank 落盘没生效,
+`ls ranks_*.npz` 报 No such file —— 因为那次 pull 根本没跑。
+
+### Cause
+
+**两台机的仓库路径不同**:
+
+| 机器 | 仓库路径 |
+|---|---|
+| 101vector(V100) | `~/mobileclip` ✅ |
+| b100(H100) | `/workspace/mount/b100_zaip_data/rby/mobileclip`(`~` = `/root`,**没有** `mobileclip`) |
+
+`cd` 失败返回非零 ⇒ **`&&` 短路,链上后续全部跳过**,而且**不报错、不退出**。
+
+### Fix
+
+**别写死路径**。文档里的命令一律改成:
+
+```bash
+cd "$(git rev-parse --show-toplevel)"   # 仓库根;两台机路径不同
+```
+
+(2026-07-29 已把仓库内 39 处 `cd ~/mobileclip` 全部替换。)
+
+**自检**:pull 之后先确认 commit 真的动了,再跑后续步骤:
+
+```bash
+git fetch origin main && git reset --hard origin/main
+git log --oneline -1      # ← 看到期望的 commit 才继续
+```
+
+---
 ## 评测出了数字,但模型根本没加载权重:`No pretrained checkpoint provided, training from scratch`
 
 ### Symptom
@@ -398,7 +445,7 @@ across InternVideo2 / UMT / VINDLU / CLIP4Clip. Reconstruct it with the helper
 script from the public Frozen-in-Time zip (the same zip used for the videos):
 
 ```bash
-cd ~/mobileclip
+cd "$(git rev-parse --show-toplevel)"
 wget https://www.robots.ox.ac.uk/~maxbain/frozen-in-time/data/MSRVTT.zip
 unzip -q MSRVTT.zip                                  # -> ./MSRVTT/
 python preprocess/build_msrvtt_1k_test.py --src ./MSRVTT
@@ -742,7 +789,7 @@ reachable there. After downloading each dataset's videos, symlink your real
 folder to the path the config expects:
 
 ```bash
-cd ~/mobileclip
+cd "$(git rev-parse --show-toplevel)"
 
 # DiDeMo  -> config wants ./data/didemo/processed_videos/test
 mkdir -p data/didemo/processed_videos
@@ -972,7 +1019,7 @@ records whose file is missing.
 Run §2b step 1 once, from the repo root:
 
 ```bash
-cd ~/mobileclip
+cd "$(git rev-parse --show-toplevel)"
 python tools/make_pilot_anno.py \
     --input /home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl \
     --clips-root /home/vca1/datasets/internvid_zh_10k/videos \
@@ -1523,7 +1570,7 @@ B 类之所以显得像"配置对了",是因为 `data_root` 只在**真正读视
 **先跑预检,不要靠崩溃来发现缺数据**(仓库里早就有这个脚本,10 秒):
 
 ```bash
-cd ~/mobileclip
+cd "$(git rev-parse --show-toplevel)"
 export MVC_DATA_DIR=/home/vca1/datasets
 python experiments/check_readiness.py
 ```
@@ -1627,7 +1674,7 @@ DEST_DIR="data/hmdb51/videos_test"
 `/home/vca1/datasets`。所以预检要**跑两遍**,见 `experiments/README.md` §3.0。
 
 ```bash
-cd ~/mobileclip
+cd "$(git rev-parse --show-toplevel)"
 unset MVC_DATA_DIR
 python experiments/check_readiness.py          # 评测集应在这一遍亮灯
 ```
@@ -1657,7 +1704,7 @@ find "$(cd data/hmdb51_hf && pwd)" -name '*.avi' -exec ln -sf {} data/hmdb51/vid
 anno 记的是**裸文件名**,所以可以做外科式搜索,比乱翻目录快得多:
 
 ```bash
-cd ~/mobileclip
+cd "$(git rev-parse --show-toplevel)"
 ANNO=anno_downstream/hmdb51_act_test.json       # 换成任何数据集的 anno 即可
 NAME=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))[0]['video'])" "$ANNO")
 echo "找这个文件:$NAME"
@@ -1742,7 +1789,7 @@ internvid_v2   anno 5000 条,但 data_root 缺失: data/video_sample/InternVId-F
 但没抓成、或抓下来的文件名与 anno 对不上。排查:
 
 ```bash
-cd ~/mobileclip
+cd "$(git rev-parse --show-toplevel)"
 ls data/video_sample/InternVId-FLT_1 | head
 ls data/video_sample/InternVId-FLT_1 | wc -l
 cat data/video_sample/InternVId-FLT_1/_download_log.tsv 2>/dev/null | tail -20
@@ -2447,7 +2494,7 @@ fatal: Need to specify how to reconcile divergent branches.
 服务器是只读端,直接把本地 `main` 对齐到远端(丢弃本地那几个多出来的提交):
 
 ```bash
-cd ~/mobileclip
+cd "$(git rev-parse --show-toplevel)"
 git fetch origin
 git reset --hard origin/main        # 只动被 git 跟踪的文件;缓存/权重/数据都是 gitignore,安全
 git log --oneline -3                # 确认 HEAD == origin/main
@@ -2498,7 +2545,7 @@ collects `debug=False` and `seed` correctly once present).
 **Pull first, then run.** From the repo root:
 
 ```bash
-cd ~/mobileclip && git pull origin main
+cd "$(git rev-parse --show-toplevel)" && git pull origin main
 bash experiments/run_pretrain.sh experiments/configs/<your_config>.py 8
 ```
 
@@ -2637,7 +2684,7 @@ checkout 落后**（`git pull` 曾 divergent 失败或忘了拉，同前一条�
 ### Fix
 
 ```bash
-cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
+cd "$(git rev-parse --show-toplevel)" && git fetch origin main && git reset --hard origin/main
 git log --oneline -1     # 核对提交号 >= 该子命令入库的 PR
 bash tools/data_audit/run_v100.sh <子命令>   # 重跑
 ```
@@ -2656,7 +2703,7 @@ bash tools/data_audit/run_v100.sh <子命令>   # 重跑
 ### Fix(一次性根治)
 
 ```bash
-cd ~/mobileclip
+cd "$(git rev-parse --show-toplevel)"
 git checkout -B main origin/main    # 切回 main 并对齐
 git branch -D claude/export-smoke   # 删滞留分支(先确认其上无未推提交;刚 reset 过则安全)
 git log --oneline -1                # 括号里应是 (HEAD -> main, origin/main)

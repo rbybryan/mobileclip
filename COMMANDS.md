@@ -319,7 +319,7 @@ python experiments/r1_fn_density.py --feats /tmp/txtfeats.npy --thresholds 0.9,0
 `pilot_10k_r1.py` 是 sigmoid 试点;`MVC_LOG_SAT=<间隔>` 打开只读探针(默认不设 = 逐位不影响训练)。
 
 ```bash
-cd ~/mobileclip && git pull origin main
+cd "$(git rev-parse --show-toplevel)" && git pull origin main
 export MVC_DATA_DIR=/home/vca1/datasets          # 试点视频根(训练/试点要 export)
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7       # 按空卡改
 # 重跑一轮读新指标(~180 步,10 epoch),每 20 步打一行 [SAT]:
@@ -371,16 +371,16 @@ python experiments/r1_fn_density.py --anno anno_downstream/InternVid/InternVid-1
 > (`missing destination file operand`)。先 `cd` 进 cache 目录,用短文件名,每行都短到不折行:**
 >
 > ```bash
-> cd ~/mobileclip/experiments/cache
+> cd "$(git rev-parse --show-toplevel)"/experiments/cache
 > cp textbank_feats.fp16.npy textbank_pilot_feats.fp16.npy
 > cp textbank_idx.npy textbank_pilot_idx.npy
-> cd ~/mobileclip
+> cd "$(git rev-parse --show-toplevel)"
 > bash experiments/run_pretrain.sh experiments/configs/nR1_textbank_pilot.py 8
 > ```
 > 启动日志应出现:`[R1] text bank ON: pool=(8999, 512) ...`。
 
 ```bash
-cd ~/mobileclip && git pull origin main      # 若报 "divergent branches",见下方 TROUBLESHOOTING
+cd "$(git rev-parse --show-toplevel)" && git pull origin main      # 若报 "divergent branches",见下方 TROUBLESHOOTING
 export MVC_DATA_DIR=/home/vca1/datasets
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
@@ -407,7 +407,7 @@ SigLIP 饱和点(~32k),bank 补 +16384 正好推进甜区,且 1M×3 epoch 不过
 `r1-implementation-plan.md` §10、`notes/verification-tier-1m-zh.md`。**一对自配对 A/B,彼此相减(不减 r0)。**
 
 ```bash
-cd ~/mobileclip && git fetch origin main && git reset --hard origin/main   # divergent 见 TROUBLESHOOTING
+cd "$(git rev-parse --show-toplevel)" && git fetch origin main && git reset --hard origin/main   # divergent 见 TROUBLESHOOTING
 export MVC_DATA_DIR=/home/vca1/datasets
 
 # ① 建 1M 文本负例库缓存(单卡、纯前向、~10–30 min、~1GB;一行,勿折行)。与试点缓存互不覆盖。
@@ -556,7 +556,7 @@ python experiments/export_smoke.py --inference-mode   # 重参数化后的部署
 单卡串行、可续跑;每个 T 就是一次普通 MSR-VTT 零样本评测。
 
 ```bash
-cd ~/mobileclip
+cd "$(git rev-parse --show-toplevel)"
 export CUDA_VISIBLE_DEVICES=0
 for T in 3 5 6 12 24 32; do
   out=experiments/evals/c2_unseenT/msrvtt_T${T}
@@ -582,7 +582,7 @@ DeepSpeed 存的是**目录式** ckpt(`ckpt_02.pth/mp_rank_00_model_states.pt`),
 `shared_utils.py:150` 的 `osp.isdir` 分支直接支持,**不用重训**。
 
 ```bash
-cd ~/mobileclip
+cd "$(git rev-parse --show-toplevel)"
 source experiments/env_b100.sh         # ⚠️ b100 必做:设 PYTHONUSERBASE,否则 termcolor 等导不进
                                        #   (脚本现在也会自动补,但显式 source 更稳)
 export CUDA_VISIBLE_DEVICES=3          # ⚠️ 只有 0-3 四张卡(#339,没有 4-7)
@@ -626,7 +626,7 @@ grep -E "Load pretrained model from|training from scratch|自动解析到" \
 的效应只有 **+0.82 r_mean**,不配对根本分辨不出来(见 `notes/verification-tier-1m-zh.md` §6)。
 
 ```bash
-cd ~/mobileclip
+cd "$(git rev-parse --show-toplevel)"
 # raw 主口径
 python experiments/collect_results.py --compare \
        experiments/evals/sub1m/sub1m_r1a_s42 \

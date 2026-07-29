@@ -276,7 +276,7 @@ held-out 自检索 R@1 相对方向仅作参考。评测走 `ret_test`(1k 自检
 > | **10k 试点语料** | `/home/vca1/datasets/internvid_zh_10k` | `export MVC_DATA_DIR=/home/vca1/datasets` |
 
 ```bash
-cd ~/mobileclip
+cd "$(git rev-parse --show-toplevel)"
 
 # ① 评测数据集(B0 用的)—— 不要 export
 unset MVC_DATA_DIR
@@ -348,7 +348,7 @@ anno 的补法见 `TROUBLESHOOTING.md`「Missing `anno_downstream/*.json`」与
 **101vector 上的全部操作就这几行**(其余三个基准的目录名已经和 config 一致):
 
 ```bash
-cd ~/mobileclip && unset MVC_DATA_DIR
+cd "$(git rev-parse --show-toplevel)" && unset MVC_DATA_DIR
 
 # MSR-VTT:盘上是 data/MSRVTT/videos/all,config 要的是 data/MSRVTT_Videos
 ls data/MSRVTT/videos/all | head -3          # 确认是 videoXXXX.mp4 这种裸文件名
@@ -405,7 +405,7 @@ python experiments/check_readiness.py --sample 50 --decode
 (哪个数据集预检没亮 `[OK ]` 就把它从列表里删掉,别让它崩在中间):
 
 ```bash
-cd ~/mobileclip && unset MVC_DATA_DIR
+cd "$(git rev-parse --show-toplevel)" && unset MVC_DATA_DIR
 CKPT=./checkpoints/mobileviclip_small.pt
 for b in msrvtt hmdb51 ucf101 k400; do
   CUDA_VISIBLE_DEVICES=0 \

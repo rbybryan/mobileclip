@@ -68,7 +68,7 @@ GATE-0 结果文件 §3 留了一个明确的缺口：目前只能说"MSR-VTT �
   对帧顺序就是等变的（且按 round-2 的 F2，它是**加性**的，本来就被均值池化精确抹掉）。
 
 ```bash
-cd ~/mobileclip && git pull origin main
+cd "$(git rev-parse --show-toplevel)" && git pull origin main
 python experiments/temporal_capacity_audit.py --self-test
 python experiments/temporal_capacity_audit.py ./checkpoints/mobileviclip_small.pt
 ```

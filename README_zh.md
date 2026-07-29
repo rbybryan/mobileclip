@@ -918,7 +918,7 @@ python -m torch.distributed.run --nnodes=1 --nproc_per_node=8 --master_port=$((1
    → 全选 → **下载**（Google 会打包成 zip）→ `scp` 到服务器再解压：
    ```bash
    scp anno_downstream.zip rby@<server>:~/mobileclip/
-   cd ~/mobileclip && unzip anno_downstream.zip -d anno_downstream
+   cd "$(git rev-parse --show-toplevel)" && unzip anno_downstream.zip -d anno_downstream
    ```
 4. **判断是版本问题还是单个文件夹问题**：权重文件夹
    `gdown --folder https://drive.google.com/drive/folders/1ROJYwQeO8lt4mEfNjEIAIDWj736WIQq7 -O checkpoints`
