@@ -92,7 +92,7 @@ Why this spine and not the others we considered:
 | # | Contribution | Built from | Novelty level |
 |---|--------------|-----------|---------------|
 | C1 | **Video Dataset Reinforcement**: offline InternVideo2 teacher (video+text embeddings, real + synthetic recaptioned captions) stored once over InternVid-10M-FLT; student trains with VTC + embedding-KD + similarity-matrix-KD | P5 + `data-quality-caprl-scheme.md` | First for video; recipe-level |
-| C2 | **Temporal-elastic distillation**: T-agnostic temporal ops + random-T training against a fixed 16-frame teacher target → one model, frames-as-knob; Pareto curve beats fixed-T baselines at every budget ⚠️ *three different success bars for this claim coexist — "beats at every budget" here, "within ~1 pt of own T=8" in the §4 R3 gate, and U10's pre-registered **non-inferiority** δ=0.3 per T. **U10's is the pre-registered one**; and per ROADMAP G2, δ=0.3 is ~8× below the measured noise floor, so the margin itself is unsettled (`plan-review-upgrades.md` §6.1 lists the three ways out — none chosen yet)* | P2 **merged into** P5 | The new idea — this is what makes it a paper, not a port. **Narrowed by FluxViT — see §7.1** |
+| C2 | **Temporal-elastic distillation**: T-agnostic temporal ops + random-T training against a fixed 16-frame teacher target → one model, frames-as-knob; Pareto curve beats fixed-T baselines at every budget ⚠️ *three different success bars for this claim coexisted — "beats at every budget" here, "within ~1 pt of own T=8" in the §4 R3 gate, and U10's per-T **non-inferiority** margin. **Settled 2026-07-29 (G2, `plan-review-upgrades.md` §6.1.1):** adoption is judged on **multi-benchmark aggregated R-Sum + both protocols same-sign + paired bootstrap CI excluding 0**; the per-T margin δ is **re-derived from the measured training-seed floor** (δ=0.3 is void). The ±2.4 rule does **not** apply here — it measures a cross-sampling nuisance that cancels in a matched-T paired comparison* | P2 **merged into** P5 | The new idea — this is what makes it a paper, not a port. **Narrowed by FluxViT — see §7.1** |
 | C3 | **Recipe components with ablations**: sigmoid multi-positive loss (learnable t/b, `get_mask` ported), temporal attention-pool head (zero-init, strictly-no-regression) | P4 + P3 | Known techniques, our ablation table |
 | C4 | **Results**: ZS retrieval (MSR-VTT/DiDeMo/ANet) + ZS classification & multi-choice (K400/UCF101/HMDB51/~~SSv2-MC~~ — **SSv2-MC data is absent and the order-sensitive suite is shelved, see `notes/order-sensitive-eval.md`**) at multiple T, **on-device latency table**, vs MobileViCLIP / InternVideo2-S/B / **FluxViT-S (GFLOPs-matched row, §7.1)** / ~~TempMe~~ (**TempMe is fine-tuned-protocol: separate block, NOT the zero-shot table**). (07-20: MSVD/LSMDC removed from the committed list — no annotations/configs in the repo; re-add only if built) | eval harness | — |
 
@@ -328,7 +328,12 @@ text above (mirrors §七 of `paper-plan-zh.md`):
    (R1×3, R2+KD sub-arms, R3, R3b, A1/A2) at 1 epoch matched steps; R0 + winner at full
    3 epochs. The run matrix is already ≈33E without a ladder.
 7. **Statistics (U10):** query-level bootstrap 95% CIs in `collect_results.py`; two
-   seeds for the winner; pre-registered per-T non-inferiority margin δ=0.3 R@1.
+   seeds for the winner; per-T non-inferiority margin ~~δ=0.3 R@1~~ — **VOID, do not cite**
+   (2026-07-29, G2 decided). δ is re-derived from the **measured training-seed floor**, per T;
+   the 1M tier's 4 arms × 2 seeds yields it at no extra cost. Adoption criterion is now
+   multi-benchmark aggregated R-Sum + both protocols same-sign + **paired bootstrap CI excluding
+   0**. Rationale in `plan-review-upgrades.md` §6.1.1 — note the ±2.4 rule does **not** apply to
+   matched-T paired comparisons; it measures a cross-sampling nuisance that cancels here.
 
 Also: §6.9's pre-submission re-sweep expands from "first video DR" to "+ the elastic-
 inference axis + FluxViT successors"; student init switches to MobileCLIP2-S2
