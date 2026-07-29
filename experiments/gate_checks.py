@@ -8,10 +8,15 @@
 * ⑤ 读 `layer_scale` —— `torch.cat(): expected a non-empty list`;
 * ① 比对空间 `layer_scale` —— 输出 `0 / 0`(一个都没匹配上,却打印得像结论)。
 
-根因一句话:**发布的 `mobileviclip_small.pt` 是重参数化(推理态)权重。**
-`RepMixer.reparameterize()`(`models/mobileviclip_small.py:753-824`)会
-`__delattr__` 掉 `mixer/norm/layer_scale/mixer_1d/norm_1d/layer_scale_1d`,
-把它们折进 `reparam_conv` / `reparam_conv_1d`。所以那些键在发布权重里**根本不存在**。
+**根因(2026-07-29 实测更正)**:发布的 `mobileviclip_small.pt` 是**训练态**权重
+(`inspect` 实测:`layer_scale_1d` 40 个、`layer_scale` 80 个、`temporal_embedding` 4 个、
+`reparam_conv*` 0 个)。原 heredoc 挂掉**不是**因为重参数化 —— 是因为
+**顶层包装键不是 `model`**:那几段只写了 `sd.get("model", sd)`,取不到就退回**顶层字典**,
+于是遍历的是 `epoch/optimizer/...` 这类键,`endswith("layer_scale_1d")` 自然 0 命中。
+本文件的 `load_state()` 依次尝试 `model / module / state_dict` 并过滤非 Tensor,才拿到 2497 个张量。
+
+> ⚠️ 我先前把根因判成「ckpt 是推理态」,**那是错的**。两种形态都要支持,所以
+> `detect_mode()` 保留 —— 但请记住实测结论:**发布权重是训练态**。
 
 ⇒ 本文件的两条纪律:**(a) 先探测 ckpt 处于哪种形态再动手;(b) 任何一步匹配到 0 个键
 就立刻抛错,绝不落盘。**
@@ -29,9 +34,12 @@
 * **③ 删时序分支** —— 令 `reparam_conv_1d.weight := δ`、`bias := 0`。这与
   `layer_scale_1d = 0` **数学等价**,也正是 INT8 对该支路做的事。
 
-⚠️ **一个必须诚实标注的点**:`notes/architecture-round4.md` §2 P2 引用的
-「λ 中位 8e-4 / 空间 1.3e-2」**不可能来自这份发布权重**(键不存在)。在 ⑤ 用本文件
-复现出真实数字之前,那两个数按**未核实**处理,P2 的 INT8 结论也随之待定。
+✅ **λ 已实测复现(2026-07-29)**:`layer_scale_1d` n=9920,**median 7.973e-04,p95 2.762e-03**
+—— 与 round4 §2 P2 引用的「8e-4 / 2.8e-3」**完全吻合**,该数据来源确认可靠(先前标它
+「不可能来自发布权重」是我判断失误,已撤回)。
+
+⚠️ **但 λ 本身仍不是 INT8 判据**:融合核是 `δ + λ·Δ`,要比的是 **λ·|Δ|**。
+用 `gate5-fused` 走一遍真正的 `reparameterize()` 再量 `|w_1d − δ|` 才算数。
 
 --------------------------------------------------------------------------------
 用法
@@ -41,6 +49,8 @@
     python experiments/gate_checks.py gate3    --ckpt checkpoints/mobileviclip_small.pt --out checkpoints/_ablate_temporal.pt
     python experiments/gate_checks.py gate4    --ckpt checkpoints/mobileviclip_small.pt --out checkpoints/_ablate_tempemb.pt
     python experiments/gate_checks.py gate1    --ckpt checkpoints/mobileviclip_small.pt --image-ckpt checkpoints/mobileclip_s2.pt
+    python experiments/gate_checks.py gate5-fused --ckpt checkpoints/mobileviclip_small.pt \\
+        --config scripts/evaluation/clip/zero_shot/mobileviclip_small/config_msrvtt.py
     python experiments/gate_checks.py self-test          # 零依赖,合成权重,验证全部逻辑
 
 跑完 gate3/gate4 后按 `COMMANDS.md` §3 的零样本评测跑 MSR-VTT,对比 t2v 42.50 / r_mean 61.55。
@@ -145,9 +155,21 @@ def cmd_gate5(args) -> int:
     if mode == "training":
         ks = [k for k in sd if k.endswith("layer_scale_1d")]
         require(ks, "layer_scale_1d", args.ckpt)
-        v = torch.cat([sd[k].flatten().abs().float() for k in ks])
-        print(f"layer_scale_1d  n={v.numel()}  median={v.median():.3e}  p95={v.quantile(.95):.3e}")
-        print("  (训练态只能给 λ;要判 INT8 得看融合后的 |w_1d − δ|,请用推理态权重)")
+        t = torch.cat([sd[k].flatten().abs().float() for k in ks])
+        sp = [k for k in sd if k.endswith("layer_scale") and not k.endswith("layer_scale_1d")]
+        print(f"layer_scale_1d (时序)  blocks={len(ks):3d}  n={t.numel():6d}  "
+              f"median={t.median():.3e}  p95={t.quantile(.95):.3e}")
+        if sp:
+            s_ = torch.cat([sd[k].flatten().abs().float() for k in sp])
+            print(f"layer_scale    (空间)  blocks={len(sp):3d}  n={s_.numel():6d}  "
+                  f"median={s_.median():.3e}  p95={s_.quantile(.95):.3e}")
+            print(f"\n  时序/空间 gate 比值(中位)= {t.median()/s_.median():.4f}"
+                  f"   ← 这就是 GATE-0 腿③ 的那个数,现在是独立复现出来的")
+        print(f"\n  λ 中位 {t.median():.2e} vs INT8 抹零阈值 {INT8_ZERO_THRESHOLD:.2e}")
+        print("  ⚠️ **但 λ 本身不是判据**:融合核是 δ + λ·Δ,真正要比的是 **λ·|Δ|**"
+              "(Δ = BN 折叠后的 mixer_1d − norm_1d)。")
+        print("  ⇒ 判 INT8 请跑:  python experiments/gate_checks.py gate5-fused "
+              f"--ckpt {args.ckpt} --config <eval config.py>")
         return 0
 
     ks = temporal_conv_keys(sd)
@@ -187,6 +209,60 @@ def cmd_gate5(args) -> int:
             s = torch.cat(sv)
             print(f"\n  对照 · 空间融合核 |w − δ| 中位 = {s.median():.3e}  "
                   f"(低于阈值占比 {100*(s < INT8_ZERO_THRESHOLD).float().mean():.1f}%)")
+    return 0
+
+
+def cmd_gate5_fused(args) -> int:
+    """真 INT8 判据:build 模型 → 载权重 → `reparameterize()` → 量 |w_1d − δ|。
+
+    训练态 ckpt 只给得出 λ,而融合核是 `δ + λ·Δ`。判 INT8 要的是 **λ·|Δ|**,
+    也就是重参数化之后的实际偏离量。与其手工复现 BN 折叠(容易错),不如直接走仓库
+    自己的 `reparameterize()`,这也正是部署路径。
+    """
+    import importlib.util
+
+    from models.backbones.internvideo2.mobileclip.modules.common.mobileone import (
+        reparameterize_model,
+    )
+
+    spec = importlib.util.spec_from_file_location("evalcfg", args.config)
+    cfg_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cfg_mod)
+
+    from utils.config import Config
+    cfg = Config.from_file(args.config) if hasattr(Config, "from_file") else cfg_mod
+
+    from models.mobileviclip_small import MobileViCLIP_Small
+    model = MobileViCLIP_Small(config=cfg, tokenizer=None, is_pretrain=False)
+
+    sd = load_state(args.ckpt)
+    missing, unexpected = model.load_state_dict(sd, strict=False)
+    print(f"load_state_dict: missing={len(missing)} unexpected={len(unexpected)}")
+    if len(missing) > 50:
+        raise SystemExit(f"[FAIL] 权重没对上(missing={len(missing)});前 5: {list(missing)[:5]}")
+
+    model.eval()
+    model = reparameterize_model(model)
+
+    devs = []
+    for name, m in model.named_modules():
+        w = getattr(getattr(m, "reparam_conv_1d", None), "weight", None)
+        if w is None:
+            continue
+        w = w.detach().float()
+        devs.append((w - identity_kernel_like(w)).abs().amax(dim=(1, 2)))
+    require(devs, "reparameterize() 之后的 reparam_conv_1d", args.ckpt)
+
+    d = torch.cat(devs)
+    erased = (d < INT8_ZERO_THRESHOLD).float().mean().item()
+    print(f"\n融合时序核 |w_1d − δ| 逐通道最大值  (channels={d.numel()})")
+    for q in (0.05, 0.25, 0.50, 0.75, 0.95):
+        print(f"    p{int(q*100):02d} = {d.quantile(q):.3e}")
+    print(f"\n  INT8 抹零阈值 {INT8_ZERO_THRESHOLD:.3e};低于它的通道占比 **{100*erased:.1f}%**")
+    print("  ⇒ " + (
+        "**坐实** round4 §2 P2:多数通道的时序混合项在 PTQ INT8 下被整个抹掉"
+        if erased > 0.5 else
+        "**未坐实**:时序项在 INT8 下存活 ⇒ round4 §2 P2 的机制不成立,须改写"))
     return 0
 
 
@@ -262,10 +338,22 @@ def cmd_gate1(args) -> int:
     a, b = load_state(args.ckpt), load_state(args.image_ckpt)
     print(f"video ckpt 形态: {detect_mode(a)}   image ckpt 形态: {detect_mode(b)}")
 
+    def norm_key(k: str) -> str:
+        """把两边的塔前缀都剥掉再比。
+
+        视频 ckpt 用 `vision_encoder.`;Apple 的 MobileCLIP ckpt 用
+        `image_encoder.model.`(见 `models/mobileviclip_small.py:341-342` 的载入路径)。
+        首跑就是因为只剥了前者,80 个张量全部「对不上名字」。
+        """
+        for p in ("vision_encoder.", "image_encoder.model.", "image_encoder.", "module."):
+            if k.startswith(p):
+                k = k[len(p):]
+        return k
+
     def suffix_index(sd):
         idx = {}
         for k in sd:
-            idx.setdefault(k.split("vision_encoder.")[-1], []).append(k)
+            idx.setdefault(norm_key(k), []).append(k)
         return idx
 
     bi = suffix_index(b)
@@ -275,7 +363,7 @@ def cmd_gate1(args) -> int:
         if not any(k.endswith(t) for t in cand_tags) or "_1d" in k:
             continue
         total += 1
-        hits = bi.get(k.split("vision_encoder.")[-1], [])
+        hits = bi.get(norm_key(k), [])
         if not hits:
             nomatch += 1
             continue
@@ -361,6 +449,10 @@ def main(argv=None) -> int:
         q.add_argument("--ckpt", required=True)
         if name in ("gate3", "gate4"):
             q.add_argument("--out", required=True)
+    q = sub.add_parser("gate5-fused", help="真 INT8 判据:重参数化后量 |w_1d − δ|")
+    q.add_argument("--ckpt", required=True)
+    q.add_argument("--config", required=True,
+                   help="任一 eval config,例如 scripts/evaluation/clip/zero_shot/mobileviclip_small/config_msrvtt.py")
     q = sub.add_parser("gate1", help="空间参数是否与图像 ckpt 逐位相同(骨干是否被冻)")
     q.add_argument("--ckpt", required=True)
     q.add_argument("--image-ckpt", required=True)
@@ -368,7 +460,8 @@ def main(argv=None) -> int:
 
     a = p.parse_args(argv)
     return {"inspect": cmd_inspect, "gate5": cmd_gate5, "gate3": cmd_gate3,
-            "gate4": cmd_gate4, "gate1": cmd_gate1, "self-test": cmd_selftest}[a.cmd](a)
+            "gate4": cmd_gate4, "gate1": cmd_gate1, "gate5-fused": cmd_gate5_fused,
+            "self-test": cmd_selftest}[a.cmd](a)
 
 
 if __name__ == "__main__":
