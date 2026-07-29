@@ -101,7 +101,7 @@ def cell_caps_text(text):
     return "\n".join(f"{i + 1}. {p}" for i, p in enumerate(parts))
 
 
-EXPORT_COLS = ["video", "英文en", "原zh", "A重述", "A长稿", "A直融",
+EXPORT_COLS = ["序号", "video", "英文en", "原zh", "A重述", "A长稿", "A直融",
                "B重述", "B长稿", "B直融", "video_path"]
 
 
@@ -131,7 +131,7 @@ def write_xlsx(path, recs, thumb_dir):
     ws.title = "AB对比"
     hdr = ["缩略图"] + EXPORT_COLS
     ws.append(hdr)
-    widths = {"缩略图": 22, "video": 18, "英文en": 30, "原zh": 26, "A重述": 42,
+    widths = {"缩略图": 22, "序号": 7, "video": 18, "英文en": 30, "原zh": 26, "A重述": 42,
               "A长稿": 42, "A直融": 26, "B重述": 42, "B长稿": 42, "B直融": 26,
               "video_path": 24}
     for i, h in enumerate(hdr, 1):
@@ -185,6 +185,26 @@ def safe_name(video):
     return re.sub(r"[^A-Za-z0-9._-]", "_", str(video)) + ".gif"
 
 
+def gif_name(idx, video):
+    """gifs/ 文件按表格行序排列 (维护者 2026-07-29): 001_ 序号前缀,
+    文件夹里按名排序=表格顺序, 按行号即可定位."""
+    return f"{idx:03d}_{safe_name(video)}"
+
+
+def adopt_legacy_gif(gif_dir, gif_abs, video):
+    """无前缀旧名或旧序号前缀的既有 GIF -> 改名复用, 不重新编码."""
+    if os.path.exists(gif_abs):
+        return
+    import glob as _glob
+    cands = [os.path.join(gif_dir, safe_name(video))]
+    cands += _glob.glob(os.path.join(gif_dir,
+                                     "[0-9][0-9][0-9]_" + safe_name(video)))
+    for c in cands:
+        if os.path.exists(c) and c != gif_abs:
+            os.rename(c, gif_abs)
+            return
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -212,10 +232,11 @@ def main():
     os.makedirs(gif_dir, exist_ok=True)
 
     body, recs, n_gif, n_fail = [], [], 0, 0
-    for r in rows:
+    for idx, r in enumerate(rows, 1):
         vid = r.get("video") or ""
-        gif_rel = f"gifs/{safe_name(vid)}"
+        gif_rel = f"gifs/{gif_name(idx, vid)}"
         gif_abs = os.path.join(args.out_dir, gif_rel)
+        adopt_legacy_gif(gif_dir, gif_abs, vid)
         vcell = ""
         if not args.no_gif:
             if not os.path.exists(gif_abs):
@@ -234,7 +255,7 @@ def main():
             vcell = f'<img src="{html.escape(gif_rel)}" loading="lazy" alt="">'
         else:
             vcell = '<div class="nogif">GIF 缺失（解码失败或视频不在）</div>'
-        vcell += f'<div class="vid">{html.escape(vid)}</div>'
+        vcell += f'<div class="vid">#{idx:03d} · {html.escape(vid)}</div>'
         body.append(
             "<tr>"
             f'<td class="gif">{vcell}</td>'
@@ -248,6 +269,7 @@ def main():
             f'<td class="cap"><span class="short">{deco((r.get("B直融") or "").strip())}</span></td>'
             "</tr>")
         recs.append({
+            "序号": f"{idx:03d}",
             "video": vid, "video_path": r.get("video_path") or "",
             "英文en": r.get("英文en") or "", "原zh": r.get("原zh") or "",
             "A重述": cell_caps_text(r.get("A重述")),
@@ -260,7 +282,8 @@ def main():
 
     sub = (f"{len(rows)} 片 · GIF {n_gif}/{len(rows)}"
            + (f"（{n_fail} 片解码失败）" if n_fail else "")
-           + " · 直融短稿=最终训练字幕(≤30字) · 长稿=细节参考 · B重述带属性徽标")
+           + " · 直融短稿=最终训练字幕(≤30字) · 长稿=细节参考 · B重述带属性徽标"
+           " · gifs/ 文件名带 #序号 前缀=表格行序")
     page = (PAGE.replace("__ROWS__", "\n".join(body))
                 .replace("__SUB__", sub).replace("__BTAG__", BUILD_TAG))
     out_html = os.path.join(args.out_dir, "table.html")

@@ -23,6 +23,17 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-29 (68) — gifs/ 文件名改带表格序号前缀(001_), 文件夹按名排序=表格行序
+
+按你要求:GIF 文件名现在是 `001_<video>.gif` `002_...`,**文件夹里按名排序就是表格顺序**,
+按行号即可定位。配套:表格页视频格下方、csv/xlsx 首列都加了 `序号`(001 起,三处一致)。
+旧命名的既有 GIF 会**自动改名复用,不重新编码**——重跑还是秒级:
+```bash
+bash tools/data_audit/run_v100.sh summary-table
+tar czf outputs/audit_10k/table.tgz -C outputs/audit_10k table_compare
+```
+(序号=review_compare.tsv 的行序,同一抽样文件下每次重跑稳定不变。)
+
 ## 2026-07-29 (65) — `ranks_*.npz` 没生成,是因为**那次 pull 根本没跑**(我给的 `cd ~/mobileclip` 是错的)
 
 你贴的日志第一行:
