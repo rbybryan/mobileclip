@@ -583,7 +583,10 @@ DeepSpeed 存的是**目录式** ckpt(`ckpt_02.pth/mp_rank_00_model_states.pt`),
 
 ```bash
 cd ~/mobileclip
-export CUDA_VISIBLE_DEVICES=4          # 一张卡够
+source experiments/env_b100.sh         # ⚠️ b100 必做:设 PYTHONUSERBASE,否则 termcolor 等导不进
+                                       #   (脚本现在也会自动补,但显式 source 更稳)
+export CUDA_VISIBLE_DEVICES=3          # ⚠️ 只有 0-3 四张卡(#339,没有 4-7)
+                                       #   训练在跑时可与之共卡:训练峰值 ~42G,80G 卡余量够
 RUN=experiments/runs/sub1m_r0_s42      # 换成要补评的臂
 bash experiments/run_eval.sh small msrvtt "${RUN}/ckpt_02.pth" \
      experiments/evals/sub1m/$(basename ${RUN}) num_frames_test 8
