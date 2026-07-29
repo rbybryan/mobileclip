@@ -23,6 +23,28 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-29 (70) — 答"测的是不是判错的caption":是, 试点只跑 RECAPTION 桶; 评审物料新增「判错原因」列
+
+**回答:是。** 我们所有试点(50 片 pipeline-compare、表格页)都只从
+`v0_2/recaption_tasks.jsonl` 里抽——它是 apply_buckets 的 RECAPTION 桶队列
+(S2 审计判「英文 caption 与画面不符」的片, TARGET_PRECISION=0.3 校准, 全桶 2,532/10k)。
+`pipeline-sample` 就是 `head -N`(或 SAMPLE_OFFSET 偏移)这个队列;评审页也一直把
+判错的 en 源和旧译并排放给你对照。
+
+**新增(已合入):** compare 表 / 单臂表 / 表格页(html/csv/xlsx)在「原zh」后面都加了
+**「判错原因」列**(来自 buckets 的 reasons)——目检时直接对着错因看新字幕是否修好,
+不用再回 TSV 查。表格页角标升 **vT20260729a**。重新生成(全部缓存命中, 分钟级):
+```bash
+N_SAMPLE=50 PIPE_LEAN=1 bash tools/data_audit/run_v100.sh pipeline-compare
+bash tools/data_audit/run_v100.sh summary-table
+tar czf outputs/audit_10k/table.tgz -C outputs/audit_10k table_compare
+```
+
+**登记的空白(可选, 待你拍板):** 我们从没在 KEEP 桶(判「好」的 caption)上跑过管线
+作对照——部署上不需要(只替换 RECAPTION 桶), 但作为标定对照有价值:若在判好的片上
+我们的重述≈旧 caption, 说明分桶和重述都靠谱。要做的话一条命令就能抽 50 片 KEEP 对照,
+回「做 KEEP 对照」即可。
+
 ## 2026-07-29 (69) — [101vector] A/B 管线图解文档上线 + 计时拆到每小步,请回一轮冷样本细粒度耗时
 
 **新东西（已合并 main）：**
