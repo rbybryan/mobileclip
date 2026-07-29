@@ -164,8 +164,9 @@ Wk 2      C3 A/Bs (cheap, 3-epoch short runs): sigmoid loss; attn pool; both.
           Kill criterion: keep a component only if ≥ +0.3 R-Sum vs locked baseline.
           [!] SUPERSEDED BY §6.7 — +0.3 on one benchmark is below seed noise.
               Use aggregated multi-benchmark R-Sum, both protocols, 2nd seed if
-              borderline. Also see ROADMAP G4: paired bootstrap CI is required
-              before ANY arm comparison is readable at all.
+              borderline. Also ROADMAP G4 (LANDED 07-29): judge arms by whether
+              the PAIRED bootstrap CI excludes 0 (collect_results.py --compare),
+              not against the unpaired +-1.6 band. ~11x finer: +-1.5 vs +-17.
 Wk 2-3    Teacher pass, staged: 100k slice → measure GPU-hrs, storage, and
           *teacher ZS quality on our eval suite* (sanity: teacher must dominate
           student by a wide margin). Decide InternVideo2-L vs 1B. Then full 10M

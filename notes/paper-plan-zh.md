@@ -33,8 +33,11 @@ C2 的新颖性主张必须按 §七.1 收窄为组合格。
 > 于是 U6 的「宽裕档 = 33E」约合 73 天,**不可行**;维护者手上正好只有 4 张 H100
 > (没有第 5 张),因此「一个 3-epoch 的 R0 ≈ 6.6 天」是硬约束。
 > **(2)** MSR-VTT 1k 目前**无法给臂排序**:数据量放大 10 倍,raw r_mean 只挪动了
-> +0.82,仍落在 ±1.6 带内;所以配对 query 级 bootstrap CI(U10-1,ROADMAP G4 🔴)
-> 是**前置条件**,不是锦上添花。
+> +0.82,仍落在 ±1.6 带内;所以配对 query 级 bootstrap CI(U10-1,ROADMAP G4)曾是**前置条件**
+> —— **该条件已于 2026-07-29 解除**:`experiments/paired_bootstrap.py` +
+> `collect_results.py --compare A B`(`COMMANDS.md` §3.9)落地,分辨率约 **11×**
+> (R-Sum 95% CI 半宽 配对 **±1.5** vs 无配对 ±17)⇒ +0.8 的差已可判显著。
+> **判读一律改为「配对 CI 是否含 0」,不再套 ±1.6**;07-29 前评过的臂需重跑一次评测取 rank。
 
 **目标转变:** 此前的笔记(`model-architecture-improvements{,-zh}.md`、
 `script-level-optimizations-zh.md`)是一份*复现 + 改进的待办清单*——
@@ -153,7 +156,8 @@ whitespace §2(时序难负例)被**吸收**:每条 clip 的教师 embedding 存
            淘汰标准:组件相对锁定基线 ≥ +0.3 R-Sum 才保留。
            [!] 已被 §六.7 取代 —— 单基准 +0.3 低于种子噪声。改用多基准
                聚合 R-Sum + 双口径同向,临界时补第二种子。另见 ROADMAP
-               G4:配对 bootstrap CI 到位之前,任何臂间比较都读不出结论。
+               G4(已于 07-29 落地):判读改看**配对 bootstrap CI 是否含 0**
+               (`collect_results.py --compare`),不再套无配对的 ±1.6 带。
 第 2-3 周  教师推理,分阶段:10 万条切片 → 实测 GPU 时数、存储、以及
            *教师在我们评测集上的零样本质量*(合理性检查:教师必须大幅
            压过学生)。据此定 InternVideo2-L 还是 1B。然后全量 1000 万

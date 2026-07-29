@@ -110,7 +110,12 @@ zero-init on-path, a 10k link-test, then queued for the full-scale A/B beside R1
 > ⚠️ **Read `verification-tier-1m-zh.md` §6 before trusting any A1 ranking number:** the first
 > 1M result showed that 10× more data buys only +0.82 raw r_mean, inside the ±1.6 noise band,
 > so **MSR-VTT 1k cannot currently rank arms at this scale.** Paired query-level bootstrap CI
-> (ROADMAP **G4**, 🔴) is a prerequisite for reading A1's arm at all.
+> (ROADMAP **G4**) was the prerequisite for reading A1's arm — and it **landed 2026-07-29**
+> (`experiments/paired_bootstrap.py`, `collect_results.py --compare A B`, `COMMANDS.md` §3.9).
+> Resolution improves ~11×: paired 95% CI halfwidth on R-Sum is **±1.5** vs ±17 unpaired, so a
+> +0.8 R@1 gap is now decidable. **Read A1's arm as "does the CI exclude 0", not against the
+> old ±1.6 band.** Caveat: per-query ranks are only dumped from 07-29 onward, so arms evaluated
+> before that need one ~1 min re-eval.
 
 **Idea.** The head currently mean-pools 8 frame embeddings (`mobileviclip_small.py:1436-1453`);
 P3 adds a learned attention pool (`temporal_pooling="attn"`, `TemporalAttentionPool:1456`).
