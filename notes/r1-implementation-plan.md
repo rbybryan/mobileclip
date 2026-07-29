@@ -26,7 +26,10 @@ seeds, scale-invariant metric, env parity confirmed (both `torch 2.5.1+cu118`). 
 pilot scale**. Caveat: both arms sit below the frozen-init epoch-0 peak, so at 9000 clips the bank
 acts as *reduced-degradation / higher-plateau* rather than absolute gain over init (the control
 collapses at ep1, the bank protects it) — see §9/§9.1/§9.2 for the full tables and why it's
-trustworthy. **Verdict: GO, scale up** (§9.3 = longer schedule; true payoff regime = more data).
+trustworthy. **Verdict: GO, scale up** — but §9.4 (the 40-epoch longer-schedule run, done) **refines
+the magnitude**: the *durable* pilot gap is **~+3.9 R-Sum**, not +11–13. With 4× the steps the control
+recovers ~2/3 of its early-collapse deficit, so the pilot win is *big early-collapse protection + a
+modest durable lift*, not a +11–13 durable win. True payoff regime = more data (H100 only, §9.3/§9.4).
 
 ---
 
@@ -527,3 +530,42 @@ subsamples; the full InternVid dataset lives only on the H100 server.** So the l
 Every pilot-scale run above, including §9.3's 40-epoch pair, stays on the V100. Before wiring the
 large-data A/B on the H100, build a matching larger text-bank cache there (the pilot cache
 `textbank_pilot_*` is 10k-only). All-server data split recorded in memory (`server-data-split`).
+
+### 9.4 Longer-schedule result (2026-07-28) → **bank still leads, but the durable gap is ~+3.9 R-Sum, not +11–13**
+
+Both 40-epoch twins ran to completion (~2:27 h each; `nR1_textbank_pilot_long` then
+`pilot_10k_r1_long`, both `torch 2.5.1+cu118`, bank arm logged `[R1] text bank ON: pool=(8999,512)
+K'=16384 dedup_cos=0.9`). The control log is complete (ep0–39); the treatment log was captured from
+ep11 on (early epochs scrolled off the paste), but the **plateau** — the decisive part for the "does
+the control catch up" question — is complete for both arms.
+
+**The control's early collapse reproduces a third time.** Control `ret_test/ r_mean`: ep0 **90.00**
+→ ep1 **85.18** (−4.8) — the same one-epoch collapse as seed-42/43 — then it climbs back over ~12
+epochs and plateaus. So the bank's pilot-scale advantage is, mechanistically, protection against this
+early-training collapse (an over-fitting artifact of the tiny 10k set), exactly as §9.2 argued.
+
+**Does the control catch up with 4× the steps? Mostly — but not fully.** Plateau = mean of ep30–39
+(LR≈0, both fully converged):
+
+| arm | plateau r_mean (ep30–39) | plateau range |
+|-----|--------------------------|---------------|
+| treatment (bank) | **88.57** | [88.33, 88.77] |
+| control (no bank) | **87.92** | [87.80, 88.10] |
+
+Δr_mean = **+0.65** → **ΔR-Sum ≈ +3.9**. The two plateau bands **do not overlap** (bank's worst late
+epoch 88.33 > control's best 88.10) → the bank is ahead at every one of the last 10 epochs.
+Final-epoch (ep39) R-Sum: T `75.4+92.1+96.4+76.5+93.3+97.3 = 531.0`; C
+`73.6+91.7+95.2+76.8+93.3+96.7 = 527.3` → **ΔR-Sum = +3.7**, consistent with the plateau average.
+
+**Verdict — refine, don't overturn.** The bank keeps a durable, consistent edge (~+3.9 R-Sum, ~8× the
+0.5 kill threshold, ahead every late epoch), so it is **not** *purely* a convergence-speed effect. But
+the durable gap is only ~30% of the 10-epoch snapshot (+11–13): 4× the steps lets the control recover
+~2/3 of its early-collapse deficit. The honest pilot-scale story is **big early stabilization + a
+modest durable lift** — the dramatic 10-epoch numbers were measured before the control had recovered.
+
+**Caveat that keeps this from being the last word.** At 10k the collapse the bank prevents is a
+small-data over-fitting artifact; the regime R1 actually targets (large data, where in-batch negatives
+become information-limiting) engages a *different* mechanism, so the pilot's durable +3.9 is
+encouraging but not decisive. The decisive test remains the **large-data H100 A/B** (§9.3, deferred
+until the maintainer names shards). **No further V100 run is needed — the pilot-scale question is now
+closed.**
