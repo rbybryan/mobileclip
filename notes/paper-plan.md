@@ -7,7 +7,38 @@ explicit week-8 export decision point (it is likely a prerequisite of C4's
 latency table).
 **Revised 2:** 2026-07-20 — nine corrections from a red-team audit, see
 **§6**; where §6 conflicts with earlier text, §6 wins (the C4 benchmark
-list, the Wk4–6 run list, and the kill criteria are rewritten in place).
+list and the Wk4–6 run list are rewritten in place).
+**Revised 3:** 2026-07-23 — seven plan-level changes from the plan review, see **§7**;
+full analysis in `notes/plan-review-upgrades.md` (U1–U10). ⚠️ **§1's novelty claim is now
+out of date**: FluxViT (ICCV'25) already does elastic-sampling distillation, so C2's
+novelty is narrowed to a four-way combination cell — **§7.1 governs, not §1.**
+(Chinese counterpart: [`notes/paper-plan-zh.md`](paper-plan-zh.md) — keep both in sync.)
+
+> ### ⚠️ Precedence, and where §4 was *not* actually rewritten (audited 2026-07-29)
+>
+> **Order of precedence: §7 > §6 > §1–§5.** Revised-2 above claims "the kill criteria are
+> rewritten in place"; **they were not**, and neither were several §4 items that §6/§7 later
+> overrode. Until §4 is rewritten, these seven conflicts resolve in favour of the later
+> section — each is also flagged inline where it occurs:
+>
+> | Conflict | §4 still says | Governing text |
+> |---|---|---|
+> | Kill criterion | Wk2 "≥ +0.3 R-Sum vs locked baseline" | **§6.7** — single-benchmark +0.3 is below seed noise; use multi-benchmark aggregated R-Sum, both protocols, second seed when borderline |
+> | P1 torch bump | a Wk1 task | **§6.8** — demoted to conditional; Wk1 keeps only the 4 correctness items |
+> | Epoch budget | "~3 epochs" for every main run | **§7.6/U6** — ranking arms 1 epoch; only R0 + winner get 3 |
+> | Hardware | 8×V100-32GB | **§7.5/U5** — the real run is 4×H100; and see the wall-clock note below |
+> | TempMe | in the C4 zero-shot table (Wk8) | **§7.1** — fine-tuned protocol, **out** of the zero-shot table; separate fine-tune/latency-only block |
+> | P9 export | first attempt at week 8 | **§7.2/U1** — conversion smoke immediately; Wk8 keeps only real-device latency. **Since done: ONNX + Core ML pass at all T ⇒ P9 does not trigger** |
+> | Novelty | §1 "no prior work combines DR with frame elasticity" | **§7.1** — FluxViT does; never claim "elastic distillation" as new |
+>
+> **Two further facts postdate every section here** and are tracked in `experiments/ROADMAP.md`
+> (its 状态速览 + 方案完整性自查 are the live source of truth, not this file):
+> **(1)** measured wall-clock is **9.18 s/it at global batch 512 ⇒ ≈53 h/epoch on full 10M**,
+> so U6's "宽裕档 = 33E" is ≈73 days and **infeasible**; the maintainer has exactly 4 H100s
+> (no more), making ~6.6 days/R0 a hard constraint. **(2)** MSR-VTT 1k currently **cannot rank
+> arms**: 10× more data moved raw r_mean by only +0.82, inside the ±1.6 band, so paired
+> query-level bootstrap CI (U10-1) is a **prerequisite**, not a nicety.
+
 **Goal shift:** the previous notes (`model-architecture-improvements{,-zh}.md`,
 `script-level-optimizations-zh.md`) were a *replication + improvement backlog* —
 10 proposals + 13 script fixes, all worth doing in the abstract. This document
@@ -38,12 +69,18 @@ Why this spine and not the others we considered:
   *same* stored teacher embedding). That gives one checkpoint whose frame count
   is a deployment knob, and the claim "a 4-frame mobile model distilled from a
   16-frame teacher beats an 8-frame VTC-only model" is a new, testable result.
-  No prior work combines DR-style offline reinforcement with frame-count
-  elasticity.
+  ~~No prior work combines DR-style offline reinforcement with frame-count
+  elasticity.~~ ⚠️ **OUT OF DATE — §7.1 governs.** FluxViT (ICCV'25,
+  arXiv:2503.14237) already does elastic-sampling distillation with multi-budget
+  zero-shot retrieval. **Never claim "elastic distillation" as new.** C2's
+  surviving novelty is the narrower four-way combination cell: frames-as-knob ×
+  mobile backbone × fixed-T teacher anchor × on-device latency.
 - **It is the highest-expected-gain item we validated** (image-side DR is worth
   +2–5 points at equal student size — P5 was already ranked "largest expected
   accuracy jump").
-- **It fits the compute we actually have** (8×V100-32GB): the expensive part is
+- **It fits the compute we actually have** (~~8×V100-32GB~~ → **4×H100**, §7.5/U5;
+  and the measured 53 h/epoch makes the budget the binding constraint — see the
+  precedence box above): the expensive part is
   one offline teacher pass (embarrassingly parallel, resumable), and student
   training *gets cheaper* than the baseline (teacher does the hard mining;
   MobileCLIP reports fewer steps needed).
@@ -55,9 +92,9 @@ Why this spine and not the others we considered:
 | # | Contribution | Built from | Novelty level |
 |---|--------------|-----------|---------------|
 | C1 | **Video Dataset Reinforcement**: offline InternVideo2 teacher (video+text embeddings, real + synthetic recaptioned captions) stored once over InternVid-10M-FLT; student trains with VTC + embedding-KD + similarity-matrix-KD | P5 + `data-quality-caprl-scheme.md` | First for video; recipe-level |
-| C2 | **Temporal-elastic distillation**: T-agnostic temporal ops + random-T training against a fixed 16-frame teacher target → one model, frames-as-knob; Pareto curve beats fixed-T baselines at every budget | P2 **merged into** P5 | The new idea — this is what makes it a paper, not a port |
+| C2 | **Temporal-elastic distillation**: T-agnostic temporal ops + random-T training against a fixed 16-frame teacher target → one model, frames-as-knob; Pareto curve beats fixed-T baselines at every budget ⚠️ *three different success bars for this claim coexist — "beats at every budget" here, "within ~1 pt of own T=8" in the §4 R3 gate, and U10's pre-registered **non-inferiority** δ=0.3 per T. **U10's is the pre-registered one**; and per ROADMAP G2, δ=0.3 is ~8× below the measured noise floor, so the margin itself is unsettled (`plan-review-upgrades.md` §6.1 lists the three ways out — none chosen yet)* | P2 **merged into** P5 | The new idea — this is what makes it a paper, not a port. **Narrowed by FluxViT — see §7.1** |
 | C3 | **Recipe components with ablations**: sigmoid multi-positive loss (learnable t/b, `get_mask` ported), temporal attention-pool head (zero-init, strictly-no-regression) | P4 + P3 | Known techniques, our ablation table |
-| C4 | **Results**: ZS retrieval (MSR-VTT/DiDeMo/ANet) + ZS classification & multi-choice (K400/UCF101/HMDB51/SSv2-MC) at multiple T, **on-device latency table**, vs MobileViCLIP / InternVideo2-S/B / TempMe-class efficient baselines. (07-20: MSVD/LSMDC removed from the committed list — no annotations/configs in the repo; re-add only if built) | eval harness | — |
+| C4 | **Results**: ZS retrieval (MSR-VTT/DiDeMo/ANet) + ZS classification & multi-choice (K400/UCF101/HMDB51/~~SSv2-MC~~ — **SSv2-MC data is absent and the order-sensitive suite is shelved, see `notes/order-sensitive-eval.md`**) at multiple T, **on-device latency table**, vs MobileViCLIP / InternVideo2-S/B / **FluxViT-S (GFLOPs-matched row, §7.1)** / ~~TempMe~~ (**TempMe is fine-tuned-protocol: separate block, NOT the zero-shot table**). (07-20: MSVD/LSMDC removed from the committed list — no annotations/configs in the repo; re-add only if built) | eval harness | — |
 
 Free bonus folded into C1's loss loop: Matryoshka prefixes (P10) — one
 paragraph + one table column, zero extra runs.
@@ -125,6 +162,10 @@ Wk 1      Hygiene gate: H1, H4, freeze bug, H3 protocol pin, torch bump (P1).
           Re-run baseline eval → LOCK baseline numbers (both scoring protocols).
 Wk 2      C3 A/Bs (cheap, 3-epoch short runs): sigmoid loss; attn pool; both.
           Kill criterion: keep a component only if ≥ +0.3 R-Sum vs locked baseline.
+          [!] SUPERSEDED BY §6.7 — +0.3 on one benchmark is below seed noise.
+              Use aggregated multi-benchmark R-Sum, both protocols, 2nd seed if
+              borderline. Also see ROADMAP G4: paired bootstrap CI is required
+              before ANY arm comparison is readable at all.
 Wk 2-3    Teacher pass, staged: 100k slice → measure GPU-hrs, storage, and
           *teacher ZS quality on our eval suite* (sanity: teacher must dominate
           student by a wide margin). Decide InternVideo2-L vs 1B. Then full 10M
@@ -143,10 +184,22 @@ Wk 4-6    Main runs (the paper's table 1):
           (07-20) measure single-epoch wall-clock on day 1 of R0 and, if over
           budget, cut in priority order R0 > R2 > R3 > R3b > R1 (R1 may
           demote to short-run evidence).
+          [!] SUPERSEDED BY §7.6/U6 — ranking arms get 1 epoch; only R0 and the
+              winner get 3. Wall-clock is now MEASURED, not pending: 9.18 s/it
+              @ global batch 512 => ~53 h/epoch on 10M => ~6.6 days per 3-epoch
+              R0 on the maintainer's 4 H100s (there is no 5th card). U6's
+              "generous tier = 33E" would be ~73 days: not available. Execute
+              the normal tier and accept serial queueing.
 Wk 7      Ablations: λ1/λ2, caption mix, T-distribution; MRL column;
           (stretch) temporal hard negatives; (if needed) P9 deployment variant.
 Wk 8      On-device latency (Core ML / ONNX at T ∈ {2,4,8,16}), TempMe +
           InternVideo2-S/B baseline table, writing.
+          [!] AMENDED BY §7.1 — TempMe is a FINE-TUNED protocol and must not sit
+              in the zero-shot table; give it a separate fine-tune/latency block.
+          [!] AMENDED BY §7.2/U1 — export conversion is no longer a Wk8 item: it
+              RAN on 07-27 and ONNX + Core ML pass at every T, so P9 does not
+              trigger. Wk8 keeps only real-device latency. Open: TFLite (blocked
+              on torch>=2.6) and whether dynamic_axes gives one graph for many T.
 Buffer    ~6 wks to the CVPR deadline for reruns and rebuttal-proofing.
 ```
 

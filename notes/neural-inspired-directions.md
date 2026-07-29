@@ -29,6 +29,12 @@ configs, tests, and kill criteria, sequenced into `experiments/ROADMAP.md` 第�
 > moving retrieval and frame-collapse is a *free* direction (F4). It also argues our current
 > benchmark suite cannot measure temporal ideas at all, and adds a mandatory **zero-training
 > gate (GATE-0)** before any further temporal work. Read round 2 §0 and §6 first.
+> **GATE-0 has since run and closed (2026-07-27, `experiments/gate0_results.md` §8):** three
+> independent probes agree the official weights carry **no temporal-direction information**
+> (shuffle ≈0, kernels indistinguishable from random, temporal gate at 6.1% of spatial), while
+> **frame diversity is worth ≈13 R@1**. The order-sensitive benchmark suite was therefore
+> **not bought** (⏸ 暂缓) and the budget went to round-2 **R1** instead. Read every "temporal
+> order" motivation in this note against that result.
 
 Anchored to code checked 2026-07-23 (`models/mobileviclip_tiny.py`, `_small.py` is the
 same code at larger width; re-locate by symbol if lines drift).
@@ -74,8 +80,8 @@ The four bottlenecks a good idea must attack, with current anchors:
 | Tag | Bottleneck | Code | Share |
 |-----|-----------|------|-------|
 | **(a)** | Full conv backbone run **per frame** (×T=8) | `FastViT.forward` flattens `T·B` and runs the whole tower: `mobileviclip_tiny.py:1288-1294` (`x.reshape(T*B,3,H,W)` → `forward_embeddings`/`forward_tokens`/`conv_exp`) | **dominant share of video MACs** (analytic est., unprofiled ⚠) — the real target |
-| **(b)** | Joint T·H·W global attention, 512 tokens, export-hostile | `AttentionBlock` + `temporal_embedding` `:1012-1038`; `MHSA` `:359`; T=8 hard-coded at `:1017` | minority of MACs (analytic est. ⚠) but peak memory + the op that breaks Core ML lowering (`whitespace-directions.md §0`) |
-| **(c)** | Lossy aggregator: unweighted mean over 8 frame embeddings | `FastViT.forward:1296-1301` (`x_new_stack.mean(0)`; the `self.temporal_pool` branch at `:1297-1299` is the P3 attention-pool head, now being wired in) | discards temporal saliency |
+| **(b)** | Joint T·H·W global attention, T·H·W tokens (512 at T=8), export-hostile | `AttentionBlock` `:955` + `temporal_embedding` `:1026`; `MHSA` `:371`. ~~T=8 hard-coded at `:1017`~~ **no longer true — dynamic since PR #222**, now `t_frames = get_num_frames()` (`:1031`) | minority of MACs (analytic est. ⚠) but peak memory + the op that breaks Core ML lowering (`whitespace-directions.md §0`) |
+| **(c)** | Lossy aggregator: unweighted mean over T frame embeddings | `FastViT.forward:1312-1318` (`x_new_stack.mean(0)`; the `self.temporal_pool` branch is the P3 attention-pool head, **now merged and switchable** via `temporal_pooling="attn"`) | discards temporal saliency — but see the round-2 sharpening below |
 | **(d)** | Small-batch InfoNCE, frozen temperature | `VTC_VTM_Loss.vtc_loss` (`criterions.py`), global batch 512, temp fixed 1/100 | small-batch contrastive is quality-limited |
 
 ⚠ **The "92% / 8%" split is an unprofiled analytic estimate** (carried from the feasibility
@@ -83,9 +89,19 @@ review). `model-architecture-improvements.md:73` states only that per-frame stag
 dominate total FLOPs — *"analytic, no measured profile yet"*. **Profile the per-frame vs
 stage-4 MAC/latency split before Tier C's efficiency claim leans on it.**
 
+> **Round-2 sharpening of (c) (2026-07-24, `neural-inspired-round2.md` F1–F3).** "Discards
+> temporal saliency" understates it. F1 proves the head is **unconditionally order-blind**:
+> mean pooling is permutation-invariant, so *no* reweighting of the frame set — attention pool,
+> surprise pool, or any other — can recover frame order. F2 proves the additive
+> `temporal_embedding` is **exactly annihilated** by the mean, so it contributes zero
+> order-sensitivity; only *multiplicative* binding survives. The real gap is that the model has
+> **no conjunctive what×when channel**, and the fix is a readout change (round 2 **R2**), not a
+> better aggregator. Read every "(c)" claim below against this.
+
 The temporal RepMixer — a parallel depthwise `Conv1d(k=3)` over time inside every
-RepMixer block (`RepMixer.forward:583-606`, `reparam_conv_1d:589`, `mixer_1d:599`) — is
+RepMixer block (`RepMixer.forward:596`, `reparam_conv_1d:533`, `mixer_1d:571`) — is
 the one existing cross-frame op, and it is the natural host for several proposals below.
+(Line numbers re-verified 2026-07-29 after PR #222; re-locate by symbol if they drift.)
 
 ---
 
@@ -98,7 +114,7 @@ P1–P10 backlog.
 | # | Proposal | Neuro anchor | Attacks | Deployable win | Novelty | Verdict |
 |---|----------|--------------|---------|----------------|---------|---------|
 | **N1** | **Geometry-preserving distillation** (RSA/CKA + CCGP) folded into C1 | Kriegeskorte RSA; Kornblith CKA; Bernardi/Fusi CCGP | (c),(d) | none (train-time) | **High** | **Do — best free novelty** |
-| **N2** | **Predictive-coding structured frame gating** (+ error-weighted pooling) | Rao & Ballard; PredNet | **(a)**,(c) | **High** if structured | High | **Headline candidate — high risk** |
+| **N2** | **Predictive-coding structured frame gating** (+ error-weighted pooling) | Rao & Ballard; PredNet | **(a)**; ~~(c)~~ ⚠ | **High** if structured | High (gating half) | **Gating half: headline candidate — high risk; GATE-0 ✅ closed 07-27 and found order ≈ worthless but frame *diversity* worth ≈13 R@1, which is the redundancy the gating half actually targets ⇒ premise survives, still unfunded. Pooling half (A1): demoted by round 2 §6.1 — order-blind, not a contribution** |
 | N3 | **Magno/parvo two-stream** (slow high-res form + fast low-res motion) | SlowFast's literal basis; dorsal/ventral | (a) | High, reliable | Low | Safe deployment substrate under N1/N2 |
 | N4 | **Graded temporal receptive windows** (dilation grows with depth) | Hasson temporal-window hierarchy | (c) | tiny, free | Low | Free ablation, not a headline |
 | N5 | Adaptive-T via evidence accumulation (**coarse router only**) | Drift-diffusion; ACT/PonderNet | (a) avg | weak (worst-case) | Med | Router-of-static-graphs variant only |
@@ -169,11 +185,20 @@ cost cut at 1–3% accuracy drop.
    **prediction-error propagation** rather than plain temporal mixing. A tiny
    frame-level surprise signal decides, per frame, whether to skip whole backbone blocks.
 2. *Error-weighted pooling (aggregator, attacks (c)).* Weight each frame embedding in the
-   head (`:1296-1301`) by its prediction error — high-surprise frames carry more
-   information than static ones. This falls straight out of part 1's error signal and
-   **unifies the efficiency headline and the mean-pool fix into one predictive-coding
-   story** (a cleaner paper than treating them separately, and it gives (c) a
-   brain-principled fix nobody in the existing plan proposed).
+   head (`:1312-1318`) by its prediction error — high-surprise frames carry more
+   information than static ones. Built as **A1** (`neural-inspired-implementation.md §A1`,
+   module `neural_inspired/temporal_surprise_pool.py`); 10k link-test passed 2026-07-24.
+
+   > ⚠️ **Withdrawn framing (round 2 §6.1, 2026-07-24).** This bullet used to claim the
+   > error-weighted pooling "**unifies the efficiency headline and the mean-pool fix into one
+   > predictive-coding story**" and "gives (c) a brain-principled fix nobody proposed". **That
+   > claim is retracted.** By F1 the head is order-blind under *any* set reweighting, so A1
+   > reaches **appearance saliency only** — it cannot touch temporal order, which is what (c)
+   > actually costs us. The two halves of N2 therefore do **not** unify: part 1 (gating) is an
+   > efficiency bet, part 2 (pooling) is an unrelated, weak aggregator tweak that must beat the
+   > plain attention pool to survive at all. Round 2's **R2 order-recoverable readout** is the
+   > real fix for (c). A1 is explicitly **not** a paper contribution
+   > (`neural-inspired-implementation.md §A1` novelty pin).
 
 **The novelty is narrow and must be stated honestly (T1).** "Delta/predictive frame
 encoding" is *done* (ResidualViT). What is open: ResidualViT is a **ViT** method; porting
@@ -305,7 +330,7 @@ mechanisms attach as follows — **no new parallel project**:
 | This note | Attaches to | Nature of the addition |
 |-----------|-------------|------------------------|
 | **N1** geometry-preserving KD | **C1 loss** | New distillation term (RSA/CKA + CCGP) beside the planned cosine + sim-matrix KD; adds the CKA-vs-R@k figure and the "preserve the abstraction manifold" story |
-| **N2** predictive gating + error-weighted pooling | **R4** (asymmetric encoding) + **C3** (pooling) | Gives R4 a predictive-coding rationale and adds error-weighted pooling as the aggregator; the surprise signal unifies both |
+| **N2** predictive gating + error-weighted pooling | **R4** (asymmetric encoding) + **C3** (pooling) | Gives R4 a predictive-coding rationale. ⚠ **Round 2 §6.1 retracts "the surprise signal unifies both"** — the pooling half (A1) is order-blind and attaches to C3 as a bare ablation row only; the halves are independent bets |
 | **N3** two-stream | R4 fallback | Low-risk deployable substrate if N2 fails under motion |
 | **N4** graded temporal windows | C3 / backbone | Free ablation on the temporal RepMixer |
 | **N5** adaptive-T router | C2 | Inference-time policy over C2's train-time elasticity; report worst-case |
@@ -323,7 +348,7 @@ ActivityNet and the classification-MC sets.
 Alongside C1 (teacher pass):  N1 geometry-KD term — train-time only, cheapest novelty,
                               cannot regress inference. Land the CKA-vs-R@k figure early.
 Alongside C3 A/Bs:            N4 graded temporal windows (free ablation).
-After R2/R3 (C1+C2 exist):    N2 as the R4 self-distillation fine-tune — structured gating
+After GATE-0, then R2/R3:     N2 as the R4 self-distillation fine-tune — structured gating
                               + error-weighted pooling; gate on worst-case on-device latency.
                               N3 stands ready as the low-risk substitute if N2 breaks on SSv2-MC.
 Opportunistic:               N5 coarse router (worst-case reported); N6 quantization ablation.

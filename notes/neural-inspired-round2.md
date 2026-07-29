@@ -218,16 +218,75 @@ the problem is upstream.
 measured on our own model, rather than cited from someone else's, in the same slot as ROADMAP
 1.6's multi-T degradation curve.
 
+> ### ✅ RESOLVED 2026-07-27 — GATE-0 ran; the outcome is row 1, but the action taken was not row 1's
+>
+> Full record: [`experiments/gate0_results.md`](../experiments/gate0_results.md) §8.
+> **Three independent probes converge: the official weights do not encode temporal direction.**
+> (1) *Behaviour* — shuffling the 8 frames moves t2v by **+0.1/+0.2** (≈0), while repeating a
+> single frame costs **−13.0/−12.1**. (2) *Kernel shape* — the k=3 branch's antisymmetric
+> fraction is **0.5011** against a random null of **0.4999** (quantile-matched, n=9920), i.e.
+> **indistinguishable from an untrained kernel**. (3) *Gate* — the temporal/spatial gate ratio
+> is **0.0613** from a shared 1e-5 init, so training actively suppressed the temporal branch by
+> ~16×. Order is worth **≈0**; frame **diversity** is worth **≈13**.
+>
+> **Two amendments to the table above, both load-bearing:**
+>
+> **(i) The SSv2-MC half was never run** — the data was missing, and rather than buy a video
+> scrape to complete it, the decision (`notes/order-sensitive-eval.md`; ROADMAP 状态速览
+> ⏸ 暂缓) was that three agreeing probes already settle the question. Row 1 was therefore
+> reached on the MSR-VTT + static-audit evidence alone. RTime/Vinoground/SSv2-MC are
+> **shelved**, reclaimed only if R2's *downstream* benefit ever has to be demonstrated.
+>
+> **(ii) Row 1's prescribed action is superseded.** It read: *"R2 becomes the only temporal
+> proposal worth funding, and it must be measured on RTime; everything else temporal is dead."*
+> Both clauses were overtaken. "Must be measured on RTime" is void per (i) — a cheap
+> **reversal-sensitivity self-test** replaces it. And the budget did **not** go to R2: it went
+> to **R1, the exact frozen-text negative bank**, because R1 attacks bottleneck **(d)** rather
+> than order, and MSR-VTT measures (d) *validly*. R1 has since produced the strongest evidence
+> in the project (pilot GO, ΔR-Sum ≈ +3.9 durable over a 40-epoch long run —
+> [`notes/r1-implementation-plan.md`](r1-implementation-plan.md) §9.4).
+>
+> **The correct one-line reading of GATE-0 is therefore: *order is not the lever on this model —
+> stop paying to measure it, and spend on (d) instead.*** Not "fund R2 and only R2". R2 keeps a
+> live premise (the gap it targets is real and now measured) but no funded slot; "everything
+> else temporal is dead" is **too strong** — A1 still holds a 1M-tier ranking arm, and C2's
+> elastic-T line is unaffected because it trades on frame *count*, not frame *order*.
+
 ---
 
 ## 3. The three proposals
 
+> ## 🚨 ID collision — `R1`/`R2`/`R3` and `P1`–`P4` mean **two different things** in this repo
+>
+> This is the single most dangerous ambiguity in the plan set, so read it before acting on any
+> ID. There are two live, unrelated namespaces:
+>
+> | Namespace | Where it is defined | `R1` | `R2` | `R3` |
+> |---|---|---|---|---|
+> | **Training runs** | `notes/paper-plan.md` §4, `experiments/ROADMAP.md` 第三线 | baseline **+ C3 components** | baseline **+ C1 DR loss** (a.k.a. "R2 教师管线") | baseline **+ C2 random-T**, the headline model (plus `R3b` fixed-T=4 control, `R0` reproduction, `R4` conditional) |
+> | **Round-2 proposals** | this file §3 | **exact frozen-text negative bank** | **order-recoverable readout** | **straightening as measurement** |
+>
+> They collide completely, and both appear inside `experiments/ROADMAP.md` — 第二线 2.2
+> "R2 教师管线" is a *training run*, while 2.4 "R1 精确文本负例库" and 2.5's "R2 读出头" are
+> *round-2 proposals*, seventeen lines apart. `P1`–`P4` collide the same way: paper-plan's
+> P1–P4 are the torch bump / T-agnostic ops / attention pool / sigmoid loss, while §5 of this
+> file uses P1–P4 for engineering prerequisites (trajectory plumbing, the `loss_weight` trap,
+> loss balancing, the grad-cosine diagnostic). `neural-inspired-implementation.md` adds a third
+> clash by naming its Tier-C item **C1** while also using `C1` for paper-plan's
+> Video-Dataset-Reinforcement contribution.
+>
+> **Convention going forward:** write **`round2-R1`** / **`run-R1`** (and `round2-P2` /
+> `plan-P2`) whenever context does not make it unambiguous within the same sentence. Nothing is
+> renamed retroactively — the IDs are cited across a dozen merged PRs — so the disambiguation
+> is a reading rule, not a refactor.
+
 Ranked by (expected gain × novelty) ÷ (risk + cost), under T1/T2 from round 1 §0.
+**All three IDs below are `round2-*`, not training runs.**
 
 | # | Proposal | Attacks | Inference cost | Novelty | Verdict |
 |---|---|---|---|---|---|
-| **R1** | **Exact frozen-text negative bank** | **(d)** | **zero** (train-time) | low as research, high as engineering | **Do first — highest expected value** |
-| **R2** | **Order-recoverable readout** (mean → +slope → +phase binding) | **(c)** | ~0.1% MACs, static | medium-high | **Do, gated on §2** |
+| **R1** | **Exact frozen-text negative bank** | **(d)** | **zero** (train-time) | low as research, high as engineering | **Do first — highest expected value.** ✅ **Done: pilot GO, durable ΔR-Sum ≈ +3.9 over 40 epochs** (`r1-implementation-plan.md` §9.4); 1M-tier A/B configs queued |
+| **R2** | **Order-recoverable readout** (mean → +slope → +phase binding) | **(c)** | ~0.1% MACs, static | medium-high | ~~Do, gated on §2~~ → **premise confirmed by GATE-0, but unfunded**: order is worth ≈0 on this model and the order-sensitive suite is shelved, so there is currently no benchmark that could show R2 winning. See the §2c resolution above |
 | **R3** | **Straightening as *measurement*, not objective** | — | zero | medium (negative result) | **Do — free figure, no arm** |
 
 ### R1 · Exact frozen-text negative bank — the one all four reviews picked
