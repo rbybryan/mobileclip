@@ -2565,3 +2565,34 @@ return checkpoint.checkpoint(_inner_forward, x, use_reentrant=False)
 This is a behavior-preserving change (only *how* activations are recomputed in
 backward changes, not the numerics). No config flag is needed — pull `main` and rerun.
 If you still hit "marked ready twice" after pulling, the server is on pre-fix code.
+
+## `run_v100.sh <子命令>` 只打印用法帮助、不执行；紧接着 `tar: Cannot stat: No such file or directory`
+
+### Symptom
+
+```
+$ bash tools/data_audit/run_v100.sh summary-table
+InternVid-zh v0.1 数据审查一键脚本 ……（整屏用法列表，没有报错）
+$ tar czf outputs/audit_10k/table.tgz -C outputs/audit_10k table_compare
+tar: table_compare: Cannot stat: No such file or directory
+```
+
+关键识别点：**打印出来的用法列表里根本没有你要跑的那个子命令**。
+
+### Cause
+
+子命令没被 `case` 匹配上，落进默认分支——旧版脚本的默认分支只打印用法、`exit 0`，
+看起来像"跑完了"。两种触发：a) 拼写错误；b) **子命令是新版本才加的，而服务器
+checkout 落后**（`git pull` 曾 divergent 失败或忘了拉，同前一条目）。产物目录
+（如 `table_compare/`）自然没生成，下一步 `tar` 才报 No such file。
+
+### Fix
+
+```bash
+cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
+git log --oneline -1     # 核对提交号 >= 该子命令入库的 PR
+bash tools/data_audit/run_v100.sh <子命令>   # 重跑
+```
+
+新版脚本（#342 起）遇到未知子命令会显式 `❌ 未知子命令: xxx` 并 `exit 1`，
+同时提示上面的对齐命令，不再静默装作成功。

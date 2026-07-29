@@ -23,6 +23,29 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-29 (65) — 你那条 summary-table 没跑起来:服务器 checkout 又落后了(帮助列表里没这命令=铁证)
+
+刚才那次失败的读法:**脚本打印整屏用法=子命令没被识别**,而打印出的列表里根本没有
+summary-table —— 说明本机还在 #341 之前的旧代码上(git pull 又没生效,老毛病,
+TROUBLESHOOTING 新增了对应条目)。table_compare/ 自然没生成,tar 才报 No such file。
+
+**恢复序列(逐行,第 2 行必须核对):**
+```bash
+cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
+git log --oneline -1     # ← 必须 #342 或更新;还是旧号就把输出贴回来
+# 若还没按 (60) 块重跑过 compare(五槽+新融合 prompt),先跑它(可加 PIPE_LEAN=1, 见 (62)):
+rm -f outputs/audit_10k/recap_slot.*.jsonl outputs/audit_10k/pipe_sl_*.jsonl       outputs/audit_10k/pipe_sl_timing.tsv outputs/audit_10k/pipe*fused_d*.jsonl
+PIPE_LEAN=1 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+# 然后表格页:
+bash tools/data_audit/run_v100.sh summary-table
+tar czf outputs/audit_10k/table.tgz -C outputs/audit_10k table_compare
+```
+注意:若跳过中间的 compare 重跑直接出表,表格显示的会是**旧版内容**(四槽 B/旧融合),
+别拿它当新方案的目检依据。
+
+顺手加固:从 #342 起,`run_v100.sh` 遇到未知子命令会显式 `❌ 未知子命令: xxx` 并
+exit 1(不再静默打帮助装作成功),并直接提示上面的对齐命令——同样的坑下次 10 秒内定位。
+
 ## 2026-07-29 (64) — 表格版总结页就位:GIF + 九列(en源|原zh|A/B 重述+长稿+短稿), compare 之后一条命令
 
 按你要的形式做好了(注:R1 线 07-29 的块把 (58)-(60) 编号复用了,与我 07-28 的 (58)-(60)
