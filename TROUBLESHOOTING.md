@@ -2644,3 +2644,23 @@ bash tools/data_audit/run_v100.sh <子命令>   # 重跑
 
 新版脚本（#342 起）遇到未知子命令会显式 `❌ 未知子命令: xxx` 并 `exit 1`，
 同时提示上面的对齐命令，不再静默装作成功。
+
+
+## 补记(2026-07-29):上两条「pull 没生效/divergent」的共同病根 —— 服务器长期站在滞留工作分支上
+
+`git log --oneline -1` 显示 `(HEAD -> claude/export-smoke, origin/main)`:服务器 checkout
+自 #320 时代起一直停在工作分支 `claude/export-smoke` 上,不在 `main`。此后所有
+`git pull origin main` 都在错误分支上执行,于是反复出现 divergent、"拉了但没生效"、
+新子命令找不到等症状(前两条目全是它的下游表现)。
+
+### Fix(一次性根治)
+
+```bash
+cd ~/mobileclip
+git checkout -B main origin/main    # 切回 main 并对齐
+git branch -D claude/export-smoke   # 删滞留分支(先确认其上无未推提交;刚 reset 过则安全)
+git log --oneline -1                # 括号里应是 (HEAD -> main, origin/main)
+```
+
+**日常自检**:每次对齐后看 `git log -1` 括号——`(HEAD -> main, origin/main)` 是唯一正常态;
+出现任何别的分支名,先 `git checkout -B main origin/main` 再干活。
