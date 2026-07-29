@@ -61,6 +61,9 @@ git pull origin main
 # 冷样本细粒度计时,双臂一条命令。offset=300 避开 §5.1c 那轮已缓存的 200-249 段;
 # 若中断,原命令重跑即按 video 续走。GDINO 未装也照跑(⑤ 行=OCR-only 口径,回填时会标注)
 SAMPLE_OFFSET=300 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+# 赶时间变体(维护者已确认可用): N_SAMPLE=10, ~40min。①行 s/片 会被模型装载虚高约 2×、
+# ②行约 +15%(每个单卡段重装一次 8B, 10 片摊不薄), 看各小步相对贵贱够用, 精确全量外推
+# 仍以 50 片为准; 之后升 50 只补跑 40 片(按 video 续跑), 目检包(§0.9 行动序②)要 50 片的量
 ```
 
 **Then report back**：把结尾「⏱ A/B 两臂分段耗时」整块贴回 from-server.md（或直接贴
