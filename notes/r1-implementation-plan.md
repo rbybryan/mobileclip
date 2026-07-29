@@ -642,32 +642,20 @@ grep -hE "t2v_r1|v2t_r1|_match|R@" experiments/runs/sub1m_{r1both,nR1}_s4?.log |
 only +0.82 (well inside the ±1.6 band), so the unpaired absolute band cannot resolve **any** arm's
 effect at 1M. The R1 A/B escapes this in the one way that matters: `nR1` and `r1both` are scored on the
 **same 1000 MSR-VTT queries**, so it is a **paired** comparison, and the paired-Δ variance is far below
-the unpaired band. Read it with the **query-level paired bootstrap CI** (U10-1 / ROADMAP **G4** — the CI the tier now
-*requires*, **landed** in `experiments/paired_bootstrap.py` + `collect_results.py --compare`, #347/#354),
-backed by **multi-benchmark aggregation** (MSR-VTT + DiDeMo + ANet, same direction). Report **both
-directions** — the bank hardens v2t (`txt_r1`); t2v benefits only indirectly (examination §1).
+the unpaired band. Read it with the **query-level bootstrap CI** on the paired difference (U10-1 /
+ROADMAP **G4** — the CI the tier now *requires*, being added to `collect_results.py`), backed by
+**multi-benchmark aggregation** (MSR-VTT + DiDeMo + ANet, same direction). Report **both directions** —
+the bank hardens v2t (`txt_r1`); t2v benefits only indirectly (examination §1).
 
-**How to read it** (per-query ranks are auto-dumped to each arm's `output_dir` during training-time
-eval — `pretrain.py:361`, so no re-eval is needed):
-
-```bash
-# per seed × both prefixes (raw ret_test_emb/ and DSL ret_test/); the bank wins a
-# seed only if BOTH prefixes' paired 95% CI exclude 0 with the SAME sign.
-python experiments/collect_results.py --compare experiments/runs/sub1m_nR1_s42 experiments/runs/sub1m_r1both_s42
-python experiments/collect_results.py --compare experiments/runs/sub1m_nR1_s42 experiments/runs/sub1m_r1both_s42 --prefix ret_test/
-# repeat for s43.
-```
-
-- **Paired-Δ CI excludes 0 for the bank in both seeds, same sign** → GO → the +3.9 pilot lift is *real
-  hard-negative value that survives at scale* → carry the bank into the full-10M final train.
+- **Paired-Δ bootstrap CI excludes 0 for the bank, both seeds same sign** → GO → the +3.9 pilot lift is
+  *real hard-negative value that survives at scale* → carry the bank into the full-10M final train.
 - **CI spans 0 / seeds conflict** → the pilot's durable +3.9 was 10k-specific stabilization that does
   **not** survive when data is real and non-saturating → drop the bank; it was a small-data effect.
 
-> **Verified fit for this A/B (2026-07-29, controlled input).** Running the actual
-> `paired_bootstrap` on near-identical arms differing by a *tiny* injected effect at the pilot scale
-> (Δ R-Sum ≈ +4.5 / r_mean ≈ +0.75): the **paired 95% CI = [+2.4, +6.9] excludes 0**, while the
-> **unpaired band (±17.8 R-Sum) spans 0** (≈8× resolution gain; self-compare → 0/0/n.s.). So the R1
-> A/B *is* measurable at 1M even though #346 showed the unpaired instrument can't rank arms.
+> **Dependency + silver lining.** The paired bootstrap (G4) is not yet in `collect_results.py` (#346
+> escalated it 🟡→🔴; a concurrent session is implementing it). Hold the R1 verdict until it lands — but
+> being *paired*, the R1 A/B is exactly the comparison the bootstrap makes resolvable, unlike the
+> r0-vs-official gap #346 could only call a tie. Log the raw per-epoch numbers meanwhile.
 
 Full 10M remains the paper number; **1M is the decision gate** (a subset scale can't prove
 scale-stability — that caveat from the tier note stands).

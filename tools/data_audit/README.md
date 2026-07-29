@@ -288,5 +288,3 @@ python tools/data_audit/apply_buckets.py --input $DATA \
 
 完整分步操作手册（含环境准备、冒烟验证、每步验收点/决策门、v0.2→v0.3 节奏）
 见 `notes/internvid-zh-data-audit-plan.md` §5–§7。
-A/B 重述管线（dense×5 vs slot×3）的分步图解、模型清单、prompt 全文与分段计时读法
-见 [`docs/recaption-ab-pipeline_zh.md`](../../docs/recaption-ab-pipeline_zh.md)。
