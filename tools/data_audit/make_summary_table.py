@@ -91,6 +91,82 @@ def cell_caps(text):
     return "<ol>" + "".join(f"<li>{deco(p)}</li>" for p in parts) + "</ol>"
 
 
+def cell_caps_text(text):
+    """csv/xlsx 版 cell_caps: 纯文本, 一条 caption 一行编号 (单条原样)."""
+    parts = [p.strip() for p in SEP.split(text or "") if p.strip()]
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    return "\n".join(f"{i + 1}. {p}" for i, p in enumerate(parts))
+
+
+EXPORT_COLS = ["video", "英文en", "原zh", "A重述", "A长稿", "A直融",
+               "B重述", "B长稿", "B直融", "video_path"]
+
+
+def write_csv(path, recs):
+    """utf-8-sig + 逗号分隔: Excel/WPS 双击直开中文不乱码; 多条重述在单元格内
+    以换行分隔 (Excel 开自动换行即逐行显示)."""
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(EXPORT_COLS)
+        for r in recs:
+            w.writerow([r.get(c, "") for c in EXPORT_COLS])
+
+
+def write_xlsx(path, recs, thumb_dir):
+    """openpyxl 可用时出 xlsx: 首列 GIF 首帧静态缩略图 (Excel 不播动图, 动图
+    看 table.html), 文本列自动换行+列宽. 返回 None=成功 / 字符串=跳过原因."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.drawing.image import Image as XImage
+        from openpyxl.styles import Alignment, Font
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        return "openpyxl 未安装 (audit_env 里 `pip install openpyxl` 后重跑本命令即可补出)"
+    from PIL import Image
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "AB对比"
+    hdr = ["缩略图"] + EXPORT_COLS
+    ws.append(hdr)
+    widths = {"缩略图": 22, "video": 18, "英文en": 30, "原zh": 26, "A重述": 42,
+              "A长稿": 42, "A直融": 26, "B重述": 42, "B长稿": 42, "B直融": 26,
+              "video_path": 24}
+    for i, h in enumerate(hdr, 1):
+        ws.cell(row=1, column=i).font = Font(bold=True)
+        ws.column_dimensions[get_column_letter(i)].width = widths.get(h, 20)
+    ws.freeze_panes = "A2"
+    wrap = Alignment(wrap_text=True, vertical="top")
+    os.makedirs(thumb_dir, exist_ok=True)
+    for ri, r in enumerate(recs, 2):
+        ws.append([""] + [r.get(c, "") for c in EXPORT_COLS])
+        for ci in range(2, len(hdr) + 1):
+            ws.cell(row=ri, column=ci).alignment = wrap
+        thumb, g = None, r.get("gif_abs")
+        if g and os.path.exists(g):
+            thumb = os.path.join(thumb_dir,
+                                 os.path.basename(g)[:-4] + ".png")
+            if not os.path.exists(thumb):
+                try:
+                    im = Image.open(g)
+                    im.seek(0)
+                    im = im.convert("RGB")
+                    im.thumbnail((150, 150))
+                    im.save(thumb)
+                except Exception:  # noqa: BLE001 - 缩略图失败只缺图不缺行
+                    thumb = None
+        if thumb and os.path.exists(thumb):
+            img = XImage(thumb)
+            ws.add_image(img, f"A{ri}")
+            ws.row_dimensions[ri].height = max(84.0, img.height * 0.75)
+        else:
+            ws.row_dimensions[ri].height = 84.0
+    wb.save(path)
+    return None
+
+
 def make_gif(video_path, out_path, frames, max_side, ms):
     from PIL import Image
     from vlm_audit import _BACKENDS, _resolve_backend
@@ -135,7 +211,7 @@ def main():
     gif_dir = os.path.join(args.out_dir, "gifs")
     os.makedirs(gif_dir, exist_ok=True)
 
-    body, n_gif, n_fail = [], 0, 0
+    body, recs, n_gif, n_fail = [], [], 0, 0
     for r in rows:
         vid = r.get("video") or ""
         gif_rel = f"gifs/{safe_name(vid)}"
@@ -171,6 +247,16 @@ def main():
             f'<td class="cap long">{deco((r.get("B长稿") or "").strip())}</td>'
             f'<td class="cap"><span class="short">{deco((r.get("B直融") or "").strip())}</span></td>'
             "</tr>")
+        recs.append({
+            "video": vid, "video_path": r.get("video_path") or "",
+            "英文en": r.get("英文en") or "", "原zh": r.get("原zh") or "",
+            "A重述": cell_caps_text(r.get("A重述")),
+            "A长稿": (r.get("A长稿") or "").strip(),
+            "A直融": (r.get("A直融") or "").strip(),
+            "B重述": cell_caps_text(r.get("B重述")),
+            "B长稿": (r.get("B长稿") or "").strip(),
+            "B直融": (r.get("B直融") or "").strip(),
+            "gif_abs": gif_abs})
 
     sub = (f"{len(rows)} 片 · GIF {n_gif}/{len(rows)}"
            + (f"（{n_fail} 片解码失败）" if n_fail else "")
@@ -180,7 +266,16 @@ def main():
     out_html = os.path.join(args.out_dir, "table.html")
     with open(out_html, "w", encoding="utf-8") as f:
         f.write(page)
+    out_csv = os.path.join(args.out_dir, "table.csv")
+    write_csv(out_csv, recs)
+    out_xlsx = os.path.join(args.out_dir, "table.xlsx")
+    skip = write_xlsx(out_xlsx, recs, os.path.join(args.out_dir, "thumbs"))
     print(f"[done] {len(rows)} rows -> {out_html} (GIF {n_gif}, fail {n_fail})")
+    print(f"[csv]  {out_csv} (utf-8-sig, Excel/WPS 直开)")
+    if skip:
+        print(f"[xlsx] 跳过: {skip}")
+    else:
+        print(f"[xlsx] {out_xlsx} (首列=GIF首帧静态缩略图; 动图看 table.html)")
 
 
 if __name__ == "__main__":

@@ -23,6 +23,28 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-29 (67) — 表格新增 csv + xlsx 导出:summary-table 一条命令三种产物
+
+答复「能不能存成 xlsx/csv」:**能,已实现**。`summary-table` 现在同目录一次出三样:
+
+- `table.html` —— 动图版(GIF 会循环播放),展示用;
+- `table.csv` —— utf-8-sig 逗号分隔,Excel/WPS **双击直开中文不乱码**;多条重述在
+  单元格内按 `1. 2. 3.` 换行(Excel 里开「自动换行」即逐行显示);列=video|en源|原zh|
+  A重述|A长稿|A直融|B重述|B长稿|B直融|video_path;
+- `table.xlsx` —— **audit_env 里 `pip install openpyxl` 后才出**(纯 python 小依赖,
+  不碰 torch,装了重跑本命令即补出):首列内嵌 GIF **首帧静态缩略图**(Excel 不播动图,
+  动图仍看 html),表头加粗冻结、全列自动换行。没装 openpyxl 时 csv/html 照出,只提示跳过。
+
+**服务器(按 (66) 对齐并跑完 compare 后):**
+```bash
+pip install openpyxl        # 一次性, 可选(只为 xlsx)
+bash tools/data_audit/run_v100.sh summary-table   # GIF 有缓存, 重跑秒级
+tar czf outputs/audit_10k/table.tgz -C outputs/audit_10k table_compare
+```
+
+(块号说明:R1 线 07-29 又用了 (63)(64),与我此前的 (64) 表格页/(65) (66) 是不同内容,
+按日期+标题区分;我继续单调递增用 (67)。)
+
 ## 2026-07-29 (64) — 配对 bootstrap 写好了(G4 结案):**分辨率提升约 11 倍**,判据换掉 ±1.6
 
 昨天那个"MSR-VTT 排不出臂序"的问题解决了。
