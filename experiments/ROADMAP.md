@@ -423,14 +423,19 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | **C2 无上限 T?(1.9)** | 🟡 **已判:代码无上限,四堵墙有一堵是真墙** | 时序算子代码层面已支持任意 T(含奇数,单测覆盖 T=3);真墙 = **stage-4 联合注意力 O(T²)**(N=64·T;T=16 实测 23.3GB)⇒ **训练集合保持 {2,4,8,16}**,真要无上限先做 **AC1a**。**待跑(零训练)**:未见过的 T 泛化(内插 3/5/6/12、外推 24/32),`COMMANDS.md` §3.7。⚠️ 别改卖点为「任意 T」(FluxViT 地盘)。见 [`c2-arbitrary-t.md`](../notes/c2-arbitrary-t.md) |
 | **R1 文本负例库(2.4)** | 🟢 **试点级结案:GO,但幅度被修正** | 三个种子/档位都领先:10-epoch ΔR-Sum **+11.0**(s42)/ **+13.1**(s43);**40-epoch 长档修正为耐久 ΔR-Sum ≈ +3.9**(平台 88.57 vs 87.92,两条平台带**不重叠**,池在最后 10 epoch 每轮都领先,仍是 kill 阈值 0.5 的 ~8×)。机制=**挡住对照 ep0→ep1 的早塌**(90.0→85.2,**三次复现**),4× 步数让对照追回约 2/3。⇒ 诚实说法:**大幅早期稳定 + 温和耐久提升**。见 §9.1/§9.2/**§9.4** |
 | R1 长档 40-epoch(对照能否追上) | ✅ **已跑完(2026-07-28)** | 答案:**大部分追上但没追平**。**试点级问题就此收尾,V100 不需要再跑**;决定性检验仍是 H100 大数据 A/B(§9.3) |
-| **1M 验证层(`sub1m_*`,#329)** | 🟡 **配置已入库,待跑** | 填 10k 冒烟与 10M 论文数字之间的空档:**8 config = 4 臂(r0/r1a/r1b/nA1)× 2 seed**,`train_corpus=internvid_v1`(单个 1M 分片)、`batch_size=128`、epoch=3、**测试集仍是标准 MSR-VTT 1k**;runner `experiments/run_verify_1m.sh`。判法=同 seed 相减 + 两 seed 同向。见 [`verification-tier-1m-zh.md`](../notes/verification-tier-1m-zh.md) |
-| R1 大数据 A/B(真正发威档) | ⬜ **H100** | `internvid_all` 11 分片**只在 H100**,V100 仅 10k 子样本(#317,记忆 `server-data-split`);上机前须在 H100 重建更大 text-bank 缓存 |
+| **1M 验证层(`sub1m_*`,#329)** | 🟡 **配置已入库,待跑** | 填 10k 冒烟与 10M 论文数字之间的空档:**8 config = 4 臂(r0/r1a/r1b/nA1)× 2 seed**,`train_corpus=internvid_v1`(单个 1M 分片)、`batch_size=128`、epoch=3、**测试集仍是标准 MSR-VTT 1k**;runner `experiments/run_verify_1m.sh`。判法=同 seed 相减 + 两 seed 同向。**+4 config = R1 文本负例库自配对 A/B**(`sub1m_r1both`/`sub1m_nR1` × 2 seed,彼此相减,见下一行)。见 [`verification-tier-1m-zh.md`](../notes/verification-tier-1m-zh.md) |
+| R1 大数据 A/B(真正发威档) | 🟡 **配置已入库(1M 子集档)** | 不等全量,**放到 1M 验证层跑**:处理 `sub1m_nR1_s42/s43`(+bank) vs 对照 `sub1m_r1both_s42/s43`(SigLIP 制度无 bank),**彼此相减**;需先建 1M 缓存 `textbank_1m_*`(命令 `COMMANDS.md` §3.3.2)。为何 1M 才发威:全局 batch 512 ≪ SigLIP 饱和 ~32k + 不过拟合 ⇒ 领先=真硬负例(非 10k 挡早塌伪影)。全量 10M=论文数字。设计见 [`r1-implementation-plan.md`](../notes/r1-implementation-plan.md) §10 |
 | 重字幕线定版(§0.9 全案复审) | 🟡 | 2026-07-28:判断式直融 v3 定版 + 供给取代旧段;**3 红**(GDINO 未装=最大裸露面 / 512→640 已修 / 长稿未验真)、4 黄(迭代快于证据 ⇒ 冻结 prompt)、4 绿。**不占 EN 主时钟(D2)**。见 [`recaption-master-plan.md`](../notes/recaption-master-plan.md) §0.9 |
 | b100 训练侧两个坑 | ✅ 已修/已档 | `patch_embed` 秒级 OOM(别等空卡,按剩余显存裁 batch)+ DDP×梯度检查点 `marked as ready twice` ⇒ 两处 `checkpoint()` 加 `use_reentrant=False`(#316,`TROUBLESHOOTING.md`) |
 | 架构探索 backlog(AC1–AC9,第三轮最终稿) | ⬜ | 顾问式,**均未 A/B、不占主时钟**;落地顺序在「架构探索 backlog」段;AC1a=可导出 P9 由 §1.5 触发、AC-b 是 AC2 前置、AC6′ 净新增仅文本塔 LoRA;死路 4 条已判。源码核查稿 #310 |
 
 ## 进展日志(实时,倒序;每个会话在此加一行,格式:日期:事件(出处))
 
+- 2026-07-28:**R1 大数据 A/B 设计定档 = 1M 子集档**(本次):既然 H100 现训 1M 子集,就把 R1 文本负例库 A/B
+  放到 1M 验证层跑,不等全量。入库 4 config(处理 `sub1m_nR1_s42/s43` +bank / 对照 `sub1m_r1both_s42/s43` 无 bank,
+  彼此相减)+ 1M 缓存构建命令(`textbank_1m_*`,`COMMANDS.md` §3.3.2)。为何 1M 才是正确尺度:全局 batch 512 ≪
+  SigLIP 饱和 ~32k、1M×3ep 不过拟合 ⇒ 领先=真硬负例,而非 10k 的挡早塌伪影。全量 10M=论文数字,1M=决策门。
+  设计见 `r1-implementation-plan.md` §10、`verification-tier-1m-zh.md`。
 - 2026-07-28:**R1 长档 40-epoch 跑完 → 结论修正(refine, not overturn)+ 新增「方案完整性自查」节**(#330 / 本次):
   平台(ep30–39)池 88.57 vs 对照 87.92、两带**不重叠** ⇒ 耐久 **ΔR-Sum ≈ +3.9**,而非 10-epoch 快照的 +11~13
   —— 那是**对照尚未从早塌恢复时**测的。对照 ep0→ep1 塌 90.00→85.18(**第三次复现**),4× 步数追回约 2/3。

@@ -399,6 +399,30 @@ bash experiments/run_pretrain.sh experiments/configs/nR1_textbank_pilot.py 8
 < 0.5 R-Sum ⇒ (d) 误判,停(方案 §5)。
 > 池损失默认关的不变性:`vtc_loss_sigmoid` 里池块全在 `if text_bank is not None` 下;不设配置 ⇒ 逐位同旧。
 
+### 3.3.2 R1 大数据 A/B —— 放到 1M 验证层跑(H100;真正发威档)
+
+10k 试点判 GO 但幅度经 40-epoch 修正为 ΔR-Sum≈+3.9,且主要是「挡早塌」的小数据伪影(`r1-implementation-plan.md`
+§9.4)。真正的检验在**批内负例成为瓶颈**的档:H100 现在训 1M 子集(`internvid_v1`),全局 batch 512 远低于
+SigLIP 饱和点(~32k),bank 补 +16384 正好推进甜区,且 1M×3 epoch 不过拟合 ⇒ 领先=真硬负例。设计见
+`r1-implementation-plan.md` §10、`notes/verification-tier-1m-zh.md`。**一对自配对 A/B,彼此相减(不减 r0)。**
+
+```bash
+cd ~/mobileclip && git fetch origin main && git reset --hard origin/main   # divergent 见 TROUBLESHOOTING
+export MVC_DATA_DIR=/home/vca1/datasets
+
+# ① 建 1M 文本负例库缓存(单卡、纯前向、~10–30 min、~1GB;一行,勿折行)。与试点缓存互不覆盖。
+python experiments/r1_build_textbank.py --anno anno_downstream/InternVid/InternVid-10M-flt_1.json --out-feats experiments/cache/textbank_1m_feats.fp16.npy --out-idx experiments/cache/textbank_1m_idx.npy
+
+# ② 跑两对(复用 1M 验证层 runner,串行;~15h/config → 4 条 ~2.5 天)。处理臂启动日志应见 `[R1] text bank ON: pool=(~1e6, 512) ...`
+bash experiments/run_verify_1m.sh 4,5,6,7 sub1m_r1both_s42 sub1m_nR1_s42 sub1m_r1both_s43 sub1m_nR1_s43
+
+# ③ 收结果(标准 MSR-VTT 1k,best epoch)
+grep -hE "t2v_r1|v2t_r1|_match|R@" experiments/runs/sub1m_{r1both,nR1}_s4?.log | tail -40
+```
+判读:ΔR-Sum = `sub1m_nR1_sXX` − `sub1m_r1both_sXX`(**同 seed**),两 seed 同向且超 MSR-VTT 1k 的 ±SE 才算赢
+(两方向都报;bank 硬化 v2t/`txt_r1`)。**两 seed 都清 ±SE ⇒ 真硬负例收益、带 bank 上全量 10M 终训;≈0/矛盾 ⇒
+试点 +3.9 是 10k 专属、不迁移 ⇒ 撤 bank。** 全量 10M = 论文数字,1M 只是决策门。
+
 ---
 
 ### 3.4 选帧基线 — C2 必须打赢的那条平凡基线(零训练,V100 一晚)
