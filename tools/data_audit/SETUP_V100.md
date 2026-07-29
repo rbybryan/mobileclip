@@ -104,7 +104,7 @@ done
 # 本机 10k 抽样路径已是 run_v100.sh 的内置默认值（DATA/CLIPS/OUT 均可不
 # export，直接 bash run_v100.sh <stage> 即可）。只需设模型路径并进仓库：
 export S2_MODEL=ckpts/Qwen3-VL-8B-Instruct
-cd ~/mobileclip                            # 仓库根目录
+cd "$(git rev-parse --show-toplevel)"                            # 仓库根目录
 
 # 内置默认（想覆盖时才 export；注意变量要在同一 shell 里生效）：
 #   DATA =/home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl
@@ -124,7 +124,7 @@ H 类工程问题（缺失/不可解码），并实测三级路径解析在全�
 （`ok` 应 ≥98%，过了后面 S1/S2 解码环节就不会有惊喜）：
 
 ```bash
-source ~/audit_env/bin/activate && cd ~/mobileclip
+source ~/audit_env/bin/activate && cd "$(git rev-parse --show-toplevel)"
 python - <<'PY'
 import json, sys, os, collections
 sys.path.insert(0, "tools/data_audit")
@@ -267,7 +267,7 @@ tail -n1 outputs/audit_10k/s1_shard*.log         # 每个都应是 "[done] shard
 再跑分布体检：
 
 ```bash
-source ~/audit_env/bin/activate && cd ~/mobileclip
+source ~/audit_env/bin/activate && cd "$(git rev-parse --show-toplevel)"
 python - <<'PY'
 import json, glob, collections
 import numpy as np
@@ -690,7 +690,7 @@ transformers≥4.57 + accelerate），区别只在 `--model` 和 `--device-map`�
 所以这里**什么都不用装**。
 
 ```bash
-source ~/audit_env/bin/activate && cd ~/mobileclip
+source ~/audit_env/bin/activate && cd "$(git rev-parse --show-toplevel)"
 df -h .                     # 验收点：剩余 ≥80GB（权重 ~64GB + 余量；8B 的 17GB 已占）
 nvidia-smi --query-gpu=index,memory.total,memory.used --format=csv
                             # 验收点：8 张 32GB 卡，且 4.2 主力已结束（used 接近 0）
@@ -1028,7 +1028,7 @@ S3 阈值**。二值口径的理由见 `SETUP_JUDGE_API.md`「路线 D」的 D3
 这一条是硬性前提。
 
 ```bash
-source ~/audit_env/bin/activate && cd ~/mobileclip
+source ~/audit_env/bin/activate && cd "$(git rev-parse --show-toplevel)"
 modelscope download --model OpenGVLab/InternVL3_5-38B-HF \
   --local_dir /tmp/ivl_probe config.json
 python -m json.tool /tmp/ivl_probe/config.json | head -20

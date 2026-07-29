@@ -141,7 +141,7 @@ pip install opencv-python-headless \
 
 ```bash
 # [101] 先更新到最新代码
-cd ~/mobileclip && git pull origin main
+cd "$(git rev-parse --show-toplevel)" && git pull origin main
 
 # [101] 生成裁判样本（s2_sample.jsonl 的前 500 行）
 head -n 500 outputs/audit_10k/s2_sample.jsonl > outputs/audit_10k/s2_judge_sample.jsonl
@@ -269,7 +269,7 @@ find "$CLIPS/videos" -name "$FN" 2>/dev/null | head -3
 ```bash
 # ③ 重新拉最新 vlm_audit.py（候选 2 是 2026-07-22 才加的），再重跑 §4 预检
 #    [101] 上执行：
-#      cd ~/mobileclip && git pull origin main
+#      cd "$(git rev-parse --show-toplevel)" && git pull origin main
 #      scp -P 31179 tools/data_audit/vlm_audit.py root@10.55.87.68:~/judge/
 #    [中转] 上确认 CLIPS 已 export（见 ②），然后重跑 §4 那段预检，ok 应变成 500
 ```
@@ -394,7 +394,7 @@ PY
 
 ```bash
 # [101] 取回判定
-cd ~/mobileclip
+cd "$(git rev-parse --show-toplevel)"
 scp -P 31179 root@10.55.87.68:~/judge/s2_verdicts_judge.jsonl outputs/audit_10k/
 
 # [101] 一致率 + Cohen's κ

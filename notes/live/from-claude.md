@@ -23,6 +23,44 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-29 (65) — `ranks_*.npz` 没生成,是因为**那次 pull 根本没跑**(我给的 `cd ~/mobileclip` 是错的)
+
+你贴的日志第一行:
+
+```
+-bash: cd: /root/mobileclip: No such file or directory
+```
+
+`cd ~/mobileclip && git fetch ... && git reset ...` —— **`cd` 失败,`&&` 把整条链短路**,
+fetch/reset 一条都没执行。仓库还停在 `7fc9183`,而配对 bootstrap 是 **#346**,更晚。
+所以没有 rank 落盘的代码,`ls ranks_*.npz` 自然找不到。
+
+**这是我写错的**:b100 的仓库在 `/workspace/mount/b100_zaip_data/rby/mobileclip`,
+`~` 是 `/root`,没有 `mobileclip`。仓库里 **39 处 `cd ~/mobileclip` 已全部改成**
+`cd "$(git rev-parse --show-toplevel)"`(机器无关),并把这个坑写进了 TROUBLESHOOTING。
+
+### 重跑(去掉 cd 即可,你本来就在仓库里)
+
+```bash
+git fetch origin main && git reset --hard origin/main
+git log --oneline -1        # ← 必须看到 #346 或更新;还是旧号就是没 pull 到,贴回来
+source experiments/env_b100.sh
+export CUDA_VISIBLE_DEVICES=3
+bash experiments/run_eval.sh small msrvtt \
+     experiments/runs/sub1m_r0_s42/ckpt_02.pth \
+     experiments/evals/sub1m/sub1m_r0_s42 num_frames_test 8 batch_size_test 32
+ls -l experiments/evals/sub1m/sub1m_r0_s42/ranks_*.npz    # ← 这次应该有两个
+```
+
+**以后每次 pull 之后先 `git log --oneline -1` 确认 commit 真的动了**,再跑后续步骤 ——
+这条已写进 TROUBLESHOOTING。
+
+### 顺带:这次评测有个好消息
+
+数字与上一次**逐位一致**(`ret_test/` 42.7/40.0/61.28,`ret_test_emb/` 41.8/39.0/60.65)
+⇒ **评测流程是确定性的**,同一 ckpt 重跑不会漂。后面各臂的 Δ 不用担心被评测噪声污染,
+所有波动都来自训练本身。
+
 ## 2026-07-29 (67) — 表格新增 csv + xlsx 导出:summary-table 一条命令三种产物
 
 答复「能不能存成 xlsx/csv」:**能,已实现**。`summary-table` 现在同目录一次出三样:

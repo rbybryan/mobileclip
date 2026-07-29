@@ -60,7 +60,7 @@ venv** 就行:
 ```bash
 python -m venv /tmp/tflite-export && source /tmp/tflite-export/bin/activate
 pip install torch timm numpy litert-torch      # torch 取最新即可,不影响主环境
-cd ~/mobileclip && python experiments/export_smoke.py --ts 2,16
+cd "$(git rev-parse --show-toplevel)" && python experiments/export_smoke.py --ts 2,16
 deactivate
 ```
 

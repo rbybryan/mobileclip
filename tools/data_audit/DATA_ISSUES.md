@@ -196,7 +196,7 @@ bash tools/data_audit/run_v100.sh status        # S1/S2 行数 + 存活进程 + 
 这个区别决定全量跑之前要不要动 rubric：
 
 ```bash
-cd ~/mobileclip
+cd "$(git rev-parse --show-toplevel)"
 python3 - <<'PROJ'
 import json, glob, collections
 rows = []
@@ -233,7 +233,7 @@ PROJ
 在 **101vector** 仓库根目录跑（`s2_verdicts_judge.jsonl` 已从中转机拷回）：
 
 ```bash
-cd ~/mobileclip
+cd "$(git rev-parse --show-toplevel)"
 python3 - <<'GRAN'
 import json, glob, collections
 J = [json.loads(l) for l in open("outputs/audit_10k/s2_verdicts_judge.jsonl")]

@@ -185,7 +185,7 @@ done
 先在 101vector 上挑出那批视频的清单：
 
 ```bash
-source ~/audit_env/bin/activate && cd ~/mobileclip
+source ~/audit_env/bin/activate && cd "$(git rev-parse --show-toplevel)"
 OUT=outputs/audit_10k
 CLIPS=/home/vca1/datasets/internvid_zh_10k/videos
 head -n "${JUDGE_N:-500}" $OUT/s2_sample.jsonl > $OUT/s2_judge_sample.jsonl
@@ -274,7 +274,7 @@ JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge
 放弃 8 卡数据并行。裁判只跑 500–2000 条，慢一点可以接受：
 
 ```bash
-source ~/audit_env/bin/activate && cd ~/mobileclip
+source ~/audit_env/bin/activate && cd "$(git rev-parse --show-toplevel)"
 OUT=outputs/audit_10k
 head -n 500 $OUT/s2_sample.jsonl > $OUT/s2_judge_sample.jsonl
 
@@ -301,7 +301,7 @@ python tools/data_audit/vlm_audit_hf.py \
 **D1. 换族同档模型做第二意见**（~1 小时，8 卡数据并行，与主力同一套脚本）
 
 ```bash
-source ~/audit_env/bin/activate && cd ~/mobileclip
+source ~/audit_env/bin/activate && cd "$(git rev-parse --show-toplevel)"
 OUT=outputs/audit_10k
 head -n 1000 $OUT/s2_sample.jsonl > $OUT/s2_judge_sample.jsonl
 for i in $(seq 0 7); do
@@ -523,7 +523,7 @@ curl -s --connect-timeout 5 http://<H100_IP>:8001/v1/models | python -m json.too
 ## 4.（V100 机）跑裁判
 
 ```bash
-source ~/audit_env/bin/activate && cd ~/mobileclip
+source ~/audit_env/bin/activate && cd "$(git rev-parse --show-toplevel)"
 export JUDGE_API_BASE=http://<H100_IP>:8001/v1
 export JUDGE_MODEL=ckpts/Qwen3-VL-235B-A22B-FP8   # 以 /v1/models 返回为准
 export JUDGE_API_KEY=EMPTY   # vLLM 未设 --api-key 时任意非空值；run_v100.sh 要求非空
