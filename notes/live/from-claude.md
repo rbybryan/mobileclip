@@ -147,7 +147,12 @@ ROADMAP 3.2 还写着「等首光回报 → R0 起跑」,两边对不上。
 **为什么 1M 才测得到(10k 测不到)**:全局 batch 512 ≪ SigLIP 饱和点 ~32k,bank 每步补 +16384 正好进甜区;
 1M×3 epoch(~5.9k 步)**不过拟合** ⇒ 领先=真硬负例收益,而不是 10k 试点那种「挡早塌」的小数据伪影(§9.4)。
 
-**服务器执行(等 R0 腾出 4 张卡时;先建一次缓存,再串行两对,共 4 config)**:
+**⚠️ 卡 = 0,1,2,3(你在这台 H100 的全部配额,没有 4–7)。全量 R0 也在这 4 张上 → 与本 A/B 串行:
+R0 在跑就先排队,等 R0 空出/暂停后再跑(全局 batch 仍 128×4=512,设计不变)。**
+**(全局更正:本仓早先交接与 `verification-tier-1m-zh.md`/`COMMANDS.md` 里凡写 `4,5,6,7` / 「空出来的 4–7」的,
+一律按 `0,1,2,3` 执行 —— 4–7 对你不可用;R1 A/B 路径的命令已在本次改成 0–3。)**
+
+**服务器执行(0–3 空出后;先建一次缓存,再串行两对,共 4 config)**:
 ```bash
 cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
 export MVC_DATA_DIR=/home/vca1/datasets
@@ -155,7 +160,7 @@ ls -l experiments/configs/sub1m_nR1_s42.py experiments/configs/sub1m_r1both_s42.
 # ① 建 1M 文本负例库缓存(单卡、纯前向、~10–30min、~1GB;一行,勿折行):
 python experiments/r1_build_textbank.py --anno anno_downstream/InternVid/InternVid-10M-flt_1.json --out-feats experiments/cache/textbank_1m_feats.fp16.npy --out-idx experiments/cache/textbank_1m_idx.npy
 # ② 跑两对(~15h/config → 4 条 ~2.5 天;处理臂启动日志应见 `[R1] text bank ON: pool=(~1e6, 512) ...`):
-bash experiments/run_verify_1m.sh 4,5,6,7 sub1m_r1both_s42 sub1m_nR1_s42 sub1m_r1both_s43 sub1m_nR1_s43
+bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_r1both_s42 sub1m_nR1_s42 sub1m_r1both_s43 sub1m_nR1_s43
 ```
 **报告回来**:每 seed 的 `sub1m_nR1` − `sub1m_r1both`(标准 MSR-VTT 1k,best epoch,六个 recall + R-Sum)。
 两 seed 同向且超 ±SE ⇒ 真硬负例、带 bank 上全量 10M 终训;≈0/矛盾 ⇒ 试点 +3.9 是 10k 专属、撤 bank。

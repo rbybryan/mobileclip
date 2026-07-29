@@ -80,15 +80,17 @@
 
 ## 跑法 & 时长
 
-在 R0 全量占着 0–3 时,用空出来的 4 张卡(如 4–7)串行跑:
+**可用卡 = 0–3(共 4 张,是维护者在这台 H100 的全部配额;没有 4–7 可用)。** 全量 R0、本验证层、
+R1 A/B **都挤在这 4 张上 → 只能时分复用、串行**:R0 在跑时本层排队,等 R0 空出/暂停后再跑。**不能**
+像本文早先设想的「R0 占 0–3、验证层用空出来的 4–7」那样分两组并行 —— 4–7 对维护者不可用。下面命令一律用 `0,1,2,3`:
 
 ```bash
 # 挂后台并记 PID(共用 root,停止只能按 PID/PGID,严禁 pkill)
-nohup bash experiments/run_verify_1m.sh 4,5,6,7 > experiments/runs/verify_1m.log 2>&1 &
+nohup bash experiments/run_verify_1m.sh 0,1,2,3 > experiments/runs/verify_1m.log 2>&1 &
 echo "verify-1m PID = $!"
 
 # 只先出 seed 42 的四臂(~2.5 天先看一版 A/B):
-bash experiments/run_verify_1m.sh 4,5,6,7 \
+bash experiments/run_verify_1m.sh 0,1,2,3 \
     sub1m_r0_s42 sub1m_r1a_s42 sub1m_r1b_s42 sub1m_nA1_s42
 
 # 收结果(每条 log 的 epoch 末评测行):
@@ -100,13 +102,13 @@ grep -hE "t2v_r1|v2t_r1|_match|R@" experiments/runs/sub1m_*_s4?.log | tail -60
 # 1) 建 1M 文本负例库缓存(单卡 forward-only,一行别断行;~10–30 min,~1GB):
 python experiments/r1_build_textbank.py --anno anno_downstream/InternVid/InternVid-10M-flt_1.json --out-feats experiments/cache/textbank_1m_feats.fp16.npy --out-idx experiments/cache/textbank_1m_idx.npy
 # 2) 跑两对(复用同一 runner;彼此相减判胜负):
-bash experiments/run_verify_1m.sh 4,5,6,7 sub1m_r1both_s42 sub1m_nR1_s42 sub1m_r1both_s43 sub1m_nR1_s43
+bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_r1both_s42 sub1m_nR1_s42 sub1m_r1both_s43 sub1m_nR1_s43
 grep -hE "t2v_r1|v2t_r1|_match|R@" experiments/runs/sub1m_{r1both,nR1}_s4?.log | tail -40
 ```
 
 **时长(单个 4-GPU slot、batch 128、9 s/step 量级)**:1M×3 epoch ≈ 1953 步/epoch ×3 ≈
-5.9k 步 ≈ **~15 h/config**;8 个串行 ≈ **~5 天**。要更快:只跑 1 个 seed(4 config,减半),
-或等全量 R0 腾出更多卡后分两组并行。**断点续训**:单独重跑某条并追加 `auto_resume True`
+5.9k 步 ≈ **~15 h/config**;8 个串行 ≈ **~5 天**(R1 A/B 那 4 条另 ~2.5 天)。**只有 0–3 这 4 张 ⇒
+只能与 R0 串行,没有第二组卡可并行**;要更快只能减 config(先只跑 1 个 seed = 减半)。**断点续训**:单独重跑某条并追加 `auto_resume True`
 (output_dir 已隔离)。
 
 相关:全量 R0 在 `r0_baseline.py`(当前以 batch 128 在 0–3 跑);长跑运维/选卡/续训见
