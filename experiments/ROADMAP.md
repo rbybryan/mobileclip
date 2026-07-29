@@ -64,6 +64,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 1.5 导出冒烟(U1) | 任务与验收:`notes/plan-review-upgrades.md` U1;**脚本 `experiments/export_smoke.py`,命令 `COMMANDS.md` §3.6,测试 `tests/test_export_smoke.py`(22 项)**;结果 `experiments/export_smoke_results.md`。TFLite 补测用独立 venv(结果文档 §3) |
 | 1.6 B0 多 T 曲线(U2) | 任务与验收:`notes/plan-review-upgrades.md` U2;2.1 已落地 ⇒ 用既有零样本 eval 脚本对官方权重覆盖 `num_frames_test <T>`(T∈{2,4,8,16})即可,模型侧自动插值 |
 | 2.1 C2 T 无关化(✅ 代码落地) | 单测 `python -m pytest tests/test_t_agnostic.py -v`(README §2);V100 冒烟命令见本文件 2.1;per-T BN 工具 `experiments/per_t_bn.py`;设计准绳 `paper-plan-zh.md` §七.3 |
+| 架构第四轮(实测 profile + 零 GPU 闸门清单) | [`notes/architecture-round4.md`](../notes/architecture-round4.md) §3 闸门清单、§5 新增关闭项;命令 `COMMANDS.md` §3.11 |
 | 2.2 R2 教师管线 | **提取脚本 `experiments/extract_teacher.py` 已落地(2026-07-29)**,命令 `COMMANDS.md` §3.10,单测 `tests/test_extract_teacher.py`(44 项);教师权重条目 `CHECKPOINTS.md`;设计决策清单:本文件 2.2 + `paper-plan-zh.md` §六.9 + 评审 U7 |
 | 2.4/2.5 A1/A2/B1(#197) | `notes/neural-inspired-implementation.md` Tier A(配置模板 + 单测)/ Tier B(B1 接线与三臂);配置文件待创建 |
 | **2.4 R1 负例库(建缓存 + 跑 A/B + 长档)** | 探针 `COMMANDS.md` §3.2;建池与 A/B 一条龙 `notes/r1-implementation-plan.md` §8;结果 §9.1/§9.2;长档两臂配置 `experiments/configs/nR1_textbank_pilot_long.py` + `pilot_10k_r1_long.py`,启动命令 `notes/live/from-claude.md` (54) |
@@ -463,9 +464,28 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | R1 大数据 A/B(真正发威档) | 🟡 **配置已入库(1M 子集档)** | 不等全量,**放到 1M 验证层跑**:处理 `sub1m_nR1_s42/s43`(+bank) vs 对照 `sub1m_r1both_s42/s43`(SigLIP 制度无 bank),**彼此相减**;需先建 1M 缓存 `textbank_1m_*`(命令 `COMMANDS.md` §3.3.2)。为何 1M 才发威:全局 batch 512 ≪ SigLIP 饱和 ~32k + 不过拟合 ⇒ 领先=真硬负例(非 10k 挡早塌伪影)。全量 10M=论文数字。设计见 [`r1-implementation-plan.md`](../notes/r1-implementation-plan.md) §10 |
 | 重字幕线定版(§0.9 全案复审) | 🟡 | 2026-07-28:判断式直融 v3 定版 + 供给取代旧段;**3 红**(GDINO 未装=最大裸露面 / 512→640 已修 / 长稿未验真)、4 黄(迭代快于证据 ⇒ 冻结 prompt)、4 绿。**不占 EN 主时钟(D2)**。见 [`recaption-master-plan.md`](../notes/recaption-master-plan.md) §0.9 |
 | b100 训练侧两个坑 | ✅ 已修/已档 | `patch_embed` 秒级 OOM(别等空卡,按剩余显存裁 batch)+ DDP×梯度检查点 `marked as ready twice` ⇒ 两处 `checkpoint()` 加 `use_reentrant=False`(#316,`TROUBLESHOOTING.md`) |
+| **架构第四轮(首次实测 profile)** | 🔴 **两条前提被推翻,需服务器端 5 分钟核验** | [`notes/architecture-round4.md`](../notes/architecture-round4.md)。四份独立评审 + **首次真实 profile**。①**GATE-0 的 ②③ 两条腿疑似混淆**:`freeze_vision` 只解冻时序分支(`_small.py:94-112`),而仓库自己的进度报告说上游recipe正是「冻结图像骨干+只训时序分支」(`clip-2025-progress-report.md:184`)⇒ 空间 λ 是在 MobileCLIP-S2 **图像预训练**里学的、时序 λ 只在短视频阶段学 ⇒ 6.1% 比值把「无用」和「少练了 100 倍」混为一谈。**腿①(行为学 shuffle)不受影响**。②**训练是解码瓶颈,MFU ≈0.67%**(477 GFLOP/样本 × 55.8 样本/s ÷ 4×H100 ÷ 990 TFLOP/s);另一路佐证:55.8÷24 workers = **430 ms/片**,典型 decord 数 ⇒ **「6.6 天/轮」很可能是 `num_workers=6` 的产物,不是模型属性**。③实测:**时序分支 = 0.20% MACs 但 27.8% 的 ONNX 图**(440/1581 节点)、18% CPU mixer 墙钟。④**O(T²) 项只有 2.10–2.25%**(「8%」是 stage-4 总量)⇒「时序注意力是 O(T²)」这条线**按算力永久关闭**。⑤**AC5+AC9 柱二被反转**:INT8 把 δ+λΔ 融合核里的时序项**整个抹掉**(λ 中位 8e-4 ≪ 3.9e-3 阈值),AC5 的容量是在 INT8 **兑出**而非兑入,且其验收判据「验推理逐位不变」是 fp32 测试、测不到这件事 |
 | 架构探索 backlog(AC1–AC9,第三轮最终稿) | ⬜ | 顾问式,**均未 A/B、不占主时钟**;落地顺序在「架构探索 backlog」段;AC1a=可导出 P9 由 §1.5 触发、AC-b 是 AC2 前置、AC6′ 净新增仅文本塔 LoRA;死路 4 条已判。源码核查稿 #310 |
 
 ## 进展日志(实时,倒序;每个会话在此加一行,格式:日期:事件(出处))
+
+- 2026-07-29:**架构第四轮 —— 首次真实 profile,推翻两条前提**
+  ([`notes/architecture-round4.md`](../notes/architecture-round4.md);四份独立专家评审)。
+  前三轮都在用**解析估算**推理,这轮用 `torch.utils.flop_counter` + ONNX 导出实测。
+  🔴 **(1) GATE-0 的腿②③ 疑似混淆**(见状态表新行)—— **腿①(行为学)不受影响**,
+  「这份权重里该支路贡献≈0」仍成立;但**「时序重参数化作为设计无效」不成立** ——
+  该支路可能从未被公平训练过。**服务器端 1 分钟判定**:比对
+  `mobileviclip_small.pt` 与 MobileCLIP-S2 图像 ckpt 的空间 `layer_scale`,逐位相同 ⇒ 骨干被冻 ⇒ 腿②③ 作废。
+  论文措辞与 round2 §6 必须相应收窄。
+  🔴 **(2) 训练是解码瓶颈,MFU ≈0.67%** ⇒ **U6 预算阶梯、裁臂顺序、乃至 G2 的测量危机
+  都可能是围绕一个可移除的障碍搭起来的**。30 分钟零 GPU 判定:空模型跑 dataloader + 看 SM%。
+  ⚠️ 修法(`num_workers`↑)取决于 H100 机器核数,**未核实**,先测再改。
+  ✅ **(3) 已在本 worktree 复核**:filmstrip 等价(float64 误差 1.3e-15,时序 Conv1d ≡
+  `(B,C,T·H,W)` 上 dilation=(H,1) 的 conv2d,**零 permute**、1.74×)、`get_sim` 早就支持
+  `ndim==3` 的 max/mean 后期交互、mean-before-normalize 导致的 **β 先验**(仅偏 t2v)、
+  `RepCPE` 的 spatial_shape 是**卷积核不是网格**(⇒ 视觉塔**分辨率无关**,256² 是从图像预训练继承来的、
+  从未为 8 帧检索重新推导)。
+  **下一步 = 零 GPU 闸门清单**(round4 §3):8 项,最贵一项 12 GPU-h,能定掉大半提案。
 
 - 2026-07-29:**C1 教师提取脚本落地 —— G1 由 🔴 降为 🟡**(`experiments/extract_teacher.py`,
   命令 `COMMANDS.md` §3.10,单测 `tests/test_extract_teacher.py` 44 项全过)。

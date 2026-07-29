@@ -2463,10 +2463,7 @@ scp -r ~/.cache/huggingface/hub/models--hfl--minirbt-h288    rby@101vector:~/.ca
 之后在服务器重跑前必须清掉"GDINO 缺席"时代的旧判定（验真按 video 续跑，不清则永不重验）：
 
 ```bash
-rm -f outputs/audit_10k/pipe*_verified.jsonl \
-      outputs/audit_10k/pipe*_r.*.jsonl outputs/audit_10k/pipe*_final.jsonl
-# 三组都要删：验真档、refine 修复档（按 video 续跑，不删会复用 OCR-only 旧口径的
-# 修复结果）、终稿拷贝——覆盖 A/B 两臂与直融/投票各版
+rm -f outputs/audit_10k/pipe*_verified.jsonl   # 覆盖 A/B 两臂与直融/投票各版
 ```
 
 ## 服务器 `git pull origin main` 报 `fatal: Need to specify how to reconcile divergent branches`

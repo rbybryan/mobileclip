@@ -142,7 +142,7 @@ def main():
     # per-stage panorama stays in --output for analysis
     SHEET_Q = ["重述质量[重述更好/差不多/旧译更好]",
                "直融质量[可直接用/信息不足/含幻觉]", "note"]
-    sheet_hdr = (["video", "video_path", "英文en", "原zh", "判错原因"]
+    sheet_hdr = (["video", "video_path", "英文en", "原zh"]
                  + [f"重述{i + 1}" for i in range(5)]
                  + ["直融长稿", "直融"] + SHEET_Q)
     sheet_rows = []
@@ -281,7 +281,6 @@ def main():
                      resolve(args.video_root or "", task, vid) if resolve else "",
                      flat(task.get("en")),
                      flat(task.get("zh_old") or task.get("zh")),
-                     flat("; ".join(task.get("reasons") or [])),
                      *recap_cells, d_long, dir_c]
                     + [""] * len(SHEET_Q))
             n_rows += 1

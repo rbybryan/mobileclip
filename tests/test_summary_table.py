@@ -42,9 +42,3 @@ def test_cell_caps_text_plain_numbered():
     assert cell_caps_text("只有一条") == "只有一条"
     assert cell_caps_text(None) == ""
     assert "<" not in cell_caps_text("【人物】a ‖ b")   # 纯文本, 无 HTML
-
-
-def test_gif_name_row_order_prefix():
-    from make_summary_table import gif_name
-    assert gif_name(7, "videos/a b.mp4") == "007_videos_a_b.mp4.gif"
-    assert gif_name(123, "x.mp4") == "123_x.mp4.gif"

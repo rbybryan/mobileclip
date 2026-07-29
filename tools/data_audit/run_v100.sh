@@ -756,7 +756,6 @@ PY
     --scores "${P}_scores.*.jsonl" --output "${P}_units.jsonl" \
     --min-support "${FUSE_MIN_SUPPORT:-2}" \
     || echo "[warn] 投票段失败——投票浓缩与诊断列将为空，其余照常"
-  t_stage "④b1投票计票(CPU规则)"
   # 版本一「直融」(§5.7 v5, ASID-Verify 式): 长短稿分开两次调用 ——
   # 调用1 判断式融合出长稿(不限字数, 保留全部过审细节)+带理由 dropped;
   # 调用2 只读长稿提炼短稿(一条≤30字训练字幕, 32-token 墙内)
@@ -765,7 +764,6 @@ PY
     --mode fuse-direct --max-new-tokens 768 --num-shards 1 --shard-id 0 \
     --output "${P}_fused_d.{shard}.jsonl" \
     || echo "[warn] 直融段失败（常见: 卡被占 OOM）——重跑本命令会按 video 续跑补齐"
-  t_stage "④b2直融=长稿+短稿(LLM×2调用)"
   # 版本二「投票浓缩」(§5.5): 规则跨遍计票 -> LLM 只打包过票单元
   CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
     --input "${P}_units.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
@@ -773,7 +771,7 @@ PY
     --output "${P}_fused_v.{shard}.jsonl" \
     || echo "[warn] 投票浓缩段失败（常见: 卡被占 OOM）——重跑本命令会按 video 续跑补齐"
 
-  t_stage "④b3投票打包(LLM×1调用)"
+  t_stage "④b融合双版(直融+投票浓缩,单卡)"
   echo "== ⑤ Panel-V v0 验真（GDINO fp32 + RapidOCR；均非 LLM；不可用会降级为 unverified 不阻塞）=="
   CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/fuse_verify.py \
     --views "$VIEWS_GLOB" --video-root "$CLIPS" \
@@ -781,7 +779,6 @@ PY
     --verifiers "${PIPE_VERIFIERS:-gdino,ocr}" \
     ${GDINO_MODEL:+--gdino-model "$GDINO_MODEL"} \
     || echo "[warn] 验真档整体失败——全部视图按 unverified 保守保留，TSV 照常生成（勿用 Qwen 自验替代：计划 §3.5 纪律）"
-  t_stage "⑤a视图验真(GDINO+OCR)"
   # 两版融合稿：验真 → (§5.8-1 ASID 式修复环) 有 ✗ 才起一次最小修改修复 + 复验；
   # 终稿一律落 *_final.jsonl（无 ✗ 时=首轮验真件的拷贝）。修复 prompt 改动后重跑
   # 需 rm ${P}_fused_*_r.*.jsonl（修复按 video 续跑）。
@@ -807,10 +804,9 @@ PY
     else
       cp -f "${P}_${FV}_verified.jsonl" "${P}_${FV}_final.jsonl"
     fi
-    case "$FV" in fused_d) t_stage "⑤b直融稿验真+✗修复复验";;
-                  *)       t_stage "⑤c投票稿验真+✗修复复验";; esac
   done
 
+  t_stage "⑤验真+✗修复复验(单卡)"
   echo "== ⑥ 全景 TSV + 评审表 =="
   python tools/data_audit/make_pipeline_tsv.py --tasks "$SAMPLE" \
     --recaps "${P}_recaps.jsonl" --scores "${P}_scores.*.jsonl" \
@@ -821,12 +817,11 @@ PY
     --dfused "${P}_fused_d_final.jsonl" --dfused-raw "${P}_fused_d.*.jsonl" \
     --output "$TSVF" \
     --sheet-output "$SHEET" --video-root "$CLIPS"
-  t_stage "⑥全景TSV(CPU)"
   echo "== ⑦ 离线评审包（better_zh 同款 index.html + videos/，含打分单选与导出） =="
   python tools/data_audit/make_review_bundle.py \
     --sheet "$SHEET" --out-dir "$BUNDLE" \
     || echo "[warn] 评审包生成失败（TSV 仍可用）"
-  t_stage "⑦评审包(CPU)"
+  t_stage "⑥⑦TSV+评审包(CPU)"
   QTOT=$(wc -l < "$QUEUE")
   echo ""
   echo "== ⏱ 分段耗时 + 全量外推（臂=$RECAP_STYLE; 队列 $QTOT 片; 线性外推=同硬件、全冷缓存）=="
