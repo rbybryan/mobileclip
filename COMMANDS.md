@@ -579,7 +579,9 @@ done
 
 用于 `Empty DataFrame` 那个坑(见 `TROUBLESHOOTING.md`「训练跑完但没有任何评测数字」)。
 DeepSpeed 存的是**目录式** ckpt(`ckpt_02.pth/mp_rank_00_model_states.pt`),
-`shared_utils.py:150` 的 `osp.isdir` 分支直接支持,**不用重训**。
+`tasks_clip/shared_utils.py` 的**非 deepspeed 加载支路**现在会自动解析这种目录,
+**不用重训**。(该支路 2026-07-29 之前只判 `osp.isfile`,目录恒为 False ⇒ 静默不加载,
+见下面的自检。)
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
@@ -611,6 +613,35 @@ grep -E "Load pretrained model from|training from scratch|自动解析到" \
 - ckpt 路径要指到**目录** `ckpt_02.pth`(不是里面的 `.pt` 文件);
 - 各臂的 `output_dir` 是隔离的,别把 s42/s43 的结果写进同一个 `--out`;
 - 补评的是**训练内 held-out 的替代**,和论文主表用的零样本评测是同一套脚本,口径一致。
+
+#### 批量:补齐所有「有 ckpt 但没 `ranks_*.npz`」的臂
+
+配对 bootstrap(§3.9)要 `ranks_*.npz`,而它 **2026-07-29 才开始落盘** ⇒ 之前评过的臂
+都得再走一次前向。先看清单(零 GPU):
+
+```bash
+for d in experiments/runs/sub1m_*/; do
+  n=$(basename "$d"); [ -e "$d/ckpt_02.pth" ] || continue
+  printf "%-24s ranks=%s\n" "$n" "$(ls experiments/evals/sub1m/$n/ranks_*.npz 2>/dev/null | wc -l)"
+done
+```
+
+`ranks=0` 的批量补(每条 MSR-VTT 1k 约 1 分钟,**串行**跑,别并发抢卡):
+
+```bash
+source experiments/env_b100.sh
+export CUDA_VISIBLE_DEVICES=3
+for d in experiments/runs/sub1m_*/; do
+  n=$(basename "$d"); [ -e "$d/ckpt_02.pth" ] || continue
+  ls experiments/evals/sub1m/$n/ranks_*.npz >/dev/null 2>&1 && { echo "skip $n"; continue; }
+  echo "=== $n ==="
+  bash experiments/run_eval.sh small msrvtt "$d/ckpt_02.pth" \
+       "experiments/evals/sub1m/$n" num_frames_test 8 batch_size_test 32 || echo "FAILED $n"
+done
+```
+
+跑完对**每条**臂做一次上面那个 `grep "Load pretrained model from"` 自检 —— 权重没加载
+也会打印出一套很像样的数字(实测 r_mean 54.82),不查就会当真。
 
 ### 3.9 配对 bootstrap 比较两条臂(评审 U10-1 / ROADMAP 自查 G4)—— 零 GPU
 
