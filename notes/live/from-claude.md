@@ -75,6 +75,27 @@ grep -E "Load pretrained model from|training from scratch" \
 「S2 初始化 + 随机时序算子」= raw `r_mean 54.82`。它是一个**免费的地板参照** ——
 1M 训练如果连它都超不过,那就是训练本身有问题。官方权重同口径 61.47 是天花板参照。
 
+## 2026-07-29 (66) — 版本对了(#344✓可继续);病根找到:服务器一直站在 claude/export-smoke 分支上
+
+你贴的 `git log` 第一行就是答案:`(HEAD -> claude/export-smoke, origin/main)` ——内容已对齐
+#344(比 #343 新,✓),**但服务器不在 main 上,而是滞留在 (#320 时代的)工作分支 claude/export-smoke**。
+这就是几周来反复 divergent/「pull 了没生效」的病根:每次 `git pull origin main` 都在错误分支上执行。
+
+**一次性根治(内容不变,只是把脚站回 main),然后继续 (65) 的序列:**
+```bash
+cd ~/mobileclip
+git checkout -B main origin/main        # 切回 main 并对齐(-B: 已存在则重置)
+git branch -D claude/export-smoke       # 删掉滞留分支(刚 reset 过,无未推提交,安全)
+git log --oneline -1                    # ← 括号里应显示 (HEAD -> main, origin/main)
+# 继续:五槽+新融合 prompt 的 compare 重跑 → 表格页
+rm -f outputs/audit_10k/recap_slot.*.jsonl outputs/audit_10k/pipe_sl_*.jsonl       outputs/audit_10k/pipe_sl_timing.tsv outputs/audit_10k/pipe*fused_d*.jsonl
+PIPE_LEAN=1 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+bash tools/data_audit/run_v100.sh summary-table
+tar czf outputs/audit_10k/table.tgz -C outputs/audit_10k table_compare
+```
+以后每次对齐后**看一眼括号**:`(HEAD -> main, origin/main)` 才是正常态。TROUBLESHOOTING
+的 divergent 条目已补这个根因。GDINO scp 仍最高优先。
+
 ## 2026-07-29 (65) — 你那条 summary-table 没跑起来:服务器 checkout 又落后了(帮助列表里没这命令=铁证)
 
 刚才那次失败的读法:**脚本打印整屏用法=子命令没被识别**,而打印出的列表里根本没有
