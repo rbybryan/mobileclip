@@ -1,5 +1,50 @@
 # Troubleshooting
 
+## venv 里明明装了的包报 `ModuleNotFoundError`(如 `termcolor`)—— 裸 `torchrun` 跑到系统 python 去了
+
+### Symptom
+
+激活了 venv/conda,训练也跑得好好的,但某个脚本一起来就:
+
+```
+ModuleNotFoundError: No module named 'termcolor'
+```
+
+**关键线索在栈里,不在报错本身** —— 明明 venv 是 `mvc_env310`,栈却全是系统路径:
+
+```
+File "/usr/local/lib/python3.10/dist-packages/torch/distributed/run.py", ...
+binary : /usr/bin/python3
+```
+
+### Cause
+
+**裸 `torchrun` 走 PATH**,在装了系统级 torch 的机器上解析到
+`/usr/local/bin/torchrun`,而它的 shebang 指向 `/usr/bin/python3`
+⇒ **整个任务在系统解释器里跑,绕开你已激活的环境**。venv 里装没装 `termcolor` 根本不相干。
+
+**这个坑咬过两次**:b100 训练 **2026-07-24**(当时只修了 `experiments/run_pretrain.sh`)、
+b100 评测 **2026-07-29**(`experiments/run_eval.sh` 没同步到,补评 `sub1m_r0_s42` 直接崩)。
+
+### Fix
+
+**一律用 `python -m torch.distributed.run`,不要用裸 `torchrun`**:
+
+```bash
+python -m torch.distributed.run --nproc_per_node=1 --master_port=... tasks_clip/retrieval.py ...
+```
+
+`python -m` 保证用的就是当前 `python`。**2026-07-29 已把全仓 17 个启动器统一改掉**
+(`experiments/run_eval.sh`、`scripts/evaluation/.../eval_*.sh` 全部、
+`scripts/pretraining/.../run.sh` 全部),`COMMANDS.md` / `README_zh.md` 里的手写配方同步。
+
+**自检**:`run_eval.sh` / `run_pretrain.sh` 起来时会打印
+```
+python    : /workspace/.../mvc_env310/bin/python
+```
+**这一行对不上你激活的环境,就是这个坑。**
+
+---
 ## 训练跑完但没有任何评测数字:`Empty DataFrame` + `Skip eval act_val split`
 
 ### Symptom

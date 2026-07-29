@@ -738,7 +738,7 @@ bash scripts/evaluation/clip/zero_shot/mobileviclip_small/eval_msrvtt.sh
 ```bash
 export PYTHONPATH=${PYTHONPATH}:.
 export CUDA_VISIBLE_DEVICES=0
-torchrun --nproc_per_node=1 --master_port=$((10000 + RANDOM % 20000)) \
+python -m torch.distributed.run --nproc_per_node=1 --master_port=$((10000 + RANDOM % 20000)) \
     tasks_clip/retrieval.py \
     scripts/evaluation/clip/zero_shot/mobileviclip_tiny/config_msrvtt.py
 ```
@@ -869,7 +869,7 @@ bash scripts/pretraining/clip/mobileviclip_small/run.sh
 ```bash
 export PYTHONPATH=${PYTHONPATH}:.
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-torchrun --nnodes=1 --nproc_per_node=8 --master_port=$((11000 + RANDOM % 20000)) \
+python -m torch.distributed.run --nnodes=1 --nproc_per_node=8 --master_port=$((11000 + RANDOM % 20000)) \
     tasks_clip/pretrain.py \
     scripts/pretraining/clip/mobileviclip_tiny/config.py
 ```
