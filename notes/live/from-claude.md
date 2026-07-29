@@ -23,6 +23,73 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-29 (64) — 表格版总结页就位:GIF + 九列(en源|原zh|A/B 重述+长稿+短稿), compare 之后一条命令
+
+按你要的形式做好了(注:R1 线 07-29 的块把 (58)-(60) 编号复用了,与我 07-28 的 (58)-(60)
+是不同内容,按日期区分;为避混我直接跳到 (64))。
+
+**用法(pipeline-compare 跑完后, CPU ~1-2 分钟):**
+```bash
+bash tools/data_audit/run_v100.sh summary-table
+tar czf outputs/audit_10k/table.tgz -C outputs/audit_10k table_compare
+# 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/table.tgz . && tar xzf table.tgz
+#       打开 table_compare/table.html
+```
+
+- 每行 = 一片:**循环 GIF**(16 帧×150ms, 最长边 300px, 用管线同款 decord 解码, 单片失败
+  只缺那一格不拖死整表) | 源caption(en) | 源翻译(黄) | **方案A** 重述(1.2.3. 编号)/直融
+  长稿/直融短稿(绿底加粗) | **方案B** 同三列(重述带【人物】【物体】蓝徽标)。
+- 数据直接读 review_compare.tsv,**零重算**;GIF 有缓存,重跑只补缺的。右上角版本角标
+  **vT20260728a**(旧文件识别用)。50 片的包约 25-75MB。
+- 表格页是给"看结果/给人展示"用的静态页;要边看边填单选仍用卡片包 bundle_compare。
+
+顺序建议:先跑 (60) 块(07-28 那个五槽重跑序列, 含 PIPE_LEAN=1 变体见 (62)) → 再跑本块
+两行。**GDINO scp 仍最高优先**。
+## 2026-07-29 (61) — `termcolor` 的真因是**没 source `env_b100.sh`**;另外**没有 GPU 4**(我上条给错了)
+
+我上一条给的命令有**两个错**,都已修:
+
+**错 ①:`CUDA_VISIBLE_DEVICES=4` —— 这台机没有 4-7**(#339 已定:0-3 就是你的全部配额)。
+**错 ②:漏了 `source experiments/env_b100.sh`。**
+
+**`termcolor` 的真因**(诊断行已经把它指出来了):`python : /usr/bin/python`。
+这在 b100 上**是对的、不是 bug** —— `SETUP_B100.md` §2 早就写明:「`mvc_env310` 提示符虽在,
+但 `python` 实际指向 `/usr/bin/python`,不再修它」,策略是**沿用系统 torch(2.5.1+cu124,含 sm_90)
++ 缺的小包装进私有 user-site**,由 `env_b100.sh` 设 `PYTHONUSERBASE` 生效。
+**你这个新 shell 没 source 它 ⇒ user-site 不在 `sys.path` ⇒ termcolor 导不进。**
+(训练那 15 小时之所以没事,是因为启动 runner 的那个 shell source 过。)
+
+⇒ **别 `pip install termcolor`** —— 裸装会落到共用系统目录,是事故级操作(会改到 wky/zyc 的环境)。
+
+### 正确命令(两处都已改对)
+
+```bash
+cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
+source experiments/env_b100.sh                 # ← 关键的一步
+export CUDA_VISIBLE_DEVICES=3                  # ← 0-3 里挑一张,不是 4
+bash experiments/run_eval.sh small msrvtt \
+     experiments/runs/sub1m_r0_s42/ckpt_02.pth \
+     experiments/evals/sub1m/sub1m_r0_s42 num_frames_test 8 batch_size_test 32
+```
+
+**先看头两行输出**:
+```
+python    : /usr/bin/python                    ← b100 上这就是对的
+userbase  : /workspace/mount/b100_zaip_data/rby/pyuser   ← 这行必须有值,`<未设置>` 就是没 source
+```
+
+### 与在跑的 r1a 共卡,可以
+
+`sub1m_r1a_s42` 占 0-3 训练,峰值 ~42G / reserved ~46G,**80G 卡还剩 ~34G**;
+补评是单卡、1k 条、`batch_size_test 32`,放得下。会让训练略慢几分钟,可接受。
+(不想共卡就等 r1a 约 16:25 UTC 跑完再补评,反正它也要补。)
+
+### 脚本已经自己会兜了
+
+`run_eval.sh` / `run_pretrain.sh` 现在:**① 检测到 `PYTHONUSERBASE` 没设且 user-site 存在
+就自动 source `env_b100.sh`;② 起 torchrun 之前先试导一次 `termcolor, torch`,失败就直接
+打印修法并退出** —— 不会再让你等三层栈之后才看到一个含糊的缺包错误。
+
 ## 2026-07-29 (60) — 别取消 `sub1m_r1a_s42`:训练是好的,只是环内评测会空;后面 6 个臂正常
 
 **回答:不用取消。** 三条:
@@ -147,7 +214,12 @@ ROADMAP 3.2 还写着「等首光回报 → R0 起跑」,两边对不上。
 **为什么 1M 才测得到(10k 测不到)**:全局 batch 512 ≪ SigLIP 饱和点 ~32k,bank 每步补 +16384 正好进甜区;
 1M×3 epoch(~5.9k 步)**不过拟合** ⇒ 领先=真硬负例收益,而不是 10k 试点那种「挡早塌」的小数据伪影(§9.4)。
 
-**服务器执行(等 R0 腾出 4 张卡时;先建一次缓存,再串行两对,共 4 config)**:
+**⚠️ 卡 = 0,1,2,3(你在这台 H100 的全部配额,没有 4–7)。全量 R0 也在这 4 张上 → 与本 A/B 串行:
+R0 在跑就先排队,等 R0 空出/暂停后再跑(全局 batch 仍 128×4=512,设计不变)。**
+**(全局更正:本仓早先交接与 `verification-tier-1m-zh.md`/`COMMANDS.md` 里凡写 `4,5,6,7` / 「空出来的 4–7」的,
+一律按 `0,1,2,3` 执行 —— 4–7 对你不可用;R1 A/B 路径的命令已在本次改成 0–3。)**
+
+**服务器执行(0–3 空出后;先建一次缓存,再串行两对,共 4 config)**:
 ```bash
 cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
 export MVC_DATA_DIR=/home/vca1/datasets
@@ -155,7 +227,7 @@ ls -l experiments/configs/sub1m_nR1_s42.py experiments/configs/sub1m_r1both_s42.
 # ① 建 1M 文本负例库缓存(单卡、纯前向、~10–30min、~1GB;一行,勿折行):
 python experiments/r1_build_textbank.py --anno anno_downstream/InternVid/InternVid-10M-flt_1.json --out-feats experiments/cache/textbank_1m_feats.fp16.npy --out-idx experiments/cache/textbank_1m_idx.npy
 # ② 跑两对(~15h/config → 4 条 ~2.5 天;处理臂启动日志应见 `[R1] text bank ON: pool=(~1e6, 512) ...`):
-bash experiments/run_verify_1m.sh 4,5,6,7 sub1m_r1both_s42 sub1m_nR1_s42 sub1m_r1both_s43 sub1m_nR1_s43
+bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_r1both_s42 sub1m_nR1_s42 sub1m_r1both_s43 sub1m_nR1_s43
 ```
 **报告回来**:每 seed 的 `sub1m_nR1` − `sub1m_r1both`(标准 MSR-VTT 1k,best epoch,六个 recall + R-Sum)。
 两 seed 同向且超 ±SE ⇒ 真硬负例、带 bank 上全量 10M 终训;≈0/矛盾 ⇒ 试点 +3.9 是 10k 专属、撤 bank。

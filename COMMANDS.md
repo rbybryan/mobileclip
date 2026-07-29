@@ -413,8 +413,9 @@ export MVC_DATA_DIR=/home/vca1/datasets
 # ① 建 1M 文本负例库缓存(单卡、纯前向、~10–30 min、~1GB;一行,勿折行)。与试点缓存互不覆盖。
 python experiments/r1_build_textbank.py --anno anno_downstream/InternVid/InternVid-10M-flt_1.json --out-feats experiments/cache/textbank_1m_feats.fp16.npy --out-idx experiments/cache/textbank_1m_idx.npy
 
-# ② 跑两对(复用 1M 验证层 runner,串行;~15h/config → 4 条 ~2.5 天)。处理臂启动日志应见 `[R1] text bank ON: pool=(~1e6, 512) ...`
-bash experiments/run_verify_1m.sh 4,5,6,7 sub1m_r1both_s42 sub1m_nR1_s42 sub1m_r1both_s43 sub1m_nR1_s43
+# ② 跑两对(复用 1M 验证层 runner,串行;~15h/config → 4 条 ~2.5 天)。卡 = 0,1,2,3(维护者全部配额;
+#    与全量 R0 时分复用,R0 空出后再跑)。处理臂启动日志应见 `[R1] text bank ON: pool=(~1e6, 512) ...`
+bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_r1both_s42 sub1m_nR1_s42 sub1m_r1both_s43 sub1m_nR1_s43
 
 # ③ 收结果(标准 MSR-VTT 1k,best epoch)
 grep -hE "t2v_r1|v2t_r1|_match|R@" experiments/runs/sub1m_{r1both,nR1}_s4?.log | tail -40
@@ -582,7 +583,10 @@ DeepSpeed 存的是**目录式** ckpt(`ckpt_02.pth/mp_rank_00_model_states.pt`),
 
 ```bash
 cd ~/mobileclip
-export CUDA_VISIBLE_DEVICES=4          # 一张卡够
+source experiments/env_b100.sh         # ⚠️ b100 必做:设 PYTHONUSERBASE,否则 termcolor 等导不进
+                                       #   (脚本现在也会自动补,但显式 source 更稳)
+export CUDA_VISIBLE_DEVICES=3          # ⚠️ 只有 0-3 四张卡(#339,没有 4-7)
+                                       #   训练在跑时可与之共卡:训练峰值 ~42G,80G 卡余量够
 RUN=experiments/runs/sub1m_r0_s42      # 换成要补评的臂
 bash experiments/run_eval.sh small msrvtt "${RUN}/ckpt_02.pth" \
      experiments/evals/sub1m/$(basename ${RUN}) num_frames_test 8

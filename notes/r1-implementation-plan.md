@@ -630,8 +630,9 @@ Cache first, then the four arms via the existing serial runner (it already accep
 names; no runner change needed):
 
 ```bash
-# after the cache exists; on a free 4-GPU slot, serial (~15 h/config → ~2.5 days for the 4)
-bash experiments/run_verify_1m.sh 4,5,6,7 sub1m_r1both_s42 sub1m_nR1_s42 sub1m_r1both_s43 sub1m_nR1_s43
+# after the cache exists; cards = 0,1,2,3 (the maintainer's full H100 quota — no spare 4-7,
+# so this timeshares 0-3 with the full-10M R0: run it when R0 is idle). Serial, ~15 h/config → ~2.5 days.
+bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_r1both_s42 sub1m_nR1_s42 sub1m_r1both_s43 sub1m_nR1_s43
 grep -hE "t2v_r1|v2t_r1|_match|R@" experiments/runs/sub1m_{r1both,nR1}_s4?.log | tail -40
 ```
 
