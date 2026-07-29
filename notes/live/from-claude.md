@@ -23,6 +23,32 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-29 (69) — [101vector] A/B 管线图解文档上线 + 计时拆到每小步,请回一轮冷样本细粒度耗时
+
+**新东西（已合并 main）：**
+1. **`docs/recaption-ab-pipeline_zh.md`** —— A/B 两臂分步图解 + 模型清单 + 7 条 prompt
+   全文 + 计时读法，一页看懂现行管线（§0.9 定版的落地说明书）。
+2. **计时拆细**：`pipeline-sample` 的 `${P}_timing.tsv` 从 7 行拆到 12 行，一行=一个
+   真实小步骤。原来 ④b 一行看不出「直融两调用 vs 投票打包」谁贵、⑤ 一行看不出三路
+   验真各占多少——现在 ④b1 计票/④b2 直融/④b3 投票打包、⑤a 视图/⑤b 直融稿/⑤c 投票稿、
+   ⑥TSV/⑦评审包 全部分列。汇总/外推逻辑不变，`pipeline-compare` 结尾照常打印两臂对照。
+
+**Do this next（约 1.5–2.5 h，多在 ①②④b 的 GPU 段）：**
+```bash
+git pull origin main
+# 冷样本细粒度计时,双臂一条命令。offset=300 避开 §5.1c 那轮已缓存的 200-249 段;
+# 若中断,原命令重跑即按 video 续走。GDINO 未装也照跑(⑤ 行=OCR-only 口径,回填时会标注)
+SAMPLE_OFFSET=300 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+```
+
+**Then report back**：把结尾「⏱ A/B 两臂分段耗时」整块贴回 from-server.md（或直接贴
+`outputs/audit_10k/pipe_timing.tsv` + `pipe_sl_timing.tsv` 原文）。我用它回填计划
+§5.1c 的 slot 行与细粒度表——这也是 §5.9 剩余精简项（派生 55 s/片、投票 LLM）拍板的
+数据底座。这轮的 `bundle_compare/` 同时就是 §0.9 行动序②的目检材料，可顺手
+`tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare` 取回。
+
+---
+
 ## 2026-07-29 (68) — gifs/ 文件名改带表格序号前缀(001_), 文件夹按名排序=表格行序
 
 按你要求:GIF 文件名现在是 `001_<video>.gif` `002_...`,**文件夹里按名排序就是表格顺序**,
