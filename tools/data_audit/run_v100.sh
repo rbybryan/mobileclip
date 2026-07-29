@@ -1169,5 +1169,19 @@ s3)
   ;;
 *)
   sed -n '2,/^set -euo/p' "$0" | grep -E '^#( |$)' | sed 's/^# \?//'
+  # 未知子命令必须响亮失败（TROUBLESHOOTING「run_v100.sh 打印用法而不执行」条）：
+  # 静默打帮助+exit 0 会把「checkout 落后/命令拼错」伪装成成功，紧接着的 tar/scp
+  # 才报 No such file，误导排查方向。
+  if [ -n "${1:-}" ]; then
+    {
+      echo ""
+      echo "❌ 未知子命令: $1"
+      echo "   上面的用法列表里没有它。两种可能："
+      echo "   a) 拼写错了 —— 对照上表；"
+      echo "   b) 命令是新版本才有的，而本机 checkout 落后 —— 先对齐再重跑："
+      echo "      git fetch origin main && git reset --hard origin/main && git log --oneline -1"
+    } >&2
+    exit 1
+  fi
   ;;
 esac
