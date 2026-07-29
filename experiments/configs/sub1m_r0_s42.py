@@ -13,6 +13,11 @@ train_corpus = "internvid_v1"        # 单个 1M 分片(全量 ~10%);train_file 
 batch_size = 128                     # 与在跑的全量 R0 一致(经 "${batch_size}" 传到 inputs.batch_size.video)
 batch_size_test = 128
 
+# 环内评测标准 MSR-VTT 1k;必须把 test_file 的键改成 "ret_test" 以匹配 test_types,
+# 否则基线默认的 dict(act_val=...) 会被跳过(见 log "Skip eval act_val split")。
+test_file = dict(ret_test=available_corpus["msrvtt_1k_test"])  # noqa: F405
+test_types = ["ret_test"]
+
 seed = 42
 
 output_dir = "experiments/runs/sub1m_r0_s42"
