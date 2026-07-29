@@ -1,5 +1,70 @@
 # Troubleshooting
 
+## 训练跑完但没有任何评测数字:`Empty DataFrame` + `Skip eval act_val split`
+
+### Symptom
+
+训练正常结束(loss 正常降、ckpt 正常存),但 epoch 末的评测什么都没出:
+
+```
+2026-07-29T01:13:36 | __main__: Skip eval act_val split. All test_types ['ret_test']
+2026-07-29T01:13:36 | __main__: Epoch 2
+2026-07-29T01:13:36 |
+Empty DataFrame
+Columns: []
+Index: []
+2026-07-29T01:13:36 | __main__: best epoch 2 [config.stop_key None]
+```
+
+**实例代价:`sub1m_r0_s42` 在 4×H100 上跑满 15:11:58,零个检索数字。**
+
+### Cause
+
+**`test_file` 的键与 `test_types` 对不上,不是评测代码坏了。**
+
+基线 config `scripts/pretraining/clip/mobileviclip_small/config.py`:
+
+```python
+test_file  = dict(act_val=available_corpus["msrvtt_1k_test"])   # 键是 act_val
+test_types = ["ret_test"]                                        # 过滤器却只认 ret_test
+```
+
+`tasks_clip/pretrain.py` 的 epoch 末循环按键过滤:
+
+```python
+for test_name, test_loader in test_name2loaders.items():
+    if test_name not in config.test_types:
+        logger.info(f"Skip eval {test_name} split. ...")
+        continue          # ← 唯一的测试集在这里被整个跳过
+```
+
+`"act_val" not in ["ret_test"]` ⇒ **每一轮都跳过 ⇒ `eval_res` 永远是 `{}` ⇒ 打印空 DataFrame。**
+
+**谁会踩到:任何直接继承基线 config 而不覆盖 `test_file` 的训练配置。**
+`pilot_10k_*` 没踩到是因为它们显式写了 `test_file = dict(ret_test=...)`;
+`sub1m_*` 第一版没写(#329)⇒ 白跑;#334 修好;**#335 新增的 4 个臂又漏了** ⇒ 再修。
+这就是评审 U8「训练内 held-out 评测修 key」那一条。
+
+### Fix
+
+**① config 里显式对齐键**(每个训练配置都要有):
+
+```python
+test_file  = dict(ret_test=available_corpus["msrvtt_1k_test"])  # noqa: F405
+test_types = ["ret_test"]
+```
+
+**② 代码侧已加开跑即失败的守卫**(`tasks_clip/pretrain.py`,本次):
+构建完 dataloader、进第一个 step 之前就检查键的交集,为空直接 `raise ValueError`
+并打印两边的键。**代价从 15 小时降到几秒。**
+
+### 已经白跑了怎么办 —— 不用重训
+
+ckpt 是存好的(DeepSpeed 目录式,`ckpt_02.pth/mp_rank_00_model_states.pt`),
+而 `tasks_clip/shared_utils.py:150` 的 `if osp.isdir(config.pretrained_path)` 分支
+**支持直接吃这个目录**。⇒ 离线补评测即可,命令见 `COMMANDS.md` §3.8。
+
+---
 ## `sqlite3.OperationalError: attempt to write a readonly database`（Gradio 审阅工具）
 
 ### Symptom

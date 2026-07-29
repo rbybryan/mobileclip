@@ -574,6 +574,29 @@ done
 - ⚠️ **T=24/32 可能 OOM**:stage-4 联合注意力是 O(T²)(N=64·T)。评测 batch 小,
   大概率放得下;**崩了也是结果** —— 那就是 `c2-arbitrary-t.md` 墙 1 的直接证据,照样记账,
   别去调 batch 硬扛。
+### 3.8 离线补评测 —— 训练跑完但评测被跳过时,救回已存的 ckpt(零重训)
+
+用于 `Empty DataFrame` 那个坑(见 `TROUBLESHOOTING.md`「训练跑完但没有任何评测数字」)。
+DeepSpeed 存的是**目录式** ckpt(`ckpt_02.pth/mp_rank_00_model_states.pt`),
+`shared_utils.py:150` 的 `osp.isdir` 分支直接支持,**不用重训**。
+
+```bash
+cd ~/mobileclip
+export CUDA_VISIBLE_DEVICES=4          # 一张卡够
+RUN=experiments/runs/sub1m_r0_s42      # 换成要补评的臂
+bash experiments/run_eval.sh small msrvtt "${RUN}/ckpt_02.pth" \
+     experiments/evals/sub1m/$(basename ${RUN}) num_frames_test 8
+```
+
+**读法**:`eval_res.json` 里 `ret_test/` = DSL 口径、`ret_test_emb/` = raw 主口径;
+1M 层判胜负按 `notes/verification-tier-1m-zh.md` —— **同 seed 相减 + 两个 seed 同向**,
+且差值要过 `experiments/README.md` §6.1 的带宽(阴性用 ±1.6,阳性要 |Δ|>2.4)。
+
+⚠️ **三条容易错的**:
+- ckpt 路径要指到**目录** `ckpt_02.pth`(不是里面的 `.pt` 文件);
+- 各臂的 `output_dir` 是隔离的,别把 s42/s43 的结果写进同一个 `--out`;
+- 补评的是**训练内 held-out 的替代**,和论文主表用的零样本评测是同一套脚本,口径一致。
+
 ## 4. Training (pretraining)
 
 **Preflight — run this before every pretraining launch, not just the first:**
