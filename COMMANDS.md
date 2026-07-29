@@ -417,12 +417,16 @@ python experiments/r1_build_textbank.py --anno anno_downstream/InternVid/InternV
 #    与全量 R0 时分复用,R0 空出后再跑)。处理臂启动日志应见 `[R1] text bank ON: pool=(~1e6, 512) ...`
 bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_r1both_s42 sub1m_nR1_s42 sub1m_r1both_s43 sub1m_nR1_s43
 
-# ③ 收结果(标准 MSR-VTT 1k,best epoch)
-grep -hE "t2v_r1|v2t_r1|_match|R@" experiments/runs/sub1m_{r1both,nR1}_s4?.log | tail -40
+# ③ 判读 = 配对 bootstrap(**别用 ±1.6 无配对带** —— #346 证明它在 1M 尺度分辨不出任何臂;
+#    逐查询 rank 在训练自评测时已自动落到各臂 output_dir,无需重评)。每 seed × 两口径:
+python experiments/collect_results.py --compare experiments/runs/sub1m_nR1_s42 experiments/runs/sub1m_r1both_s42
+python experiments/collect_results.py --compare experiments/runs/sub1m_nR1_s42 experiments/runs/sub1m_r1both_s42 --prefix ret_test/
+# s43 同上两条。
 ```
-判读:ΔR-Sum = `sub1m_nR1_sXX` − `sub1m_r1both_sXX`(**同 seed**),两 seed 同向且超 MSR-VTT 1k 的 ±SE 才算赢
-(两方向都报;bank 硬化 v2t/`txt_r1`)。**两 seed 都清 ±SE ⇒ 真硬负例收益、带 bank 上全量 10M 终训;≈0/矛盾 ⇒
-试点 +3.9 是 10k 专属、不迁移 ⇒ 撤 bank。** 全量 10M = 论文数字,1M 只是决策门。
+判读:某 seed 里 **两个口径(raw `ret_test_emb/` + DSL `ret_test/`)的配对 95% CI 都不含 0 且同号** ⇒ 该 seed bank 赢;
+**两个 seed 都赢 ⇒ 真硬负例收益、带 bank 上全量 10M 终训;CI 含 0 / 两 seed 矛盾 ⇒ 试点 +3.9 是 10k 专属 ⇒ 撤 bank。**
+(两方向都报;bank 硬化 v2t/`txt_r1`。已验证配对能分辨 +3.9-R-Sum 量级、无配对带分辨不出 —— 见 `r1-implementation-plan.md` §10.4。)
+全量 10M = 论文数字,1M 只是决策门。
 
 ---
 
