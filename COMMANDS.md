@@ -592,6 +592,17 @@ bash experiments/run_eval.sh small msrvtt "${RUN}/ckpt_02.pth" \
      experiments/evals/sub1m/$(basename ${RUN}) num_frames_test 8
 ```
 
+**⚠️ 跑完先做这个自检 —— 否则可能把「未加载权重」的数字当真**:
+
+```bash
+grep -E "Load pretrained model from|training from scratch|自动解析到" \
+     experiments/evals/sub1m/$(basename ${RUN})/train.log
+```
+必须看到 **`Load pretrained model from .../ckpt_02.pth/mp_rank_00_model_states.pt`**。
+看到 `training from scratch` 就是**权重没加载上,数字无效**(2026-07-29 踩过:DeepSpeed 存的是
+**目录式** ckpt,而评测走 `deepspeed.enable=False` 那一支只判 `osp.isfile` ⇒ 目录恒为 False ⇒
+静默跳过。现已改为自动解析目录 + 加载失败直接 raise)。
+
 **读法**:`eval_res.json` 里 `ret_test/` = DSL 口径、`ret_test_emb/` = raw 主口径;
 1M 层判胜负按 `notes/verification-tier-1m-zh.md` —— **同 seed 相减 + 两个 seed 同向**,
 且差值要过 `experiments/README.md` §6.1 的带宽(阴性用 ±1.6,阳性要 |Δ|>2.4)。

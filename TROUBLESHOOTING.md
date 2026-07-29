@@ -1,5 +1,53 @@
 # Troubleshooting
 
+## 评测出了数字,但模型根本没加载权重:`No pretrained checkpoint provided, training from scratch`
+
+### Symptom
+
+补评一个训好的 ckpt,命令不报错、评测正常出表,但表里的数字明显偏低。日志里**有这三行**:
+
+```
+2026-07-29T02:48:36 | tasks_clip.shared_utils: Auto resuming
+2026-07-29T02:48:37 | tasks_clip.shared_utils: Not found checkpoint in experiments/evals/...
+WARNING ... | tasks_clip.shared_utils: No pretrained checkpoint provided, training from scratch
+```
+
+**这一组数字是无效的** —— 评的是「骨干初始化 + **随机**时序算子」,不是你训的模型。
+实例:`sub1m_r0_s42` 补评出 raw `r_mean 54.82`,而官方权重同口径是 **61.47**。
+
+### Cause
+
+**DeepSpeed 存的是目录式 ckpt**(`ckpt_02.pth/` 里面才是 `mp_rank_00_model_states.pt`),
+而 `tasks_clip/shared_utils.py` 里**只有 `deepspeed.enable=True` 那一支**用 `osp.isdir` 处理目录;
+**评测配置默认 `deepspeed.enable=False`**,走的是另一支:
+
+```python
+if osp.isfile(config.pretrained_path):   # ← 目录在这里恒为 False
+    ...
+else:
+    logger.warning("No pretrained checkpoint provided, training from scratch")   # ← 只 warning
+```
+
+⇒ **目录被静默跳过,只留一句 warning,评测照跑。**
+
+(`Auto resuming` / `Not found checkpoint in <eval 输出目录>` 那两行是**无害的**:auto-resume 找不到
+就不覆盖 `pretrained_path`。真正的问题在上面那个 `osp.isfile`。)
+
+### Fix(2026-07-29 已改)
+
+- **自动解析目录**:`pretrained_path` 是目录时,自动指向里面的 `mp_rank_00_model_states.pt`
+  (该文件的 `module` 键正好被既有加载逻辑支持)。
+- **加载失败直接炸**:显式给了 `pretrained_path` 却加载不上,或 `evaluate=True` 却无权重可加载,
+  一律 `raise` —— **绝不在未加载权重的模型上出数字**。
+
+### 自检(养成习惯)
+
+```bash
+grep -E "Load pretrained model from|training from scratch" <out_dir>/train.log
+```
+必须看到 `Load pretrained model from ...`。命令见 `COMMANDS.md` §3.8。
+
+---
 ## venv 里明明装了的包报 `ModuleNotFoundError`(如 `termcolor`)—— 裸 `torchrun` 跑到系统 python 去了
 
 ### Symptom

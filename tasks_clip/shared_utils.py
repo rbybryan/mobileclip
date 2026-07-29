@@ -162,6 +162,23 @@ def setup_model(
                     load_module_only=True
                 )
     else:
+        # DeepSpeed 存的是**目录式** ckpt(`ckpt_02.pth/mp_rank_00_model_states.pt`),
+        # 而这一支(deepspeed.enable=False,评测配置的默认)只判 `osp.isfile` ⇒ 目录恒为 False
+        # ⇒ **静默跳过加载**,最后只警告一句 "training from scratch",评测出来的是
+        # 未训练的模型。2026-07-29 补评 sub1m_r0_s42 就这样出了一组看似正常、实为
+        # MobileCLIP-S2 初始化 + 随机时序算子的数字。这里自动把目录解析到里面的权重文件。
+        if osp.isdir(config.pretrained_path):
+            _ds_inner = join(config.pretrained_path, "mp_rank_00_model_states.pt")
+            if osp.isfile(_ds_inner):
+                logger.info(
+                    f"pretrained_path 是 DeepSpeed 目录式 ckpt,自动解析到 {_ds_inner}"
+                )
+                config.pretrained_path = _ds_inner
+            else:
+                raise FileNotFoundError(
+                    f"pretrained_path 是目录但里面没有 mp_rank_00_model_states.pt:"
+                    f"{config.pretrained_path}"
+                )
         if osp.isfile(config.pretrained_path):
             checkpoint = torch.load(config.pretrained_path, map_location="cpu")
             
@@ -195,6 +212,18 @@ def setup_model(
             logger.info(msg)
             logger.info(f"Loaded checkpoint from {config.pretrained_path}")
         else:
+            # 评测/显式给了权重却没加载上 = 结果必然是垃圾,必须炸,不能只 warning。
+            # (2026-07-29:目录式 ckpt 在这里被静默跳过,补评白跑还差点把数字当真。)
+            if config.get("pretrained_path", ""):
+                raise FileNotFoundError(
+                    f"给了 pretrained_path 却加载不了:{config.pretrained_path}\n"
+                    "  —— 路径不存在,或不是文件/DeepSpeed 目录。评测绝不能在未加载权重的\n"
+                    "     模型上继续(会得到一组看似正常、实为随机初始化的数字)。"
+                )
+            if config.get("evaluate", False):
+                raise ValueError(
+                    "evaluate=True 但没有任何预训练权重可加载 —— 拒绝在未训练模型上评测。"
+                )
             logger.warning("No pretrained checkpoint provided, training from scratch")
     
     if reparameterize:

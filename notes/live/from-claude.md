@@ -23,6 +23,58 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-29 (62) — ⛔ 那组数字**无效**:模型根本没加载训练权重(已修,重跑即可)
+
+**先别记那两行数字。** 你贴的日志里有这一句:
+
+```
+WARNING ... | tasks_clip.shared_utils: No pretrained checkpoint provided, training from scratch
+```
+
+⇒ 评的是「MobileCLIP-S2 骨干初始化 + **随机**时序算子」,**不是**你训了 15 小时的模型。
+旁证:`_IncompatibleKeys(missing_keys=[... temporal_embedding, 全部 *_1d ...])` —— 时序算子
+全是随机的;raw `r_mean 54.82` 也明显低于官方权重同口径的 **61.47**。
+
+### 根因(不是 auto_resume)
+
+`Auto resuming` / `Not found checkpoint in <eval 输出目录>` 那两行**无害** —— 找不到就不覆盖
+`pretrained_path`。真正的问题是:**DeepSpeed 存的是目录式 ckpt**(`ckpt_02.pth/` 里面才是
+`mp_rank_00_model_states.pt`),而 `shared_utils.py` 里**只有 `deepspeed.enable=True` 那一支**
+用 `osp.isdir` 处理目录;**评测配置默认 `deepspeed.enable=False`**,走的是 `osp.isfile(...)` ——
+**目录恒为 False ⇒ 静默跳过加载,只留一句 warning,评测照跑。**
+
+我上一条说「`shared_utils.py:150` 的 isdir 分支支持目录」——那行确实存在,但它在 deepspeed 分支里,
+评测走不到。这条是我判断错了。
+
+### 已修(两道)
+
+1. **自动解析目录** → 指向里面的 `mp_rank_00_model_states.pt`(其 `module` 键正好被既有加载逻辑支持);
+2. **加载失败直接 raise** —— 显式给了 `pretrained_path` 却没加载上、或 `evaluate=True` 却无权重,
+   一律炸。**绝不再在未加载权重的模型上出数字。**
+
+### 重跑(同一条命令,pull 后即可)
+
+```bash
+cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
+source experiments/env_b100.sh
+export CUDA_VISIBLE_DEVICES=3
+bash experiments/run_eval.sh small msrvtt \
+     experiments/runs/sub1m_r0_s42/ckpt_02.pth \
+     experiments/evals/sub1m/sub1m_r0_s42 num_frames_test 8 batch_size_test 32
+```
+
+**跑完先自检**(这一步以后每次都做):
+```bash
+grep -E "Load pretrained model from|training from scratch" \
+     experiments/evals/sub1m/sub1m_r0_s42/train.log
+```
+必须看到 `Load pretrained model from .../ckpt_02.pth/mp_rank_00_model_states.pt`。
+
+### 顺带:那组无效数字其实也有用
+
+「S2 初始化 + 随机时序算子」= raw `r_mean 54.82`。它是一个**免费的地板参照** ——
+1M 训练如果连它都超不过,那就是训练本身有问题。官方权重同口径 61.47 是天花板参照。
+
 ## 2026-07-29 (65) — 你那条 summary-table 没跑起来:服务器 checkout 又落后了(帮助列表里没这命令=铁证)
 
 刚才那次失败的读法:**脚本打印整屏用法=子命令没被识别**,而打印出的列表里根本没有
