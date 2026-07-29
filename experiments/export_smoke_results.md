@@ -54,18 +54,35 @@ torch version. Please upgrade to torch >= 2.11.0`。
 
 ### 怎么把这格补上(不碰训练环境)
 
-导出是 **CPU-only + 随机权重**,不需要 decord / 数据集 / CUDA,所以开一个**独立
-venv** 就行:
-
 ```bash
-python -m venv /tmp/tflite-export && source /tmp/tflite-export/bin/activate
-pip install torch timm numpy litert-torch      # torch 取最新即可,不影响主环境
-cd ~/mobileclip && python experiments/export_smoke.py --ts 2,16
-deactivate
+conda create -y --name tflite-export --clone mobileviclip
+conda activate tflite-export
+
+pip install -U pip                                     # 见下,这条不是可选的
+pip install "numpy==2.2.6" "torch==2.13.0" "torchvision==0.28.0"
+pip install litert-torch                               # 单独一步,别和 torch 同轮解析
+
+cd ~/mobileclip && git checkout claude/export-smoke
+python experiments/export_smoke.py --ts 2,16
 ```
 
 只需跑 T=2 与 T=16 两端 —— 中间两个 T 在另外两条路线上都与两端同结论,
 没有理由单独在 TFLite 上分叉。
+
+**为什么是 clone 而不是干净 venv**(2026-07-29 实测踩过):裸 venv 里
+`pip install torch timm numpy litert-torch` 会连着栽两次 ——
+
+1. 缺传递依赖。导出虽是 CPU-only + 随机权重,但 `models/mobileviclip_small.py`
+   拉的是整条 InternVideo2 链(`torchvision` / `PIL` / `einops` / …),
+   装 `timm` 远远不够。
+2. **依赖解析爆炸**。`litert-torch` 与 torch/numpy 同轮解析时,pip 23.0.1 会
+   从 torch 2.13 一路回溯到 2.4、再从 numpy 2.2.6 回溯到 **1.19.2 并试图源码编译**,
+   最终挂在 Cython 上(`_sfc64.pyx: Cannot assign type ... noexcept`),
+   途中已下载数 GB nvidia wheel。
+
+`--clone` 用硬链接、秒级完成,一次拿全传递依赖;**`mobileviclip` 环境是独立目录,
+完全不受影响**。三条 pin + 拆成两次 `pip install` 是为了让 torch 先落地,
+litert-torch 就只能接受既成事实,没有回溯空间。
 
 **在补上之前,P9 的结论只能写「ONNX / Core ML 两路无障碍,TFLite 未评估」。**
 

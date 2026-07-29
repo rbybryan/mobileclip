@@ -481,13 +481,26 @@ python experiments/frame_select_diag.py             # 全量 1000 条
 ```bash
 # 装多少跑多少;缺哪条依赖那一列就记 skip,不影响另外两条
 pip install onnx onnxruntime onnxscript      # ONNX 路线(torch>=2.6 需要 onnxscript)
-pip install litert-torch                     # TFLite 路线(ai-edge-torch 已改名,旧包是空壳)
+pip install litert-torch                     # TFLite 路线;需 torch>=2.6,见下方 ⚠️
 pip install coremltools                      # Core ML 路线
 
 python experiments/export_smoke.py --mini    # 先自检脚本本身(秒级)
 python experiments/export_smoke.py           # 全尺寸,T∈{2,4,8,16}
 python experiments/export_smoke.py --inference-mode   # 重参数化后的部署形态
 ```
+
+⚠️ **TFLite 那条别在 101vector 主环境跑**:`litert-torch` 要 **torch≥2.6**,而本机锁
+`2.5.1+cu118` 是为了 V100 的 sm_70 内核(动了 8 卡全崩)。补测请用克隆环境:
+
+```bash
+conda create -y --name tflite-export --clone mobileviclip && conda activate tflite-export
+pip install -U pip && pip install "numpy==2.2.6" "torch==2.13.0" "torchvision==0.28.0"
+pip install litert-torch                     # 单独一步,别和 torch 同轮解析
+python experiments/export_smoke.py --ts 2,16
+```
+
+**别用裸 venv** —— 缺整条 InternVideo2 传递依赖,且 pip 会回溯到 numpy 1.19 源码编译。
+原委见 [`export_smoke_results.md`](experiments/export_smoke_results.md) §3。
 
 导出的是**视觉塔**(`FastViT`,架构参数与 `build_vision_encoder` 逐项一致 ⇒ 含全部
 时序算子);输入签名 `[B,T,C,H,W]` 与 `encode_vision` 对齐(脚本内做同一行 permute)。

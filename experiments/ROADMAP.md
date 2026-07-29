@@ -105,8 +105,9 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       —— ① `ai-edge-torch` 已改名 `litert-torch`(旧包是空壳);② `litert-torch` 需
       **torch>=2.6** 的 `torch.int1`,而 101vector 锁 **2.5.1+cu118** 是为了 V100 的
       **sm_70 内核**(换版本会让 8 卡在第一个 barrier 全崩,见 TROUBLESHOOTING 末节)。
-      ⇒ **别为一格导出结论动训练环境的 torch**;导出是 CPU-only + 随机权重,
-      开独立 venv 补测即可(配方见结果文档 §3)。两轮都已修为 skip 而非 fail。
+      ⇒ **别为一格导出结论动训练环境的 torch**;用 `conda create --clone mobileviclip`
+      开一份克隆环境补测(配方见结果文档 §3 —— 裸 venv 走不通,缺整条 InternVideo2
+      传递依赖,且 pip 会把 numpy 回溯到 1.19 源码编译)。两轮都已修为 skip 而非 fail。
       落档 [`export_smoke_results.md`](export_smoke_results.md)。
       ⚠️ **对 C2 部署叙事的观察**:trace 显示 **T 被烘成常量**(`int(t)`、reshape、
       以及 `temporal_embedding` 走不走插值那个 `if`)⇒ "帧数即部署旋钮"在**权重层面**
