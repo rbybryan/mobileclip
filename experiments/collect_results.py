@@ -17,6 +17,7 @@ pandas orient="columns" 格式:{"<protocol>": {"<metric>": value}}),
     python experiments/collect_results.py --dirs experiments/evals --format md
 """
 import argparse
+import sys
 import json
 import os
 from collections import OrderedDict
@@ -75,6 +76,59 @@ def fmt(v):
     return str(v)
 
 
+
+def run_compare(arm_dir, base_dir, prefix, n_boot, seed, out_path=None):
+    """配对 bootstrap 比较两条臂(评审 U10-1 / ROADMAP 自查 G4)。
+
+    为什么不能直接拿 ±1.6 判:那是**无配对**带。两条臂评的是同一批查询,
+    配对做差会抵消共享方差 —— 2026-07-29 的 1M 结果显示「10× 数据」的效应
+    只有 +0.82 r_mean,不配对就根本分辨不出来。
+    """
+    from paired_bootstrap import load_ranks, paired_bootstrap, unpaired_halfwidth
+
+    arm, base = load_ranks(arm_dir, prefix), load_ranks(base_dir, prefix)
+    res = paired_bootstrap(arm, base, n_boot=n_boot, seed=seed)
+
+    lines = [
+        f"# 配对 bootstrap:`{os.path.basename(arm_dir.rstrip('/'))}` − "
+        f"`{os.path.basename(base_dir.rstrip('/'))}`",
+        "",
+        f"口径 `{prefix}` · 查询数 i2t={len(arm['i2t'])} / t2i={len(arm['t2i'])} · "
+        f"{n_boot} 次重采样 · seed={seed} · 95% CI",
+        "",
+        "| 指标 | 臂 | 基线 | Δ | 95% CI | 判定 |",
+        "|---|---:|---:|---:|---|---|",
+    ]
+    order = ["txt_r1", "txt_r5", "txt_r10", "img_r1", "img_r5", "img_r10", "r_mean", "R_sum"]
+    for k in order:
+        r = res[k]
+        verdict = "**显著**" if r["significant"] else "不显著(CI 含 0)"
+        lines.append(
+            f"| {k} | {r['arm']:.2f} | {r['baseline']:.2f} | {r['delta']:+.2f} | "
+            f"[{r['lo']:+.2f}, {r['hi']:+.2f}] | {verdict} |"
+        )
+
+    half_paired = (res["R_sum"]["hi"] - res["R_sum"]["lo"]) / 2
+    half_unpaired = unpaired_halfwidth(arm, base, n_boot=n_boot, seed=seed)
+    lines += [
+        "",
+        "**配对买到了多少分辨率**(R-Sum 的 95% CI 半宽):",
+        f"- 配对:**±{half_paired:.2f}**",
+        f"- 无配对:±{half_unpaired:.2f}",
+        f"- ⇒ 配对把可分辨的最小差异缩到约 **1/{half_unpaired / max(half_paired, 1e-9):.1f}**。",
+        "",
+        "判读:**以 CI 是否含 0 为准**,不要再套 `README.md` §6.1 的 ±1.6 —— 那是无配对带,",
+        "用在 A/B 上过于保守。两口径同向(`ret_test/` 与 `ret_test_emb/` 都跑一遍)的纪律照旧。",
+    ]
+    text = "\n".join(lines)
+    print(text)
+    if out_path:
+        with open(out_path, "w") as f:
+            f.write(text + "\n")
+        print(f"\n[written to {out_path}]")
+    return res
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dirs", nargs="*",
@@ -83,7 +137,20 @@ def main():
     ap.add_argument("--baseline", default=None,
                     help="作为对比基线的 run 名(目录名);给出后附加 Δ 列")
     ap.add_argument("--out", default=None, help="同时写入该 markdown 文件")
+    ap.add_argument("--compare", nargs=2, metavar=("ARM_DIR", "BASE_DIR"), default=None,
+                    help="配对 bootstrap 比较两条臂(U10-1/G4)。需要两边都有 ranks_*.npz;"
+                         "缺了就重跑一次评测(纯前向,MSR-VTT 1k 约 1 分钟)")
+    ap.add_argument("--prefix", default="ret_test_emb/",
+                    help="比较用的口径,默认 raw 主口径;DSL 用 ret_test/")
+    ap.add_argument("--n-boot", type=int, default=10000, help="bootstrap 重采样次数")
+    ap.add_argument("--seed", type=int, default=0, help="bootstrap 随机种子(可复现)")
     args = ap.parse_args()
+
+    if args.compare:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        run_compare(args.compare[0], args.compare[1], args.prefix,
+                    args.n_boot, args.seed, args.out)
+        return
 
     # rows[(bench, protocol)][run] = {metric: value}
     rows = OrderedDict()

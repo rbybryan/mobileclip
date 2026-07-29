@@ -219,7 +219,10 @@ def main(config):
                     )
                     continue
                 res = evaluation_wrapper(
-                    model_without_ddp, test_loader, tokenizer, device, config, data_type=data_type, prefix=test_name
+                    model_without_ddp, test_loader, tokenizer, device, config, data_type=data_type, prefix=test_name,
+                    # 逐查询 rank 落盘(~8KB/臂),配对 bootstrap 的输入;
+                    # 只有 rank 存着,才不用为了做 A/B 再把评测重跑一遍。
+                    dump_ranks_dir=config.output_dir if is_main_process() else None,
                 )
                 eval_res.update(res)
 
