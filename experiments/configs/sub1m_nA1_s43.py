@@ -7,6 +7,9 @@ train_corpus = "internvid_v1"
 batch_size = 128
 batch_size_test = 128
 
+test_file = dict(ret_test=available_corpus["msrvtt_1k_test"])  # noqa: F405  环内评 MSR-VTT 1k
+test_types = ["ret_test"]
+
 seed = 43
 
 model["vision_encoder"]["temporal_pooling"] = "surprise"  # noqa: F405
