@@ -173,7 +173,7 @@ bash scripts/evaluation/clip/zero_shot/mobileviclip_small/eval_ssv2_mc.sh
 ```bash
 export PYTHONPATH=${PYTHONPATH}:.
 export CUDA_VISIBLE_DEVICES=0
-torchrun --nproc_per_node=1 --master_port=$((10000 + RANDOM % 20000)) \
+python -m torch.distributed.run --nproc_per_node=1 --master_port=$((10000 + RANDOM % 20000)) \
     tasks_clip/retrieval.py \
     scripts/evaluation/clip/zero_shot/mobileviclip_tiny/config_msrvtt.py
 ```
@@ -627,7 +627,7 @@ Default config uses `NNODE=2`, `NUM_GPUS=8` (16 GPUs). Edit `run.sh` (`NNODE`, `
 ### Single-node manual launch
 ```bash
 export PYTHONPATH=${PYTHONPATH}:.
-torchrun --nproc_per_node=8 --master_port=$((11000 + RANDOM % 20000)) \
+python -m torch.distributed.run --nproc_per_node=8 --master_port=$((11000 + RANDOM % 20000)) \
     tasks_clip/pretrain.py \
     scripts/pretraining/clip/mobileviclip_tiny/config.py
 ```

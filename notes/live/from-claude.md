@@ -23,6 +23,38 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-29 (59) — `termcolor` 不是真问题:裸 `torchrun` 把评测跑到**系统 python** 去了(已全仓修)
+
+**先看你贴的栈,不是看报错**:venv 是 `mvc_env310`,可栈里全是
+`/usr/local/lib/python3.10/dist-packages/...`、`binary: /usr/bin/python3`
+⇒ **评测根本没在你激活的环境里跑**,所以 venv 装没装 `termcolor` 不相干。
+
+**根因**:裸 `torchrun` 走 PATH → `/usr/local/bin/torchrun`,其 shebang 指向 `/usr/bin/python3`。
+**这个坑 7-24 咬过一次**(当时训练崩,只修了 `run_pretrain.sh`),`run_eval.sh` 没同步到,7-29 又咬一次。
+
+**已修**:全仓 **17 个启动器**统一改成 `python -m torch.distributed.run`
+(`experiments/run_eval.sh` + `scripts/evaluation/.../eval_*.sh` 全部 + `scripts/pretraining/.../run.sh` 全部),
+`COMMANDS.md` / `README_zh.md` 的手写配方同步。`run_eval.sh` 现在会先打印 `python : <路径>`,
+**那一行对不上你激活的环境就是这个坑**。
+
+### 重跑(同一条命令,pull 后即可)
+
+```bash
+cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
+export CUDA_VISIBLE_DEVICES=4
+RUN=experiments/runs/sub1m_r0_s42
+bash experiments/run_eval.sh small msrvtt "${RUN}/ckpt_02.pth" \
+     experiments/evals/sub1m/sub1m_r0_s42 num_frames_test 8
+```
+
+**先看第一行输出的 `python :`** —— 应该是 `/workspace/.../mvc_env310/bin/python`。
+不是的话先 `source` 你的 venv 再跑,**别急着 pip install termcolor**(装在系统 python 上治标不治本)。
+
+跑完把 `experiments/evals/sub1m/sub1m_r0_s42/eval_res.json` 里
+`ret_test/` 与 `ret_test_emb/` 两行贴回来 —— 那是 1M 层的第一个基准数字,后面所有臂都减它。
+
+(上一条 (58) 的第 ② 步「用 runner 起剩下 11 个臂」不受影响,可以并行开。)
+
 ## 2026-07-29 (58) — 15 小时白跑的根因找到了:评测键对不上,**不用重训**;顺带拿到全量 wall-clock
 
 **先说结论:`sub1m_r0_s42` 那 15 小时没白费 —— ckpt 是好的,离线补评测就行。**
