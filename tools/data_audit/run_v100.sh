@@ -709,8 +709,15 @@ PY
   fi
 
   t_stage "②派生(单卡; struct 臂≈0)"
-  echo "== ③ SigLIP 逐重述打分（A− 选择依据；tag=recap_i 回联）=="
-  python - "$P" <<'PY'
+  # PIPE_LEAN=1（§5.9 部分拍板, 2026-07-28）: 跳 SigLIP 打分与 A′ 句切——直融
+  # 终稿不消费两者（分数只喂已退役的 A−、评审页 ⟨⟩ 徽章、投票代表句排序；A′ 只剩
+  # 全景对照列），下游对缺失文件全部出空列不崩。多样性诊断绝不随开关跳：它是
+  # 「独立采样」这一判断式融合核心前提的唯一哨兵（COLLAPSE/IDENT 旗），CPU 秒级。
+  if [ "${PIPE_LEAN:-0}" = 1 ]; then
+    echo "== ③ SigLIP 打分：跳过（PIPE_LEAN=1；⟨⟩徽章/A−/投票代表句排序缺省，直融不受影响）=="
+  else
+    echo "== ③ SigLIP 逐重述打分（A− 选择依据；tag=recap_i 回联）=="
+    python - "$P" <<'PY'
 import json, sys
 p = sys.argv[1]
 with open(f"{p}_recap_texts.jsonl", "w", encoding="utf-8") as fo:
@@ -720,16 +727,21 @@ with open(f"{p}_recap_texts.jsonl", "w", encoding="utf-8") as fo:
             fo.write(json.dumps({"video": r["video"], "zh": c,
                                  "tag": f"recap_{i+1}"}, ensure_ascii=False) + "\n")
 PY
-  rm -f "${P}_scores.0.jsonl"
-  CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/score_alignment.py \
-    --input "${P}_recap_texts.jsonl" --video-root "$CLIPS" \
-    --output "${P}_scores.{shard}.jsonl" --frames 4 --batch-clips 8 \
-    --xlingual-model ''
+    rm -f "${P}_scores.0.jsonl"
+    CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/score_alignment.py \
+      --input "${P}_recap_texts.jsonl" --video-root "$CLIPS" \
+      --output "${P}_scores.{shard}.jsonl" --frames 4 --batch-clips 8 \
+      --xlingual-model ''
+  fi
 
   t_stage "③SigLIP打分(单卡)"
-  echo "== ④ A′ 句切 + 多样性诊断 =="
-  python tools/data_audit/split_views.py --recaps "${P}_recaps.jsonl" \
-    --output "${P}_aprime.jsonl"
+  if [ "${PIPE_LEAN:-0}" = 1 ]; then
+    echo "== ④ A′ 句切：跳过（PIPE_LEAN=1；G1=A′ 已退役）——多样性诊断照跑（独立采样哨兵）=="
+  else
+    echo "== ④ A′ 句切 + 多样性诊断 =="
+    python tools/data_audit/split_views.py --recaps "${P}_recaps.jsonl" \
+      --output "${P}_aprime.jsonl"
+  fi
   python tools/data_audit/recap_diag.py --recaps "${P}_recaps.jsonl" \
     --out-perclip "${P}_diag.jsonl" | tee "${P}_diag.txt"
 
