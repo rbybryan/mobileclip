@@ -569,3 +569,81 @@ become information-limiting) engages a *different* mechanism, so the pilot's dur
 encouraging but not decisive. The decisive test remains the **large-data H100 A/B** (§9.3, deferred
 until the maintainer names shards). **No further V100 run is needed — the pilot-scale question is now
 closed.**
+
+## 10. The large-data A/B — run it at the 1M subset tier (H100)
+
+The H100 is currently training on the **1M verification subset** (`internvid_v1` = one
+`InternVid-10M-flt` shard, ~10% of full; the tier that fills the gap between the 10k smoke and the
+10M paper number — see [`notes/verification-tier-1m-zh.md`](verification-tier-1m-zh.md), #329). Rather
+than wait for full 10M, we run the R1 text-bank A/B **at this 1M tier**. That is not a compromise — it
+is the *right* scale to answer the question the pilot could not.
+
+### 10.1 Why 1M is the decisive test the 10k pilot couldn't give
+
+R1's value hypothesis: **extra hard text negatives matter only once in-batch negatives become
+information-limiting** (the SigLIP regime). Two things make 1M the regime where that actually bites,
+and make the 10k pilot's result an artifact:
+
+- **Batch vs saturation.** Global batch = 128×n_gpu ≈ **512** in-batch negatives — *far* below SigLIP's
+  ~32k saturation point. The bank adds `K=16384` re-projected negatives per step → ~17k effective,
+  pushing into SigLIP's productive band. At 10k the data was too small for this to be the operative
+  effect at all.
+- **No collapse artifact.** 1M / 3 epochs ≈ **5.9k steps** and cannot over-fit; the "ep0→ep1 collapse"
+  that dominated the 10k pilot (§9.2/§9.4) does not occur. So a 1M lead is a **genuine hard-negative
+  gain**, not the small-data stabilization that inflated (and then, at 40 epochs, deflated) the pilot
+  number. This directly tests whether the durable +3.9 was 10k-specific.
+
+### 10.2 Design — faithful scale-up of the validated pilot pair
+
+Matched pair, differenced **against each other** (not against `sub1m_r0`), two seeds:
+
+| arm | config | = | text bank |
+|-----|--------|---|-----------|
+| control | `sub1m_r1both_s42` / `_s43` | SigLIP regime: sigmoid + attn-pool + caption_idx + t/b big-lr | **OFF** |
+| treatment | `sub1m_nR1_s42` / `_s43` | control **+ `criterion.text_bank`** (1M cache) | **ON** |
+
+The control is the exact 1M analog of the pilot control `pilot_10k_r1.py` (and doubles as the tier's
+missing combined `r1a+r1b` arm). The treatment adds *only* `criterion.text_bank`. Everything else is
+the tier default: `train_corpus=internvid_v1`, `batch_size=128`, **3 epochs** (base default), **bf16**,
+test on **standard MSR-VTT 1k** (inherited — the tier never shrinks the test set; note this differs
+from the pilot, which tested on its own held-out InternVid val).
+
+### 10.3 The 1M text-bank cache (build once, before the treatment arms)
+
+The pilot cache `textbank_pilot_*` is 10k-only. Build a matching cache from the 1M shard's captions
+(training env, single GPU, forward-only — **one line, no backslash-continuation**):
+
+```bash
+python experiments/r1_build_textbank.py --anno anno_downstream/InternVid/InternVid-10M-flt_1.json --out-feats experiments/cache/textbank_1m_feats.fp16.npy --out-idx experiments/cache/textbank_1m_idx.npy
+```
+
+Expect ~1M distinct captions → feats `[~1M, 512]` fp16 ≈ **~1 GB** on disk, loaded as a non-persistent
+GPU buffer at train time (~1 GB VRAM, trivial on H100). `_sample_text_bank` draws a fresh
+`randperm`-selected `K=16384` subset each step (deterministic per step-counter for cross-rank
+consistency), so the **full 1M pool is utilized** across the run, not a fixed 16k slice. `dedup_cos=0.90`
+is the same near-dup sparse mask validated in Part B (§7.6); `caption_idx` shared-caption negatives are
+masked as positives via the saved `idx`.
+
+### 10.4 Run + reading rule
+
+Cache first, then the four arms via the existing serial runner (it already accepts explicit config
+names; no runner change needed):
+
+```bash
+# after the cache exists; on a free 4-GPU slot, serial (~15 h/config → ~2.5 days for the 4)
+bash experiments/run_verify_1m.sh 4,5,6,7 sub1m_r1both_s42 sub1m_nR1_s42 sub1m_r1both_s43 sub1m_nR1_s43
+grep -hE "t2v_r1|v2t_r1|_match|R@" experiments/runs/sub1m_{r1both,nR1}_s4?.log | tail -40
+```
+
+**Verdict rule** (tier convention): ΔR-Sum = `sub1m_nR1_sXX` − `sub1m_r1both_sXX` (**same seed**) on
+MSR-VTT 1k, best epoch. The bank **wins** only if both seeds agree in sign and the gap exceeds the
+MSR-VTT-1k ±SE (small/conflicting ⇒ inconclusive, decide only at full 10M). Report **both directions**
+— the bank hardens v2t (`txt_r1`); t2v benefits only indirectly (examination §1).
+
+- **Both seeds clear ±SE for the bank** → high-confidence GO → the +3.9 pilot lift is *real hard-negative
+  value that survives at scale* → carry the bank into the full-10M final train (paper number).
+- **≈0 / conflicting** → the pilot's durable +3.9 was 10k-specific stabilization that does **not**
+  survive when data is real and non-saturating → drop the bank; it was a small-data effect.
+
+Full 10M remains the paper number; **1M is the decision gate** (a subset scale can't prove
+scale-stability — that caveat from the tier note stands).

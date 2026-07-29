@@ -23,6 +23,29 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-28 (63) — R1 大数据 A/B 定档 = 1M 子集档:入库 4 config + 1M 缓存命令,先建缓存再跑两对
+
+既然 H100 现在训 1M 子集(`internvid_v1`),就把 R1 文本负例库的「真正发威档」A/B **放到 1M 验证层跑**(不等全量 10M)。
+已入库(合入 main):处理 `sub1m_nR1_s42/s43`(+bank)、对照 `sub1m_r1both_s42/s43`(SigLIP 制度、无 bank),
+**彼此相减判胜负**(不减 r0)。全套设计 `notes/r1-implementation-plan.md` §10、`verification-tier-1m-zh.md`。
+
+**为什么 1M 才测得到(10k 测不到)**:全局 batch 512 ≪ SigLIP 饱和点 ~32k,bank 每步补 +16384 正好进甜区;
+1M×3 epoch(~5.9k 步)**不过拟合** ⇒ 领先=真硬负例收益,而不是 10k 试点那种「挡早塌」的小数据伪影(§9.4)。
+
+**服务器执行(等 R0 腾出 4 张卡时;先建一次缓存,再串行两对,共 4 config)**:
+```bash
+cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
+export MVC_DATA_DIR=/home/vca1/datasets
+ls -l experiments/configs/sub1m_nR1_s42.py experiments/configs/sub1m_r1both_s42.py   # 应都在
+# ① 建 1M 文本负例库缓存(单卡、纯前向、~10–30min、~1GB;一行,勿折行):
+python experiments/r1_build_textbank.py --anno anno_downstream/InternVid/InternVid-10M-flt_1.json --out-feats experiments/cache/textbank_1m_feats.fp16.npy --out-idx experiments/cache/textbank_1m_idx.npy
+# ② 跑两对(~15h/config → 4 条 ~2.5 天;处理臂启动日志应见 `[R1] text bank ON: pool=(~1e6, 512) ...`):
+bash experiments/run_verify_1m.sh 4,5,6,7 sub1m_r1both_s42 sub1m_nR1_s42 sub1m_r1both_s43 sub1m_nR1_s43
+```
+**报告回来**:每 seed 的 `sub1m_nR1` − `sub1m_r1both`(标准 MSR-VTT 1k,best epoch,六个 recall + R-Sum)。
+两 seed 同向且超 ±SE ⇒ 真硬负例、带 bank 上全量 10M 终训;≈0/矛盾 ⇒ 试点 +3.9 是 10k 专属、撤 bank。
+(先建缓存再跑,别忘 `git reset --hard` 那行 —— 少 pull 会崩在 `config.debug`,见 TROUBLESHOOTING。)
+
 ## 2026-07-28 (62) — SigLIP打分可跳、A′可跳、多样性诊断要留; PIPE_LEAN=1 开关已就位
 
 ⚠️ **先说一件事**:并行分支合并把我此前的 (57)-(60) 四个块覆盖丢了,已从提交历史恢复并

@@ -31,6 +31,22 @@
 
 各臂 `output_dir` 相互隔离(`experiments/runs/sub1m_<臂>_s<seed>`),不会互相覆盖 ckpt。
 
+### ➕ R1 文本负例库 A/B(+2 臂 × 2 seed;**彼此相减,不减 r0**)
+
+把 R1 文本负例库的「真正发威档」A/B 也放到本层跑(不等全量 10M)。它是一对**自配对** A/B,判读方式
+与上面四臂不同(**处理减自己的对照,不减 r0**),所以单列:
+
+- `sub1m_r1both_s42/s43` —— **对照**:SigLIP 制度(sigmoid + attn 池化 + caption_idx + t/b 大 lr),**不含** bank。
+  = 10k 试点对照 `pilot_10k_r1.py` 的 1M 直放大;也顺带补上四臂里缺的「r1a+r1b 合并」臂。
+- `sub1m_nR1_s42/s43` —— **处理**:在对照基础上**唯一新增** `criterion.text_bank`(1M 缓存 `textbank_1m_*`,
+  K=16384、dedup_cos=0.90;每步 randperm 抽 16384 条重投影当 sigmoid 负列)。
+- **为什么 1M 才是这个 A/B 的正确尺度**:全局 batch 512 远低于 SigLIP 饱和点(~32k),bank 补的 +16384 正好
+  推进甜区;1M×3 epoch(~5.9k 步)**不过拟合**,所以领先=真硬负例收益,**不是** 10k 试点那种「挡早塌」的
+  小数据伪影(见 `r1-implementation-plan.md` §9.4 / §10)。
+- **判胜负**:ΔR-Sum = `sub1m_nR1_sXX` − `sub1m_r1both_sXX`(**同 seed**),两个 seed 同向且超 ±SE 才算赢;
+  两方向都报(bank 硬化 v2t/`txt_r1`,t2v 只间接受益)。**先建缓存再跑处理臂**(命令见 §跑法 & 时长 / COMMANDS §3.5)。
+  全套设计见 [`r1-implementation-plan.md`](r1-implementation-plan.md) §10。
+
 ---
 
 ## 怎么读结果(判胜负的规矩)
@@ -77,6 +93,15 @@ bash experiments/run_verify_1m.sh 4,5,6,7 \
 
 # 收结果(每条 log 的 epoch 末评测行):
 grep -hE "t2v_r1|v2t_r1|_match|R@" experiments/runs/sub1m_*_s4?.log | tail -60
+```
+
+**R1 文本负例库 A/B(+4 config;先建一次 1M 缓存,再串行两对)**:
+```bash
+# 1) 建 1M 文本负例库缓存(单卡 forward-only,一行别断行;~10–30 min,~1GB):
+python experiments/r1_build_textbank.py --anno anno_downstream/InternVid/InternVid-10M-flt_1.json --out-feats experiments/cache/textbank_1m_feats.fp16.npy --out-idx experiments/cache/textbank_1m_idx.npy
+# 2) 跑两对(复用同一 runner;彼此相减判胜负):
+bash experiments/run_verify_1m.sh 4,5,6,7 sub1m_r1both_s42 sub1m_nR1_s42 sub1m_r1both_s43 sub1m_nR1_s43
+grep -hE "t2v_r1|v2t_r1|_match|R@" experiments/runs/sub1m_{r1both,nR1}_s4?.log | tail -40
 ```
 
 **时长(单个 4-GPU slot、batch 128、9 s/step 量级)**:1M×3 epoch ≈ 1953 步/epoch ×3 ≈
