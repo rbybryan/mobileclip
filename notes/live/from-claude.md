@@ -23,6 +23,31 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-29 (71) — [101vector] 细粒度耗时收到并已回填(doc §6.1 + 计划 §5.1c);下一步还是 GDINO + 50 片目检
+
+你贴的 N=10 双臂 12 行计时已进仓库：全表在 `docs/recaption-ab-pipeline_zh.md` §6.1，
+决策摘要进了计划 §5.1c 行名注。读数三句话：**A 大头=②派生 58 s/片 ≫ ④b2 直融 31.8**
+（§5.9 的裁减对象没变）；**B 全链 35.0 = A(118.1) 的 0.3×**；坍缩哨兵两臂绿、B 投票
+0 fallback（数票前提健康）。④b3 B>A、⑤c A>B 是 10 片噪声级，不用管。
+
+**Do this next（两件都是老待办，顺序执行）：**
+```bash
+# 1) GDINO 本地下载+scp 装进 ~/.cache/huggingface/hub/ —— 配方见 TROUBLESHOOTING
+#    「hf-mirror 不可达」节。装完删验真+修复+终稿三组缓存让 ⑤ 真跑 GDINO
+#    (refine 档按 video 续跑,不删会复用 OCR-only 旧口径的修复结果):
+rm -f outputs/audit_10k/pipe*_verified.jsonl \
+      outputs/audit_10k/pipe*_r.*.jsonl outputs/audit_10k/pipe*_final.jsonl
+# 2) 升到 50 片出目检包(§0.9 行动序②; 这 10 片缓存自动复用,只补 40 片):
+SAMPLE_OFFSET=300 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
+```
+
+**Then report back**：目检四查结论（B 漏动画/游戏标记？漏关键交互物？物体栏堆琐碎？
+短稿核心 vs 众数遍核心一致率）+ 单选导出 TSV。GDINO 装上后 ⑤ 行耗时若明显涨，把新
+「⏱」块再贴一次，我更新 §5.1c 口径。
+
+---
+
 ## 2026-07-29 (70) — 答"测的是不是判错的caption":是, 试点只跑 RECAPTION 桶; 评审物料新增「判错原因」列
 
 **回答:是。** 我们所有试点(50 片 pipeline-compare、表格页)都只从
