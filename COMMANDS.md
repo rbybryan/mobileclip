@@ -644,6 +644,63 @@ python experiments/collect_results.py --compare \
 2026-07-29 才开始存的**。在那之前评过的臂(如首版 `sub1m_r0_s42`)没有,
 **重跑一次评测即可**(纯前向,MSR-VTT 1k 约 1 分钟,命令见 §3.8)。
 
+### 3.10 C1 教师嵌入离线提取(ROADMAP 2.2 / 评审 U7)—— 主线,GPU
+
+`experiments/extract_teacher.py`。教师 = **InternVideo2-stage2**(U7-4 定案;换 Qwen 已否决,
+换 IV3/IV2.5/Next 均无对比空间不可用)。学生训练时只读盘,不跑教师。
+
+**先跑自检(零 GPU、零权重、零视频;接线前必做)**:
+```bash
+python experiments/extract_teacher.py self-test
+python -m pytest tests/test_extract_teacher.py -q      # 44 项
+```
+
+**第一步永远是 100k 成本切片** —— U7-1 的语料范围(curated 2–3M vs 全量 10M)**至今未定**,
+定它的方法就是先用切片实测吞吐再外推,别一上来就全量:
+```bash
+CUDA_VISIBLE_DEVICES=0 python experiments/extract_teacher.py run \
+  --anno data/anno_pretrain/internvid_v1.jsonl \
+  --out  experiments/teacher/iv2s2_100k \
+  --teacher-ckpt checkpoints/InternVideo2-stage2_1b-224p-f4.pt \
+  --limit 100000 --batch-size 8 --num-workers 8 --amp bf16
+```
+日志每块打 `clip/s`;拿它乘语料规模就是两档的 GPU 时数,决策留到数据出来那天。
+
+**全语料按 shard 并行**(每卡一个 shard,彼此不通信,挂了各自续跑;块已存在即跳过):
+```bash
+for k in 0 1 2 3; do
+  CUDA_VISIBLE_DEVICES=$k nohup python experiments/extract_teacher.py run \
+    --anno data/anno_pretrain/internvid_v1.jsonl \
+    --out  experiments/teacher/iv2s2_full \
+    --teacher-ckpt checkpoints/InternVideo2-stage2_1b-224p-f4.pt \
+    --shard-id $k --num-shards 4 --batch-size 8 --num-workers 8 \
+    > experiments/teacher/extract_$k.log 2>&1 &
+done
+```
+
+**逐帧 + 低 T 子集嵌入(U7-2 的「保险」)** —— 加 `--per-frame`。只多几次极廉价的池化,
+**不是** T× 成本(实现见脚本 `ProjectorCapture`);存储按 IV2-1B 的 D=768 计
+≈ `16×768×2B` ≈ **24 KB/片**(U7 里写的 ~45KB 是按更大的 D 估的):
+```bash
+python experiments/extract_teacher.py run ... --per-frame --subset-ts 2,4,8
+```
+
+**合并 + 体检**(体检不过就别往下接):
+```bash
+python experiments/extract_teacher.py merge  --out experiments/teacher/iv2s2_full
+python experiments/extract_teacher.py verify --out experiments/teacher/iv2s2_full
+```
+`verify` 关注三格:`rows_unique`(行号唯一)、`fail_rate`(解码失败率)、
+**`zero_emb_but_ok`**(标了成功却是零向量 ⇒ **教师前向出问题**,不是解码问题,必须查)。
+
+⚠️ **三条容易踩的**:
+1. **失败条保留占位行、不删** —— 删行会让 `rows` 与嵌入静默错位,下游只表现为
+   「蒸馏没效果」。单块失败率超 `--fail-rate-abort`(默认 20%)直接抛错,不写半空的块。
+2. **归一化用 ImageNet 那套**(0.485/0.456/0.406),不是 CLIP 那套 —— 依据是仓库自己的
+   分派规则 `dataset/__init__.py:get_train_transform`。用错会整体偏移而 loss 照降。
+3. **文本阶段(`--stage text`)依赖重** —— IV2-stage2 文本塔是 LLaMA 系,要 `peft`;
+   仓库刻意不 eager import 它。视频阶段完全不碰这条链,先把视频跑完再说。
+
 ## 4. Training (pretraining)
 
 **Preflight — run this before every pretraining launch, not just the first:**
