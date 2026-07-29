@@ -236,6 +236,24 @@ def main(config):
     train_loaders, test_name2loaders, train_media_types = setup_dataloaders(
         config, mode=config.mode
     )
+
+    # 开跑前就把「训练内评测永远被跳过」这件事查出来。
+    # 坑:基线 config 写 `test_file = dict(act_val=...)` 而 `test_types = ["ret_test"]`,
+    # 键对不上 ⇒ 下面 epoch 末的循环把唯一的测试集整个 `continue` 掉,跑完只剩
+    # `Empty DataFrame`。2026-07-29 的 sub1m_r0_s42 就是这样白跑了 15 小时才发现。
+    # 那时才发现太晚了 —— 这里在第一个 step 之前就炸,代价是秒级。
+    if test_name2loaders:
+        _usable = [k for k in test_name2loaders if k in config.test_types]
+        if not _usable:
+            raise ValueError(
+                "训练内评测会全部被跳过:test_file 的键与 test_types 对不上。\n"
+                f"  test_file 的键 = {sorted(test_name2loaders)}\n"
+                f"  test_types     = {list(config.test_types)}\n"
+                "修法:把 config 里的 test_file 改成 "
+                'dict(ret_test=available_corpus["<你的测试集>"]) —— 键必须在 test_types 里。\n'
+                "见 TROUBLESHOOTING.md「训练跑完但没有任何评测数字」。"
+            )
+
     num_steps_per_epoch = sum(len(d) for d in train_loaders)
 
     config.scheduler.num_training_steps = num_steps_per_epoch * config.scheduler.epochs

@@ -23,6 +23,57 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-29 (58) — 15 小时白跑的根因找到了:评测键对不上,**不用重训**;顺带拿到全量 wall-clock
+
+**先说结论:`sub1m_r0_s42` 那 15 小时没白费 —— ckpt 是好的,离线补评测就行。**
+
+**根因**(不是评测代码坏了):基线 config 写 `test_file = dict(act_val=...)`,而 `test_types = ["ret_test"]`
+—— 键对不上,`pretrain.py` 的 epoch 末循环把唯一的测试集整个跳过,所以只剩 `Empty DataFrame`。
+`pilot_10k_*` 没踩到是因为它们显式写了 `ret_test`。#334 已为 8 个臂修过,**但 #335 新增的 4 个臂又漏了**
+(`sub1m_nR1_s42/s43`、`sub1m_r1both_s42/s43`)—— **本次补齐 12/12**,并在 `pretrain.py` 加了**开跑前**就检查
+键交集的守卫(为空直接 raise),**代价从 15 小时降到几秒**。
+
+### 你现在做两件事
+
+**① 先补评已跑完的那臂(一张卡,几分钟,零重训)**
+
+```bash
+cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
+export CUDA_VISIBLE_DEVICES=4
+RUN=experiments/runs/sub1m_r0_s42
+bash experiments/run_eval.sh small msrvtt "${RUN}/ckpt_02.pth" \
+     experiments/evals/sub1m/sub1m_r0_s42 num_frames_test 8
+python -c "import json;d=json.load(open('experiments/evals/sub1m/sub1m_r0_s42/eval_res.json'));print(json.dumps(d,indent=2)[:800])"
+```
+(ckpt 路径指到**目录** `ckpt_02.pth`,不是里面的 `.pt`;`shared_utils.py:150` 的 `osp.isdir` 分支支持它。)
+
+**② 再用 runner 起剩下的臂**(上次没走 runner —— `verify_1m.log` 里没有 START/DONE,所以只有 r0_s42 跑了)
+
+```bash
+nohup bash experiments/run_verify_1m.sh 4,5,6,7 > experiments/runs/verify_1m.log 2>&1 &
+grep -E "START|DONE" experiments/runs/verify_1m.log     # 现在应该能看到标记
+```
+
+### ⏱ 顺带:U6 等了很久的那个数拿到了
+
+`9.1821 s/it` @ 全局 batch 512(4 卡 × 128)= **55.8 samples/s**。外推全量 10.65M:
+
+| | 4 卡(现状) | 8 卡(每卡 batch 64,全局仍 512) |
+|---|---|---|
+| 单 epoch | **53.0 h** | ~26.5 h |
+| **R0 三个 epoch** | **≈ 159 h ≈ 6.6 天** | **≈ 3.3 天** |
+
+⇒ U6 的「宽裕档 = 33E」≈ **73 天,直接不可行**;常态档(R0 3ep + 排序臂各 1ep + 胜者补 3ep)
+在 4 卡上 ≈ **26 天**。**几乎必然要申请后 4 张卡** —— 8 卡且每卡 batch 64 可保持全局 512,
+**不改任何对照条件**(`SETUP_B100.md` 红线要求你明确指示才能用后 4 张)。
+
+**⚠️ 外推假设**:全量分片的 IO 与 1M 单分片同速。真起跑后请用首日实测校正。
+
+### 还想请你回一句
+
+**全量 10M 的 R0 是不是另有一路在跑?** 上面这 15 小时是 **1M 子集**那一路(`sub1m_r0_s42`)。
+ROADMAP 3.2 还写着「等首光回报 → R0 起跑」,两边对不上。
+
 ## 2026-07-28 (63) — R1 大数据 A/B 定档 = 1M 子集档:入库 4 config + 1M 缓存命令,先建缓存再跑两对
 
 既然 H100 现在训 1M 子集(`internvid_v1`),就把 R1 文本负例库的「真正发威档」A/B **放到 1M 验证层跑**(不等全量 10M)。

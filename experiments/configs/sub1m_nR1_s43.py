@@ -10,6 +10,13 @@ batch_size_test = 128
 
 seed = 43
 
+# ⚠️ 训练内评测的 key 必须落在 test_types 里。基线 config 是
+# `test_file = dict(act_val=...)` + `test_types = ["ret_test"]` —— 键对不上,
+# 唯一的测试集会被整个跳过,跑完只得到 `Empty DataFrame`(#334 已为其余臂修过,
+# 本臂 #335 新增时漏了)。见 TROUBLESHOOTING「训练跑完但没有任何评测数字」。
+test_file = dict(ret_test=available_corpus["msrvtt_1k_test"])  # noqa: F405
+test_types = ["ret_test"]
+
 model["use_sigmoid_loss"] = True                          # noqa: F405
 model["vision_encoder"]["temporal_pooling"] = "attn"      # noqa: F405
 available_corpus["internvid_v1"]["caption_idx"] = True    # noqa: F405
