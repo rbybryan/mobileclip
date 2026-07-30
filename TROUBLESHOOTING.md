@@ -198,6 +198,22 @@ test_types = ["ret_test"]
 构建完 dataloader、进第一个 step 之前就检查键的交集,为空直接 `raise ValueError`
 并打印两边的键。**代价从 15 小时降到几秒。**
 
+> 🔴 **2026-07-30:守卫上线后,基线 config 自己没跟着改 ⇒ 预训练整个跑不起来。**
+> 上面 ① 的修法当时只写进了这份文档和各个实验臂配置,**两个基线预训练 config 本身
+> 一直是坏的**:
+>
+> | 文件 | 修前 | 修后 |
+> |---|---|---|
+> | `scripts/pretraining/clip/mobileviclip_small/config.py:7` | `dict(act_val=…)` | `dict(ret_test=…)` |
+> | `scripts/pretraining/clip/mobileviclip_tiny/config.py:7` | `dict(act_val=…)` | `dict(ret_test=…)` |
+>
+> 于是 ② 的守卫忠实地在第一个 step 前 `raise` —— **任何直接用基线 config 跑
+> `tasks_clip/pretrain.py` 的人都会撞上**(闸② 的 workers 对照实验就是这么撞的)。
+> 守卫没错、错的是配置;**加守卫和修配置必须同一次提交完成**,只加守卫等于把
+> 「静默白跑」换成「谁都跑不了」。已全仓扫描确认现在**没有**残留的键/类型不匹配
+> (`experiments/configs/sub1m_*` 那四个早就是对的 —— 它们文件里那句
+> `# test_file = dict(act_val=...)` 是**警示注释**,不是代码,扫描时别被它骗了)。
+
 ### 已经白跑了怎么办 —— 不用重训
 
 ckpt 是存好的(DeepSpeed 目录式,`ckpt_02.pth/mp_rank_00_model_states.pt`),

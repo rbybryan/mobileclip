@@ -965,6 +965,12 @@ python -m torch.distributed.run --nproc_per_node=1 --master_port=$((10000+RANDOM
 > 解码/IO 画像(`train_corpus internvid_zh_10k_pilot`,并先确认 `data/internvid_zh_10k/videos`
 > 指向 `/home/vca1/datasets/internvid_zh_10k`)。那是「以后能不能挪到 V100 训」的问题,**不是闸②**。
 
+> ⚠️ **2026-07-30 首次尝试直接崩了,先 `git pull` 再跑。** 基线 config 的
+> `test_file` 键是 `act_val` 而 `test_types = ["ret_test"]`,2026-07-29 加的守卫
+> (`pretrain.py:248`)会在第一个 step 之前 `raise ValueError` ⇒ **预训练当时谁都跑不起来**。
+> 两个基线 config(`mobileviclip_small` / `_tiny`)已改成 `dict(ret_test=…)`,
+> 见 TROUBLESHOOTING「训练跑完但没有任何评测数字」。
+
 🔴 **别和历史基准比 —— b100 是共享机。** 8 张 H100 常年被别的租户占到 ~87%
 (TROUBLESHOOTING「b100 is a shared, multi-tenant node」),而 `9.1821 s/it` 是**另一天**、
 未知负载下测的。拿今天的 `num_workers=16` 去比它,等于把机器负载差异算到 workers 头上 ——
