@@ -24,7 +24,7 @@ re-locate by symbol if files drift).
 >
 > | Item | 2026-07-15 status here | Reality on `main`, 2026-07-29 |
 > |---|---|---|
-> | **P1** SDPA/Flash attention | "do first" | ⬜ **Still open — the one item fully unstarted.** No `scaled_dot_product_attention` anywhere; `MHSA` still does an explicit `attn.softmax(dim=-1)` (`mobileviclip_tiny.py:425`). `use_flash_attn` is accepted and threaded (`:887`, `:974`, `:1218`) but **never read in any forward**. Still blocked by the torch 1.13.1 pin — and paper-plan §6.8 has since **demoted P1 to conditional**, so this is no longer "do first" |
+> | **P1** SDPA/Flash attention | "do first" | ⬜ **Still open — the one item fully unstarted**, but 🔴 **its stated blocker was disproved 2026-07-30.** No `scaled_dot_product_attention` anywhere; `MHSA` still does an explicit `attn.softmax(dim=-1)` (`mobileviclip_tiny.py:425`). `use_flash_attn` is accepted and threaded (`:887`, `:974`, `:1218`) but **never read in any forward**. ~~Still blocked by the torch 1.13.1 pin~~ — **the pin describes no machine in use: b100 runs 2.5.1+cu124, 101vector runs 2.5.1+cu118.** SDPA is available on both today, and the DeepSpeed-compat risk that justified paper-plan §6.8's demotion was already paid by ~15 h of successful 1M-tier training on 2.5.1. See `architecture-round4.md` §8.1 |
 > | **P2** remove hard-coded T=8 | proposal | ✅ **LANDED** as C2 T-agnostic (PR #222, ROADMAP 2.1). All eleven `reshape(8,…)` sites are dynamic: `t_frames = get_num_frames()` (`:408`, `:597`, `:1031`), broadcast via `set_num_frames(T)` (`:1306`), `temporal_embedding` resized at runtime by `resize_temporal_embedding`. 18 unit tests + 8-GPU elastic-T smoke passed |
 > | **P3** temporal attention pool | proposal | ✅ **LANDED, default-off.** `TemporalAttentionPool` (`mobileviclip_tiny.py:1321`, `_small.py:1456`) — one cross-attention block, query = mean, **zero-init proj** (`:1338-1339`) exactly as proposed. Switch: `temporal_pooling="attn"` (default `"mean"`) |
 > | **P4** SigLIP sigmoid loss + learnable t/b | proposal | ✅ **LANDED, default-off.** `vtc_loss_sigmoid` (`criterions.py:225`) is now **called** (`mobileviclip_small.py:243`) behind `use_sigmoid_loss` (default `False`). The `idx` fix proposed here was implemented too: it calls `get_mask(logits, idx=idx)` (`criterions.py:405`), with `torch.eye` only as fallback. Config `experiments/configs/r1a_sigmoid.py` |
@@ -142,13 +142,22 @@ all materialize the full `N×N` attention matrix. Replace the body with
 `F.scaled_dot_product_attention`. The flags for this (`use_flash_attn`) already
 exist and are ignored — wire them up or just make SDPA unconditional.
 
-**Validation correction (2026-07-15):** the pinned env is **PyTorch 1.13.1**
+~~**Validation correction (2026-07-15):** the pinned env is **PyTorch 1.13.1**
 (`mobileviclip.yml`), which predates SDPA (added in 2.0). So this requires
 either a torch ≥2.0 env bump (cu117/cu118 wheels exist; verify DeepSpeed/apex
-compat) or `xformers.ops.memory_efficient_attention` on 1.13. Also: the Flash
-kernel needs sm80+; **V100 (sm70) gets the memory-efficient kernel**, which
-still removes the N×N materialization — the win is real but it is a
-memory+moderate-speed win, not a Flash-class speedup.
+compat) or `xformers.ops.memory_efficient_attention` on 1.13.~~
+
+🔴 **Re-corrected 2026-07-30 — no env bump is required, because it already happened.**
+`mobileviclip.yml`'s 1.13.1+cu117 is validated only on a **CPU node**; both GPU boxes run
+**torch 2.5.1** (b100 `+cu124`/sm_90, 101vector `+cu118`/sm_70 — the latter pinned *at 2.5.1*
+precisely for the V100 kernels). `F.scaled_dot_product_attention` is therefore callable today
+on both, and DeepSpeed compatibility is already demonstrated by ~15 h of 1M-tier training.
+The swap is **mathematically exact** — verified in float64 at this model's real stage-4 shape
+(N = T·H·W = 512, 20 heads): `max|naive − SDPA| = 2.08e-16`. See `architecture-round4.md` §8.1.
+
+What survives from the original note: the Flash kernel needs sm80+, so **V100 (sm70) gets the
+memory-efficient kernel**, which still removes the N×N materialization — a memory + moderate-speed
+win there, while **H100 (sm90) gets the full Flash path**.
 
 - **Touchpoints:** `models/mobileviclip_{small,tiny}.py` (`MHSA`,
   `CrossAttention`); keep the reshape choreography, swap only the attention core.

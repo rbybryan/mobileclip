@@ -284,6 +284,14 @@ code. Nine findings and their dispositions:
 8. **P1 demoted**: torch≥2.0 bump moves from Wk-1 default to conditional
    (naive attention at 512 tokens runs today; DeepSpeed-compat validation
    risks more schedule than it saves). Wk 1 keeps only the 4 correctness items.
+   > 🔴 **Half of this rationale expired (2026-07-30).** There is **no bump to make**: both GPU
+   > boxes already run torch 2.5.1 (b100 `+cu124`, 101vector `+cu118`), and the
+   > DeepSpeed-compat validation that this item priced in **has already been paid** — the
+   > 1M-tier arms trained ~15 h under DeepSpeed on 2.5.1. The surviving leg is narrower than
+   > written: naive attention runs fine at **T=8** (N=512), but at **T=16** (N=1024) the
+   > materialized probabilities are what makes peak memory 23.3 GB — i.e. it constrains
+   > **C2's own elastic-T range**. P1 is now a ~20-line, zero-dependency edit whose swap is
+   > exact to 2.08e-16. See `architecture-round4.md` §8.1.
 9. **Three C1 design details added to R2**: teacher embedding dim ≠ 512 needs
    a projection scheme; the offline pass must record teacher frame indices and
    the sampling protocol (reproducibility); low-T reachability of the 16-frame

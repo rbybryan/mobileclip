@@ -14,7 +14,7 @@
 >
 > | 条目 | 本报告(07-15) | `main` 实况(07-29) |
 > |---|---|---|
-> | **P1** SDPA/Flash | 「优先做」 | ⬜ **唯一完全未动的一条**。全仓无 `scaled_dot_product_attention`,`MHSA` 仍显式 `attn.softmax`(`_tiny.py:425`);`use_flash_attn` 接进来了但**任何 forward 都不读**。仍卡在 torch 1.13.1;且 paper-plan §六.8 已把 P1 **降级为条件项** |
+> | **P1** SDPA/Flash | 「优先做」 | ⬜ **唯一完全未动的一条**,但 🔴 **它的「阻塞理由」已于 2026-07-30 被证伪**。全仓无 `scaled_dot_product_attention`,`MHSA` 仍显式 `attn.softmax`(`_tiny.py:425`);`use_flash_attn` 接进来了但**任何 forward 都不读**。~~仍卡在 torch 1.13.1~~ —— **那个 pin 描述的机器一台都不存在**:b100 跑 `2.5.1+cu124`、101vector 跑 `2.5.1+cu118`,SDPA **两台今天就能用**;paper-plan §六.8 降级所依据的「DeepSpeed 兼容性验证成本」也**早已付清**(1M 档在 2.5.1 上成功训了约 15 小时)。见 `architecture-round4.md` §8.1 |
 > | **P2** 解 T=8 硬编码 | 提案 | ✅ **已落地** = C2 T 无关化(#222,ROADMAP 2.1)。11 处 reshape 全部动态化,`t_frames = get_num_frames()`;18 项单测 + 8 卡弹性 T 冒烟全过 |
 > | **P3** 时间维注意力池化 | 提案 | ✅ **已落地,默认关**。`TemporalAttentionPool`(`_tiny.py:1321` / `_small.py:1456`),query=mean、**proj 零初始化**(`:1338-1339`),与提案一致。开关 `temporal_pooling="attn"` |
 > | **P4** sigmoid 损失 + 可学习 t/b | 提案 | ✅ **已落地,默认关**。`vtc_loss_sigmoid`(`criterions.py:225`)**已被调用**(`_small.py:243`),受 `use_sigmoid_loss` 控制;本报告提的 `idx` 修正也实现了 —— 已改调 `get_mask(logits, idx=idx)`(`criterions.py:405`),`torch.eye` 仅作兜底。配置 `experiments/configs/r1a_sigmoid.py` |
@@ -99,7 +99,7 @@ LiT(Zhai 等,CVPR'22,锁**图像**塔)方向相反;"LiT 式"是对本项目自�
 
 | # | 提案 | 代码核查 | 文献核查 | 结论 |
 |---|------|---------|---------|------|
-| P1 | SDPA/高效注意力 | ✅ 朴素注意力、旗标被忽略属实 | ⚠️ **修正** | **成立,但须先升级环境**:锁定环境为 PyTorch **1.13.1**(`mobileviclip.yml`),`F.scaled_dot_product_attention` 是 2.0 才有的 API;且 Flash 内核要求 sm80+,**V100(sm70)只能走 memory-efficient 内核**。收益仍真实(消除 N×N 显存物化 + 中等提速),但不是 Flash 级加速。可选路线:升 torch ≥2.0(需验证 DeepSpeed 兼容)或在 1.13 上用 `xformers.ops.memory_efficient_attention`。 |
+| P1 | SDPA/高效注意力 | ✅ 朴素注意力、旗标被忽略属实 | 🔴 **再修正(2026-07-30)** | ~~**成立,但须先升级环境**:锁定环境为 PyTorch **1.13.1**(`mobileviclip.yml`)……可选路线:升 torch ≥2.0(需验证 DeepSpeed 兼容)或在 1.13 上用 `xformers`。~~ **不需要升级 —— 升级早就发生过了。** `mobileviclip.yml` 的 1.13.1+cu117 只在 **CPU 节点**上验证过;**两台 GPU 机都是 torch 2.5.1**(b100 `+cu124`/sm_90;101vector `+cu118`/sm_70,后者**正是为了 V100 内核才钉在 2.5.1**)。⇒ `F.scaled_dot_product_attention` 两台今天就能调,DeepSpeed 兼容性也已由 1M 档约 15 小时训练证实。**替换在数学上精确** —— 本仓 float64 实测(N=T·H·W=512,20 头):`max|朴素 − SDPA| = 2.08e-16`。**原文仍成立的部分**:Flash 内核要 sm80+,故 **V100(sm70)走 memory-efficient 内核**(仍消除 N×N 物化),而 **H100(sm90)走完整 Flash 路径**。见 `architecture-round4.md` §8.1。 |
 | P2 | 解除 T=8 硬编码、弹性帧数训练 | ✅ 三处 reshape + embedding 形状均核实;`interpolate_pos_embed` 已存在可复用 | ✅ FlexiViT / LiteFrame(2026) | 成立。另注:TimeSformer 报告联合注意力在 32 帧即 OOM——硬编码之外,**联合注意力本身也会限制帧数扩展**,与 P9 联动。 |
 | P3 | 帧维注意力池化替代均值 | ✅ `mean(0)` 属实;⚠️ 措辞收紧:`AttentionPoolingBlock` 在规范模型中未用,但 InternVideo2 骨干以同名副本作头部在用(仓库内证据);`Attention_global_residual` 的 proj 零初始化可用于"零回退"启动 | ✅ InternVideo2 / Perception Encoder 均用注意力池化头 | 成立,且比原稿更强:仓库内已有同模式的工作实现可参照。开销 ≈ 8 个 512 维 token 上的一次 cross-attention,总 FLOPs 占比 ~1e-5 量级。 |
 | P4 | SigLIP sigmoid 损失 + 可学习温度/偏置 | ✅ `vtc_loss_sigmoid` 完整存在、零调用;`temp==temp_min` 两个配置均属实;⚠️ 该实现用 `torch.eye` 忽略 `idx`;另查明 `idx` 即数据集样本下标(`pt_dataset.py __getitem__` 返回 `index`),故跨样本重复字幕在现有 softmax 版里同样是假负例 | ✅ SigLIP 原文:小 batch 下 sigmoid 优于 softmax;MobileCLIP2:温度调优值最高 ~2.8% ⚠️(**英文版写的是 ~1–2%,两版自 07-21 起不一致且都没引表号;疑与 §3.4 的 MobileCLIP2-S2 整体 IN-1k +2.8(77.2 vs 74.4)混淆 —— 那是整模型增益,不是温度消融**。两个数都按未核实处理,勿写进论文;P4 的理据由 SigLIP 小 batch 论证独立支撑) | 成立,且工程量比预想更小(接线改动而非新码)。须把 `get_mask`(`criterions.py:270`)移植进 sigmoid 目标,SigLIP 初始化 t=log 10、b=−10。 |

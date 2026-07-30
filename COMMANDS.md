@@ -23,6 +23,28 @@ git clone https://github.com/MCG-NJU/MobileViCLIP.git
 The pinned stack (from `mobileviclip.yml`): **Python 3.10**, **PyTorch 1.13.1 + CUDA 11.7**, plus compiled
 extensions (flash-attn, apex, deepspeed). Note the yml's internal env name is `internvideo`.
 
+> ⚠️ **That pin describes no machine this project actually uses (corrected 2026-07-30).** The
+> 1.13.1+cu117 recipe is validated **only on a CPU node** (import check, below). **Both GPU boxes
+> run PyTorch 2.5.1:**
+>
+> | machine | torch | why | source |
+> |---|---|---|---|
+> | **b100 / 8×H100 (sm_90)** — main training clock | **2.5.1+cu124** | system torch already has `sm_90`; repo pin "从没被装上" | `experiments/SETUP_B100.md` §2 (measured 2026-07-24) |
+> | **101vector / 8×V100 (sm_70)** — eval + export | **2.5.1+cu118** | pinned *at 2.5.1* deliberately, for the sm_70 kernels | `experiments/ROADMAP.md:126`, `experiments/export_smoke_results.md` §env |
+>
+> Consequences, because several docs still reason from the 1.13.1 premise:
+> - **`F.scaled_dot_product_attention` (torch ≥2.0) is available on both boxes, and has been
+>   since at least 2026-07-24.** Backlog item **P1 is therefore not blocked** — see
+>   `notes/architecture-round4.md` §8.1.
+> - The DeepSpeed-compatibility risk that demoted P1 (`notes/paper-plan.md` §6.8 item 8) is
+>   **already discharged**: the 1M-tier arms trained ~15 h under DeepSpeed on torch 2.5.1
+>   (`ROADMAP.md` G9), and both R1 arms ran on `2.5.1+cu118` (`ROADMAP.md:304`).
+> - `torch.compile`, `channels_last`, and CUDA graphs are likewise available — relevant to the
+>   open **MFU 0.67%** question (`architecture-round4.md` §0.2).
+>
+> **Do not "upgrade" anything to act on this** — the upgrade already happened. What is missing is
+> code that *uses* it, plus a `hasattr` guard so the CPU-node 1.13.1 recipe keeps importing.
+
 ### Option 0 — one shot (recommended, validated)
 
 ```bash
@@ -1058,6 +1080,125 @@ python experiments/collect_results.py --compare-mc ssv2_gate3 ssv2_base
 > 为什么必须配对:两条臂答的是**同一批题**,裸 acc 相减会把共享方差算进去。
 > 合成数据上实测配对半宽 ±0.72 vs 无配对 ±2.99(**4.2×**)。
 > 单测见 `tests/test_paired_bootstrap.py`(多选部分 7 项,共 18 项)。
+
+### 3.13 环境实况自检 + SDPA 可用性(零 GPU,~10 秒;round-5 §8.1)
+
+**为什么要跑**:仓库多处文档按 `mobileviclip.yml` 的 **torch 1.13.1** 推理,断言
+「SDPA 用不了、P1 被环境卡住」。**那个 pin 描述的机器一台都不存在** —— 两台 GPU 机
+都是 **2.5.1**。下面这条命令是**一次性证实/证伪**,请在**两台机器上各跑一次**并把输出
+贴回 `notes/live/from-server.md`。
+
+```bash
+# 两台机器各跑一次(b100 先 source experiments/env_b100.sh)
+python - <<'PY'
+import torch, torch.nn.functional as F
+print("torch      :", torch.__version__)
+print("arch_list  :", torch.cuda.get_arch_list() if torch.cuda.is_available() else "no cuda")
+print("has SDPA   :", hasattr(F, "scaled_dot_product_attention"))
+print("has compile:", hasattr(torch, "compile"))
+PY
+```
+
+**判读**:`has SDPA = True` ⇒ **P1 不再有环境阻塞**,`architecture-round4.md` §5 里
+「torch 1.13.1 没有 SDPA、只能手写分块」那句作废(已划掉),`paper-plan` §六.8 的
+降级理由也只剩半条。`arch_list` 含 `sm_90` = H100 走完整 Flash 路径;只含 `sm_70`
+= V100 走 memory-efficient 内核(仍然消掉 N×N 物化)。
+
+**替换本身是数学恒等的**,本地 float64 已按本模型 stage-4 真实形状(N = T·H·W = 512,
+20 头)验过,`max|朴素 − SDPA| = 2.08e-16`。复现:
+
+```bash
+python - <<'PY'
+import torch, torch.nn.functional as F
+torch.manual_seed(0)
+B,T,H,W,C,hd = 2,8,8,8,640,32
+N, nh, scale = T*H*W, C//32, 32**-0.5
+x  = torch.randn(B,N,C, dtype=torch.float64)
+qw = torch.randn(C*3,C, dtype=torch.float64)*0.02
+q,k,v = (x@qw.T).reshape(B,N,3,nh,hd).permute(2,0,3,1,4).unbind(0)
+ref = (((q*scale)@k.transpose(-2,-1)).softmax(-1)@v).transpose(1,2).reshape(B,N,C)
+out = F.scaled_dot_product_attention(q,k,v).transpose(1,2).reshape(B,N,C)
+print("max|naive - SDPA| =", (ref-out).abs().max().item())
+PY
+```
+
+⚠️ **落地时必须加版本护栏**:`mobileviclip.yml` 的 1.13.1 CPU 配方仍是 import 冒烟的
+基准,所以走 `if hasattr(F, "scaled_dot_product_attention"): ... else: <现有朴素路径>`,
+不要无条件调用。开关沿用仓库既有的 `use_flash_attn` 旗标(现在被接进来却**从不读**)。
+
+### 3.14 P11 逐块深度敏感度扫描(零训练,~1 GPU-小时;round-5 §8.3 P11)
+
+**目的**:`architecture-round4.md` §8.2 证明**每个 RepMixerBlock 的 MACs 完全相同
+(157.29 M = 逐帧 2.04%)**,「stage 3 占一半」其实只是 `layers[2]=24`。⇒ 删**深度**是
+第一次真正作用在 86.5% 主导项上的杠杆,而且**可以零训练地量出每一块值多少分**。
+
+> ⚠️ **这个子命令还不存在,需要先写。** `gate_checks.py` 目前只有
+> `gate1/gate3/gate4/gate5/gate5-fused/self-test`(`experiments/gate_checks.py:467-485`)。
+> 下面是**规格**,不是可直接粘的命令 —— 照它加一个 `gate6-dropblock` 子命令即可复用
+> 现成的「探模式 → 0 匹配就抛错不落盘」骨架。
+
+**要置零的张量(每块 3 个,少一个就不是恒等)**:
+
+| # | 后缀 | 作用 | 数量(全模型) |
+|---|---|---|---|
+| 1 | `token_mixer.layer_scale_1d` | 时序 mixer 残差门 | 40 |
+| 2 | `token_mixer.layer_scale` | **空间** mixer 残差门 | 40 |
+| 3 | `layer_scale`(块级,**不带** `token_mixer.`) | ConvFFN 残差门 | 40 |
+
+依据(已核源码):`RepMixer.forward:743-746` = `x + λ_1d·(mixer_1d−norm_1d)` 然后
+`x + λ·(mixer−norm)`;`RepMixerBlock.forward:1075` = `token_mixer(x)` 然后
+`x + drop_path(layer_scale·convffn(x))`。三者全零 ⇒ 该块**精确恒等**。
+
+> 🔴 **必须写进断言的坑**:全模型 `layer_scale` 共 **80** 个 = 40 个
+> `token_mixer.layer_scale`(空间 mixer)+ 40 个**块级** ConvFFN 门。**这正是 §0.1 里
+> `gate5` 分母取错、凭空造出 2.42% 的同一个坑。** 子命令要 `assert` 每块恰好命中 3 个键,
+> 并把命中的键名打出来。先看一眼真实键名:
+>
+> ```bash
+> python - <<'PY'
+> import torch, collections
+> sd = torch.load("checkpoints/mobileviclip_small.pt", map_location="cpu")
+> sd = sd.get("module", sd.get("model", sd))
+> c = collections.Counter()
+> for k in sd:
+>     if k.endswith("layer_scale_1d"):            c["token_mixer.layer_scale_1d"] += 1
+>     elif k.endswith("token_mixer.layer_scale"): c["token_mixer.layer_scale"] += 1
+>     elif k.endswith("layer_scale"):             c["block-level layer_scale"] += 1
+> print(c)   # 期望 40 / 40 / 40
+> PY
+> ```
+>
+> ⚠️ 顶层 wrapper 键**不是** `model`(§3 开头那次静默 no-op 就是踩了这个)——先按上面这样探。
+
+**扫描循环(40 块;stage 4 的 4 个 `AttentionBlock` 门结构不同、`:1111-1188` **未核**,先别纳入)**:
+
+```bash
+for i in $(seq 0 39); do
+  python experiments/gate_checks.py gate6-dropblock \
+      --ckpt checkpoints/mobileviclip_small.pt \
+      --block "$i" --out "checkpoints/_drop_b${i}.pt"      # 内部断言命中 3 个键
+  # ⚠️ 每臂必须单独 output_dir,否则 rank 文件互相覆盖(§3.9 那个坑)
+  bash scripts/evaluation/clip/zero_shot/mobileviclip_small/eval_msrvtt.sh \
+      "checkpoints/_drop_b${i}.pt" "drop_b${i}"
+done
+python experiments/collect_results.py --compare drop_b7 base    # 逐块配对 CI
+```
+
+**两条强制纪律**:
+
+1. **删块会改变下游每个 BN 的输入分布** ⇒ **评测前必须做一次前向 BN 重校准**
+   (`experiments/per_t_bn.py` 已有这套机器,round4-P7 的分辨率扫描也要用同一套)。
+   不做的话量到的是分布漂移,不是这块的价值。
+2. **判读用配对 bootstrap(§3.9),不要看裸差**;两口径(raw `ret_test_emb/` +
+   DSL `ret_test/`)同向才算(house rule)。
+
+**判据(预先登记)**:若**没有任何单块**的代价 < +1.0 r_mean,或**最便宜的 6 块之和 > 2.0
+r_mean** ⇒ 这份权重里深度不冗余,**关掉这条线**,预算全给 round4-P7(分辨率)。
+反之:按 Δr_mean/Δms 贪心删,并与 round4-P7 组成 **(分辨率 × 深度) 二维等延迟前沿**
+—— 两者都保算术强度(§8.2b),省下的延迟可以相乘。
+
+**顺带产出**:这条曲线本身就是论文的 Fig-1 级分析(「一个蒸馏出来的移动端视频 CLIP
+把算力放在哪、每一块买到了什么」),**零训练轮次**。
 
 ## 4. Training (pretraining)
 
