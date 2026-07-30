@@ -14,8 +14,12 @@
 # 要跑请显式指定:
 #   bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_nR1_s42 sub1m_r1both_s42 sub1m_nR1_s43 sub1m_r1both_s43
 #
-# batch/输出目录/种子都写在各 config 里;这里不再传 batch。断点续训:给某个 config
-# 追加 `auto_resume True`(单独重跑那一条即可,output_dir 已隔离,不会互相覆盖)。
+# batch/输出目录/种子都写在各 config 里;这里不再传 batch。
+# **断点续训已内置**:下面对 run_pretrain 传了 `auto_resume True` ⇒ 某臂被信号打断
+# (前台 runner 遇 tunnel 掉线 / Ctrl-C ⇒ SignalException ⇒ set -e 整条 runner 退出)后,
+# 只需**用剩余的 config 名重跑本脚本**:已有 ckpt 的臂(如被打断的那条)会从 ckpt_latest
+# 续训,没 ckpt 的臂正常从头开始(auto_resume 找不到 ckpt = 全新起步,安全)。
+# ⚠️ **务必挂 nohup 后台**(见上面用法),别再前台跑 —— 前台是这次被打断的根因。
 set -euo pipefail
 
 GPUS=${1:?usage: run_verify_1m.sh <CUDA_VISIBLE_DEVICES> [config_short_name ...]}
@@ -41,7 +45,7 @@ for c in "${CONFIGS[@]}"; do
     echo "════════ $(date '+%F %T')  START ${c} ════════"
     CUDA_VISIBLE_DEVICES="$GPUS" bash experiments/run_pretrain.sh \
         "$cfg" "$NG" \
-        use_bf16 True bf16 True \
+        use_bf16 True bf16 True auto_resume True \
         > "experiments/runs/${c}.log" 2>&1
     echo "════════ $(date '+%F %T')  DONE  ${c}  (log: experiments/runs/${c}.log) ════════"
 done

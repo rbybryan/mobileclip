@@ -2754,3 +2754,32 @@ python -m torch.distributed.run --nproc_per_node=1 --master_port=$((10000+RANDOM
 **教训**:`train_corpus`/`test_file` 换了 benchmark 时,**入口脚本也可能要换** ——
 `retrieval.py`(检索)与 `retrieval_mc.py`(多选)读同一份 config 却算不同的指标。
 换 benchmark 前先看该 benchmark 自带的 `eval_*.sh` 调的是哪个 py。
+
+## 训练日志尾部 `torch.distributed.elastic...SignalException: Process NNNN got signal:` —— 训练被信号打断,不是代码 bug
+
+**症状**:某臂 log 末尾是一段 `torch/distributed/elastic/.../api.py` 栈,最后一行
+`SignalException: Process <pid> got signal: <n>`(信号号可能为空)。训练看似「崩了」,
+但**没有任何 Python 业务异常**(不是 OOM、不是 shape 错)。
+
+**原因**:torchrun 的 elastic agent 捕获到了**终止信号**(SIGTERM/SIGINT/SIGHUP)。
+最常见来源 = **前台跑的 runner + SSH/tunnel 掉线**(掉线给前台进程组发 SIGHUP)或手误
+Ctrl-C。因为 `run_verify_1m.sh` 是 `set -euo pipefail`,被打断的那一臂返回非零 ⇒ **整条
+runner 直接退出** ⇒ 排在后面的臂(如 `nA1_s42` 及所有 seed-43)**根本没启动**。已跑完的
+臂(ckpt 已存)不受影响。
+
+**修复(两步)**:
+1. **务必挂后台**再跑,别用前台:
+   ```bash
+   cd ~/mobileclip && git pull origin main   # 取到内置 auto_resume 的 runner
+   nohup bash experiments/run_verify_1m.sh 0,1,2,3 <剩余 config 名...> > experiments/runs/verify_1m_resume.log 2>&1 & echo "PID=$!"
+   ```
+2. **续训已内置**:`run_verify_1m.sh` 现在对每臂传 `auto_resume True`(base config 默认
+   `auto_resume=False`)⇒ 被打断的臂从 `ckpt_latest` 续,没 ckpt 的臂从头开始(安全)。
+   所以重跑时**只列还没跑完的 config**即可,已完成的别列(别重评/重训)。
+
+**重跑前先确认 0–3 没有残留进程占显存**(信号打断一般会自己释放,但保险起见):
+```bash
+nvidia-smi --query-gpu=index,memory.used --format=csv    # 4 张卡 memory.used 应接近 0
+```
+若仍有几十 G 被占 = 有孤儿 worker,按 PID/PGID 精确清(严禁 pkill,见 `COMMANDS.md` §4),
+清干净再重跑。

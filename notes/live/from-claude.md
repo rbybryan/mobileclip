@@ -23,6 +23,31 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-30 (74) — ⚠️ `sub1m_r1b_s42` 被信号打断,整条 runner 死了;续训重跑(挂后台)
+
+**发生了什么**:`sub1m_r1b_s42.log` 尾部 `SignalException: Process 4004093 got signal:` ——
+训练被**终止信号**打断(不是代码 bug、不是 OOM)。根因 = **前台跑的 runner + tunnel 掉线/Ctrl-C**。
+因为 runner 是 `set -e`,被打断的臂返回非零 ⇒ **整条 `run_verify_1m.sh` 退出** ⇒ `nA1_s42` 和
+所有 seed-43 臂**没启动**。`r0_s42`/`r1a_s42` 已跑完,不受影响。(详见 `TROUBLESHOOTING.md` 新增段。)
+
+**Do this next:**
+```bash
+cd ~/mobileclip && git pull origin main
+# 1) 先确认 0–3 没残留进程占显存(应接近 0):
+nvidia-smi --query-gpu=index,memory.used --format=csv
+# 2) 挂后台续跑剩余 6 臂(r1b_s42 会从 ckpt_latest 续训,其余从头;runner 已内置 auto_resume True):
+nohup bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_r1b_s42 sub1m_nA1_s42 sub1m_r0_s43 sub1m_r1a_s43 sub1m_r1b_s43 sub1m_nA1_s43 > experiments/runs/verify_1m_resume.log 2>&1 & echo "verify-1m PID = $!"
+```
+**关键:这次必须 `nohup ... &` 后台跑**(上次前台是被打断的根因)。记下 PID —— 共用 root,
+以后要停只能按这个 PID / 其 PGID,**严禁 pkill**。
+
+**验证续训生效**:重跑后 `grep -m1 -E "auto_resume|Resume|ckpt_latest|Load pretrained" experiments/runs/sub1m_r1b_s42.log`
+—— 看到 resume/加载既有 ckpt = 续上了;若是从 epoch 0 step 0 全新开始,说明 r1b 之前没存到 ckpt(那也没关系,重训即可)。
+
+**Then report back** in from-server.md:上面 nvidia-smi 的四行 + 新 runner 的 PID + `sub1m_r1b_s42.log` 头几行(确认续训/全新)。
+
+---
+
 ## 2026-07-30 (73) — 1M 验证层首条臂 A/B:`sub1m_r1a`(SigLIP sigmoid)**显著输** `r0`(仅 seed 42)
 
 **结果**(配对 bootstrap,§3.9;补评已核实权重加载 `Load pretrained model from .../sub1m_r1a_s42/ckpt_02.pth/mp_rank_00_model_states.pt`):
