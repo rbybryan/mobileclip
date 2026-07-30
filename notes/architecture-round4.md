@@ -12,6 +12,12 @@ plan's load-bearing premises did not survive contact with those numbers.
 > **Reading order.** §0 first — it contains two corrections that change what is worth doing.
 > §3 is the actionable part: five checks that cost **zero GPU-days** and settle most of §2.
 >
+> 🔺 **Then §8 (round 5, 2026-07-30) — the first pass to attack the 86.5% term.** It adds
+> P11–P14, corrects two premises this file states elsewhere (**P1 is not blocked by any torch
+> pin**; **"stage 3 is 50% of MACs" is really "`layers[2]=24`"**), and refutes one suspect before
+> anyone spends time on it. **§8 is partial**: 3 of its 4 commissioned panels died on an API
+> quota limit, so the accuracy/MFU/quantization sweeps still owe a round.
+>
 > 🔴 **Status as of 2026-07-30 — all five §3 gates have now been run** (§3.0 for results).
 > Two things this round asserted did **not** survive: §0.1's confound suspicion (tested,
 > **rejected** — the legs stand) and **§2 P2's INT8 mechanism** (tested, **falsified** — the
@@ -613,10 +619,12 @@ not 1**).
 `AttentionBlock.__init__` and **never read** — `MHSA.forward` is unconditionally naive. This is
 irrelevant for export (Core ML/TFLite lower attention themselves) but **not** for training: at
 T=16, N=1024, 20 heads, the materialized attention probabilities are what your 23.3 GB peak is
-made of, and they gate whether T=16 is trainable at all. torch 1.13.1 has no SDPA and the
+made of, and they gate whether T=16 is trainable at all. ~~torch 1.13.1 has no SDPA and the
 sm_70 pin is load-bearing, so the zero-risk fix is **manual query-block chunking inside
-`MHSA.forward`**, not a torch upgrade. Either fix it or delete the flags — right now they read
-like a feature and are a trap.
+`MHSA.forward`**, not a torch upgrade.~~ 🔴 **Retracted 2026-07-30 — the premise is false; see
+§8.1. Both GPU boxes already run torch 2.5.1, so `F.scaled_dot_product_attention` is available
+today and the manual-chunking workaround is unnecessary work.** Either fix it or delete the
+flags — right now they read like a feature and are a trap.
 
 ---
 
@@ -671,3 +679,291 @@ citations of the *real* LiT paper elsewhere (`docs/clip-2025-progress-report.md`
 confirmation that this plan's own kill/defer calls on all five externally-sourced candidates
 were already correct given the evidence gathered in rounds 3–4 — worth having for the paper's
 robustness story, not worth adding to the backlog.
+
+---
+
+## §8. Round 5 (2026-07-30) — the first pass to attack the **86.5%** term
+
+> ⚠️ **This round is PARTIAL and must be read as such.** Four expert panels were commissioned
+> (VLM/CLIP accuracy levers · efficient architecture · MFU diagnosis · on-device quantization).
+> **Three died mid-run on an API quota limit; only the efficient-architecture panel returned.**
+> So §8.3's proposals are one panel's output plus this session's own verification — *not* the
+> four-way convergence that rounds 3–4 had. **The accuracy-side, MFU-side, and quantization-side
+> sweeps still owe a round.** Do not read "nothing else came up" into this section.
+>
+> What makes the round worth landing anyway: **§8.1 and §8.2 are corrections and derivations
+> verified here**, independent of any panel, and each changes what is worth doing.
+
+### §8.1 🔴 P1 is not blocked. The `torch 1.13.1` premise describes no machine in use.
+
+Multiple docs defer P1 (SDPA/efficient attention) because "the env is torch 1.13.1, which
+predates SDPA". **Measured against the repo's own setup docs, that environment exists nowhere:**
+
+| machine | role | torch | source |
+|---|---|---|---|
+| **b100 / 8×H100 (sm_90)** | main training clock — R0, all ranking arms, winner's final train | **2.5.1+cu124** | `experiments/SETUP_B100.md` §2, measured 2026-07-24: the repo pin 「**从没被装上**」 |
+| **101vector / 8×V100 (sm_70)** | eval + export smoke | **2.5.1+cu118** | `ROADMAP.md:126` (pinned *at 2.5.1* deliberately, for the sm_70 kernels), `export_smoke_results.md` §env |
+
+`mobileviclip.yml`'s 1.13.1+cu117 is validated **only on a CPU node** (an import check).
+⇒ **`F.scaled_dot_product_attention` has been callable on both GPU boxes since at least
+2026-07-24.** Three consequences:
+
+1. **§5's recommended workaround is unnecessary work.** "torch 1.13.1 has no SDPA … so the
+   zero-risk fix is manual query-block chunking, not a torch upgrade" — struck in place.
+2. **`paper-plan.md` §6.8 item 8's demotion rationale is half-expired.** It priced in
+   "DeepSpeed-compat validation risks more schedule than it saves". That validation is
+   **already paid**: the 1M-tier arms trained ~15 h under DeepSpeed on 2.5.1 (`ROADMAP` G9),
+   and both R1 arms ran on `2.5.1+cu118` (`ROADMAP.md:304`). The surviving leg is narrower than
+   written — naive attention is fine at **T=8** (N=512), but at **T=16** (N=1024) the
+   materialized probabilities *are* the 23.3 GB peak, i.e. the thing constraining **C2's own
+   elastic-T upper bound**.
+3. **`torch.compile` / `channels_last` / CUDA graphs are all available** — see §8.3 P12.
+
+**The swap is mathematically exact, verified here in float64** at this model's real stage-4
+shape (N = T·H·W = 512, 20 heads): `max|naive − SDPA| = 2.08e-16` (roundoff only). Recipe and a
+10-second both-boxes self-check: `COMMANDS.md` §3.13.
+
+⚠️ **Ship it behind `hasattr(F, "scaled_dot_product_attention")`**, so the CPU-node 1.13.1
+import baseline keeps working; reuse the existing `use_flash_attn` flag, which is threaded
+through the constructors and **never read**.
+
+### §8.2 ✅ Every RepMixerBlock costs the *same* MACs. "Stage 3 is 50%" is a statement about depth.
+
+*Derived from `models/mobileviclip_small.py:295-297` (`layers=[4,12,24,4]`,
+`embed_dims=[80,160,320,640]`, `mlp_ratios=[3,3,3,3]`, stem stride 4 ⇒ 64²/32²/16²/8²), and
+**re-verified numerically in this worktree**.*
+
+ConvFFN's fc1+fc2 = `2·(3C²·S)`. C doubles while S quarters, so **3C²S is invariant across
+stages**:
+
+| stage | C | S | **fc1+fc2 per block** | depth | stage total | MAC share | **byte share** (fp16 act. I/O) | **arith. intensity** |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 80 | 4096 | **157.29 M** | 4 | 0.629 G | 8.2% | **24.2%** | 60 FLOP/B |
+| 2 | 160 | 1024 | **157.29 M** | 12 | 1.887 G | 24.5% | **36.3%** | 120 |
+| 3 | 320 | 256 | **157.29 M** | 24 | 3.775 G | 49.0% | **36.3%** | 240 |
+| 4 | 640 | 64 | **157.29 M** | 4 | 0.629 G | 8.2% | 3.0% | 480 |
+
+40 RepMixerBlocks + 4 AttentionBlocks × 157.29 M = **6.921 G/frame = 89.6%** of the 7.72 G/frame
+per-frame total — i.e. this reconstructs §1's *measured* 86.5% pointwise share from first
+principles, and the per-stage totals match §1's measured 0.77/2.00/3.89/1.06 G to within the
+non-ConvFFN remainder. **One block = 2.04% of per-frame MACs, in every stage.**
+
+**Three consequences that reorder the plan:**
+
+**(a) "Stage 3 = 50% of the model" is not about stage 3. It is about `layers[2]=24`.** MACs here
+are a pure function of *depth allocation*; there is no per-stage width story in the MACs column.
+This makes **depth a first-class lever that no prior round considered** (§8.3 P11).
+
+**(b) Resolution beats a narrower student, and the roofline says so before any experiment.**
+H100 fp16 ridge ≈ 989 TFLOP/s ÷ 3.35 TB/s ≈ **295 FLOP/byte**; Apple ANE ≈ **230**. Stages 1–3
+sit at 60–240 ⇒ **memory-bound on both the training GPU and the target device.** Intensity
+`C·N/(C+N)` is independent of S and of depth, so **resolution and depth are
+intensity-preserving** (MACs→latency ≈1:1), while **width is intensity-destroying** (C→C/√2 cuts
+FLOPs 2× but bytes only √2×). ⇒ **round4-P7's primacy is confirmed on a stronger argument than
+"86.5% and linear in pixels", and "distill into a narrower S1/S0" is dominated.**
+
+**(c) The MACs profile misranks cut targets on-device.** Stage 1 is 8.2% of MACs but **24.2% of
+bytes** — one stage-1 block moves **8× the bytes of a stage-4 block for identical MACs.** This is
+the same lesson as §1's "count transposes, not FLOPs", now quantified for the dominant term.
+
+> ⚠️ **Estimate, not measurement:** the byte-share and intensity columns are analytic
+> (activation I/O, fp16, ignoring fusion). A fused ConvFFN would move less. They are strong
+> enough to *rank* levers and not strong enough to quote as latency.
+
+### §8.3 New numbered proposals
+
+Numbering continues §2's P-series (P1–P9 are taken). **All costs assume the standing
+4×H100 / 6.6-day-per-run budget.**
+
+#### P11 · Latency-weighted structured **depth** pruning — decided by a training-free gate sweep
+*NetAdapt (ECCV'18, arXiv:1804.03230) for latency-table-driven pruning; Gromov et al.
+arXiv:2403.17887 and ShortGPT arXiv:2403.03853 for layer-drop sensitivity probes.*
+
+**Mechanism — and it needs no code change.** Verified in code: `RepMixer.forward:743-746` is
+`x = x + λ_1d·(mixer_1d − norm_1d)` then `x = x + λ·(mixer − norm)`, and
+`RepMixerBlock.forward:1075` is `x = token_mixer(x); x = x + drop_path(layer_scale·convffn(x))`.
+
+> 🔴 **Correction to the panel's version, which said "two tensors".** Making block *i* an exact
+> identity on the **released checkpoint** requires **three** gates:
+> `blocks[i].token_mixer.layer_scale_1d` (temporal mixer) · `blocks[i].token_mixer.layer_scale`
+> (spatial mixer) · `blocks[i].layer_scale` (block-level ConvFFN gate). Omit `layer_scale_1d`
+> and the temporal branch still runs — the block is **not** an identity.
+>
+> ⚠️ **This is exactly the 40-vs-80 distinction that already produced one wrong number in this
+> repo** (§0.1/§3.0: `gate5` pooled all **80** `layer_scale` = 40 spatial-mixer + 40 block-level
+> ConvFFN gates, inflating a denominator and inventing a spurious 2.42%). The block-drop harness
+> **must** zero the matched pair per block and assert the count, or it will repeat that error.
+
+So the sweep is **40 RepMixerBlocks** (stages 1–3), reusing the *existing* `gate_checks.py`
+harness at ~75 s/eval ⇒ **~1 GPU-hour for the full per-block sensitivity curve, zero GPU-days.**
+Stage 4's 4 `AttentionBlock`s have a different gate structure (`:1111-1188`) and are
+**unverified** — check before including them. Cross the curve with per-block on-device latency
+(available at **random init**, per §3's standing rule) and remove greedily by Δr_mean/Δms.
+
+- **Measured:** each removed block = **157.29 MMACs = 2.04% of per-frame MACs**, and
+  5.24/2.62/1.31 MB per frame of activation traffic depending on stage.
+- **Estimated (soft):** 4–8 stage-3 blocks removable for <1.0 r_mean after a short heal ⇒
+  8–16% MACs. **The estimate is soft; the sensitivity curve is not — it costs one GPU-hour and
+  either exists or doesn't.**
+- **Mandatory control:** dropping a block shifts every downstream BN's input distribution. **Run
+  forward-only BN recalibration before each eval** (`experiments/per_t_bn.py` already exists and
+  is the same machinery round4-P7's sweep needs) or you are measuring distribution shift, not
+  block utility.
+- **Not on the kill-list:** every killed item attacks the temporal axis (0.20%) or attention
+  (7.35%). This is the first attack on per-frame **depth**, i.e. on 100% of the 86.5% term. It is
+  **not** content-based skipping — blocks are deleted statically at export, identically for all
+  inputs ⇒ **T2-clean** (dense, static, shape-invariant).
+- **Kill:** if no single block costs <+1.0 r_mean, or the cheapest 6 sum to >2.0 r_mean, depth is
+  not redundant in this checkpoint — close the lane and put the budget into round4-P7.
+- **Paper or engineering:** **both, and it is the strongest paper item this round.** "Where does
+  a distilled mobile video-CLIP put its compute, and what does each block buy?" plus §8.2's
+  MACs-uniform/bytes-non-uniform result — a defensible cost-frontier figure **with zero training
+  runs**.
+- **Sequencing note:** run P11 **× round4-P7 as a 2-D grid, not a union.** Both are
+  intensity-preserving (§8.2b), so their latency savings compose and the iso-latency frontier is
+  real.
+
+#### P12 · The MFU ladder — with its top suspect already refuted here
+**Standing:** §0.2 leaves "the GPU-side cause of MFU 0.67%" as the open question, and it is worth
+more than any accuracy item because it sets the 6.6-day clock.
+
+✅ **Settled here, in one command — the panel's #1 suspect is wrong.** It proposed that 9.1821
+s/it might be an **8×V100** number (the config carries `batch_size = 64  # 8x V100-32GB`,
+`config.py:21`), which would make MFU 2.7% rather than 0.67%. **Refuted by arithmetic:** 1M × 3
+epochs ÷ global 512 = 5859 it × 9.1821 s = **14.94 h** vs the reported `Training time 15:11:58`
+= **15.20 h** (ratio 1.017, the remainder being eval/checkpointing). **9.1821 s/it is the 4×H100
+run. MFU 0.67% stands.**
+
+**The bandwidth side of the roofline, never computed before (analytic estimate):** per-sample
+ConvFFN activation traffic ≈ 86.6 MB/frame × 8 ≈ 693 MB; ×~2.5 for BN/GELU/residual/permutes
+≈ 1.7 GB; ×4 for fwd+recompute+bwd ≈ 6.9 GB/sample. At 13.95 samples/s/GPU ⇒ **~96 GB/s ≈ 2.9%
+of H100 HBM3.**
+
+> **0.67% of compute peak and ~3% of bandwidth peak ⇒ the model is neither compute- nor
+> bandwidth-bound. The GPU is idle or running pathological kernels.** That inequality halves the
+> hypothesis space for free.
+
+**Settling measurement (~30 min):** `torch.profiler` with `ProfilerActivity.CUDA` over ~20
+steady-state steps; compute **Σ(kernel durations) ÷ wall-time = GPU busy fraction.** Busy ≈ 1 ⇒
+bad kernels (rungs 1–2). Busy ≪ 1 ⇒ host-side stall (rungs 3–4). Note §0.2's dataloader probe
+does **not** rule out a host stall: it measured worker output rate in a *separate process*, not
+the main loop's consume path (shm deserialization of a ~400 MB batch + H2D + DeepSpeed syncs).
+
+Ladder, all grounded in this worktree, cheapest first:
+
+| # | Suspect | Evidence here | Est. win | Effort |
+|---|---|---|---|---|
+| 1 | **No `channels_last` anywhere** — grep of `models/ tasks_clip/ utils/ dataset/ tasks/` returns **zero hits**. A pure convnet in fp16 **NCHW** on H100 forces non-tensor-core kernels or implicit layout transforms around all 229 convs | verified | **2–4×** (NVIDIA convnet guidance) | 2 lines |
+| 2 | **`cudnn.benchmark = len(train_media_types) == 1`** (`tasks_clip/pretrain.py:263`) — **False** whenever the run mixes media types, leaving cuDNN on heuristic algo choice for 229 convs. This model has 4 fixed spatial shapes | verified | 10–30% | 1 line + confirm which branch the live run takes |
+| 3 | **fp16 + DeepSpeed dynamic loss scaling** (`use_bf16=False`) — every overflow **discards a completed fwd+bwd**, invisible in s/it. Read `skipped_steps` in the DeepSpeed log; bf16 is free on H100 and removes the failure mode (fp16 is a *V100* constraint being paid on the H100 box) | verified in config | 5–50% if thrashing | 1 flag |
+| 4 | **`find_unused_parameters=True`** (`:279`) with `freeze_text=True` (63M frozen) — forces full autograd traversal per step, defeats bucket fusion. **First check whether the DeepSpeed path bypasses DDP entirely** — if so it is dead code and should be deleted so it stops reading like a feature | verified | 10–40% | 1 line |
+| 5 | **Selective checkpointing.** `gradient_checkpointing=True` **is** needed (unckeckpointed peak ≈ 40–80 GB/GPU at batch 64 × T=8) but costs only 4/3, not 100×. Checkpoint **stages 1+2 only** — 60% of activation bytes, 33% of MACs (§8.2) ⇒ overhead 33% → ~12% | estimate | **~+18%** | ~1 day |
+
+⚠️ **Ordering constraint:** `channels_last` must land **after** round4-P1 (delete temporal
+branch). The temporal `reshape → permute(1,3,4,2,0) → reshape` chain (`:726-731`) assumes NCHW
+contiguity; `.reshape` on a channels_last tensor silently inserts a copy.
+
+⚠️ **MFU bookkeeping:** the 0.67% numerator counts recompute as useful work, which *flatters* it.
+Against 3×119 GFLOP the honest figure is **0.50%**.
+
+**Kill:** if GPU busy-fraction >0.9 **and** rungs 1–3 together yield <1.5×, the architecture
+really is this inefficient on H100, the 6.6-day budget is physics, and the lane closes with a
+number.
+
+#### P13 · The text tower's **25.3M-parameter embedding table** — 0% of FLOPs, training-free to shrink
+*ALBERT factorized embeddings (ICLR'20, arXiv:1909.11942) for the retrain variant; BPE
+vocabulary/merge pruning for the training-free one.*
+
+Verified from `models/backbones/internvideo2/mobileclip/configs/mobileclip_s2.json`:
+`vocab_size=49408`, `dim=512` ⇒ token embedding = **25.3M params contributing exactly zero
+MACs**, vs ~37.8M for the 12-layer body. With `max_txt_l=32` the text tower is ~63% of model
+params and ~2% of MACs. Two training-free cuts: **(a)** quantize/palettize the table alone (pure
+lookup, no accumulation ⇒ error is a bounded per-token perturbation; Core ML supports this
+natively): 50.6 MB fp16 → 25.3 MB INT8 → ~12.6 MB INT4 with per-row scales. **(b)** Prune the BPE
+vocab + merge list to tokens the train/eval corpora actually produce — deleting a merge is
+*exact* on covered text. **Estimated** 12–20k of 49,408 tokens cover >99.9% of video captions at
+≤32 tokens ⇒ 25.3M → ~8M. Combined: **50.6 MB → ~4 MB ≈ −27% of total model params, zero GPU.**
+
+- **Not a duplicate of P8** (killed as a paper item: "pure compression, no novelty"). P8 replaces
+  the transformer **body** and needs distillation; this is the **table** and needs nothing. They
+  compose. **P13 is engineering — ship it, footnote it, do not build a section on it.**
+- **Kill:** kill (b) if corpus coverage at the chosen vocab size is <99.9%, or if MSR-VTT r_mean
+  moves at all (75-s eval, existing harness). Kill (a) at whatever bit-width first moves r_mean
+  beyond the paired band.
+
+> 🔺 **Strategic question this raises, worth more than the megabytes — and it currently has no
+> owner.** In a retrieval deployment the **vision** tower runs once per gallery video (amortized,
+> offline, arguably server-side), while the **text** tower runs on every query in the interactive
+> path. If that is the product, the entire 86.5% analysis is about **indexing throughput**, not
+> **query latency**, and P8's priority should go **up**. MobileCLIP/MobileViCLIP report
+> *image-encoder* latency, so the paper's headline is the indexing one. **Someone should write
+> down in one sentence which of the two C4's latency table measures** — it silently decides
+> whether P11 + round4-P7 or P8 + P13 is the main efficiency result.
+
+### §8.4 Considered and rejected on the numbers (round 5)
+
+| Candidate | Why it dies |
+|---|---|
+| **Inference-time low-rank factorization of fc1/fc2** (C→r→3C) | FLOPs ratio 4r/3C, but **bytes ratio (4C+2r)/4C > 1 always** — the rank-r intermediate is a new full-spatial write+read. At r=0.5C: FLOPs 0.67×, **bytes 1.25×**. Stages 1–3 are memory-bound (§8.2b) ⇒ **it makes the model slower.** Legitimate only as a *train-time-only* branch (P14 below) |
+| **Grouped / blockwise pointwise convs + channel shuffle** (ShuffleNet-style) | FLOPs ÷g, bytes unchanged ⇒ **intensity ÷g**, the worst trade in a memory-bound regime; shuffle adds traffic (8C·S → 14C·S = **1.75×**) and **is a full-feature-map transpose** — self-rejecting under this repo's own "count transposes" rule |
+| **Structured channel-**width** pruning of the 1×1s** | Width is intensity-destroying (§8.2b): 2× the FLOPs cut buys only √2× latency. Strictly dominated by P11 (depth) and round4-P7 (resolution) |
+| **Unstructured / N:M sparsity on the pointwise convs** | T2. 2:4 is a training-side H100 feature with no on-device counterpart here |
+| **Distilling into MobileCLIP-S1/S0** | (i) It is a width cut ⇒ dominated (§8.2b). (ii) S1/S0 have **no video-stage checkpoint**, so you pay image *and* video stages, ≥2 runs ≈ 13 GPU-days, to land on a frontier MobileCLIP already published. round4-P7 is a **config change**. ⇒ **The roofline decides this against the smaller student before any experiment** |
+| **Shrinking dw 7×7 → 5×5/3×3** | 3.31% of MACs, and depthwise sits at intensity ≈ k² (49→25 FLOP/B), far below every ridge ⇒ removing FLOPs you were never paying for. **≈0 latency win** |
+| **MobileOne/RepVGG over-parameterization of RepMixer's dw3×3** | 0.59% of MACs — same category error as AC5: right technique, wrong term |
+| **Cross-block weight sharing (ALBERT-style) in stage 3** | Saves params, saves **zero** FLOPs and zero bytes. Vision tower is 36M — params are the *text*-side problem (P13), not the vision-side one |
+| **`torch.compile` / CUDA-graph capture as the MFU fix** | Now **available** (§8.1 corrects the panel, which thought it was pin-blocked) — but **still not the story**: ~4,400 kernels/iteration at 9.18 s/it ⇒ launch overhead ≈ **0.4%**. Keep it as a later multiplier, not a suspect |
+| **Chasing the temporal branch's 80 permutes for MFU** | Costed: ~43 GB permute traffic/forward/GPU ×3 ≈ 129 GB ⇒ **~38 ms of a 9,182 ms iteration = 0.4%.** §1's 18.1% is a **CPU-inference** figure and does not transfer to the H100 training loop. Delete the branch for **export** reasons (round4-P1), not MFU |
+| **Winograd / FFT convolution** | 1×1 convs — 86.5% of the model — gain nothing from either |
+
+#### P14 · (parked, low confidence) Train-time-only over-parameterization *inside* ConvFFN
+*ExpandNets (NeurIPS'20, arXiv:1811.10495); Diverse Branch Block (CVPR'21, arXiv:2103.13425);
+RepOptimizer (ICLR'23, arXiv:2205.15242) to mitigate train cost.*
+
+`ConvFFN.forward` (`:874-881`) is `dw7×7 → BN → fc1 → GELU → fc2`: **dw7×7, its BN, and fc1 are
+three adjacent linear ops with no nonlinearity between them**, so any linear over-parameterization
+inserted there folds away at export (e.g. `M` between BN and fc1 collapses as `fc1' = fc1·M`;
+a low-rank branch collapses as `fc1' = fc1 + UV`). **Exported graph byte-identical in shape;
+inference cost exactly +0**, and it is free in *both* roofline regimes.
+
+**Parked rather than proposed, on the panel's own self-critique:** DBB's published +0.7–1.9
+IN-1k comes substantially from *receptive-field diversity across branches*, and `fc1`/`fc2` are
+1×1 — a sum of full-rank matrices spans the same function class as one, so any gain there is a
+pure optimization/implicit-regularization effect (Arora et al., ICML'18), plausibly small. **The
+genuine-diversity half is the dw7×7 = 3.31% of MACs.** Train-time cost is the binding problem at
+6.6 d/run (DBB ≈1.5–2× conv wall-clock; RepOptimizer removes it only for constant-scale,
+BN-free branches). ⇒ **Only worth running if P11 finds blocks worth removing** — its entire
+justification is buying back removed capacity. Pre-register that the fc1/fc2 half may come back
+null; that is a cheap publishable negative.
+
+*One thing to say explicitly in any writeup: **P2's falsified INT8 pathology does not transfer
+here.** That failure mode is specific to RepMixer's fused `δ + λ·Δ`, where an O(1) identity tap
+sets the quantization scale and starves the perturbation. `fc1`/`fc2` have no identity tap; the
+collapsed matrix is a single O(1)-scaled weight and quantizes normally. A reviewer who read P2
+will ask.*
+
+### §8.5 Sequencing and provenance
+
+**Order (respects the dependencies; steps 1–3 and 5 total ≈1 GPU-hour + ~1 week engineering):**
+
+1. **P12's profiler run** (~30 min) — GPU busy-fraction splits the hypothesis space. *(P12's
+   suspect #1 is already refuted above; do not re-spend time on it.)*
+2. **P11's 40-block drop sweep** (~1 GPU-hour, zero GPU-days) — produces the analysis figure and
+   the pruning decision at once. **Include BN recalibration and assert the 3-gates-per-block count.**
+3. **round4-P1 (delete temporal branch — already decided) → then P12 rungs 1–4.**
+   `channels_last` must follow P1.
+4. **round4-P7 × P11 as a 2-D (resolution × depth) iso-latency grid.**
+5. **P13** whenever someone has two spare days. **§8.1 (P1/SDPA)** is ~20 lines and unblocks the
+   T=16 memory ceiling; do it alongside.
+6. **P14** last, and only conditional on P11.
+
+**Provenance.** One expert panel (efficient architecture), 2026-07-30; three sibling panels
+(VLM accuracy / MFU / quantization) **failed on an API quota limit and still owe a round**.
+Everything marked ✅ or "verified" was re-derived **directly against this worktree** in the same
+session: the two-machine torch reality and the SDPA float64 equivalence (§8.1); the per-block MAC
+invariance and its reconstruction of the measured 86.5% (§8.2); the 9.1821 s/it provenance
+arithmetic, the absence of `channels_last`, and `pretrain.py:263`/`:279` (P12); `layers`/
+`embed_dims`/`mlp_ratios`, the three-gate identity collapse and the 40-vs-80 `layer_scale`
+hazard (P11); `vocab_size=49408`/`dim=512` (P13). **Explicitly still analytic estimates, not
+measurements:** all byte-share / arithmetic-intensity figures, the bandwidth-side roofline, the
+BPE coverage fraction, and every "estimated" win in the P12 ladder.
