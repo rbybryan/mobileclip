@@ -52,7 +52,7 @@ plan's load-bearing premises did not survive contact with those numbers.
 > gates are matched channel-for-channel. `0.0008 / 0.0130 = 0.0613`. The whole 2026-07-24 audit
 > reproduced bit-for-bit; see `experiments/gate0_results.md` §7.
 >
-> ✅ **CROSS-VALIDATED 2026-07-31 — the fixed `gate5` was run and now agrees.** Output:
+> ✅ **CROSS-VALIDATED 2026-07-30 — the fixed `gate5` was run and now agrees.** Output:
 > `layer_scale_1d (时序 mixer) blocks=40 n=9920 median=7.973e-04`,
 > `layer_scale (空间 mixer) blocks=40 n=9920 median=1.300e-02` ⇒ **0.0613**, identical to the
 > audit to four decimals via an **independent code path**. Spatial median 1.300e-02 also matches
@@ -116,6 +116,13 @@ Independent corroboration from the data side: `num_workers = 6`
 55.8 ÷ 24 = **2.32 clips/s/worker = 430 ms/clip** — a textbook `decord` number for opening a
 container and seeking 8 frames. Two independent routes agree.
 
+> 🔴 **2026-07-30 measured — the "430 ms is a textbook decord number" reading was wrong.**
+> Actual decode of one clip is **22 ms** warm (`experiments/probe_decode_bound.py` §A), i.e.
+> **20× faster** than the 430 ms this paragraph inferred. The 430 ms/worker is real, but it is
+> **not** decode — so the "two independent routes agree" claim was a coincidence of arithmetic,
+> not a confirmation. **The MFU conclusion below stands; the stated cause does not.** Details,
+> the three surviving hypotheses, and the re-run command are in `COMMANDS.md` §3.11 ②.
+
 Depthwise-heavy convnets are inefficient, but **8–20% inefficient, not 0.7%**.
 
 **Why this matters more than any proposal in §2:** "53 h/epoch ⇒ 6.6 days per 3-epoch run" is
@@ -130,9 +137,37 @@ was built around a removable obstacle.**
 > ⚠️ **Caveat:** the fix (`num_workers` ↑) depends on the H100 box's core count, which has not
 > been checked. Do (a)–(c) before changing anything.
 
-Fix ladder: `num_workers` 6→12–16 (free) → pre-decode to a 4×4 frame **sprite** JPEG
-(~60 KB/clip, ~640 GB for 10.65M, one decode instead of a container-open + 8 seeks) in
-WebDataset tars → NVDEC/DALI. Plausible 5–20× epoch-time reduction.
+**2026-07-30 — (a) and (c) are done, and they contradict each other:**
+
+| probe | measured | implication |
+|---|---|---|
+| (c) warm decode, same file ×20 | **22 ms/clip** | 6 workers should give **274 samples/s** |
+| (a) loader-only, 1 rank × 6 workers | **48.9 samples/s** | **5.6× below** what (c) predicts |
+| training, 4 ranks × 6 = 24 workers | 55.8 samples/s | 4× the workers, **+14%** throughput |
+
+GPUs are idle — that part holds, and (a) alone on **one** rank nearly matches full training on
+**four**. But decode is not what they are idle *for*: it costs 22 ms, and the loader realises
+only 18% of the throughput that implies. Workers ×4 → +14% says a **shared resource is already
+saturated at 6 workers**. Three mutually exclusive causes remain, with three different fixes:
+
+1. **Core starvation** — 6 workers already saturate the available cores; 24 is oversubscription.
+2. **Mount I/O** — data lives on `/workspace/mount/...`; probe (c) re-read *one* file, so it
+   measured a page-cache hit. Training reads 10.65M **distinct** files, every one cold.
+3. **decord thread oversubscription** — `dataset/video_utils.py:137` passes `num_threads=0`
+   (auto ⇒ multi-threaded). Probe (c) had one reader owning the whole box; the loader has 6
+   workers each spawning a thread pool that fights the other five.
+
+`experiments/probe_decode_bound.py` now runs four sections (warm decode / cold read vs cold
+decode on disjoint file sets / loader-only / `num_workers` sweep) and **cross-checks them against
+each other** rather than against 55.8 alone — the single-comparison rule is exactly what
+mis-called this on 2026-07-30. Command in `COMMANDS.md` §3.11 ②.
+
+Fix ladder: ~~`num_workers` 6→12–16 (free)~~ **← first rung is probably dead**: the sweep is the
+measurement that decides, but 4× workers buying +14% is not the signature of a config that just
+needs a bigger number. → pre-decode to a 4×4 frame **sprite** JPEG (~60 KB/clip, ~640 GB for
+10.65M, one decode instead of a container-open + 8 seeks) in WebDataset tars → NVDEC/DALI.
+Plausible 5–20× epoch-time reduction — and if cause 3 is the answer, a **one-line** change
+(`num_threads=1`) gets some of it for free.
 
 ---
 
@@ -458,7 +493,7 @@ architecture verdict. (b) MSR-VTT captions are largely appearance-driven and are
 probe; **`ssv2_mc_val` is the benchmark that can falsify "delete `temporal_embedding`"**, and it
 is already wired into `available_corpus`. **Run it before ratifying — this has not happened yet.**
 
-> 🟡 **Downgraded from blocker to nice-to-have, 2026-07-31.** Data is still absent and
+> 🟡 **Downgraded from blocker to nice-to-have, 2026-07-30.** Data is still absent and
 > licence-gated (`CHECKPOINTS.md` → "SSv2-MC"), but the *time-arrow* question it was meant to
 > settle has now been answered twice from the parameter side, without any new data:
 > the static audit (`gate0_results.md` §7–§8, run 2026-07-24 and reproduced bit-for-bit
