@@ -98,9 +98,29 @@ supported claim is narrower: **"in these released weights, that branch contribut
 Round 2 §6 and any paper text must be re-worded accordingly, and the controlled experiment
 that would settle it is §2 P4.
 
-### 0.2 🔴 Training is decode-bound at ~0.67% MFU. The "6.6 days/run" budget is probably an artifact.
+### 0.2 ~~🔴 Training is decode-bound at ~0.67% MFU.~~ ✅ **MEASURED 2026-07-30 — the MFU is real, "decode-bound" is not**
 
-Arithmetic, re-derived and confirmed:
+> **Verdict: the dataloader is not the constraint.** Measured with
+> `experiments/probe_decode_bound.py` on the 101vector box (**192 cores, 176 usable**):
+>
+> | probe | measured | implication |
+> |---|---|---|
+> | warm decode | ~20 ms/clip | decode itself is fast |
+> | cold read vs cold decode, **disjoint** file sets | I/O ≈ **0%** of cold decode, cold/warm 1.2× | the mount is **not** slow |
+> | loader-only, 1 rank × 6 workers | **132.7 samples/s** | training consumes only **13.9/rank** ⇒ **9.5× headroom** |
+> | `num_workers` sweep 1→24 | 7.5 → 324.6 samples/s, **no saturation** | cores are not the limit either |
+>
+> The input pipeline supplies roughly an order of magnitude more than training consumes, so
+> **"53 h/epoch ⇒ 6.6 days per 3-epoch run" is not a dataloader artifact.** The 0.67% MFU below
+> stands; what does not stand is the *cause* stated in this section's title and in the fix
+> ladder. The remaining suspects are on the GPU side of the loop — kernel-launch overhead and
+> low occupancy from a depthwise-heavy mobile backbone (see §1: the temporal branch alone is
+> **440 ONNX nodes and 80 full-tensor transposes** for 0.20% of MACs), plus DeepSpeed/NCCL
+> overhead. **The settling measurement is a real training run**, not another micro-benchmark:
+> raise `num_workers` and re-time `s/it` against the 9.1821 s/it baseline. Command and the
+> `nvidia-smi dmon` reading rules (which invert depending on sm%) are in `COMMANDS.md` §3.11 ②.
+
+Arithmetic, re-derived and confirmed — **this part is unaffected**:
 
 | quantity | value |
 |---|---|
@@ -111,63 +131,39 @@ Arithmetic, re-derived and confirmed:
 | ⇒ per-GPU | 6.66 TFLOP/s on 4×H100 |
 | ⇒ **MFU vs ~990 TFLOP/s bf16** | **0.67%** |
 
-Independent corroboration from the data side: `num_workers = 6`
-(`scripts/pretraining/clip/mobileviclip_small/config.py:9`) × 4 ranks = 24 decode workers;
-55.8 ÷ 24 = **2.32 clips/s/worker = 430 ms/clip** — a textbook `decord` number for opening a
-container and seeking 8 frames. Two independent routes agree.
+~~Independent corroboration from the data side: `num_workers = 6` × 4 ranks = 24 decode workers;
+55.8 ÷ 24 = **2.32 clips/s/worker = 430 ms/clip** — a textbook `decord` number. Two independent
+routes agree.~~ **Retracted.** Decode measures **~20 ms**, not 430 ms — off by 20×. The
+"agreement" was a coincidence of arithmetic: dividing a throughput that is limited by something
+else by a worker count happens to land in decord's plausible range. **A number landing in a
+plausible range is not a measurement.**
 
-> 🔴 **2026-07-30 measured — the "430 ms is a textbook decord number" reading was wrong.**
-> Actual decode of one clip is **22 ms** warm (`experiments/probe_decode_bound.py` §A), i.e.
-> **20× faster** than the 430 ms this paragraph inferred. The 430 ms/worker is real, but it is
-> **not** decode — so the "two independent routes agree" claim was a coincidence of arithmetic,
-> not a confirmation. **The MFU conclusion below stands; the stated cause does not.** Details,
-> the three surviving hypotheses, and the re-run command are in `COMMANDS.md` §3.11 ②.
+Depthwise-heavy convnets are inefficient, but **8–20% inefficient, not 0.7%** — so something
+beyond the architecture is still unaccounted for, and that gap is now the open question.
 
-Depthwise-heavy convnets are inefficient, but **8–20% inefficient, not 0.7%**.
+**Why this still matters as much as any proposal in §2:** "6.6 days per run" is the constraint
+that shaped the entire experimental plan — U6's budget ladder, the arm-cutting order, the
+decision to run ranking arms for 1 epoch, and arguably G2's measurement crisis (you cannot
+afford seeds). A 0.67% MFU means **~100× of headroom exists somewhere**; it is simply not in the
+input pipeline. Until the GPU-side cause is found, treat the budget as real.
 
-**Why this matters more than any proposal in §2:** "53 h/epoch ⇒ 6.6 days per 3-epoch run" is
-the constraint that shaped the entire experimental plan — U6's budget ladder, the arm-cutting
-order, the decision to run ranking arms for 1 epoch, and arguably G2's measurement crisis
-(you cannot afford seeds). **If it is a dataloader configuration, most of that scaffolding
-was built around a removable obstacle.**
+> 🔴 **Two method errors produced two wrong answers here on the same day. Both are now rules.**
+>
+> 1. **Comparing against a single baseline judges nothing.** The first pass compared
+>    loader-only (**1 rank × 6 workers**) against training (**4 ranks × 24 workers**), got
+>    "4× the workers, +14% throughput", and concluded a shared resource was saturated. The two
+>    sides had different worker counts and were never comparable. An actual sweep showed clean
+>    linear scaling to 24 with no saturation at all.
+> 2. **A throughput benchmark must drain the prefetch queue before timing.** DataLoader
+>    prefetches `num_workers × prefetch_factor` batches. Warming up with 1 batch and measuring
+>    40 meant the 24-worker setting (queue of 48) was almost entirely consuming pre-built work
+>    — reported as **43× superlinear**, with per-worker throughput *rising* as workers were
+>    added. Per-worker throughput cannot rise; that impossibility is the tell. The probe now
+>    warms `2 × workers × prefetch_factor` and flags superlinearity in its own output.
 
-> **Diagnosis — 30 minutes, zero GPU:** (a) iterate the train loader with the model deleted,
-> measure samples/s; (b) `nvidia-smi dmon -s u` during a real step, read SM%; (c) time
-> `read_frames_decord` on 100 clips. If loader-only ≈ 55.8 samples/s and SM% < 25, confirmed.
-> ⚠️ **Caveat:** the fix (`num_workers` ↑) depends on the H100 box's core count, which has not
-> been checked. Do (a)–(c) before changing anything.
-
-**2026-07-30 — (a) and (c) are done, and they contradict each other:**
-
-| probe | measured | implication |
-|---|---|---|
-| (c) warm decode, same file ×20 | **22 ms/clip** | 6 workers should give **274 samples/s** |
-| (a) loader-only, 1 rank × 6 workers | **48.9 samples/s** | **5.6× below** what (c) predicts |
-| training, 4 ranks × 6 = 24 workers | 55.8 samples/s | 4× the workers, **+14%** throughput |
-
-GPUs are idle — that part holds, and (a) alone on **one** rank nearly matches full training on
-**four**. But decode is not what they are idle *for*: it costs 22 ms, and the loader realises
-only 18% of the throughput that implies. Workers ×4 → +14% says a **shared resource is already
-saturated at 6 workers**. Three mutually exclusive causes remain, with three different fixes:
-
-1. **Core starvation** — 6 workers already saturate the available cores; 24 is oversubscription.
-2. **Mount I/O** — data lives on `/workspace/mount/...`; probe (c) re-read *one* file, so it
-   measured a page-cache hit. Training reads 10.65M **distinct** files, every one cold.
-3. **decord thread oversubscription** — `dataset/video_utils.py:137` passes `num_threads=0`
-   (auto ⇒ multi-threaded). Probe (c) had one reader owning the whole box; the loader has 6
-   workers each spawning a thread pool that fights the other five.
-
-`experiments/probe_decode_bound.py` now runs four sections (warm decode / cold read vs cold
-decode on disjoint file sets / loader-only / `num_workers` sweep) and **cross-checks them against
-each other** rather than against 55.8 alone — the single-comparison rule is exactly what
-mis-called this on 2026-07-30. Command in `COMMANDS.md` §3.11 ②.
-
-Fix ladder: ~~`num_workers` 6→12–16 (free)~~ **← first rung is probably dead**: the sweep is the
-measurement that decides, but 4× workers buying +14% is not the signature of a config that just
-needs a bigger number. → pre-decode to a 4×4 frame **sprite** JPEG (~60 KB/clip, ~640 GB for
-10.65M, one decode instead of a container-open + 8 seeks) in WebDataset tars → NVDEC/DALI.
-Plausible 5–20× epoch-time reduction — and if cause 3 is the answer, a **one-line** change
-(`num_threads=1`) gets some of it for free.
+Fix ladder — **all rungs below are now off the critical path**, kept for the record: ~~`num_workers`
+6→12–16~~ → ~~pre-decode to a 4×4 frame sprite JPEG in WebDataset tars~~ → ~~NVDEC/DALI~~.
+They would speed up a pipeline that already has 9.5× of headroom.
 
 ---
 
@@ -330,7 +326,7 @@ at once — rank-1 constraint, shared 1e-5 init, frozen tower — and answers th
 instead of the confounded one. **Mechanistic prior against it:** the mean-pool readout is
 first-order blind to the zero-sum component of any linear temporal mixer, so expect the
 diversity-relevant (DC) part to train and the order-relevant (antisymmetric) part not to.
-**The only proposal here that costs main-clock time (~6.6 days, or ~1 day after §0.2).**
+**The only proposal here that costs main-clock time (~6.6 days). ~~or ~1 day after §0.2~~ — §0.2's speedup did not materialise: the dataloader was measured on 2026-07-30 and is *not* the constraint, so budget the full 6.6 days until the GPU-side cause is found.**
 Must include the plain single-branch-with-larger-init arm or the result is uninterpretable.
 **Pre-register the kill:** gate still <20% of spatial **and** merged kernel energy still below
 the INT8 LSB **and** ΔMSR-VTT < 1.0 ⇒ AC5 is a permanent one-line negative.
@@ -523,7 +519,7 @@ All on the **locked checkpoint**, all falsifiable, all cheap. Together they sett
 | # | Check | Cost | Decides |
 |---|---|---|---|
 | 1 | **Spatial `layer_scale` in `mobileviclip_small.pt` vs MobileCLIP-S2's** — bit-identical? | ~1 min | **§0.1** — whether GATE-0 legs ②③ are publishable as written |
-| 2 | Dataloader-only throughput + SM% during a step | 30 min | **§0.2** — whether the 6.6-day budget is real |
+| 2 | Dataloader-only throughput + SM% during a step | 30 min | ✅ **DONE 2026-07-30** — loader has **9.5× headroom**, so it is **not** the constraint; the 6.6-day budget is real until the GPU-side cause is found (§0.2) |
 | 3 | `layer_scale_1d = 0` → re-eval MSR-VTT | 75 s | **P1**. ~~*is* the exact INT8 simulation for **P2**~~ — **wrong, refuted by step 5**: INT8 zeroes only 36.2% of channels, so this ablation is strictly *more* destructive than INT8, not equivalent to it |
 | 4 | `temporal_embedding = 0` → re-eval | 75 s | **P5** |
 | 5 | Per-channel `max\|Δ\|` histogram vs the 3.9e-3 INT8 threshold | ~10 min | ✅ **RUN 2026-07-30 — refuted P2's mechanism** (36.2% zeroed, median 1.57× above threshold). §2 P2 rewritten |

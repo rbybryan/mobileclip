@@ -893,7 +893,8 @@ python experiments/gate_checks.py gate5-fused \
 > 池化值仍会打印但标注为「**勿用于腿③** … 0.0242 … 混进了块级 ConvFFN 门」,
 > ⇒ 这个错误现在被记录在**工具自己的输出里**,不只是散文里。
 
-**② 训练是不是解码瓶颈(30 分钟,零 GPU 训练)** —— 三步,全部在 101vector/H100 上跑:
+**② 训练到底卡在哪?(30 分钟,零 GPU 训练)** —— ✅ **已定案:不是 dataloader**(见下),
+剩下的是 GPU 侧。全部在 101vector/H100 上跑:
 
 > 🔴 **2026-07-30 修正:本节原先的两段 heredoc 都是坏的,一段都跑不了。**
 > ① 解码那段读 `data/anno_pretrain/internvid_v1.jsonl` —— **该路径不存在**,真实标注是
@@ -905,34 +906,34 @@ python experiments/gate_checks.py gate5-fused \
 > 现已合并为一个受版本管理的脚本 `experiments/probe_decode_bound.py`(A/B 两段都在里面,
 > 路径全部从 config 自己解析,不硬编码)。
 
-> 🔴 **2026-07-30 第一次实测:A 段和 B 段互相矛盾,原来的判读规则判错了。**
+> ✅ **2026-07-30 定案(第二次实测,四段版):`dataloader 根本不是约束`。**
 >
-> | 段 | 实测 | 含义 |
+> | 段 | 实测(06:24) | 含义 |
 > |---|---|---|
-> | A 热解码(同一文件读 20 次) | **22 ms/片** | ⇒ 6 workers 应有 **274 样本/s** |
-> | B loader-only(1 卡 6 workers) | **48.9 样本/s** | 比 A 的外推**低 5.6×** |
-> | round-4 训练(4 卡 × 6 = **24** workers) | 55.8 样本/s | workers ×4,吞吐只 **+14%** |
+> | A 热解码 | ~20 ms/片 | 解码本身很快 |
+> | A2 冷读 | I/O 占冷解码 **≈0%**,冷/热 1.2× | **挂载盘不慢** ⇒ H2 死 |
+> | B loader-only(单卡 6 workers) | **132.7 样本/s** | 训练每卡只消费 **13.9** ⇒ **富余 9.5×** |
+> | C 扫描 1→24 workers | 7.5 → 324.6 样本/s,**没饱和** | 机器 **192 核 / 可用 176** ⇒ H1 死 |
 >
-> 脚本当时印的是「坐实解码瓶颈,先调 num_workers」—— **那条判读只把 B 和 55.8 比,
-> 从没和 A 对过账**。对上账就看出:解码本身只要 22 ms,loader 却只拿到 18% 的应有吞吐,
-> 而且 workers 翻 4 倍几乎不涨 ⇒ **某个共享资源已经饱和,加 workers 大概率修不动。**
-> GPU 空转(§0.2 的 MFU 结论)不变,**变的是「为什么」和「怎么修」**。三个互斥假设:
+> ⇒ **`notes/architecture-round4.md` §0.2「训练是解码瓶颈」不成立。**
+> MFU 0.67% 仍是真的,但原因在 **GPU 侧/训练循环**(depthwise 小核的 kernel-launch、
+> 低占用率、DeepSpeed/通信),不在读数据。「6.6 天/轮」大概率仍可大幅压缩,
+> 但**不是靠 `num_workers`、也不是靠预解码**。
 >
-> * **H1 核数不够** —— 6 workers 就吃满核;24 workers 是超订,于是每片 123 → 430 ms。
-> * **H2 挂载盘 I/O** —— 数据在 `/workspace/mount/...`;A 段第 2 次起命中 page cache,
->   所以 22 ms 是**无 I/O 的下界**,而训练读的是 1000 万个互不相同的文件,**每个都冷**。
-> * **H3 decord 线程超订** —— `dataset/video_utils.py:137` 是 `num_threads=0`(自动=多线程)。
->   A 段只有一个 reader 独占整机;loader 里 6 个 worker 各开一把线程互抢。
->
-> 三者修法完全不同(降 CPU / 打包顺序读 / 改一行 `num_threads=1`),所以**必须先判出是哪个**。
-> 脚本已扩到四段并会自己交叉对账,重跑一次即可。
+> 🔴 **同一天里这个结论被推翻过两次,两次都是方法错,记在这里防第三次:**
+> 1. **只比一个基准 ⇒ 判反。** 第一版把「单卡 6 workers 的 loader」直接和
+>    「4 卡 24 workers 的训练」相比,算出「workers ×4 只换 +14%」,据此宣布
+>    「共享资源饱和、加 workers 没用」。两边 workers 总数不同,**根本不可比**。
+>    真扫描一跑,1→24 workers 一路线性到底,没有任何饱和。
+> 2. **预热没排空 prefetch 队列 ⇒ 高档位虚高。** DataLoader 预取
+>    `num_workers × prefetch_factor`(默认 2)个 batch;第一版预热 1 个 batch、
+>    最多测 40 个,而 24 workers 的队列有 48 个 ⇒ 几乎全在吃存货,测出 **43× 超线性**、
+>    每 worker 吞吐反随 workers 上升(物理上讲不通)。脚本现已预热
+>    `2 × workers × prefetch_factor`,并对超线性直接打警告 —— 所以 324.6 那个数
+>    **别引用**,只引用「还在爬、没饱和」这个方向。
 
-```bash
-nvidia-smi dmon -s u -c 60     # 真训练时看 sm 列;持续 <25% 支持「GPU 在空转」
-```
-
-`nproc` 不用单独跑了 —— 脚本末尾会打印 `os.cpu_count()` 和**本进程实际可用核**
-(容器里两者常常不一样,`nproc` 只告诉你其中一个)。
+`nproc` 不用单独跑 —— 脚本末尾会打印 `os.cpu_count()` 和**本进程实际可用核**
+(容器里两者常常不一样,`nproc` 只告诉你其中一个;本机 192 / 176)。
 
 ```bash
 # A 热解码 + A2 冷读 + B loader-only + C workers 扫描 —— 一个脚本跑完,自带交叉判读
@@ -946,20 +947,37 @@ python -m torch.distributed.run --nproc_per_node=1 --master_port=$((10000+RANDOM
 > 必须走 `torch.distributed.run`(理由见上 ②)。约 15 分钟。可选参数:
 > `--batches N`(B 段迭代多少 batch,默认 50)、`--sweep 1,2,6,12,24`(C 段档位,
 > 给 `none` 跳过)、`--cold-files N`(A2 每组取几个互不相同的文件,默认 25)。
-> **任何一段失败都不挡后面的段。**
+> **任何一段失败都不挡后面的段。** 判读只有 **④** 定瓶颈:比较「同样 workers 下
+> loader 供得起多少」与「训练每卡实际消费多少」,富余 ≥2× 就说明输入管线无罪。
 
-**判读**(脚本自己会印,这里是留档):
+**③ 证伪 / 证实「dataloader 无罪」—— 真训练两分钟(需要 GPU)**
 
-| 观测 | 结论 | 修法 |
-|---|---|---|
-| A2 里 I/O 占冷解码 **> 50%** | **H2 挂载盘** | 打包成顺序读的 shard / 落本地盘 |
-| A2 冷读 ≈ 热读 且 C 曲线压平 且 `num_workers` ≈ 可用核 | **H1 核数** | 预解码降每片 CPU |
-| A2 冷读 ≈ 热读 且 C 曲线压平 且 `num_workers` ≪ 可用核 | **H3 线程超订** | `video_utils.py:137` 改 `num_threads=1` |
-| C 曲线**仍在爬** | round-4 的「免费修法」成立 | `num_workers` 调到扫描最优档 |
+微基准只能证明 loader **供得起**,证不了训练**吃不吃得下**。唯一能定案的是真训练:
+把 `num_workers` 调大重测 `s/it`,**基本不动 ⇒ 坐实 loader 无罪**;
+明显变快 ⇒ 单卡外推不成立(多卡会互抢),回到调 workers 那条路。
 
-前三种情况下,`notes/architecture-round4.md` §0.2 修法阶梯的第一级
-(`num_workers` 6→12–16,标着「免费」)**作废** —— 「6.6 天/轮」仍然可移除,
-但要靠预解码/打包/改线程数那一级,不是靠调 workers。
+开**两个终端**。终端 1 跑训练(log_freq=1,每步都打 s/it;看到十来步就 Ctrl-C):
+
+```bash
+export PYTHONPATH=${PYTHONPATH}:. ; export OMP_NUM_THREADS=1
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+python -m torch.distributed.run --nproc_per_node=4 --master_port=$((10000+RANDOM%20000)) \
+    tasks_clip/pretrain.py scripts/pretraining/clip/mobileviclip_small/config.py \
+    num_workers 16 output_dir probe_train_nw16
+```
+
+终端 2 同时看 GPU(**两种读法相反,别只记一种**):
+
+```bash
+nvidia-smi dmon -s u -c 60
+```
+
+| sm 列 | 读法 |
+|---|---|
+| 持续 **<25%** | GPU 在等数据/等同步 ⇒ 还是喂不饱(输入或通信) |
+| 持续 **>70% 而 MFU 仍 0.67%** | 核在跑但几乎不干活 ⇒ **kernel-launch / 低占用率**,这才是要修的 |
+
+对照基准:`num_workers=6` 时是 **9.1821 s/it @ 全局 batch 512 = 55.8 样本/s**。
 
 **⑥⑦⑧** 仍见 `notes/architecture-round4.md` §3(⑥ 需让 `encode_vision` 别提前折叠 T,
 打分路径 `get_sim` 已支持;⑦ 视觉塔分辨率无关,改 `img_size` 免插值免重训;
