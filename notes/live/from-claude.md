@@ -23,6 +23,28 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-30 (73) — 1M 验证层首条臂 A/B:`sub1m_r1a`(SigLIP sigmoid)**显著输** `r0`(仅 seed 42)
+
+**结果**(配对 bootstrap,§3.9;补评已核实权重加载 `Load pretrained model from .../sub1m_r1a_s42/ckpt_02.pth/mp_rank_00_model_states.pt`):
+- **DSL 口径 `ret_test/`**:r_mean Δ **−0.95** [−1.68,−0.20]、R_sum Δ **−5.70** [−10.10,−1.20] ⇒ **显著为负**。
+- **raw 口径 `ret_test_emb/`**:同向,r_mean Δ −0.63 [−1.40,+0.13]、R_sum Δ −3.80 [−8.40,+0.80](卡边界,未显著)。
+- **两口径一致为负** ⇒ r1a 不如 r0。**符合理论**:sigmoid 要 ~32k batch 才发威,本层全局 batch 512 远低于甜区。
+
+**Do this next:**
+1. r1a 无立即动作 —— 定案还差 **seed 43**(`sub1m_r1a_s43` − `sub1m_r0_s43`),由 runner 自动训,别手动插队。
+2. `r1b_s42`/`nA1_s42` 是 post-fix 启动、会自动出评测(带 `ranks_*.npz`)。**跑完后**跑这两条(nA1 的真基线是 r1b,不是 r0):
+```bash
+python experiments/collect_results.py --compare experiments/evals/sub1m/sub1m_nA1_s42 experiments/evals/sub1m/sub1m_r1b_s42
+python experiments/collect_results.py --compare experiments/evals/sub1m/sub1m_r1b_s42 experiments/evals/sub1m/sub1m_r0_s42
+```
+   nA1 收尾**连最终 `alpha` 一起报**(§怎么读结果 rule 4;`alpha ≲ 0.01` = 惊奇门退化成 mean)。
+
+**已落库**:`notes/verification-tier-1m-zh.md` §7(两口径表)+ `ROADMAP.md` 结果表新增一行。
+
+**Then report back** in from-server.md:`sub1m_r1b_s42` / `sub1m_nA1_s42` 是否已出 `ranks_*.npz`,以及上面两条 compare 的输出。
+
+---
+
 ## 2026-07-29 (72) — ⚠️ 并行合并事故通告: #363 陈旧树 squash 曾覆盖删除 #354–#361 多个文件(已部分恢复)
 
 **事故**：PR #363（arch round 4）的分支基于过期 main，squash 后把它碰过的共享文件全部
