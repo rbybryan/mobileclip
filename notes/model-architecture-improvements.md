@@ -68,7 +68,10 @@ three video-specific insertions:
 **Objective** — VTC (InfoNCE) only (`VTC_VTM_Loss.vtc_loss`,
 `models/criterions.py:93`), **fixed** temperature 1/100
 (`temp == temp_min == 0.01`, so the clamp makes it constant), global batch 512
-(8×64), 3 epochs on InternVid-10M-FLT, LiT-style (vision open, text locked).
+(8×64), 3 epochs on InternVid-10M-FLT, **frozen-text tuning** (vision open, text
+locked) — note this is the *inverse* of classic LiT (Zhai et al., CVPR'22), which
+locks the *image* tower; "LiT-style" is a mislabel for this project's own regime
+(caught in a 2026-07-30 SOTA cross-check, see `architecture-round4.md` §7).
 
 **Latent constraints baked into the code** *(as of 2026-07-15 — **three of the four have
 since been discharged**; struck text is no longer true of the tree, see the status refresh

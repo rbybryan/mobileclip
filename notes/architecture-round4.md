@@ -632,3 +632,42 @@ defaulting True, and the MACs/MFU arithmetic. **Unverified here** (needs the ser
 weights are gitignored): the λ magnitudes, the CPU wall-clock timings, and the ONNX node counts.
 Treat those three as the reviewer's measurements pending replication — checks 1, 3 and 5 in §3
 replicate them.
+
+---
+
+## §7. External SOTA cross-check (2026-07-30) — five outside candidates, zero survive
+
+A user-facing assistant session, working from a stale (2026-07-15/24) read of this plan and one
+round of its own literature scan, proposed five model-side levers drawn from recent image-CLIP /
+VideoCLIP / efficient-VLM literature: a CoCa-style captioning auxiliary decoder, a learned
+per-frame adaptive-compute gate (AdaViT/DynamicViT/Mixture-of-Depths-style), register tokens
+(Darcet et al., ICLR'24), a FILIP-style token-wise contrastive loss, and feature/attention-map
+distillation from InternVideo2. Checked against this round's own kill-list, round-3's C1–C9, and
+the T1/T2 constraints before landing anything: **none survive as new work.**
+
+| # | Candidate | Verdict | Evidence |
+|---|---|---|---|
+| 1 | CoCa-style captioning auxiliary decoder | **Already killed** | `model-architecture-improvements-round3-zh.md` §3: "CoCa 式 caption 解码头:增自回归解码成本、与冻结文本塔冲突,端侧不值" — independently listed in `ROADMAP.md:402-403` and `c2-vs-alternatives.md:101`'s dead-end lists |
+| 2 | Learned per-frame adaptive-compute gate | **Killed by standing constraint T2** | `neural-inspired-directions.md` §0 T2: Core ML/TFLite reward static, dense, structured graphs; **data-dependent control flow** is named as one of the three disqualifying failure modes. §5 of *this file* already applies it verbatim: "skip by content (forbidden by T2)". A content-gated per-frame skip is exactly that forbidden case — reviving it means abandoning the mobile-export goal, not a training trick |
+| 3 | Register tokens (Darcet et al., ICLR'24) | **Deprioritized, not duplicate** | Distinct mechanism from the removed C4/AC4 "temporal register / latent-bottleneck attention" (`ROADMAP.md:394-395`, dropped for lack of motivation) — but §1 above measures stage-4 attention (qkv/proj + bmm) at **~7.35% of MACs total** (5.25% + 2.10%), and the bmm term any register-token change would sit inside is capped at 2.10–2.25%. Engineering effort there is low-value while P1 (delete temporal branch, an ~18% wall-clock win, already decided) and P7 (resolution cut, 2× the *dominant* 86.5% term) sit unclaimed |
+| 4 | FILIP-style token-wise contrastive loss | **Subsumed — defer** | §2 P6 above ("late interaction at scoring time") already covers the motivating mechanism: `get_sim` already supports `agg_method ∈ {mean, max}` at zero build cost, and its own §3 gate (check 6, ~4 GPU-h) is the correctly-sequenced next step. A full FILIP *training-time* loss (token-token contrastive, not just an inference aggregation choice) is materially bigger and unjustified until check 6 shows late-interaction scoring beats mean pooling by more than a section's worth |
+| 5 | Feature-level / attention-map distillation from InternVideo2 (MGD-style) | **Mostly already exists** | `UTA_Loss`/`new_UTA_Loss` (`models/criterions.py:409,522`, per `data-quality-caprl-scheme.md:35`) already implement middle+final-layer feature-cosine distillation against a teacher, unwired — the same dead-code pattern P4 wired up for the sigmoid loss. Round-3's C1/C1a/C1b ("attn→conv distillation", kept, rewritten) appears to cover the attention-map-specific extension already; this cross-check could not establish novelty beyond what C1a/C1b already plan and did not re-derive their content |
+
+**One candidate from the same pass survives as a real, non-duplicate gap — but it's a data lever,
+not a model lever**, so it's addended to `notes/data-quality-caprl-scheme.md` rather than here:
+DFN/MetaCLIP2-style corpus-level filtering (as opposed to per-clip recaptioning) is surveyed in
+`docs/clip-2025-progress-report.md` §3–4 but never wired into an execution plan or given a
+decision owner.
+
+**Byproduct of the same pass:** this project's own regime — text tower frozen except the final
+projection, vision tower open — was mislabeled "LiT-style" in six places (`model-architecture-
+improvements.md:71` and its `-zh` twin, `paper-plan.md:292` and its `-zh` twin,
+`neural-inspired-round2.md:495-496` and its `-zh` twin). Classic LiT (Zhai et al., CVPR'22) locks
+the *image* tower and tunes text — the inverse of this project's setup. Corrected in place;
+citations of the *real* LiT paper elsewhere (`docs/clip-2025-progress-report.md`,
+`caption-kd-review-2026-07.md`, `recaption-master-plan.md`) were accurate and left untouched.
+
+**Net effect: zero new P/AC-numbered proposals.** The value of this pass is independent
+confirmation that this plan's own kill/defer calls on all five externally-sourced candidates
+were already correct given the evidence gathered in rounds 3–4 — worth having for the paper's
+robustness story, not worth adding to the backlog.

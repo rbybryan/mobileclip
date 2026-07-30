@@ -470,6 +470,17 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 
 ## 进展日志(实时,倒序;每个会话在此加一行,格式:日期:事件(出处))
 
+- 2026-07-30:**外部 SOTA 交叉核查:5 个候选模型侧改动,0 个存活为新提案**(用户请求 →
+  vision-language-models 子代理文献扫描 → 对照 round-3/round-4/GATE-0/T1-T2 逐条核实,见
+  `architecture-round4.md` §7)。CoCa 式字幕解码头——round-3 已杀;学习式逐帧自适应算力
+  门控——被站内硬约束 T2(禁数据依赖控制流,导出用)直接否决;register token / FILIP
+  token-wise 损失——不重复但优先级低(round-4 实测 stage-4 注意力仅占 ~7.35% MACs,
+  P1/P7 两个更大的免费收益还没认领);InternVideo2 特征级/注意力图蒸馏——已大半存在于
+  未接线的 `UTA_Loss`/`new_UTA_Loss` 且与 round-3 C1/C1a/C1b 重叠。唯一存活但已判定
+  「不排队」的第四方向:DFN 本体式过滤网络,见 `data-quality-caprl-scheme.md` §3 附注。
+  **副产品**:本项目自己的训练方式被误标"LiT 式"(实为冻结**文本**,与锁图像塔的经典
+  LiT 方向相反)——6 处文档已订正(`model-architecture-improvements(-zh).md`、
+  `paper-plan(-zh).md`、`neural-inspired-round2(_zh).md`)。
 - 2026-07-30:**闸③ 的测法在交付前被自己的规矩否掉了一次,已改成背靠背配对。**
   维护者问「能不能在 V100 上跑」⇒ **不能**,两条硬理由:① `101vector`(8×V100)
   **没有训练数据**(只有 `internvid_zh_10k` 那 1 万条抽样,11 个 InternVid 分片一个没有,

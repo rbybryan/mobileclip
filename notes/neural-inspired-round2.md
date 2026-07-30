@@ -492,8 +492,11 @@ the field currently treats as self-evidently good, at zero A/B cost.
 512² to 64×8², static and export-friendly, and probably the correct fix, but it is TimeSformer /
 axial / Video-Swin and the neuroscience adds nothing; and a **small trainable text adapter**
 (LoRA r=8–16 on the last text blocks; note `open_text_lora` already exists in the config
-schema) — plausibly high-leverage since LiT caps how well the two spaces can meet, but it
-changes the stated LiT design, so it is a bigger decision than a loss term.
+schema) — plausibly high-leverage since the frozen text tower caps how well the two
+spaces can meet, but it changes the stated frozen-text design, so it is a bigger
+decision than a loss term. (Note: this project's regime is frozen-*text* tuning, the
+inverse of classic LiT, which freezes the image tower — "LiT" above was a mislabel,
+corrected 2026-07-30.)
 
 ---
 
