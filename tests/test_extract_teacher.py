@@ -27,6 +27,7 @@ from experiments.extract_teacher import (  # noqa: E402
     merge_blocks,
     pick_captions,
     pick_video_path,
+    read_anno,
     save_npz_atomic,
     shard_rows,
     subset_token_slice,
@@ -134,6 +135,39 @@ class TestRecordFields:
     def test_captions_merges_synthetic_channel(self):
         rec = {"caption": "real", "recaption": ["syn1", "syn2"]}
         assert pick_captions(rec, "caption", 4) == ["real", "syn1", "syn2"]
+
+
+class TestReadAnno:
+    RECS = [{"video": "/a.mp4", "caption": "x"}, {"video": "/b.mp4", "caption": "y"}]
+
+    def _roundtrip(self, text):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = os.path.join(tmp, "anno")
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(text)
+            return read_anno(p)
+
+    def test_jsonl(self):
+        import json
+        text = "\n".join(json.dumps(r) for r in self.RECS) + "\n"
+        assert self._roundtrip(text) == self.RECS
+
+    def test_json_array(self):
+        """仓库 anno_downstream/InternVid/*.json 是 `[{...}]` 数组(configs/data.py
+        指向的正是它们)—— 必须和 jsonl 一样直接可读,行号语义一致。"""
+        import json
+        assert self._roundtrip(json.dumps(self.RECS)) == self.RECS
+
+    def test_json_array_with_leading_whitespace(self):
+        import json
+        assert self._roundtrip("\n  " + json.dumps(self.RECS)) == self.RECS
+
+    def test_malformed_line_raises_not_silently_skips(self):
+        """坏行必须炸而不是被静默吞掉 —— 行号错位的下游表现是「蒸馏没效果」。"""
+        import json as _json
+        with pytest.raises(ValueError):
+            self._roundtrip('{"video": "/a.mp4"}{"video": "/b.mp4"}\n')
+        assert issubclass(_json.JSONDecodeError, ValueError)
 
 
 class TestBlocksAndMerge:

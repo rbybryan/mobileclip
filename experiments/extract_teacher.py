@@ -62,7 +62,7 @@ U7-1 建议 **curated 2–3M 先行**(教师 pass 成本 ~1/3),全量 10M 仅当
 
     # 1) 100k 成本切片(U7-1 的决策数据)
     python experiments/extract_teacher.py run \\
-        --anno data/anno_pretrain/internvid_v1.jsonl \\
+        --anno anno_downstream/InternVid/InternVid-10M-flt_1.json \\
         --out experiments/teacher/iv2s2_100k \\
         --teacher-ckpt checkpoints/InternVideo2-stage2_1b-224p-f4.pt \\
         --limit 100000 --batch-size 8 --num-workers 8
@@ -165,14 +165,30 @@ def save_npz_atomic(path: str, **arrays) -> None:
 
 
 def read_anno(path: str) -> List[dict]:
-    """读 jsonl 语料。返回**全部**行;切片交给调用方,以免行号语义漂移。"""
-    out = []
+    """读语料标注。返回**全部**记录;切片交给调用方,以免行号语义漂移。
+
+    两种格式自动识别:
+      - JSONL(一行一个 JSON 对象)—— b100 上游原始文件的格式;
+      - JSON 数组 `[{...}, ...]` —— 仓库 `anno_downstream/InternVid/
+        InternVid-10M-flt_*.json` 的格式(`configs/data.py` 指向的就是它)。
+    判别看第一个非空白字符:`[` 是数组,其余按 JSONL 逐行读。
+    """
     with open(path, "r", encoding="utf-8") as f:
+        head = f.read(1)
+        while head.isspace():
+            head = f.read(1)
+        f.seek(0)
+        if head == "[":
+            out = json.load(f)
+            if not isinstance(out, list):
+                raise ValueError(f"{path}: 顶层是 JSON 但不是数组")
+            return out
+        out = []
         for line in f:
             line = line.strip()
             if line:
                 out.append(json.loads(line))
-    return out
+        return out
 
 
 def pick_video_path(rec: dict) -> Optional[str]:
@@ -787,7 +803,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     def common(q):
         q.add_argument("--out", required=True, help="输出根目录")
-        q.add_argument("--anno", help="语料 jsonl")
+        q.add_argument("--anno", help="语料标注(jsonl 或 json 数组,自动识别)")
         q.add_argument("--shard-id", type=int, default=0)
         q.add_argument("--num-shards", type=int, default=1)
         q.add_argument("--shard-tag", default="")
