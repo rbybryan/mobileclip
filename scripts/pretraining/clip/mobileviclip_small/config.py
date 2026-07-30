@@ -4,8 +4,13 @@ from configs.model import *
 # ========================= data ==========================
 train_corpus = "internvid_all"
 train_file = "${available_corpus[${train_corpus}]}"  # for lazy evaluation
-test_file = dict(act_val=available_corpus["msrvtt_1k_test"]) 
-test_types = ["ret_test"] 
+# 键必须落在 test_types 里,否则 epoch 末的评测会被整个 `continue` 掉。
+# 原来写的是 act_val 而 test_types 是 ["ret_test"] ⇒ sub1m_r0_s42 白跑 15 小时;
+# 2026-07-29 加的守卫(pretrain.py:248)会在第一个 step 前直接 raise —— 但基线 config
+# 本身一直没跟着改,于是守卫上线后**预训练完全跑不起来**。2026-07-30 一并修掉。
+# 见 TROUBLESHOOTING.md「训练跑完但没有任何评测数字」。
+test_file = dict(ret_test=available_corpus["msrvtt_1k_test"])
+test_types = ["ret_test"]
 num_workers = 6 
 
 stop_key = None
