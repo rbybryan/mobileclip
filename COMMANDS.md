@@ -879,8 +879,11 @@ python experiments/gate_checks.py gate5-fused \
 >   残差,另一个模块)也算了进去 ⇒ 分母被抬到 3.296e-02 ⇒ 假的 **2.42%**。
 >
 > **腿③ 原样成立。** `gate5` 已改:主报可比比值,池化比值只作**明确标注为不可比**的参考。
-> 服务器上一条命令即可确认:
-> `python experiments/temporal_capacity_audit.py checkpoints/mobileviclip_small.pt`
+>
+> ✅ **2026-07-30 服务器实测确认**:`temporal_capacity_audit.py` 输出
+> **闸门比 = 0.0613**,时序中位 0.0008、空间中位 **0.0130**,且**两侧 n 都是 9920**
+> (40 块 × 通道)⇒ 逐通道一一对应,这就是「可比」的定义。
+> 该脚本 2026-07-24 的全部输出本次**逐位复现**,见 `experiments/gate0_results.md` §7。
 
 **② 训练是不是解码瓶颈(30 分钟,零 GPU 训练)** —— 三步,全部在 101vector/H100 上跑:
 

@@ -44,8 +44,13 @@ plan's load-bearing premises did not survive contact with those numbers.
 >   the spurious **2.42%**.
 >
 > **Leg ③ stands exactly as written.** `gate5` now prints the matched ratio as the headline and
-> the pooled one only as a clearly-labelled non-comparable reference. Confirm on the server with
-> one command: `python experiments/temporal_capacity_audit.py checkpoints/mobileviclip_small.pt`.
+> the pooled one only as a clearly-labelled non-comparable reference.
+>
+> ✅ **CONFIRMED on the server, 2026-07-30.** `temporal_capacity_audit.py` on
+> `mobileviclip_small.pt` prints **ratio = 0.0613**, temporal median 0.0008, spatial median
+> **0.0130** — and, decisively, **n = 9920 on both sides** (40 blocks × channels), i.e. the two
+> gates are matched channel-for-channel. `0.0008 / 0.0130 = 0.0613`. The whole 2026-07-24 audit
+> reproduced bit-for-bit; see `experiments/gate0_results.md` §7.
 
 GATE-0 concluded "the model does not encode temporal direction" from three lines of evidence
 (`experiments/gate0_results.md` §8). ROADMAP, round 2, and several docs — including edits made
@@ -445,10 +450,21 @@ architecture verdict. (b) MSR-VTT captions are largely appearance-driven and are
 probe; **`ssv2_mc_val` is the benchmark that can falsify "delete `temporal_embedding`"**, and it
 is already wired into `available_corpus`. **Run it before ratifying — this has not happened yet.**
 
-> 🔴 **Blocked on data as of 2026-07-30.** Neither `anno_downstream/ssv2_mc_val.json` nor
-> `data/ssv2/20bn-something-something-v2` exists on 101vector, and SSv2 videos are
-> licence-gated (Qualcomm-hosted, account required). Acquisition steps: `CHECKPOINTS.md`
-> → "SSv2-MC". **Until it runs, gate ④'s verdict holds on MSR-VTT only.**
+> 🟡 **Downgraded from blocker to nice-to-have, 2026-07-31.** Data is still absent and
+> licence-gated (`CHECKPOINTS.md` → "SSv2-MC"), but the *time-arrow* question it was meant to
+> settle has now been answered twice from the parameter side, without any new data:
+> the static audit (`gate0_results.md` §7–§8, run 2026-07-24 and reproduced bit-for-bit
+> 2026-07-30) finds kernel antisymmetry **0.5011 vs a random null of 0.500**, the temporal gate
+> at **6.1%** of the matched spatial gate, and `temporal_embedding` **below** the reversal null
+> (0.60–0.65 vs 0.706 — *palindromic-leaning*, i.e. structurally unable to encode direction).
+> Those agree with the behavioural shuffle (+0.1). The repo's standing decision, taken
+> 2026-07-24, is therefore **do not pay to acquire RTime/SSv2 video for the time-arrow
+> question** (`notes/order-sensitive-eval.md` §3).
+>
+> **What SSv2-MC would still add:** it probes action dynamics more broadly than time reversal,
+> so it remains the sharpest available check on gate ④ — just not a prerequisite.
+> **Gate ④'s verdict is MSR-VTT-scoped**, and now has a mechanistic account for *why* deleting
+> an additive, mean-pooling-annihilated, palindromic-leaning positional code costs nothing.
 >
 > ⚠️ Two traps recorded while wiring this up. (1) SSv2-MC is a **174-way multiple-choice
 > accuracy** task — the entry point is **`tasks_clip/retrieval_mc.py`**, not `retrieval.py`;
