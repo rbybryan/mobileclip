@@ -31,10 +31,21 @@ plan's load-bearing premises did not survive contact with those numbers.
 > the audit record of a hypothesis that was tested and rejected — it was the right thing to
 > check, and checking it is what makes the legs quotable.
 >
-> ⚠️ **One number in leg ③ still does not reproduce.** `gate5` measures the temporal gate at
-> **2.42%** of the spatial gate (medians; 1.90% by p95/p95), not the **6.1%** quoted below.
-> The direction is unchanged and in fact *stronger*, but the 6.1% figure must have its
-> provenance found or be corrected before it appears in the paper.
+> ~~⚠️ **One number in leg ③ still does not reproduce.**~~ ✅ **RETRACTED 2026-07-30 — the 6.1%
+> is correct and my `gate5` was the broken one.** The two scripts divide by different
+> denominators:
+> - `temporal_capacity_audit.py:178` uses **`token_mixer.layer_scale` only** (40 tensors) — the
+>   gate on the **spatial mixer** branch, the one-to-one counterpart of `layer_scale_1d` on the
+>   temporal mixer branch. Median ≈ **1.3e-2** (the figure §2 P2 independently quotes) ⇒
+>   7.973e-04 / 1.3e-2 = **6.1%**. ✅
+> - `gate_checks.py gate5` (my 2026-07-29 version) pooled **all 80** `layer_scale` tensors,
+>   folding in the **block-level** gate that scales the **ConvFFN residual** — a different
+>   module with a different magnitude. That inflated the denominator to 3.296e-02 and produced
+>   the spurious **2.42%**.
+>
+> **Leg ③ stands exactly as written.** `gate5` now prints the matched ratio as the headline and
+> the pooled one only as a clearly-labelled non-comparable reference. Confirm on the server with
+> one command: `python experiments/temporal_capacity_audit.py checkpoints/mobileviclip_small.pt`.
 
 GATE-0 concluded "the model does not encode temporal direction" from three lines of evidence
 (`experiments/gate0_results.md` §8). ROADMAP, round 2, and several docs — including edits made
@@ -380,11 +391,26 @@ this section and `COMMANDS.md` §3.11 had it backwards). **No verdict changes** 
 move the same direction in both gates. What changes is that the *headline* deltas are the
 **larger** ones: gate ③ −0.43 and gate ④ +0.70, not −0.33 / +0.67.
 
-⚠ **A number that did NOT reproduce.** §0's leg ③ states the temporal gate is at **6.1%** of the
+~~⚠ **A number that did NOT reproduce.**~~ ✅ **RETRACTED 2026-07-30 — see §0.1. The 6.1% is
+correct; `gate5` was dividing by the wrong denominator** (all 80 `layer_scale`, which pools in
+the block-level ConvFFN gate, instead of the 40 matched `token_mixer.layer_scale`). `gate5` is
+fixed. The struck-through text below is kept as the audit record of my error.
+
+<details><summary>Original (incorrect) claim</summary>
+
+⚠ ~~**A number that did NOT reproduce.** §0's leg ③ states the temporal gate is at **6.1%** of the
 spatial gate. Measured: **2.42%** (medians; p95/p95 gives 1.90%). Neither ratio recovers 6.1%.
 The *direction* of leg ③ is unaffected and in fact strengthened — the temporal gate is smaller
 than advertised — but **the 6.1% figure needs its provenance found or corrected before it is
-quoted in the paper.**
+quoted in the paper.**~~
+
+</details>
+
+**Lesson worth keeping.** I asserted three times, in three documents, that a repo figure "does
+not reproduce" — while my own script was the one comparing incommensurable quantities. The tell
+was available the whole time: §2 P2 quotes spatial λ = **1.3e-2**, and `7.973e-04 / 1.3e-2` is
+exactly 6.1%. **When a re-measurement contradicts a recorded number, check that both sides are
+measuring the same thing before writing "does not reproduce" into three files.**
 
 ~~⚠ **The paired-bootstrap inputs were destroyed.**~~ ✅ **RESOLVED, AND THE CI IS IN (2026-07-30).**
 The first run sent all three arms to the same `output_dir` and overwrote the ranks; the per-arm
