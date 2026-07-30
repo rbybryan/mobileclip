@@ -53,7 +53,9 @@
         --config scripts/evaluation/clip/zero_shot/mobileviclip_small/config_msrvtt.py
     python experiments/gate_checks.py self-test          # 零依赖,合成权重,验证全部逻辑
 
-跑完 gate3/gate4 后按 `COMMANDS.md` §3 的零样本评测跑 MSR-VTT,对比 t2v 42.50 / r_mean 61.55。
+跑完 gate3/gate4 后按 `COMMANDS.md` §3 的零样本评测跑 MSR-VTT。基线锚点(勿混口径):
+**raw = `ret_test_emb/` = 论文主口径** → t2v R@1 40.8 / r_mean 61.55;
+**DSL = `ret_test/`** → t2v R@1 42.50 / r_mean 62.28。
 判据:③ Δr_mean > 1.0(raw 与 DSL 同向)才保留该支路;④ Δ > 0.5 才保留 embedding。
 """
 
@@ -280,7 +282,8 @@ def cmd_gate5_fused(args) -> int:
 def _save(sd_full, out: str) -> None:
     torch.save(sd_full, out)
     print(f"\n[OK] 已写出 {out}")
-    print("     按 COMMANDS.md §3 跑 MSR-VTT 零样本评测,与 t2v 42.50 / r_mean 61.55 对比。")
+    print("     按 COMMANDS.md §3 跑 MSR-VTT 零样本评测。基线:raw(ret_test_emb/,主口径)"
+          " t2v 40.8 / r_mean 61.55;DSL(ret_test/) t2v 42.50 / r_mean 62.28。")
 
 
 def cmd_gate3(args) -> int:

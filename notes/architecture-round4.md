@@ -315,15 +315,26 @@ jitter and `W₂` learns to zero it. See §4 — this is the proposal the open d
 | Gate | Result | Verdict |
 |---|---|---|
 | ① spatial `layer_scale` vs MobileCLIP-S2 | 80 comparable tensors, **0 bit-identical**, 0 name/shape misses | Spatial tower **was** trained ⇒ GATE-0 legs ②③ keep their same-init premise. **Leg ① and the legs survive.** |
-| ③ `layer_scale_1d = 0` (40 tensors zeroed) | r_mean **61.95** raw / **61.12** DSL vs baseline 62.28 / 61.55 ⇒ branch worth **+0.33 / +0.43** | Keep-threshold was Δ > 1.0. **Fails by ~2.5×.** |
-| ④ `temporal_embedding = 0` (4 tensors, norms 0.107–0.150) | r_mean **62.95** raw / **62.25** DSL ⇒ deleting it **gains +0.67 / +0.70** | Keep-threshold was Δ > 0.5. Not merely free to delete — **removing it scores higher on both readouts.** |
+| ③ `layer_scale_1d = 0` (40 tensors zeroed) | r_mean **61.12** raw / **61.95** DSL vs baseline 61.55 / 62.28 ⇒ branch worth **+0.43 raw / +0.33 DSL** | Keep-threshold was Δ > 1.0. **Fails by ~2.3×.** |
+| ④ `temporal_embedding = 0` (4 tensors, norms 0.107–0.150) | r_mean **62.25** raw / **62.95** DSL vs baseline 61.55 / 62.28 ⇒ deleting it **gains +0.70 raw / +0.67 DSL** | Keep-threshold was Δ > 0.5. Not merely free to delete — **removing it scores higher on both readouts.** |
 | ⑤ gate magnitudes | temporal median 7.973e-04, spatial median 3.296e-02, **ratio 0.0242** | See the ⚠ below. |
 | ⑤-fused (`λ·\|Δ\|` after `reparameterize_model()`) | **not yet run** — blocked by an over-strict missing-key guard of mine (it counted the 148 `text_encoder.*` keys, which the constructor loads separately from `mobileclip_s2.pt`; `retrieval.py` reports the same 148 and runs fine). Guard fixed. | **P2's INT8 claim still undecided.** |
 
-**Baseline reproduced to the decimal** (t2v R@1 42.5 / r_mean 61.55 on the `_emb` row), and
-`sample_type_test: middle` makes the eval deterministic — so these deltas carry no run-to-run
-model noise. The remaining uncertainty is sampling over the 1000 test videos, which is exactly
-what the paired bootstrap measures.
+**Baseline reproduced to the decimal** — raw (`ret_test_emb/`) t2v R@1 **40.8** / r_mean **61.55**,
+DSL (`ret_test/`) t2v R@1 **42.5**, both matching the B0 anchors — and `sample_type_test: middle`
+makes the eval deterministic, so these deltas carry no run-to-run model noise. The remaining
+uncertainty is sampling over the 1000 test videos, which is exactly what the paired bootstrap
+measures. The 2026-07-30 per-arm re-run reproduced all three arms **bit-identically**, which is
+the determinism claim actually tested rather than assumed.
+
+⚠ **Correction (2026-07-30): the two readouts were mislabelled in the first version of this
+table.** `retrieval_utils.py:154-160` returns `(dsl, dsl_T, raw, raw_T)` and `:84-85` maps
+position 1 → `ret_test/` and position 3 → `ret_test_emb/`. So **`ret_test/` is DSL** and
+**`ret_test_emb/` is raw — and raw is the paper's headline protocol** (`COMMANDS.md` §3.7,
+`experiments/README.md` §6.1, `experiments/gate0_results.md` §1 all state this correctly; only
+this section and `COMMANDS.md` §3.11 had it backwards). **No verdict changes** — both readouts
+move the same direction in both gates. What changes is that the *headline* deltas are the
+**larger** ones: gate ③ −0.43 and gate ④ +0.70, not −0.33 / +0.67.
 
 ⚠ **A number that did NOT reproduce.** §0's leg ③ states the temporal gate is at **6.1%** of the
 spatial gate. Measured: **2.42%** (medians; p95/p95 gives 1.90%). Neither ratio recovers 6.1%.
@@ -331,10 +342,13 @@ The *direction* of leg ③ is unaffected and in fact strengthened — the tempor
 than advertised — but **the 6.1% figure needs its provenance found or corrected before it is
 quoted in the paper.**
 
-⚠ **The paired-bootstrap inputs were destroyed.** All three arms wrote
-`ranks_ret_test{,_emb}.npz` into the same `output_dir`, so only the last arm's ranks survive.
-Re-run with a per-arm `output_dir` (see `COMMANDS.md` §3.11) before claiming significance —
-Δ = 0.67 sits under the paired-bootstrap resolution reported for G4.
+~~⚠ **The paired-bootstrap inputs were destroyed.**~~ ✅ **RESOLVED 2026-07-30.** The first run
+sent all three arms to the same `output_dir`, so `ranks_ret_test{,_emb}.npz` were overwritten and
+only the last arm's ranks survived. The per-arm re-run (`COMMANDS.md` §3.11) landed
+`eval_base/`, `eval_gate3/`, `eval_gate4/` with both rank files each, so **the paired CI is now
+runnable** — see the `--compare` command in §3.11. Until it is run, "not worth keeping" stands
+(the point estimates miss their thresholds by >2×) but **"deleting `temporal_embedding` is
+*better*" does not** — +0.70 sits under the unpaired resolution and needs the paired interval.
 
 **Reading of ③+④ together.** GATE-0 concluded the model encodes no temporal *direction*. Gate ④
 now shows the architecture's one explicit temporal-order parameter is not merely inert but
