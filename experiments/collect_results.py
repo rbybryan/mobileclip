@@ -77,6 +77,60 @@ def fmt(v):
 
 
 
+def run_compare_mc(arm_dir, base_dir, n_boot, seed, out_path=None):
+    """多选任务(SSv2-MC 等)的配对 bootstrap。
+
+    多选评测只产出一个标量 acc,但统计问题和检索口径完全一样:两条臂答的是同一批
+    题目 ⇒ 是配对比较。不配对就只能拿两个裸 acc 相减,分辨率会差好几倍。
+    输入是 `retrieval_mc.py` 落盘的 `mc_correct.npz`(逐题 0/1)。
+    """
+    from paired_bootstrap import (load_mc_correct, paired_bootstrap_mc,
+                                  unpaired_halfwidth_mc)
+
+    arm, base = load_mc_correct(arm_dir), load_mc_correct(base_dir)
+    res = paired_bootstrap_mc(arm, base, n_boot=n_boot, seed=seed)["acc"]
+
+    verdict = "**显著**" if res["significant"] else "不显著(CI 含 0)"
+    half_paired = (res["hi"] - res["lo"]) / 2
+    half_unpaired = unpaired_halfwidth_mc(arm, base, n_boot=n_boot, seed=seed)
+    lines = [
+        f"# 配对 bootstrap(多选):`{os.path.basename(arm_dir.rstrip('/'))}` − "
+        f"`{os.path.basename(base_dir.rstrip('/'))}`",
+        "",
+        f"题目数 n={len(arm)} · {n_boot} 次重采样 · seed={seed} · 95% CI",
+        "",
+        "| 指标 | 臂 | 基线 | Δ | 95% CI | 判定 |",
+        "|---|---:|---:|---:|---|---|",
+        f"| acc | {res['arm']:.2f} | {res['baseline']:.2f} | {res['delta']:+.2f} | "
+        f"[{res['lo']:+.2f}, {res['hi']:+.2f}] | {verdict} |",
+        "",
+        "**配对买到了多少分辨率**(acc 的 95% CI 半宽):",
+        f"- 配对:**±{half_paired:.2f}**",
+        f"- 无配对:±{half_unpaired:.2f}",
+    ]
+    if half_paired < 1e-9:
+        lines.append(
+            "- ⇒ 配对半宽为 **0**:若这是自比对(臂目录 == 基线目录)说明链路正确;"
+            "若是两条不同的臂,说明两次评测逐题结果完全相同,先查是不是比错了目录。"
+        )
+    else:
+        lines.append(
+            f"- ⇒ 配对把可分辨的最小差异缩到约 **1/{half_unpaired / half_paired:.1f}**。"
+        )
+    lines += [
+        "",
+        "判读:**以 CI 是否含 0 为准**。SSv2-MC 是**时序**探针(174 选 1,随机基线 0.57%),",
+        "MSR-VTT 上「删 `temporal_embedding` 更好」的结论要在这里也不变号才算数。",
+    ]
+    text = "\n".join(lines)
+    print(text)
+    if out_path:
+        with open(out_path, "w") as f:
+            f.write(text + "\n")
+        print(f"\n[written to {out_path}]")
+    return res
+
+
 def run_compare(arm_dir, base_dir, prefix, n_boot, seed, out_path=None):
     """配对 bootstrap 比较两条臂(评审 U10-1 / ROADMAP 自查 G4)。
 
@@ -153,16 +207,28 @@ def main():
     ap.add_argument("--compare", nargs=2, metavar=("ARM_DIR", "BASE_DIR"), default=None,
                     help="配对 bootstrap 比较两条臂(U10-1/G4)。需要两边都有 ranks_*.npz;"
                          "缺了就重跑一次评测(纯前向,MSR-VTT 1k 约 1 分钟)")
+    ap.add_argument("--compare-mc", nargs=2, metavar=("ARM_DIR", "BASE_DIR"), default=None,
+                    help="多选任务(SSv2-MC 等)的配对 bootstrap。需要两边都有 mc_correct.npz"
+                         "(由 tasks_clip/retrieval_mc.py 落盘)")
     ap.add_argument("--prefix", default="ret_test_emb/",
                     help="比较用的口径,默认 raw 主口径;DSL 用 ret_test/")
     ap.add_argument("--n-boot", type=int, default=10000, help="bootstrap 重采样次数")
     ap.add_argument("--seed", type=int, default=0, help="bootstrap 随机种子(可复现)")
     args = ap.parse_args()
 
+    if args.compare and args.compare_mc:
+        raise SystemExit("[FAIL] --compare 与 --compare-mc 只能给一个")
+
     if args.compare:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         run_compare(args.compare[0], args.compare[1], args.prefix,
                     args.n_boot, args.seed, args.out)
+        return
+
+    if args.compare_mc:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        run_compare_mc(args.compare_mc[0], args.compare_mc[1],
+                       args.n_boot, args.seed, args.out)
         return
 
     # rows[(bench, protocol)][run] = {metric: value}

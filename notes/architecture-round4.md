@@ -417,7 +417,21 @@ not the same as *training without* the branch — the ablation upper-bounds what
 *in this checkpoint*, which is the right quantity for the deployment/P2 question but not a final
 architecture verdict. (b) MSR-VTT captions are largely appearance-driven and are a weak temporal
 probe; **`ssv2_mc_val` is the benchmark that can falsify "delete `temporal_embedding`"**, and it
-is already wired into `available_corpus`. Run it before ratifying.
+is already wired into `available_corpus`. **Run it before ratifying — this has not happened yet.**
+
+> 🔴 **Blocked on data as of 2026-07-30.** Neither `anno_downstream/ssv2_mc_val.json` nor
+> `data/ssv2/20bn-something-something-v2` exists on 101vector, and SSv2 videos are
+> licence-gated (Qualcomm-hosted, account required). Acquisition steps: `CHECKPOINTS.md`
+> → "SSv2-MC". **Until it runs, gate ④'s verdict holds on MSR-VTT only.**
+>
+> ⚠️ Two traps recorded while wiring this up. (1) SSv2-MC is a **174-way multiple-choice
+> accuracy** task — the entry point is **`tasks_clip/retrieval_mc.py`**, not `retrieval.py`;
+> the two read the same config and compute different metrics, so the wrong one yields a
+> meaningless number rather than an error. (2) `retrieval_mc.py` reduced straight to a scalar
+> `acc` and dumped nothing per-question, so an A/B would have had **no confidence interval** —
+> exactly the failure the paired bootstrap exists to prevent. It now writes `mc_correct.npz`
+> and `collect_results.py --compare-mc` does the paired CI (synthetic check: ±0.72 paired vs
+> ±2.99 unpaired, 4.2×). Chance is 0.57%; upstream reference is **acc 46.07**.
 
 All on the **locked checkpoint**, all falsifiable, all cheap. Together they settle most of §2.
 

@@ -182,3 +182,104 @@ def unpaired_halfwidth(arm: Dict[str, np.ndarray],
         draws[b] = va[metric] - vb[metric]
     lo, hi = np.percentile(draws, [(100.0 - ci) / 2, 100.0 - (100.0 - ci) / 2])
     return float(hi - lo) / 2
+
+
+# ---------------------------------------------------------------------------
+# 多选题口径(SSv2-MC 等)
+#
+# 为什么要单独一套:多选评测(`tasks_clip/retrieval_mc.py`)只产出一个标量 acc,
+# 没有 i2t/t2i 两个查询总体,也没有 rank。但**统计问题是同一个** —— base 与臂评
+# 的是同一批题目,是配对比较;不做配对就只能拿两个裸 acc 相减,重蹈 ±1.6 无配对
+# 带的覆辙(见本文件顶部的模块说明)。
+#
+# 逐题 0/1 正确性由 `retrieval_mc.py` 在算完 acc 后落盘(~2KB/臂),与检索口径的
+# `ranks_*.npz` 同理:存它几乎不要钱,缺了它就得重跑整个评测。
+# ---------------------------------------------------------------------------
+
+MC_FILENAME = "mc_correct.npz"
+
+
+def save_mc_correct(out_dir: str, correct: Sequence[int]) -> str:
+    """把逐题 0/1 正确性存成 npz。`retrieval_mc.py` 在 rank0 上调用一次。"""
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, MC_FILENAME)
+    np.savez_compressed(path, correct=np.asarray(correct, dtype=np.int8))
+    return path
+
+
+def load_mc_correct(run_dir: str) -> np.ndarray:
+    """读回某条臂的逐题正确性;缺文件时给出可执行的补救指引而不是裸 KeyError。"""
+    path = os.path.join(run_dir, MC_FILENAME)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(
+            f"找不到逐题正确性:{path}\n"
+            "  —— 该臂是在 MC rank dump 落地(2026-07-30)之前评的,或者用的是\n"
+            "     `retrieval.py` 而不是 `retrieval_mc.py`(多选任务必须用后者)。\n"
+            "     重跑一次评测即可,命令见 COMMANDS.md §3.12。"
+        )
+    with np.load(path) as z:
+        return z["correct"].astype(np.float64)
+
+
+def paired_bootstrap_mc(
+    arm: np.ndarray,
+    baseline: np.ndarray,
+    n_boot: int = 10000,
+    seed: int = 0,
+    ci: float = 95.0,
+) -> Dict[str, Dict[str, float]]:
+    """多选准确率的**配对** bootstrap,返回结构与 `paired_bootstrap` 同构(键为 `acc`)。
+
+    同一次重采样里两条臂用**同一组题目下标** —— 两臂同时答对/同时答错的题在做差时
+    抵消掉,这正是配对带远窄于无配对带的原因。
+    """
+    arm = np.asarray(arm, dtype=np.float64)
+    baseline = np.asarray(baseline, dtype=np.float64)
+    if arm.shape != baseline.shape:
+        raise ValueError(
+            f"两条臂的题目数不一致({len(arm)} vs {len(baseline)})"
+            " —— 配对比较要求同一个测试集,请检查是不是评了不同的 benchmark。"
+        )
+    if arm.ndim != 1:
+        raise ValueError(f"逐题正确性应为一维 0/1 向量,收到 shape={arm.shape}")
+    if n_boot < 1:
+        raise ValueError("n_boot 必须 >= 1")
+
+    n = len(arm)
+    rng = np.random.default_rng(seed)
+    draws = np.empty(n_boot)
+    for b in range(n_boot):
+        idx = rng.integers(0, n, n)          # ← 同一组下标,这就是"配对"
+        draws[b] = 100.0 * (arm[idx].mean() - baseline[idx].mean())
+
+    lo_q, hi_q = (100.0 - ci) / 2, 100.0 - (100.0 - ci) / 2
+    lo, hi = np.percentile(draws, [lo_q, hi_q])
+    point_a, point_b = 100.0 * arm.mean(), 100.0 * baseline.mean()
+    return {
+        "acc": {
+            "arm": float(point_a),
+            "baseline": float(point_b),
+            "delta": float(point_a - point_b),
+            "lo": float(lo),
+            "hi": float(hi),
+            "significant": bool(lo > 0 or hi < 0),
+        }
+    }
+
+
+def unpaired_halfwidth_mc(arm: np.ndarray,
+                          baseline: np.ndarray,
+                          n_boot: int = 10000,
+                          seed: int = 0,
+                          ci: float = 95.0) -> float:
+    """同一对臂的**无配对** acc CI 半宽,仅用于展示配对买到了多少分辨率。"""
+    arm = np.asarray(arm, dtype=np.float64)
+    baseline = np.asarray(baseline, dtype=np.float64)
+    n = len(arm)
+    rng = np.random.default_rng(seed)
+    draws = np.empty(n_boot)
+    for b in range(n_boot):
+        draws[b] = 100.0 * (arm[rng.integers(0, n, n)].mean()
+                            - baseline[rng.integers(0, n, n)].mean())
+    lo, hi = np.percentile(draws, [(100.0 - ci) / 2, 100.0 - (100.0 - ci) / 2])
+    return float(hi - lo) / 2

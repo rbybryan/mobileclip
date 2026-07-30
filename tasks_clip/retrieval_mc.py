@@ -99,12 +99,24 @@ def main_with_ensemble(config, test_loader, model_without_ddp, tokenizer, data_t
 
     all_gt_answers = torch.cat(all_gt_answers, 0)
     all_pred_answers = torch.cat(all_pred_answers, 0)
-    acc = all_gt_answers == all_pred_answers
-    acc = float(torch.sum(acc) / len(acc))
+    correct = all_gt_answers == all_pred_answers
+    acc = float(torch.sum(correct) / len(correct))
     eval_res = {"acc": round(100 * acc, 2)}
     logger.info(f"\n{eval_res}")
     save_json(eval_res, join(config.output_dir, "eval_res.json"))
     torch.save(predictions, join(config.output_dir, "prediction_scores.pth"))
+
+    # 逐题 0/1 正确性(~2KB)—— 多选任务的配对 bootstrap 输入。没有它,A/B 只能
+    # 拿两个裸 acc 相减,重蹈无配对带的覆辙;补存要重跑整个评测,所以默认一直开着。
+    # 与检索口径的 ranks_*.npz 同一套逻辑,见 experiments/paired_bootstrap.py。
+    try:
+        import sys
+        sys.path.insert(0, join(os.path.dirname(os.path.abspath(__file__)), "..", "experiments"))
+        from paired_bootstrap import save_mc_correct
+        p = save_mc_correct(config.output_dir, correct.cpu().numpy().astype("int8"))
+        logger.info(f"逐题正确性已存(配对 bootstrap 用):{p}")
+    except Exception as e:  # 存盘失败绝不能吃掉评测结果
+        logger.warning(f"逐题正确性落盘失败(评测结果不受影响):{e}")
     return eval_res
 
 
