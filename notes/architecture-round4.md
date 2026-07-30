@@ -51,6 +51,14 @@ plan's load-bearing premises did not survive contact with those numbers.
 > **0.0130** — and, decisively, **n = 9920 on both sides** (40 blocks × channels), i.e. the two
 > gates are matched channel-for-channel. `0.0008 / 0.0130 = 0.0613`. The whole 2026-07-24 audit
 > reproduced bit-for-bit; see `experiments/gate0_results.md` §7.
+>
+> ✅ **CROSS-VALIDATED 2026-07-31 — the fixed `gate5` was run and now agrees.** Output:
+> `layer_scale_1d (时序 mixer) blocks=40 n=9920 median=7.973e-04`,
+> `layer_scale (空间 mixer) blocks=40 n=9920 median=1.300e-02` ⇒ **0.0613**, identical to the
+> audit to four decimals via an **independent code path**. Spatial median 1.300e-02 also matches
+> the `1.3e-2` §2 P2 quoted from the start — **three sources, one number.** The old pooled value
+> is still printed, explicitly flagged `勿用于腿③ … 0.0242 … 混进了块级 ConvFFN 门`, so the
+> error is now documented inside the tool's own output rather than only in prose.
 
 GATE-0 concluded "the model does not encode temporal direction" from three lines of evidence
 (`experiments/gate0_results.md` §8). ROADMAP, round 2, and several docs — including edits made
