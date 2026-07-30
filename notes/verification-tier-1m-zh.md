@@ -161,3 +161,35 @@ grep -hE "t2v_r1|v2t_r1|_match|R@" experiments/runs/sub1m_{r1both,nR1}_s4?.log |
 - 本轮跑的是 `deepspeed.enable=False` 的评测路径,权重经目录自动解析加载;
   `missing_keys` 只剩**冻结的文本塔**(训练时 `exclude_frozen_parameters=True` 不存),
   它在建模时已从 `mobileclip_s2.pt` 载入 ⇒ **属预期,不影响结果**。
+
+---
+
+## 7. 第一条臂 A/B:`sub1m_r1a`(SigLIP sigmoid 损失) vs `sub1m_r0`(2026-07-30)
+
+r1a 补评已就位(权重加载已核实:`Load pretrained model from
+.../sub1m_r1a_s42/ckpt_02.pth/mp_rank_00_model_states.pt`),配对 bootstrap
+(`collect_results.py --compare`,§3.9,10000 次重采样、seed=0)出第一份 A/B。
+
+**seed 42,raw 主口径 `ret_test_emb/`:r1a − r0**
+
+| 指标 | r1a | r0 | Δ | 95% CI | 判定 |
+|---|---:|---:|---:|---|---|
+| txt_r1 | 40.60 | 41.80 | **−1.20** | [−3.10, +0.70] | NS(含 0) |
+| img_r1 | 39.10 | 39.00 | +0.10 | [−1.80, +2.00] | NS(含 0) |
+| r_mean | 60.02 | 60.65 | **−0.63** | [−1.40, +0.13] | NS(含 0) |
+| R_sum  | 360.10 | 363.90 | **−3.80** | [−8.40, +0.80] | NS(含 0) |
+
+配对把 R-Sum 的 95% CI 半宽从无配对 ±15.1 缩到 **±4.6**(约 1/3.3 分辨率)。
+
+**读法**:所有指标 CI 都含 0 ⇒ **r1a 在 seed 42 没有赢 r0**;但 8 个指标里 7 个点估计
+**为负**(仅 img_r1 +0.10 基本持平),方向一致地略输。**符合理论预期**:SigLIP sigmoid
+损失要在**大 batch(~32k)**才发威,本层全局 batch 512(128×4)远低于甜区 ⇒ softmax(r0)
+持平或略胜是意料之中(与 R1 文本负例库 A/B 的批量论证同源,见 §设计 ➕ 段 / `r1-implementation-plan.md`)。
+
+**未完成 → 还不能下最终结论**:
+1. **DSL 口径**(`--prefix 'ret_test/'`)要再跑一遍核对同向(纪律)。
+2. **seed 43**(`sub1m_r1a_s43` − `sub1m_r0_s43`)尚未训练(排在 `r1b_s42`/`nA1_s42`
+   之后,还要几天)。按 §怎么读结果 的规矩,**两个 seed 方向一致**才能定。当前仅 seed 42
+   = 提示性,不是判决。
+3. 若 seed 43 也是负向且 CI 含 0 ⇒ **弱否决 r1a**(这个 batch 尺度下 sigmoid 不划算),
+   把算力让给 r1b(attn)/nA1(surprise)那两条更有戏的臂。
