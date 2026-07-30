@@ -885,7 +885,7 @@ python experiments/gate_checks.py gate5-fused \
 > (40 块 × 通道)⇒ 逐通道一一对应,这就是「可比」的定义。
 > 该脚本 2026-07-24 的全部输出本次**逐位复现**,见 `experiments/gate0_results.md` §7。
 >
-> ✅ **2026-07-31 交叉验证:改好的 `gate5` 跑出同一个数。**
+> ✅ **2026-07-30 交叉验证:改好的 `gate5` 跑出同一个数。**
 > `layer_scale_1d (时序 mixer) n=9920 median=7.973e-04` /
 > `layer_scale (空间 mixer) n=9920 median=1.300e-02` ⇒ **0.0613** ——
 > 与静态审计**由完全独立的代码路径**得到、四位小数一致;空间中位 1.300e-02 也正是
@@ -895,7 +895,7 @@ python experiments/gate_checks.py gate5-fused \
 
 **② 训练是不是解码瓶颈(30 分钟,零 GPU 训练)** —— 三步,全部在 101vector/H100 上跑:
 
-> 🔴 **2026-07-31 修正:本节原先的两段 heredoc 都是坏的,一段都跑不了。**
+> 🔴 **2026-07-30 修正:本节原先的两段 heredoc 都是坏的,一段都跑不了。**
 > ① 解码那段读 `data/anno_pretrain/internvid_v1.jsonl` —— **该路径不存在**,真实标注是
 > `anno_downstream/InternVid/InternVid-10M-flt_1.json`(**JSON 列表**,不是 JSONL),
 > 且记录里的文件名键是 **`image`**(本仓库 video 也用 `image`,见
@@ -905,13 +905,37 @@ python experiments/gate_checks.py gate5-fused \
 > 现已合并为一个受版本管理的脚本 `experiments/probe_decode_bound.py`(A/B 两段都在里面,
 > 路径全部从 config 自己解析,不硬编码)。
 
-```bash
-nproc                          # ← 先看核数;fix 是否为「调大 num_workers」取决于它
-nvidia-smi dmon -s u -c 60     # 真训练时看 sm 列;持续 <25% 基本坐实解码瓶颈
-```
+> 🔴 **2026-07-30 第一次实测:A 段和 B 段互相矛盾,原来的判读规则判错了。**
+>
+> | 段 | 实测 | 含义 |
+> |---|---|---|
+> | A 热解码(同一文件读 20 次) | **22 ms/片** | ⇒ 6 workers 应有 **274 样本/s** |
+> | B loader-only(1 卡 6 workers) | **48.9 样本/s** | 比 A 的外推**低 5.6×** |
+> | round-4 训练(4 卡 × 6 = **24** workers) | 55.8 样本/s | workers ×4,吞吐只 **+14%** |
+>
+> 脚本当时印的是「坐实解码瓶颈,先调 num_workers」—— **那条判读只把 B 和 55.8 比,
+> 从没和 A 对过账**。对上账就看出:解码本身只要 22 ms,loader 却只拿到 18% 的应有吞吐,
+> 而且 workers 翻 4 倍几乎不涨 ⇒ **某个共享资源已经饱和,加 workers 大概率修不动。**
+> GPU 空转(§0.2 的 MFU 结论)不变,**变的是「为什么」和「怎么修」**。三个互斥假设:
+>
+> * **H1 核数不够** —— 6 workers 就吃满核;24 workers 是超订,于是每片 123 → 430 ms。
+> * **H2 挂载盘 I/O** —— 数据在 `/workspace/mount/...`;A 段第 2 次起命中 page cache,
+>   所以 22 ms 是**无 I/O 的下界**,而训练读的是 1000 万个互不相同的文件,**每个都冷**。
+> * **H3 decord 线程超订** —— `dataset/video_utils.py:137` 是 `num_threads=0`(自动=多线程)。
+>   A 段只有一个 reader 独占整机;loader 里 6 个 worker 各开一把线程互抢。
+>
+> 三者修法完全不同(降 CPU / 打包顺序读 / 改一行 `num_threads=1`),所以**必须先判出是哪个**。
+> 脚本已扩到四段并会自己交叉对账,重跑一次即可。
 
 ```bash
-# A(单片解码耗时)+ B(loader-only 吞吐)—— 一个脚本跑完,自带判读
+nvidia-smi dmon -s u -c 60     # 真训练时看 sm 列;持续 <25% 支持「GPU 在空转」
+```
+
+`nproc` 不用单独跑了 —— 脚本末尾会打印 `os.cpu_count()` 和**本进程实际可用核**
+(容器里两者常常不一样,`nproc` 只告诉你其中一个)。
+
+```bash
+# A 热解码 + A2 冷读 + B loader-only + C workers 扫描 —— 一个脚本跑完,自带交叉判读
 export PYTHONPATH=${PYTHONPATH}:. ; export CUDA_VISIBLE_DEVICES=0
 python -m torch.distributed.run --nproc_per_node=1 --master_port=$((10000+RANDOM%20000)) \
     experiments/probe_decode_bound.py \
@@ -919,13 +943,23 @@ python -m torch.distributed.run --nproc_per_node=1 --master_port=$((10000+RANDOM
     output_dir probe_decode_bound
 ```
 
-> 必须走 `torch.distributed.run`(理由见上 ②)。`--batches N` 可调 B 段迭代多少个 batch
-> (默认 50);A 段若因分片没下全而跳过,**不会挡住 B 段**。
+> 必须走 `torch.distributed.run`(理由见上 ②)。约 15 分钟。可选参数:
+> `--batches N`(B 段迭代多少 batch,默认 50)、`--sweep 1,2,6,12,24`(C 段档位,
+> 给 `none` 跳过)、`--cold-files N`(A2 每组取几个互不相同的文件,默认 25)。
+> **任何一段失败都不挡后面的段。**
 
-**判读**:loader-only ≈ 55.8 且 sm% < 25 ⇒ **坐实解码瓶颈**,
-则 `notes/architecture-round4.md` §0.2 成立、「6.6 天/轮」是可移除的,
-U6 预算阶梯与裁臂顺序都要重算。若 loader-only ≥ 3× 全步吞吐且 sm% > 70 ⇒ 确实算力瓶颈,
-是 round4 的 FLOP 模型错了 —— 那本身也是个结论。
+**判读**(脚本自己会印,这里是留档):
+
+| 观测 | 结论 | 修法 |
+|---|---|---|
+| A2 里 I/O 占冷解码 **> 50%** | **H2 挂载盘** | 打包成顺序读的 shard / 落本地盘 |
+| A2 冷读 ≈ 热读 且 C 曲线压平 且 `num_workers` ≈ 可用核 | **H1 核数** | 预解码降每片 CPU |
+| A2 冷读 ≈ 热读 且 C 曲线压平 且 `num_workers` ≪ 可用核 | **H3 线程超订** | `video_utils.py:137` 改 `num_threads=1` |
+| C 曲线**仍在爬** | round-4 的「免费修法」成立 | `num_workers` 调到扫描最优档 |
+
+前三种情况下,`notes/architecture-round4.md` §0.2 修法阶梯的第一级
+(`num_workers` 6→12–16,标着「免费」)**作废** —— 「6.6 天/轮」仍然可移除,
+但要靠预解码/打包/改线程数那一级,不是靠调 workers。
 
 **⑥⑦⑧** 仍见 `notes/architecture-round4.md` §3(⑥ 需让 `encode_vision` 别提前折叠 T,
 打分路径 `get_sim` 已支持;⑦ 视觉塔分辨率无关,改 `img_size` 免插值免重训;
