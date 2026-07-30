@@ -158,15 +158,30 @@ def cmd_gate5(args) -> int:
         ks = [k for k in sd if k.endswith("layer_scale_1d")]
         require(ks, "layer_scale_1d", args.ckpt)
         t = torch.cat([sd[k].flatten().abs().float() for k in ks])
-        sp = [k for k in sd if k.endswith("layer_scale") and not k.endswith("layer_scale_1d")]
-        print(f"layer_scale_1d (时序)  blocks={len(ks):3d}  n={t.numel():6d}  "
+        # 分母有两种取法,**只有 token_mixer 那一种是可比的**:
+        #   · token_mixer.layer_scale  —— 缩放**空间 mixer** 支路,与 layer_scale_1d
+        #     缩放时序 mixer 支路一一对应。这是 GATE-0 腿③ / round2 静态审计用的分母
+        #     (`experiments/temporal_capacity_audit.py:178`),得到 ≈6.1%。
+        #   · 块级 layer_scale     —— 缩放的是 **ConvFFN 残差**,另一个模块,数量级也不同。
+        # 2026-07-29 首版把两者混在一起(80 个全池化)⇒ 算出 2.42%,并据此误判
+        # 「文档里的 6.1% 复现不出来」。**是这个脚本错了,不是文档错了。**
+        sp_mixer = [k for k in sd
+                    if k.endswith("layer_scale") and "token_mixer" in k]
+        sp_all = [k for k in sd
+                  if k.endswith("layer_scale") and not k.endswith("layer_scale_1d")]
+        print(f"layer_scale_1d (时序 mixer)  blocks={len(ks):3d}  n={t.numel():6d}  "
               f"median={t.median():.3e}  p95={t.quantile(.95):.3e}")
-        if sp:
-            s_ = torch.cat([sd[k].flatten().abs().float() for k in sp])
-            print(f"layer_scale    (空间)  blocks={len(sp):3d}  n={s_.numel():6d}  "
-                  f"median={s_.median():.3e}  p95={s_.quantile(.95):.3e}")
-            print(f"\n  时序/空间 gate 比值(中位)= {t.median()/s_.median():.4f}"
-                  f"   ← 这就是 GATE-0 腿③ 的那个数,现在是独立复现出来的")
+        if sp_mixer:
+            s_ = torch.cat([sd[k].flatten().abs().float() for k in sp_mixer])
+            print(f"layer_scale    (空间 mixer)  blocks={len(sp_mixer):3d}  n={s_.numel():6d}  "
+                  f"median={s_.median():.3e}  p95={s_.quantile(.95):.3e}   ← 可比分母")
+            print(f"\n  **时序/空间 mixer gate 比值(中位)= {t.median()/s_.median():.4f}**"
+                  f"   ← GATE-0 腿③ 的那个数(文档记的 ≈6.1%)")
+        if sp_all:
+            s_all = torch.cat([sd[k].flatten().abs().float() for k in sp_all])
+            print(f"  (参考,**勿用于腿③**:对全部 {len(sp_all)} 个 layer_scale 池化后"
+                  f" median={s_all.median():.3e},比值 {t.median()/s_all.median():.4f} —— "
+                  f"混进了块级 ConvFFN 门,与时序 mixer 门不可比)")
         print(f"\n  λ 中位 {t.median():.2e} vs INT8 抹零阈值 {INT8_ZERO_THRESHOLD:.2e}")
         print("  ⚠️ **但 λ 本身不是判据**:融合核是 δ + λ·Δ,真正要比的是 **λ·|Δ|**"
               "(Δ = BN 折叠后的 mixer_1d − norm_1d)。")

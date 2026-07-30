@@ -870,9 +870,17 @@ python experiments/gate_checks.py gate5-fused \
 > **仍成立**:该支路不值得保留 —— 但依据换成消融(上界 0.82 r_mean vs 27.8% ONNX 图),
 > 不再是量化。详见 `notes/architecture-round4.md` §2 P2 的改写。
 >
-> ⚠️ **对不上的数**:GATE-0 腿③ 写的「时序 gate 是空间的 **6.1%**」,实测中位比值是
-> **2.42%**(p95/p95 为 1.90%),两种算法都回不到 6.1%。结论方向不变(而且更强),
-> 但**这个数字进论文前必须找到出处或改正**。
+> ✅ **~~「对不上的数」~~ 已撤回(2026-07-30):6.1% 是对的,错的是我的 `gate5`。**
+> 两个脚本的**分母**取法不同:
+> - `temporal_capacity_audit.py:178` 只取 **`token_mixer.layer_scale`**(40 个)——
+>   它缩放的是**空间 mixer** 支路,与 `layer_scale_1d` 缩放时序 mixer 支路**一一对应**。
+>   中位 ≈ **1.3e-2**(正是 round4 §2 P2 独立引用的那个数)⇒ 7.973e-04 / 1.3e-2 = **6.1%** ✅
+> - 我 07-29 版的 `gate5` 池化了**全部 80 个** `layer_scale`,把**块级**(缩放 ConvFFN
+>   残差,另一个模块)也算了进去 ⇒ 分母被抬到 3.296e-02 ⇒ 假的 **2.42%**。
+>
+> **腿③ 原样成立。** `gate5` 已改:主报可比比值,池化比值只作**明确标注为不可比**的参考。
+> 服务器上一条命令即可确认:
+> `python experiments/temporal_capacity_audit.py checkpoints/mobileviclip_small.pt`
 
 **② 训练是不是解码瓶颈(30 分钟,零 GPU 训练)** —— 三步,全部在 101vector/H100 上跑:
 
