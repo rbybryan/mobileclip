@@ -11,6 +11,12 @@ plan's load-bearing premises did not survive contact with those numbers.
 
 > **Reading order.** §0 first — it contains two corrections that change what is worth doing.
 > §3 is the actionable part: five checks that cost **zero GPU-days** and settle most of §2.
+>
+> 🔴 **Status as of 2026-07-30 — all five §3 gates have now been run** (§3.0 for results).
+> Two things this round asserted did **not** survive: §0.1's confound suspicion (tested,
+> **rejected** — the legs stand) and **§2 P2's INT8 mechanism** (tested, **falsified** — the
+> temporal term survives quantization). P2's *recommendation* survives on ablation evidence;
+> its *reason* does not. Read §2 P2's banner before quoting anything from that proposal.
 
 ---
 
@@ -177,27 +183,65 @@ stage-4/head graph per T. Publishable as the empirical counterpart to GATE-0.
 **Kill if** Δr_mean > 1.0 (raw and DSL, same sign). ⚠️ Delete from the *shipped model*, not
 from the *research question* — §0.1 means the branch may never have had a fair run (see P4).
 
-### P2 · Unfuse for quantization / mixed precision by op class
+### P2 · ~~Unfuse for quantization~~ 🔴 **MECHANISM FALSIFIED 2026-07-30 — the temporal term survives INT8**
+
+> 🔴 **The decisive measurement was run and it refutes this proposal's premise.**
+> `gate_checks.py gate5-fused` reparameterizes the released checkpoint and measures the actual
+> fused perturbation `|w_1d − δ|` per channel (n=9920):
+>
+> | p05 | p25 | **p50** | p75 | p95 |
+> |---|---|---|---|---|
+> | 4.695e-04 | 2.531e-03 | **6.178e-03** | 1.252e-02 | 2.880e-02 |
+>
+> INT8 round-to-zero threshold is **3.937e-03**. Only **36.2%** of channels fall below it —
+> the **median sits 1.57× above** it. **INT8 does not annihilate the temporal branch; ~64% of
+> channels survive.** The claim below is withdrawn.
+>
+> **Why the prediction failed, precisely.** P2 estimated the fused perturbation as `λ·|Δ|`
+> using λ (temporal median 8e-4, since confirmed as 7.973e-04) and an *assumed* BN-fused
+> depthwise magnitude of **O(0.1–1)**. The measured fused perturbation implies `|Δ| ≈ 7.7`
+> — the BN-folded depthwise kernels are **one to two orders of magnitude larger** than assumed.
+> The λ figures were right; the term they were multiplied by was wrong.
+>
+> **What this kills:** (a) the "INT8 annihilates the temporal branch" mechanism; (b) the
+> inversion of pillar 2 below — AC5/AC9 are *not* "cashed out at INT8", because the thing they
+> add is not below the LSB; (c) the claim in §3 that `layer_scale_1d = 0` is "the exact INT8
+> simulation" — it is not, it is strictly more destructive than INT8. (d) The generalizable
+> one-liner `SNR ∝ 127·λ` is **wrong as written**: it must be `SNR ∝ 127·λ·|Δ|`, and `|Δ|` is
+> the term that actually decides. That correction is the transferable lesson.
+>
+> **What survives:** the *deployment* conclusion, but now resting entirely on the ablation
+> rather than on quantization. Gate ③ says the branch is worth ≤0.82 r_mean (95% CI, both
+> protocols) while costing **27.8% of the exported graph** for **0.20% of MACs**. The branch is
+> not quantization noise — it is a real computation that survives INT8 and still buys almost
+> nothing. That is a *different* and arguably more interesting finding than the original claim.
+>
+> ⚠️ **Untested half:** `gate5-fused` measured only the temporal kernel `w_1d`. The companion
+> claim that the **spatial** mixer runs at "1–3 LSB / ~2 effective bits" is **still unverified**
+> and, given how badly the temporal estimate missed, should be assumed wrong until measured.
+
+<details><summary>Original P2 argument (kept as audit record — premise now refuted)</summary>
+
 `RepMixer.reparameterize()` (`:766-777`) fuses to **δ + λ·Δ** — an O(1) identity tap plus an
 O(λ) perturbation, in **one** tensor. Per-channel symmetric INT8 sets the scale from the max
 element (the identity, ≈1) ⇒ `s ≈ 1/127 = 7.87e-3`, round-to-zero threshold **3.9e-3**. With
 measured λ (temporal median 8e-4, spatial 1.3e-2) and BN-fused depthwise weights of O(0.1–1):
-**PTQ INT8 annihilates the temporal branch exactly** (bit-identical to `layer_scale_1d = 0`)
-and leaves **the spatial mixer running at 1–3 LSB**, i.e. ~2 effective bits.
+~~**PTQ INT8 annihilates the temporal branch exactly**~~ (bit-identical to `layer_scale_1d = 0`)
+and leaves ~~**the spatial mixer running at 1–3 LSB**~~, i.e. ~2 effective bits.
 
-> **This inverts pillar 2.** `c2-vs-alternatives.md` §4 proposes **AC5 + AC9** as
+> ~~**This inverts pillar 2.**~~ `c2-vs-alternatives.md` §4 proposes **AC5 + AC9** as
 > "reparameterization on the temporal axis — free at train time, **cashed in at INT8**".
-> Measured, it is cashed **out** at INT8: AC5 adds train-time capacity that folds into a kernel
-> whose mixing term is already below the INT8 LSB. Worse, **AC5's stated acceptance test
-> (「验推理逐位不变」) is an fp32 test that passes while INT8 silently deletes what was added.**
+> ~~Measured, it is cashed **out** at INT8~~ — refuted above. **AC5's acceptance test
+> (「验推理逐位不变」) being an fp32 test remains a fair criticism**, but the specific failure
+> mode it was said to miss (INT8 silently deleting the added capacity) does not occur.
 
 Fix: deploy **unfused** (`y = x + conv_λ(x)`, so the conv gets its own scale and keeps ~7 bits),
 or INT8 only the pointwise convs (86.5% of MACs) and keep the 40 depthwise mixers in fp16 —
 the ops that break under INT8 are exactly the ops that are 0.8% of MACs.
 Prior art to differentiate: QARepVGG (2022) for RepVGG; Nagel et al. (2019) for depthwise
-ranges. **Neither covers RepMixer/FastViT, and nobody covers the temporal-axis case.** The
-generalizable one-liner is `SNR ∝ 127·λ` for any layer-scaled reparameterization.
-**Decide with:** a per-channel `max|Δ|` histogram from the checkpoint vs the 3.9e-3 threshold.
+ranges. **Neither covers RepMixer/FastViT, and nobody covers the temporal-axis case.**
+
+</details>
 
 ### P3 · Filmstrip layout — exact, free, zero permutes ✅ *verified numerically here*
 The temporal depthwise Conv1d over T is **exactly** a conv2d on a `(B, C, T·H, W)` filmstrip:
@@ -315,10 +359,10 @@ jitter and `W₂` learns to zero it. See §4 — this is the proposal the open d
 | Gate | Result | Verdict |
 |---|---|---|
 | ① spatial `layer_scale` vs MobileCLIP-S2 | 80 comparable tensors, **0 bit-identical**, 0 name/shape misses | Spatial tower **was** trained ⇒ GATE-0 legs ②③ keep their same-init premise. **Leg ① and the legs survive.** |
-| ③ `layer_scale_1d = 0` (40 tensors zeroed) | r_mean **61.12** raw / **61.95** DSL vs baseline 61.55 / 62.28 ⇒ branch worth **+0.43 raw / +0.33 DSL** | Keep-threshold was Δ > 1.0. **Fails by ~2.3×.** |
-| ④ `temporal_embedding = 0` (4 tensors, norms 0.107–0.150) | r_mean **62.25** raw / **62.95** DSL vs baseline 61.55 / 62.28 ⇒ deleting it **gains +0.70 raw / +0.67 DSL** | Keep-threshold was Δ > 0.5. Not merely free to delete — **removing it scores higher on both readouts.** |
+| ③ `layer_scale_1d = 0` (40 tensors zeroed) | r_mean **61.12** raw / **61.95** DSL vs baseline 61.55 / 62.28 ⇒ branch worth **+0.43 raw** (95% CI [+0.03, +0.82], significant) / **+0.33 DSL** (CI [−0.05, +0.72], n.s.) | Keep-threshold was Δ > 1.0. **The entire 95% CI lies below 1.0 in both protocols** ⇒ not a null result but an *equivalence* one: the branch does something, and that something is bounded above by 0.82 r_mean. **Fails.** |
+| ④ `temporal_embedding = 0` (4 tensors, norms 0.107–0.150) | r_mean **62.25** raw / **62.95** DSL ⇒ deleting it **gains +0.70 raw** (CI [+0.20, +1.20]) / **+0.67 DSL** (CI [+0.17, +1.15]) — **significant in both** | Keep-threshold was Δ > 0.5. Not merely free to delete — **removing it significantly improves MSR-VTT r_mean under the two-protocol rule.** See the t2v caveat below. |
 | ⑤ gate magnitudes | temporal median 7.973e-04, spatial median 3.296e-02, **ratio 0.0242** | See the ⚠ below. |
-| ⑤-fused (`λ·\|Δ\|` after `reparameterize_model()`) | **not yet run** — blocked by an over-strict missing-key guard of mine (it counted the 148 `text_encoder.*` keys, which the constructor loads separately from `mobileclip_s2.pt`; `retrieval.py` reports the same 148 and runs fine). Guard fixed. | **P2's INT8 claim still undecided.** |
+| ⑤-fused (`\|w_1d − δ\|` after `reparameterize_model()`) | n=9920 channels: p05 4.695e-04, p25 2.531e-03, **p50 6.178e-03**, p75 1.252e-02, p95 2.880e-02. INT8 threshold **3.937e-03** ⇒ only **36.2%** of channels zeroed; median sits **1.57× above** threshold | 🔴 **P2's mechanism is FALSIFIED — the temporal term survives INT8.** See §2 P2 for the rewrite and the root cause (assumed `\|Δ\|` = O(0.1–1); actual ≈ 7.7). |
 
 **Baseline reproduced to the decimal** — raw (`ret_test_emb/`) t2v R@1 **40.8** / r_mean **61.55**,
 DSL (`ret_test/`) t2v R@1 **42.5**, both matching the B0 anchors — and `sample_type_test: middle`
@@ -342,19 +386,31 @@ The *direction* of leg ③ is unaffected and in fact strengthened — the tempor
 than advertised — but **the 6.1% figure needs its provenance found or corrected before it is
 quoted in the paper.**
 
-~~⚠ **The paired-bootstrap inputs were destroyed.**~~ ✅ **RESOLVED 2026-07-30.** The first run
-sent all three arms to the same `output_dir`, so `ranks_ret_test{,_emb}.npz` were overwritten and
-only the last arm's ranks survived. The per-arm re-run (`COMMANDS.md` §3.11) landed
-`eval_base/`, `eval_gate3/`, `eval_gate4/` with both rank files each, so **the paired CI is now
-runnable** — see the `--compare` command in §3.11. Until it is run, "not worth keeping" stands
-(the point estimates miss their thresholds by >2×) but **"deleting `temporal_embedding` is
-*better*" does not** — +0.70 sits under the unpaired resolution and needs the paired interval.
+~~⚠ **The paired-bootstrap inputs were destroyed.**~~ ✅ **RESOLVED, AND THE CI IS IN (2026-07-30).**
+The first run sent all three arms to the same `output_dir` and overwrote the ranks; the per-arm
+re-run fixed it, and the paired bootstrap (10 000 resamples, seed 0) has now been run on both
+protocols. **Measured paired resolution on these arms: R-Sum 95% CI half-width ±2.30–3.00 vs
+±14.50–14.70 unpaired ⇒ 4.9–6.3× tighter.** (G4's headline "≈11×, ±1.5 vs ±17" came from a
+different, more tightly-coupled arm pair — treat 5–11× as the achievable range, not 11× as a
+constant. `experiments/ROADMAP.md` G4 row updated accordingly.)
 
-**Reading of ③+④ together.** GATE-0 concluded the model encodes no temporal *direction*. Gate ④
-now shows the architecture's one explicit temporal-order parameter is not merely inert but
-slightly *counterproductive* on MSR-VTT, and gate ③ shows the temporal conv branch buys ~0.4
-r_mean while costing **27.8% of the ONNX graph** (§1) for **0.20% of MACs**. Those three
-measurements agree.
+⚠ **The main metric does *not* clear the two-protocol bar, even though r_mean does.** For gate ④
+the paper's headline metric **t2v R@1** (`img_r1`) gains **+1.70 raw, CI [+0.40, +3.10]
+(significant)** but only **+1.30 DSL, CI [−0.10, +2.70] (not significant)**. House rule is that
+an A/B claim needs both protocols to agree *and* both to clear zero. So the defensible statement
+is **"deleting `temporal_embedding` significantly improves r_mean (both protocols)"**, and
+*not* "it significantly improves t2v R@1".
+
+**Reading of ③+④+⑤-fused together.** GATE-0 concluded the model encodes no temporal *direction*.
+Gate ④ now shows the architecture's one explicit temporal-order parameter is not merely inert but
+*significantly counterproductive* on MSR-VTT r_mean, and gate ③ bounds the temporal conv branch
+at **≤0.82 r_mean** while it costs **27.8% of the exported graph** (§1) for **0.20% of MACs**.
+
+⑤-fused then removes the explanation we thought we had. The branch is **not** below the INT8 LSB
+— 64% of its channels survive quantization. So this is not "a computation too small to represent";
+it is **a computation that is faithfully represented, costs a quarter of the graph, and buys
+≤0.82 r_mean.** The deployment case for removing it is unchanged and the *scientific* story is
+sharper: the temporal machinery is well-formed and nearly useless, rather than numerically dead.
 
 **Two limits, stated before anyone over-reads this.** (a) Zeroing a gate in a *trained* model is
 not the same as *training without* the branch — the ablation upper-bounds what the branch does
@@ -369,9 +425,9 @@ All on the **locked checkpoint**, all falsifiable, all cheap. Together they sett
 |---|---|---|---|
 | 1 | **Spatial `layer_scale` in `mobileviclip_small.pt` vs MobileCLIP-S2's** — bit-identical? | ~1 min | **§0.1** — whether GATE-0 legs ②③ are publishable as written |
 | 2 | Dataloader-only throughput + SM% during a step | 30 min | **§0.2** — whether the 6.6-day budget is real |
-| 3 | `layer_scale_1d = 0` → re-eval MSR-VTT | 75 s | **P1**, and *is* the exact INT8 simulation for **P2** |
+| 3 | `layer_scale_1d = 0` → re-eval MSR-VTT | 75 s | **P1**. ~~*is* the exact INT8 simulation for **P2**~~ — **wrong, refuted by step 5**: INT8 zeroes only 36.2% of channels, so this ablation is strictly *more* destructive than INT8, not equivalent to it |
 | 4 | `temporal_embedding = 0` → re-eval | 75 s | **P5** |
-| 5 | Per-channel `max\|Δ\|` histogram vs the 3.9e-3 INT8 threshold | ~10 min | **P2**'s mechanism |
+| 5 | Per-channel `max\|Δ\|` histogram vs the 3.9e-3 INT8 threshold | ~10 min | ✅ **RUN 2026-07-30 — refuted P2's mechanism** (36.2% zeroed, median 1.57× above threshold). §2 P2 rewritten |
 | 6 | `agg ∈ {mean, max, LSE, top-2}` eval sweep | ~4 GPU-h | **P6** + the §4 disagreement |
 | 7 | Iso-pixel grid at 128²/160²/181²/224²/256² (+ per-T BN recal) | ~12 GPU-h | **P7** |
 | 8 | Ablation-by-deletion export timing at random init (latency ≠ weights) | 1 day, 0 GPU | the real 92/8 **latency** split |
