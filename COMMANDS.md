@@ -786,7 +786,9 @@ python experiments/gate_checks.py self-test
 
 > 🔴 **每个臂必须给独立的 `output_dir`。** 首跑三个臂全写进同一个目录,
 > `ranks_ret_test{,_emb}.npz`(配对 bootstrap 的输入)被后一个臂覆盖,只剩最后一个臂的秩,
-> **配对 CI 因此做不了**。下面的命令已带 `output_dir` 覆盖。
+> 配对 CI 因此做不了。下面的命令已带 `output_dir` 覆盖 ——
+> ✅ **2026-07-30 已按此重跑,`eval_base/`、`eval_gate3/`、`eval_gate4/` 各自的两个
+> `ranks_*.npz` 都已落地,配对 CI 现在可跑**(命令见本节末尾)。
 
 ```bash
 export PYTHONPATH=${PYTHONPATH}:. ; export CUDA_VISIBLE_DEVICES=0
@@ -800,16 +802,34 @@ run gate3   ./checkpoints/_ablate_temporal.pt
 run gate4   ./checkpoints/_ablate_tempemb.pt
 ```
 
-**首跑结果(2026-07-29,`r_mean` raw / DSL`_emb`):**
+**实测结果(2026-07-29 首跑;2026-07-30 分臂重跑**逐位复现**):**
 
-| 臂 | r_mean raw | r_mean DSL | Δ vs base | 判定 |
+> ⚠️ **2026-07-30 更正:本表首版把两个口径写反了。** `tasks_clip/retrieval_utils.py:154-160`
+> 返回 `(dsl, dsl_T, raw, raw_T)`,`:84-85` 把第 1 位映射到 `ret_test/`、第 3 位映射到
+> `ret_test_emb/` ⇒ **`ret_test/` 是 DSL、`ret_test_emb/` 是 raw,而 raw 才是论文主口径**
+> (§3.7 / `experiments/README.md` §6.1 / `experiments/gate0_results.md` §1 一直是对的,
+> 写反的只有本节和 `notes/architecture-round4.md` §3.0)。**判定不变**(两口径同向),
+> 变的是**主口径的 Δ 反而更大**:③ −0.43、④ +0.70。
+
+| 臂 | r_mean raw(`_emb/`,主口径) | r_mean DSL(`ret_test/`) | Δ vs base(raw / DSL) | 判定 |
 |---|---|---|---|---|
-| base | 62.28 | 61.55 | — | 与文档记载逐位一致 |
-| ③ 时序支路置零 | 61.95 | 61.12 | **−0.33 / −0.43** | 支路只值 0.4,判据要 >1.0 ⇒ **不保留** |
-| ④ `temporal_embedding` 置零 | **62.95** | **62.25** | **+0.67 / +0.70** | 删掉反而更高 ⇒ **不保留** |
+| base | 61.55 | 62.28 | — | 与文档记载逐位一致 |
+| ③ 时序支路置零 | 61.12 | 61.95 | **−0.43 / −0.33** | 支路只值 0.4,判据要 >1.0 ⇒ **不保留** |
+| ④ `temporal_embedding` 置零 | **62.25** | **62.95** | **+0.70 / +0.67** | 删掉反而更高 ⇒ **不保留** |
 
 > ⚠️ Δ 都小于 G4 配对 bootstrap 的分辨率,**"删了更好"要等配对 CI 才能下结论**;
-> "不值得保留"则已成立(点估计离阈值差 2.5 倍以上)。
+> "不值得保留"则已成立(点估计离阈值差 2 倍以上)。
+
+**配对 bootstrap(2026-07-30 起可跑 —— 三个臂的 `ranks_*.npz` 都已就位):**
+
+```bash
+# 主口径(raw = ret_test_emb/,--prefix 的默认值)
+python experiments/collect_results.py --compare eval_gate3 eval_base
+python experiments/collect_results.py --compare eval_gate4 eval_base
+# 第二口径(DSL)—— 两口径同向才算数
+python experiments/collect_results.py --compare eval_gate3 eval_base --prefix 'ret_test/'
+python experiments/collect_results.py --compare eval_gate4 eval_base --prefix 'ret_test/'
+```
 > ⚠️ MSR-VTT 的字幕以外观为主,是弱时序探针。**`ssv2_mc_val` 才是能证伪「删 `temporal_embedding`」
 > 的基准**,批准前先跑它。
 

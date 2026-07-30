@@ -469,14 +469,31 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 
 ## 进展日志(实时,倒序;每个会话在此加一行,格式:日期:事件(出处))
 
+- 2026-07-30:**分臂重跑落地 ⇒ 配对 CI 解锁;同时更正我自己写反的 raw/DSL 口径标签**
+  (`COMMANDS.md` §3.11,[`notes/architecture-round4.md`](../notes/architecture-round4.md) §3.0)。
+  ✅ **三个臂各自独立 `output_dir` 重跑完成**,`eval_base/`、`eval_gate3/`、`eval_gate4/`
+  的 `ranks_ret_test{,_emb}.npz` 全部落地 ⇒ **G4 配对 bootstrap 现在可跑**
+  (`python experiments/collect_results.py --compare eval_gate3 eval_base`,两口径各一遍)。
+  三个臂的六个 r_mean **与首跑逐位相同** ⇒ `sample_type_test: middle` 的确定性是**实测**的,
+  不再是假设。
+  🔴 **口径标签更正(我的错)**:`retrieval_utils.py:154-160` 返回 `(dsl, dsl_T, raw, raw_T)`,
+  `:84-85` 把第 1 位映射到 `ret_test/`、第 3 位映射到 `ret_test_emb/` ⇒
+  **`ret_test/` = DSL、`ret_test_emb/` = raw = 论文主口径**。仓库其余各处(§3.7、
+  `experiments/README.md` §6.1、`gate0_results.md` §1)一直是对的,写反的只有 07-29 我加的
+  round4 §3.0 与 COMMANDS §3.11 两处,现已改正。**判定不变**(两口径同向),但**主口径的
+  Δ 反而更大**:③ −0.43、④ +0.70。
+  ⚠️ **仍未判**:`gate5-fused`(P2 的 INT8 结论)、`ssv2_mc_val`(能证伪「删
+  `temporal_embedding`」的时序基准)、GATE-0 腿③ 那个回不到的 **6.1%**。
+
 - 2026-07-29:**第四轮闸门首次跑通 —— 时序分支与 `temporal_embedding` 双双未过保留判据**
   ([`notes/architecture-round4.md`](../notes/architecture-round4.md) **§3.0**,命令 `COMMANDS.md` §3.11)。
   ✅ **腿②③ 保住**:闸①实测 80 个可比空间张量**逐位相同 0 个** ⇒ 空间塔确实训过 ⇒
   「同初值」前提成立,GATE-0 维持原判(状态表 GATE-0 行的 ⚠️ 可据此解除)。
-  🔴 **闸③ 时序支路**:置零后 r_mean 61.95 raw / 61.12 DSL,即该支路只值 **+0.33 / +0.43**,
+  🔴 **闸③ 时序支路**:置零后 r_mean 61.12 raw / 61.95 DSL,即该支路只值 **+0.43 raw / +0.33 DSL**,
   判据要 >1.0 ⇒ **未过**。与 round4 §1 的 profile 合看:0.20% MACs 却占 **27.8% ONNX 图**。
-  🔴 **闸④ `temporal_embedding`**:置零后 **62.95 / 62.25**,**删掉反而更高 +0.67 / +0.70**,
-  判据要 >0.5 ⇒ **未过**。与 GATE-0「不编码时间方向」同向。
+  🔴 **闸④ `temporal_embedding`**:置零后 **62.25 raw / 62.95 DSL**,**删掉反而更高
+  +0.70 raw / +0.67 DSL**,判据要 >0.5 ⇒ **未过**。与 GATE-0「不编码时间方向」同向。
+  (口径标签于 2026-07-30 更正,见下条;判定不变。)
   ✅ **λ 撤回**:`gate5` 从发布权重复现出 median 7.973e-04 / p95 2.762e-03,与 §2 P2 引用一致
   ⇒ 我此前给 λ 打的「未核实」标记**作废**。同时更正我自己的误判:发布权重是**训练态**,
   首跑失败的真因是 heredoc 的顶层包装键名(不是重参数化)。
