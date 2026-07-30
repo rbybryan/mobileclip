@@ -894,7 +894,7 @@ python experiments/gate_checks.py gate5-fused \
 > ⇒ 这个错误现在被记录在**工具自己的输出里**,不只是散文里。
 
 **② 训练到底卡在哪?(30 分钟,零 GPU 训练)** —— ✅ **已定案:不是 dataloader**(见下),
-剩下的是 GPU 侧。全部在 101vector/H100 上跑:
+剩下的是 GPU 侧。**全部在 b100(H100)上跑** —— 101vector 是 8×V100 且没有训练数据,见下 ③:
 
 > 🔴 **2026-07-30 修正:本节原先的两段 heredoc 都是坏的,一段都跑不了。**
 > ① 解码那段读 `data/anno_pretrain/internvid_v1.jsonl` —— **该路径不存在**,真实标注是
@@ -950,23 +950,47 @@ python -m torch.distributed.run --nproc_per_node=1 --master_port=$((10000+RANDOM
 > **任何一段失败都不挡后面的段。** 判读只有 **④** 定瓶颈:比较「同样 workers 下
 > loader 供得起多少」与「训练每卡实际消费多少」,富余 ≥2× 就说明输入管线无罪。
 
-**③ 证伪 / 证实「dataloader 无罪」—— 真训练两分钟(需要 GPU)**
+**③ 证伪 / 证实「dataloader 无罪」—— 真训练(必须在 b100/H100 上跑)**
 
-微基准只能证明 loader **供得起**,证不了训练**吃不吃得下**。唯一能定案的是真训练:
-把 `num_workers` 调大重测 `s/it`,**基本不动 ⇒ 坐实 loader 无罪**;
-明显变快 ⇒ 单卡外推不成立(多卡会互抢),回到调 workers 那条路。
+> ❌ **不能拿 101vector(V100)代跑**,两条独立的硬理由:
+> 1. **那台机器没有训练数据。** `tools/data_audit/SETUP_V100.md` 开篇即写:本机只有
+>    `/home/vca1/datasets/internvid_zh_10k` 这 1 万条抽样,**11 个 InternVid 训练分片一个都没有**
+>    (7 个下游评测基准的视频也都没有,见 TROUBLESHOOTING「这台机器上根本没有下游评测数据」)。
+>    `config.py` 的 `train_file` 指向 `data/video_sample/InternVId-FLT_*`,在 V100 上直接建不出 dataset。
+> 2. **要检验的那个数本身是 H100 的数。** 基准 9.1821 s/it、MFU 0.67% 都是 4×H100 上测的
+>    (峰值 ~990 TFLOP/s bf16);V100 是 sm70、无 bf16、fp16 峰值 ~125 TFLOP/s,差约 **8×**。
+>    同样的 loader 吞吐在 V100 上算出来的 MFU 会高一个量级,**V100 的 s/it 既证实不了也证伪不了 H100 的结论**。
+>
+> V100 能做的是另一件事:用 `internvid_zh_10k_pilot` 语料给**那台机器自己**做一份
+> 解码/IO 画像(`train_corpus internvid_zh_10k_pilot`,并先确认 `data/internvid_zh_10k/videos`
+> 指向 `/home/vca1/datasets/internvid_zh_10k`)。那是「以后能不能挪到 V100 训」的问题,**不是闸②**。
 
-开**两个终端**。终端 1 跑训练(log_freq=1,每步都打 s/it;看到十来步就 Ctrl-C):
+🔴 **别和历史基准比 —— b100 是共享机。** 8 张 H100 常年被别的租户占到 ~87%
+(TROUBLESHOOTING「b100 is a shared, multi-tenant node」),而 `9.1821 s/it` 是**另一天**、
+未知负载下测的。拿今天的 `num_workers=16` 去比它,等于把机器负载差异算到 workers 头上 ——
+**这正是本节 ② 刚刚栽过的「只和一个陈旧基准比」那个错。**
+
+所以**两档要背靠背在同一个会话里各跑一次**,顺序 6 → 16,中间不要隔夜:
 
 ```bash
+# 先记录此刻的争抢情况(两档各跑前都记一次,便于事后判断负载是否变了)
+nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total --format=csv
+
 export PYTHONPATH=${PYTHONPATH}:. ; export OMP_NUM_THREADS=1
 export CUDA_VISIBLE_DEVICES=0,1,2,3
+
+# ① 复现基准档(log_freq=1,每步打 s/it;看到十来步就 Ctrl-C)
+python -m torch.distributed.run --nproc_per_node=4 --master_port=$((10000+RANDOM%20000)) \
+    tasks_clip/pretrain.py scripts/pretraining/clip/mobileviclip_small/config.py \
+    num_workers 6 output_dir probe_train_nw6
+
+# ② 立刻再跑高 workers 档
 python -m torch.distributed.run --nproc_per_node=4 --master_port=$((10000+RANDOM%20000)) \
     tasks_clip/pretrain.py scripts/pretraining/clip/mobileviclip_small/config.py \
     num_workers 16 output_dir probe_train_nw16
 ```
 
-终端 2 同时看 GPU(**两种读法相反,别只记一种**):
+另开一个终端,在**任一档**跑的时候看 GPU(**两种读法相反,别只记一种**):
 
 ```bash
 nvidia-smi dmon -s u -c 60
@@ -977,7 +1001,11 @@ nvidia-smi dmon -s u -c 60
 | 持续 **<25%** | GPU 在等数据/等同步 ⇒ 还是喂不饱(输入或通信) |
 | 持续 **>70% 而 MFU 仍 0.67%** | 核在跑但几乎不干活 ⇒ **kernel-launch / 低占用率**,这才是要修的 |
 
-对照基准:`num_workers=6` 时是 **9.1821 s/it @ 全局 batch 512 = 55.8 样本/s**。
+**判读**:比的是**今天这两档之间**的 s/it,不是和 9.1821 比。
+两档基本持平 ⇒ **坐实 loader 无罪**,瓶颈在 GPU 侧;
+16 档明显更快 ⇒ 单卡外推不成立(4 卡会互抢 CPU),回到调 workers 那条路。
+历史基准 9.1821 s/it 只用来**旁证机器负载**:若今天的 6 档和它差很多,说明当时/现在的争抢不同,
+更要以今天的两档对比为准。
 
 **⑥⑦⑧** 仍见 `notes/architecture-round4.md` §3(⑥ 需让 `encode_vision` 别提前折叠 T,
 打分路径 `get_sim` 已支持;⑦ 视觉塔分辨率无关,改 `img_size` 免插值免重训;
