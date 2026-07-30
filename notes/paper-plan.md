@@ -289,7 +289,8 @@ code. Nine findings and their dispositions:
    the sampling protocol (reproducibility); low-T reachability of the 16-frame
    teacher target (per-T weighting / curriculum KD) is an explicit design
    decision. Also: R2 gains a planned ablation "unfreeze the last N text
-   layers" (under LiT freezing, text-KD can only train the projection);
+   layers" (under this project's frozen-text tuning — the inverse of classic LiT,
+which freezes the image tower, not text — text-KD can only train the projection);
    before submission, re-sweep the literature for the "first video DR" claim
    and check InternVid / InternVideo2 licenses for releasing derived
    embeddings (decides whether "dataset release" can be a contribution).

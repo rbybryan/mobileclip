@@ -58,7 +58,9 @@
 
 **训练目标** 仅 VTC(InfoNCE,`VTC_VTM_Loss.vtc_loss`),温度**固定** 1/100
 (`temp == temp_min == 0.01`,clamp 使其恒定),全局 batch 512(8×64,V100),
-InternVid-10M-FLT 上 3 个 epoch,LiT 式(视觉开放、文本锁定)。
+InternVid-10M-FLT 上 3 个 epoch,**冻结文本微调**(视觉开放、文本锁定)——注意这与经典
+LiT(Zhai 等,CVPR'22,锁**图像**塔)方向相反;"LiT 式"是对本项目自身训练方式的
+误称(2026-07-30 外部 SOTA 复核发现,见 `architecture-round4.md` §7)。
 
 **代码中的隐性约束与"沉睡代码"(截至 2026-07-15 全部核实;⚠️ **其中三条已于 07-24 前后解除**,
 逐条标注如下,另见文首状态刷新表):**
