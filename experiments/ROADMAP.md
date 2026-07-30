@@ -470,6 +470,19 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 
 ## 进展日志(实时,倒序;每个会话在此加一行,格式:日期:事件(出处))
 
+- 2026-07-31:**闸② 的两段命令原来都是坏的,已重写为受版本管理的脚本**
+  (`experiments/probe_decode_bound.py`,`COMMANDS.md` §3.11 ②)。交付前逐条核对时发现:
+  ① 解码那段读的 `data/anno_pretrain/internvid_v1.jsonl` **根本不存在** —— 真实标注是
+  `anno_downstream/InternVid/InternVid-10M-flt_1.json`(**JSON 列表**非 JSONL),
+  文件名键是 **`image`**,且要与 `data_root` 拼接;三处都错。
+  ② 吞吐那段调 `setup_main()`,而它会读 argv 里的 config 并做 `init_distributed_mode()`
+  + `dist.barrier()` ⇒ **裸 python/heredoc 起不来**,必须走 `torch.distributed.run`。
+  ⇒ 合并为一个脚本:路径全部从 config 自解析、先找**第一个真实存在**的 clip 再计时
+  (分片没下全时不会伪装成「脚本坏了」)、A 段失败不挡 B 段、判读直接打印在输出末尾。
+  **这是本轮第三次「文档里的命令在服务器上跑不了」**(前两次:闸门 heredoc 的
+  `sd.get("model", sd)`、SSv2 用错入口 `retrieval.py`)。**新规矩:交付命令前先核对
+  它引用的每个路径/键/入口是否真实存在** —— 三次全都是这一步没做。
+
 - 2026-07-31(凌晨,补):**改好的 `gate5` 交叉验证通过 —— 与静态审计独立地得到同一个 0.0613。**
   输出:`layer_scale_1d(时序 mixer) n=9920 median=7.973e-04` /
   `layer_scale(空间 mixer) n=9920 median=1.300e-02` ⇒ **0.0613**(四位小数一致)。

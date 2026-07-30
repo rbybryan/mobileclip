@@ -895,41 +895,32 @@ python experiments/gate_checks.py gate5-fused \
 
 **② 训练是不是解码瓶颈(30 分钟,零 GPU 训练)** —— 三步,全部在 101vector/H100 上跑:
 
+> 🔴 **2026-07-31 修正:本节原先的两段 heredoc 都是坏的,一段都跑不了。**
+> ① 解码那段读 `data/anno_pretrain/internvid_v1.jsonl` —— **该路径不存在**,真实标注是
+> `anno_downstream/InternVid/InternVid-10M-flt_1.json`(**JSON 列表**,不是 JSONL),
+> 且记录里的文件名键是 **`image`**(本仓库 video 也用 `image`,见
+> `dataset/base_dataset.py:139-156`),还得和 `data_root` 拼起来才是完整路径。
+> ② 吞吐那段调 `setup_main()` —— 它会**读 argv 里的 config** 并执行
+> `init_distributed_mode()` + `dist.barrier()`,**裸 `python` / heredoc 根本起不来**。
+> 现已合并为一个受版本管理的脚本 `experiments/probe_decode_bound.py`(A/B 两段都在里面,
+> 路径全部从 config 自己解析,不硬编码)。
+
 ```bash
 nproc                          # ← 先看核数;fix 是否为「调大 num_workers」取决于它
 nvidia-smi dmon -s u -c 60     # 真训练时看 sm 列;持续 <25% 基本坐实解码瓶颈
-
-# 单片解码耗时(把路径换成 anno 里任一条真实 clip)
-python - <<'EOF'
-import json, time
-from dataset.video_utils import read_frames_decord
-rec = json.loads(open("data/anno_pretrain/internvid_v1.jsonl").readline())
-p = rec.get("abs_path") or rec.get("video")
-t0 = time.time()
-for _ in range(20):
-    read_frames_decord(p, 8, sample="middle")
-print(f"{(time.time()-t0)/20*1000:.0f} ms/clip   (round4 预测 ~430)")
-EOF
 ```
-
-纯 dataloader 吞吐(不建模型)用训练入口自己的构造函数,避免手搓配置:
 
 ```bash
-python - <<'EOF'
-import time, torch.distributed as dist
-from utils.config_utils import setup_main          # 与训练同一套配置入口
-from tasks_clip.pretrain import setup_dataloaders
-cfg = setup_main()                                  # 传与 R0 相同的 config
-cfg.distributed = True
-train_loaders, _, _ = setup_dataloaders(cfg, mode="pt")[:3]
-dl = train_loaders[0]
-t0, n = time.time(), 0
-for i, _ in enumerate(dl):
-    n += dl.batch_size
-    if i == 50: break
-print(f"loader-only: {n/(time.time()-t0):.1f} samples/s    (训练实测 55.8)")
-EOF
+# A(单片解码耗时)+ B(loader-only 吞吐)—— 一个脚本跑完,自带判读
+export PYTHONPATH=${PYTHONPATH}:. ; export CUDA_VISIBLE_DEVICES=0
+python -m torch.distributed.run --nproc_per_node=1 --master_port=$((10000+RANDOM%20000)) \
+    experiments/probe_decode_bound.py \
+    scripts/pretraining/clip/mobileviclip_small/config.py \
+    output_dir probe_decode_bound
 ```
+
+> 必须走 `torch.distributed.run`(理由见上 ②)。`--batches N` 可调 B 段迭代多少个 batch
+> (默认 50);A 段若因分片没下全而跳过,**不会挡住 B 段**。
 
 **判读**:loader-only ≈ 55.8 且 sm% < 25 ⇒ **坐实解码瓶颈**,
 则 `notes/architecture-round4.md` §0.2 成立、「6.6 天/轮」是可移除的,
