@@ -2714,3 +2714,43 @@ git log --oneline -1                # 括号里应是 (HEAD -> main, origin/main
 
 **日常自检**:每次对齐后看 `git log -1` 括号——`(HEAD -> main, origin/main)` 是唯一正常态;
 出现任何别的分支名,先 `git checkout -B main origin/main` 再干活。
+
+## `FileNotFoundError: anno_downstream/ssv2_mc_val.json` —— 兼:SSv2-MC 的入口脚本用错了
+
+```
+File "dataset/utils.py", line 106, in load_anno
+    cur_ann = json.load(open(fp, "r"))
+FileNotFoundError: [Errno 2] No such file or directory: 'anno_downstream/ssv2_mc_val.json'
+```
+
+### Cause —— 两个独立的问题,报错只暴露了第一个
+
+1. **数据没落地。** `ssv2_mc_val` 需要 `anno_downstream/ssv2_mc_val.json` 与
+   `data/ssv2/20bn-something-something-v2`,101vector 上**两者都不存在**(2026-07-30 实测)。
+   SSv2 视频有许可协议,不能匿名 wget。
+2. **入口脚本用错了(更隐蔽)。** SSv2-MC 是 **174 选 1 的多选准确率**任务,入口是
+   `tasks_clip/retrieval_mc.py`;用 `tasks_clip/retrieval.py` 跑它,即使数据齐全也
+   **产不出 acc**。`eval_ssv2_mc.sh` 里一直是对的,是 2026-07-30 我在聊天里给错了命令 ——
+   而 `FileNotFoundError` 先一步抛出,把这个错误掩盖了。**数据补齐后如果照着旧命令跑,
+   会拿到一个语义不对的结果而不是报错。**
+
+### Fix
+
+```bash
+# 1) 数据:先探测机器上是否已有,再按许可流程下载。完整步骤见 CHECKPOINTS.md「SSv2-MC」
+find / -maxdepth 6 -type d \( -name '20bn-something*' -o -name 'ssv2' \) 2>/dev/null | head
+ls anno_downstream/ | grep -i ssv2
+
+# 2) 入口:用 retrieval_mc.py,每个臂独立 output_dir(否则逐题结果被覆盖)
+export PYTHONPATH=${PYTHONPATH}:. ; export CUDA_VISIBLE_DEVICES=0
+S=scripts/evaluation/clip/zero_shot/mobileviclip_small/config_ssv2_mc.py
+python -m torch.distributed.run --nproc_per_node=1 --master_port=$((10000+RANDOM%20000)) \
+    tasks_clip/retrieval_mc.py "$S" \
+    pretrained_path ./checkpoints/mobileviclip_small.pt output_dir ssv2_base
+```
+
+完整 A/B + 配对 CI 见 `COMMANDS.md` §3.12。上游参考 `acc 46.07`(随机基线 0.57%)。
+
+**教训**:`train_corpus`/`test_file` 换了 benchmark 时,**入口脚本也可能要换** ——
+`retrieval.py`(检索)与 `retrieval_mc.py`(多选)读同一份 config 却算不同的指标。
+换 benchmark 前先看该 benchmark 自带的 `eval_*.sh` 调的是哪个 py。

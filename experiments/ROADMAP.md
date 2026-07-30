@@ -469,6 +469,22 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 
 ## 进展日志(实时,倒序;每个会话在此加一行,格式:日期:事件(出处))
 
+- 2026-07-30(夜):**SSv2-MC 通路打通(数据仍缺);多选口径也接上了配对 CI;
+  更正我给错的入口脚本**(`COMMANDS.md` §3.12、`CHECKPOINTS.md`「SSv2-MC」、
+  `TROUBLESHOOTING.md` 末条)。
+  🔴 **我给错了命令**:SSv2-MC 是 **174 选 1 多选**,入口是 `tasks_clip/retrieval_mc.py`,
+  不是 `retrieval.py`。`FileNotFoundError` 先抛出把它掩盖了 —— **数据补齐后照旧命令跑
+  会拿到语义不对的结果而不是报错**,已写进 TROUBLESHOOTING。
+  🔴 **数据未落地**:`anno_downstream/ssv2_mc_val.json` 与
+  `data/ssv2/20bn-something-something-v2` 在 101vector 上都不存在;SSv2 视频有许可协议
+  (Qualcomm 托管,需注册),获取步骤已写入 `CHECKPOINTS.md`。
+  ✅ **多选口径的配对 bootstrap 已实现**:`retrieval_mc.py` 现在落盘逐题 0/1
+  `mc_correct.npz`(~2KB),新增 `paired_bootstrap_mc` / `unpaired_halfwidth_mc` +
+  `collect_results.py --compare-mc`,合成数据实测配对 ±0.72 vs 无配对 ±2.99(**4.2×**)。
+  单测 11 → **18 项**全过。**否则 SSv2 只能给两个裸 acc,重蹈 ±1.6 无配对带的覆辙。**
+  ⚠️ **闸④ 仍未被证伪也未被确证** —— SSv2-MC 是唯一能证伪它的基准,数据到位前
+  round4 §3.0 闸④ 的结论只在 MSR-VTT 口径上成立。
+
 - 2026-07-30(晚):**第四轮五个闸门全部跑完 —— `gate5-fused` 证伪了 P2 的 INT8 机制,
   配对 CI 让闸④「删了更好」站住**([`notes/architecture-round4.md`](../notes/architecture-round4.md)
   §2 P2 + §3.0,`COMMANDS.md` §3.11)。

@@ -925,6 +925,44 @@ U6 预算阶梯与裁臂顺序都要重算。若 loader-only ≥ 3× 全步吞�
 > 18% 的 CPU mixer 墙钟(约 75% 是 permute 而非算术)。
 > **这个仓库以后判效率,数的是全特征图 transpose 的个数,不是 FLOPs。**
 
+### 3.12 SSv2-MC —— 唯一能证伪「删 `temporal_embedding`」的时序基准
+
+> 🔴 **入口不是 `retrieval.py`,是 `tasks_clip/retrieval_mc.py`。**
+> SSv2-MC 是 **174 选 1 的多选准确率**任务,不是检索。2026-07-30 我给过一条用
+> `retrieval.py` 的命令,**那是错的** —— 即使数据齐了也跑不出 acc。
+> 数据获取(标注 + 视频,视频有许可协议)见 [`CHECKPOINTS.md`](CHECKPOINTS.md) 的
+> 「SSv2-MC」小节;`anno_downstream/ssv2_mc_val.json` 缺失时报
+> `FileNotFoundError`,见 `TROUBLESHOOTING.md`。
+
+**判据**:MSR-VTT 上「删 `temporal_embedding` 使 r_mean 显著提升」的结论,
+在 SSv2-MC 上**至少不能显著变差**。这里若显著掉分,说明那个提升是 MSR-VTT
+外观偏置的产物,round4 §3.0 闸④ 的结论必须收回。
+上游参考:`mobileviclip_small` **acc 46.07**(随机基线 174 选 1 = 0.57%)。
+
+```bash
+export PYTHONPATH=${PYTHONPATH}:. ; export CUDA_VISIBLE_DEVICES=0
+S=scripts/evaluation/clip/zero_shot/mobileviclip_small/config_ssv2_mc.py
+runmc () {  # runmc <臂名> <ckpt>   —— 注意每个臂独立 output_dir(否则逐题结果被覆盖)
+  python -m torch.distributed.run --nproc_per_node=1 --master_port=$((10000+RANDOM%20000)) \
+      tasks_clip/retrieval_mc.py "$S" pretrained_path "$2" output_dir "ssv2_$1"
+}
+runmc base  ./checkpoints/mobileviclip_small.pt
+runmc gate4 ./checkpoints/_ablate_tempemb.pt
+runmc gate3 ./checkpoints/_ablate_temporal.pt   # 可选:时序支路在时序任务上值多少
+```
+
+**配对 CI(多选口径,2026-07-30 新增)** —— `retrieval_mc.py` 现在会把**逐题 0/1
+正确性**存到 `<out_dir>/mc_correct.npz`(~2 KB),因此多选也能做配对比较:
+
+```bash
+python experiments/collect_results.py --compare-mc ssv2_gate4 ssv2_base
+python experiments/collect_results.py --compare-mc ssv2_gate3 ssv2_base
+```
+
+> 为什么必须配对:两条臂答的是**同一批题**,裸 acc 相减会把共享方差算进去。
+> 合成数据上实测配对半宽 ±0.72 vs 无配对 ±2.99(**4.2×**)。
+> 单测见 `tests/test_paired_bootstrap.py`(多选部分 7 项,共 18 项)。
+
 ## 4. Training (pretraining)
 
 **Preflight — run this before every pretraining launch, not just the first:**

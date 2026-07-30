@@ -64,6 +64,61 @@ anno_downstream
 
 - **Annotations (Google Drive):** https://drive.google.com/drive/folders/1grbR39KnMLpeHPNpX4MBYArhr6wASJza?usp=drive_link
 
+### SSv2-MC(`ssv2_mc_val`)—— 时序探针,2026-07-30 实测**尚未落地**
+
+`configs/data.py` 里 `available_corpus["ssv2_mc_val"]` 指向
+`anno_downstream/ssv2_mc_val.json` + `data/ssv2/20bn-something-something-v2`,
+两者在 101vector 上**都不存在**(2026-07-30 实测报
+`FileNotFoundError: anno_downstream/ssv2_mc_val.json`)。
+
+它是目前唯一能**证伪**「删 `temporal_embedding` 更好」的基准 —— MSR-VTT 的字幕以外观
+为主,而 SSv2 是 174 选 1 的动作多选(随机基线 **0.57%**,上游 `mobileviclip_small`
+参考值 **acc 46.07**,见 `eval_ssv2_mc.sh` 末尾注释),必须真的看懂动作演变才能答对。
+
+**① 先探测(别急着下载 —— 机器上可能已经有了)**
+
+```bash
+ls -d data/ssv2 data/20bn* 2>/dev/null
+ls anno_downstream/ | grep -i ssv2
+# 全盘找一找共享副本(b100 的经验:大数据集常在共享目录里)
+find / -maxdepth 6 -type d \( -name '20bn-something*' -o -name 'ssv2' \) 2>/dev/null | head
+```
+
+**② 标注 JSON** —— 与其它 `anno_downstream/*.json` 同一个 Google Drive 文件夹。
+若整目录 `gdown --folder`(`COMMANDS.md` §1)没把它带下来,单独取:
+
+```bash
+# 在上面那个 folder 里找到 ssv2_mc_val.json,右键取 file id,然后:
+gdown <FILE_ID> -O anno_downstream/ssv2_mc_val.json
+python -c "import json;d=json.load(open('anno_downstream/ssv2_mc_val.json'));print(len(d), d[0].keys())"
+```
+
+> ⚠️ `gdown --folder` **一次最多 50 个文件**,超出会静默截断。`anno_downstream/`
+> 目前约 20 个文件还没到上限,但若以后加了 InternVid 分片要留意这条。
+
+**③ 视频** —— SSv2 **有许可协议,不能匿名 wget**。原 20BN 数据集现由 Qualcomm 托管:
+<https://www.qualcomm.com/developer/software/something-something-v-2-dataset>
+需要注册账号并接受许可,然后下载分卷 zip(`20bn-something-something-v2-??.zip`,
+合计 ~20 GB,220 847 个 webm;验证集 24 777 个)。解包后按仓库预期路径接上:
+
+```bash
+mkdir -p data/ssv2
+# 解包后目录名通常就是 20bn-something-something-v2/
+ln -s /path/to/20bn-something-something-v2 data/ssv2/20bn-something-something-v2
+# 抽查 anno 里的前几个 video id 在不在
+python - <<'EOF'
+import json, os
+d = json.load(open('anno_downstream/ssv2_mc_val.json'))
+root = 'data/ssv2/20bn-something-something-v2'
+miss = [x for x in d[:50] if not os.path.exists(os.path.join(root, x['video']))]
+print(f"前 50 条里缺 {len(miss)} 个;示例:{miss[:3]}")
+EOF
+```
+
+> 💡 **只需要验证集**,但官方只发整包 —— 没有官方的部分下载。若磁盘紧张,解包后
+> 可按 `ssv2_mc_val.json` 里的 id 白名单裁剪。
+> ⚠️ **不要从来路不明的 HF 镜像拉** —— 该数据集的许可要求注明来源,论文里要写清楚。
+
 ## Videos (datasets)
 
 Download from each dataset's official website into `data/`:

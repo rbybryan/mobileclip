@@ -147,3 +147,72 @@ def test_dsl_and_raw_go_to_separate_files(tmp_path):
 def test_missing_ranks_error_tells_you_how_to_fix(tmp_path):
     with pytest.raises(FileNotFoundError, match="重跑一次评测"):
         load_ranks(str(tmp_path), "ret_test_emb/")
+
+
+# --- 多选口径(SSv2-MC)---------------------------------------------------------
+# 与检索口径同构:同一批题目 ⇒ 必须配对。这里钉死的不变式和上面那组一一对应,
+# 因为踩过的坑是一样的(裸差值 + 无配对带 = 判不出来)。
+
+from paired_bootstrap import (  # noqa: E402
+    load_mc_correct,
+    paired_bootstrap_mc,
+    save_mc_correct,
+    unpaired_halfwidth_mc,
+)
+
+
+def test_mc_identical_arms_give_zero_delta_and_zero_width_ci():
+    c = np.array([1, 0, 1, 1, 0, 1, 0, 0, 1, 1])
+    r = paired_bootstrap_mc(c, c, n_boot=200, seed=0)["acc"]
+    assert r["delta"] == pytest.approx(0.0)
+    assert r["lo"] == pytest.approx(0.0)
+    assert r["hi"] == pytest.approx(0.0)
+    assert r["significant"] is False   # CI 含 0(退化成一个点)⇒ 不显著
+
+
+def test_mc_uniform_improvement_is_detected_as_significant():
+    base = np.zeros(400, dtype=np.int8)
+    arm = base.copy()
+    arm[:80] = 1                        # 臂多答对 20%
+    r = paired_bootstrap_mc(arm, base, n_boot=500, seed=0)["acc"]
+    assert r["delta"] == pytest.approx(20.0)
+    assert r["significant"] is True
+    assert r["lo"] > 0
+
+
+def test_mc_paired_ci_is_tighter_than_unpaired():
+    rng = np.random.default_rng(7)
+    base = (rng.random(600) < 0.46).astype(np.int8)   # ≈ 上游 46.07 的量级
+    arm = base.copy()
+    flip = rng.choice(600, 30, replace=False)          # 只动一小部分题
+    arm[flip] = 1 - arm[flip]
+    paired = paired_bootstrap_mc(arm, base, n_boot=500, seed=0)["acc"]
+    half_paired = (paired["hi"] - paired["lo"]) / 2
+    half_unpaired = unpaired_halfwidth_mc(arm, base, n_boot=500, seed=0)
+    assert half_paired < half_unpaired      # 配对必须更窄,否则配对逻辑写错了
+
+
+def test_mc_reproducible_given_seed():
+    rng = np.random.default_rng(1)
+    base = (rng.random(200) < 0.5).astype(np.int8)
+    arm = (rng.random(200) < 0.55).astype(np.int8)
+    a = paired_bootstrap_mc(arm, base, n_boot=300, seed=42)["acc"]
+    b = paired_bootstrap_mc(arm, base, n_boot=300, seed=42)["acc"]
+    assert a == b
+
+
+def test_mc_mismatched_question_counts_raise():
+    with pytest.raises(ValueError, match="题目数不一致"):
+        paired_bootstrap_mc(np.ones(10), np.ones(11))
+
+
+def test_mc_save_and_load_roundtrip(tmp_path):
+    c = np.array([1, 0, 0, 1, 1], dtype=np.int8)
+    save_mc_correct(str(tmp_path), c)
+    back = load_mc_correct(str(tmp_path))
+    assert np.array_equal(back, c.astype(np.float64))
+
+
+def test_mc_missing_file_error_tells_you_how_to_fix(tmp_path):
+    with pytest.raises(FileNotFoundError, match="retrieval_mc.py"):
+        load_mc_correct(str(tmp_path))
