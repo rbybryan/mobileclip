@@ -65,6 +65,8 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 1.6 B0 多 T 曲线(U2) | 任务与验收:`notes/plan-review-upgrades.md` U2;2.1 已落地 ⇒ 用既有零样本 eval 脚本对官方权重覆盖 `num_frames_test <T>`(T∈{2,4,8,16})即可,模型侧自动插值 |
 | 2.1 C2 T 无关化(✅ 代码落地) | 单测 `python -m pytest tests/test_t_agnostic.py -v`(README §2);V100 冒烟命令见本文件 2.1;per-T BN 工具 `experiments/per_t_bn.py`;设计准绳 `paper-plan-zh.md` §七.3 |
 | 架构第四轮(实测 profile + 零 GPU 闸门清单) | [`notes/architecture-round4.md`](../notes/architecture-round4.md) §3 闸门清单、§5 新增关闭项;命令 `COMMANDS.md` §3.11 |
+| 架构第五轮(P11–P14,首次打 86.5% 主导项) | [`notes/architecture-round4.md`](../notes/architecture-round4.md) **§8**;命令 `COMMANDS.md` §3.13(环境/SDPA 自检)、§3.14(P11 逐块扫描规格) |
+| **V100 + 10k 能提前测什么**(主时钟被 6.6 天卡着时的并行线) | [`notes/v100-10k-advance-tests.md`](../notes/v100-10k-advance-tests.md) —— 按**需要什么**分档:A 档只要权重(今天就能跑,含 §8 里两处「未核实」)、B 档用那 1 万条字幕、C 档要 MSR-VTT 视频;**第 0 步永远是 `check_readiness.py`** |
 | 2.2 R2 教师管线 | **提取脚本 `experiments/extract_teacher.py` 已落地(2026-07-29)**,命令 `COMMANDS.md` §3.10,单测 `tests/test_extract_teacher.py`(44 项);教师权重条目 `CHECKPOINTS.md`;设计决策清单:本文件 2.2 + `paper-plan-zh.md` §六.9 + 评审 U7 |
 | 2.4/2.5 A1/A2/B1(#197) | `notes/neural-inspired-implementation.md` Tier A(配置模板 + 单测)/ Tier B(B1 接线与三臂);配置文件待创建 |
 | **2.4 R1 负例库(建缓存 + 跑 A/B + 长档)** | 探针 `COMMANDS.md` §3.2;建池与 A/B 一条龙 `notes/r1-implementation-plan.md` §8;结果 §9.1/§9.2;长档两臂配置 `experiments/configs/nR1_textbank_pilot_long.py` + `pilot_10k_r1_long.py`,启动命令 `notes/live/from-claude.md` (54) |
@@ -518,6 +520,24 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 
 ## 进展日志(实时,倒序;每个会话在此加一行,格式:日期:事件(出处))
 
+- 2026-07-31:**新增 [`notes/v100-10k-advance-tests.md`](../notes/v100-10k-advance-tests.md):V100+10k 的提前测试清单**
+  (维护者问「哪些能先在 V100 上用 10k 测掉」)。按**需要什么**分档而非按重要性 —— 那台机器
+  缺的是**数据**不是算力:🔴 **7 个基准的视频一个都不在**,`msrvtt/k400/ucf101/hmdb51`
+  **anno 齐、只差视频**,DiDeMo/ANet/SSv2 连 anno 都没有;且 `data_root` **只在真正读视频那一刻**
+  才被触碰 ⇒ 配置错了会一路装到解码才炸。**第 0 步永远是 `check_readiness.py`,它决定你在哪一档。**
+  **A 档(只要权重,零评测数据,今天就能跑)**:环境/SDPA 自检 + float64 恒等复核 + P11 门普查
+  (40/40/40),外加 §8 里**两处明确标注「未核实」**的东西 —— **A4** 用随机输入证明「置零 3 个门 ⇒
+  该块精确恒等」(不通过就当场省下 40 次评测,顺带核掉 stage-4 `AttentionBlock` 是 40 块还是 44 块)、
+  **A5** `gate5-fused` 的**空间** mixer 那一半(**决定 AC9 是拿到新理由还是该埋**);再加 MACs/分辨率
+  曲线复核(免费拿到 round4-P7 的成本轴)、随机初始化导出图 diff(用起「延迟不依赖权重」那条规矩)、
+  §6 标注待复现的 CPU 墙钟。
+  **B 档(用那 1 万条,它有字幕)**:**P13 的 BPE 覆盖率从估计变成测量**(⚠️ 10k 是**中文**抽样,
+  必须标口径)、新开关的链路 go/no-go(off-path 逐位一致)、**SDPA 到底能不能抬掉 T=16 的显存天花板**
+  (那是卡住 C2 弹性 T 上界的东西;只看比值,V100 无 bf16 且 32G,绝对数不可外推)。
+  **C 档(等 MSR-VTT 视频)**:P11 40 块扫描 / P6 聚合扫描 / P7 分辨率前沿 / §4 方差-vs-覆盖判别实验。
+  **§4 明确列出做不了的**,免得白花一晚:**整段 P12 MFU 阶梯**(0.67% 本身是 4×H100 的数,V100 无 bf16、
+  峰值差 ~8×)、**任何排序 A/B**(10k 排不了序,40M 参数严重欠拟合)、TFLite(**别动本机 torch**,
+  2.5.1 是为 sm_70 钉的)。
 - 2026-07-30:**架构第五轮:首次攻击 86.5% 主导项 —— 新增 P11–P14,并订正两条前提**
   (见 [`notes/architecture-round4.md`](../notes/architecture-round4.md) **§8**)。
   ⚠️ **本轮不完整**:委托的 4 个专家面板有 **3 个因 API 配额中断**(精度侧 / MFU 侧 /

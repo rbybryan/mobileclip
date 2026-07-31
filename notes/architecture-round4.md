@@ -957,6 +957,16 @@ will ask.*
    T=16 memory ceiling; do it alongside.
 6. **P14** last, and only conditional on P11.
 
+> 🔺 **Much of this does not need the H100 — and two of §8's own "unverified" items can be
+> closed on the idle V100 box today.** See [`v100-10k-advance-tests.md`](v100-10k-advance-tests.md),
+> which tiers every item by what it *requires*. Specifically: **P11's identity-collapse premise
+> is provable on random input with no eval data** (tier A4 — if a gate is missing it costs 40
+> GPU evals to find out the expensive way), and **the spatial-mixer half of `gate5-fused`**,
+> which §2 P2 flags as unverified and which decides whether **AC9 gets a new rationale or gets
+> buried**, is pure checkpoint statistics (tier A5). P13's BPE-coverage *estimate* also becomes a
+> *measurement* there (tier B1). ⚠️ The whole of **P12 is H100-only** — 0.67% MFU is a 4×H100
+> number and the V100 has no bf16.
+
 **Provenance.** One expert panel (efficient architecture), 2026-07-30; three sibling panels
 (VLM accuracy / MFU / quantization) **failed on an API quota limit and still owe a round**.
 Everything marked ✅ or "verified" was re-derived **directly against this worktree** in the same
