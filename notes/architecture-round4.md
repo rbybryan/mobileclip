@@ -17,9 +17,13 @@ plan's load-bearing premises did not survive contact with those numbers.
 > pin**; **"stage 3 is 50% of MACs" is really "`layers[2]=24`"**), and refutes one suspect before
 > anyone spends time on it. **§8 is partial**: 3 of its 4 commissioned panels died on an API
 > quota limit, so the accuracy/MFU/quantization sweeps still owe a round.
-> **Update 2026-07-31: the accuracy panel was resumed and returned — see §9, whose §9.0 outranks
-> everything in §8 (the R1 bank exists only inside the sigmoid path, so C3's shipped combination
-> may be net-negative). MFU and quantization are still outstanding.**
+> ✅ **Update 2026-07-31: all three were resumed and returned. ROUND 5 IS COMPLETE** —
+> **§9** accuracy (§9.0 outranks everything in §8: the R1 bank exists only inside the sigmoid
+> path, so C3's shipped combination may be net-negative), **§10** quantization/latency (P2's
+> retraction *over*-corrected — it is 0.78 LSB, not "survives"; and **P1 subsumes P3 entirely**),
+> **§11** MFU (**three of §8.3's five rungs are worth 0%**, §8.4's temporal-permute dismissal is
+> **retracted**, and the realistic ladder is **3–6×** ⇒ 6.6 days → 1.1–2.2 days).
+> **Read §9–§11 before acting on §8.**
 >
 > 🔴 **Status as of 2026-07-30 — all five §3 gates have now been run** (§3.0 for results).
 > Two things this round asserted did **not** survive: §0.1's confound suspicion (tested,
