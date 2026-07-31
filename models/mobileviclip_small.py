@@ -131,10 +131,32 @@ class MobileViCLIP_Small(nn.Module):
         )
         # load pretrained models
         self.load_checkpoint(
-            config.model.vision_ckpt_path, config.model.text_ckpt_path, 
+            config.model.vision_ckpt_path, config.model.text_ckpt_path,
             config.model.get("extra_ckpt_path", None)
         )
-        
+
+        # round-5 **P1**:整条时序分支从 stage 1–3 删除(config:
+        # model.vision_encoder.disable_temporal_branch = True)。
+        # 机制:`RepMixer.forward:743-746` 是 x = x + λ_1d·(mixer_1d − norm_1d),
+        # 所以 λ_1d ≡ 0 且**不训练** ⇒ 该支路恒等 ⇒ 等价于它不存在。
+        # 🔴 **必须放在 load_checkpoint 之后** —— 放 __init__ 前面会被随后的权重加载覆盖,
+        #    那是一个静默失效(臂看起来跑了,其实时序分支还活着)。
+        # 依据:上面 freeze 分支的注释说得很清楚 ——「temporal parts are absent from the
+        # image-pretrained checkpoint ... else they are frozen at zero forever」。
+        # 那句话原本是在**警告**这个后果;P1 要的**正是**这个后果。
+        if self.config.model.vision_encoder.get("disable_temporal_branch", False):
+            n = 0
+            for name, p in self.vision_encoder.named_parameters():
+                if "layer_scale_1d" in name:
+                    p.data.zero_()
+                    p.requires_grad = False
+                    n += 1
+            # 断言:本模型 stage 1–3 恰有 40 个 RepMixerBlock(layers=[4,12,24,4],
+            # stage 4 是 attention 块)。数不对就是选错了张量 —— 这正是 §0.1 里
+            # gate5 把 80 个 layer_scale 混池、凭空造出 2.42% 的同一个坑。
+            assert n == 40, f"disable_temporal_branch 期望命中 40 个 layer_scale_1d,实际 {n}"
+            logger.info(f"[P1] 时序分支已删除:{n} 个 layer_scale_1d 置零并冻结")
+
         # criterions
         self.clip_loss = VTC_VTM_Loss(False)
 
@@ -1405,6 +1427,10 @@ class FastViT(nn.Module):
             # the neural_inspired/ package (see neural_inspired/README.md).
             from neural_inspired import TemporalSurprisePool
             self.temporal_pool = TemporalSurprisePool(self.head.out_dim)
+        elif temporal_pooling == "stats":
+            # round-5 P9:统计池化。mean 是 rank-1 一阶统计,GATE-0 说有用的结构是
+            # 置换不变且**高阶**的(打乱 ≈0、重复帧 −13)—— 这一支补的正是那个缺口。
+            self.temporal_pool = TemporalStatsPool(self.head.out_dim)
         elif temporal_pooling == "mean":
             self.temporal_pool = None
         else:
@@ -1490,6 +1516,47 @@ class TemporalAttentionPool(nn.Module):
         attn = attn.softmax(dim=-1)
         out = (attn @ v).reshape(B, C)  # [B, H, 1, hd] -> [B, C]
         return mean + self.proj(out)
+
+
+class TemporalStatsPool(nn.Module):
+    """round-5 **P9** 统计池化:``out = mean + W2 · LN(std)``,``W2`` 零初始化。
+
+    **为什么是它**:GATE-0 实测「打乱帧序 ≈0、重复同一帧 −13」⇒ 有用的时序结构是
+    **置换不变且高阶**的。而 mean 是 rank-1 的**一阶**统计,表达不了这种结构;
+    零初始化的 ``TemporalAttentionPool``(r1b)是一个**凸组合**,同样只是一阶。
+    帧间**标准差**是最小的置换不变二阶统计量 —— 这是唯一在**不加辅助损失**
+    (⇒ 没有可刷分的面)的前提下,把检索损失在帧残差子空间上变成非平的做法。
+
+    🔺 **与提案原文的一处**有意**偏离,理由要写清楚**:§8 P9 写的是
+    ``LN(mean) + W2·LN(std)``。这里**不对 mean 支路加 LN** —— 因为 LayerNorm 会沿
+    嵌入维做去均值与方差归一,**改变向量方向**,而下游 ``get_sim`` 只做 L2 归一
+    (`criterions.py:110-111`),消不掉这个改变。带 LN 的写法**在 step 0 就不等于
+    baseline**,会丢掉本仓对新池化头一贯要求的「零初始化 ⇒ 与 mean 逐位等价」纪律
+    (r1b/nA1 都守着这条)。写成残差形式后:``W2 = 0`` ⇒ ``out ≡ mean``,**逐位等价**。
+    std 支路自己保留 LN,让它与 mean 量纲可比。
+
+    ⚠️ **读结果时必须连 ``‖W2‖`` 一起报**。若训练结束 ``W2`` 仍≈0 ⇒ 该臂已退化成 mean,
+    这时「打平 r1b」**不代表方向错**,只代表没学动 —— 这正是 nA1 那条
+    「alpha 仍 ≲0.01 ⇒ 无法判读」的坑(`notes/verification-tier-1m-zh.md` §怎么读结果 2)。
+    ⇒ 1M 臂请照 nA1 的做法给 ``temporal_pool`` 单独 lr。
+    """
+
+    def __init__(self, dim, eps: float = 1e-5):
+        super().__init__()
+        self.eps = eps
+        self.ln_std = nn.LayerNorm(dim)
+        self.w2 = nn.Linear(dim, dim, bias=False)
+        nn.init.zeros_(self.w2.weight)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (B, T, D) —— 与 TemporalAttentionPool 的入参约定一致
+        mean = x.mean(dim=1)
+        if x.shape[1] < 2:
+            # T=1 时帧间 std 无定义(且 unbiased=True 会得到 NaN)。P8 的 T=1 回放
+            # 通道会真的走到这里,所以必须显式处理,不能靠运气。
+            return mean
+        std = x.std(dim=1, unbiased=False).clamp_min(self.eps)
+        return mean + self.w2(self.ln_std(std))
 
 
 class GlobalPool2D(nn.Module):
