@@ -17,6 +17,9 @@ plan's load-bearing premises did not survive contact with those numbers.
 > pin**; **"stage 3 is 50% of MACs" is really "`layers[2]=24`"**), and refutes one suspect before
 > anyone spends time on it. **§8 is partial**: 3 of its 4 commissioned panels died on an API
 > quota limit, so the accuracy/MFU/quantization sweeps still owe a round.
+> **Update 2026-07-31: the accuracy panel was resumed and returned — see §9, whose §9.0 outranks
+> everything in §8 (the R1 bank exists only inside the sigmoid path, so C3's shipped combination
+> may be net-negative). MFU and quantization are still outstanding.**
 >
 > 🔴 **Status as of 2026-07-30 — all five §3 gates have now been run** (§3.0 for results).
 > Two things this round asserted did **not** survive: §0.1's confound suspicion (tested,
@@ -977,3 +980,177 @@ arithmetic, the absence of `channels_last`, and `pretrain.py:263`/`:279` (P12); 
 hazard (P11); `vocab_size=49408`/`dim=512` (P13). **Explicitly still analytic estimates, not
 measurements:** all byte-share / arithmetic-intensity figures, the bandwidth-side roofline, the
 BPE coverage fraction, and every "estimated" win in the P12 ladder.
+
+---
+
+## §9. Round 5, accuracy/objective panel (2026-07-31) — the round §8 said was still owed
+
+*One of the three panels that died on a quota limit; resumed and returned. The MFU and
+quantization panels are still outstanding.*
+
+### §9.0 🔴 The finding that outranks every proposal: **the R1 bank exists only inside the sigmoid path**
+
+**Verified line-by-line in this worktree, and it changes a shipped GO decision.**
+
+| fact | evidence |
+|---|---|
+| `vtc_loss_sigmoid` **has** `text_bank=` | `criterions.py:235`; consumed `:279-281` via `_text_bank_nll` (`:286`), which adds **`F.logsigmoid`** terms using sigmoid's `t`/`b` |
+| **`vtc_loss` — the softmax InfoNCE path the locked baseline actually trains with — has no `text_bank` parameter at all** | `criterions.py:172`; signature is `(vision_proj, text_proj, idx, temp, all_gather, agg_method)` |
+| The only branch that can reach the bank is the sigmoid one | `mobileviclip_small.py:238` `if self.use_sigmoid_loss:` … `else:` → `vtc_loss(...)` with no bank. The docstring at `:245` says it outright: *"R1 **SigLIP-regime** negative pool"* |
+| **Every R1 arm at every tier is sigmoid-vs-sigmoid** | 10k long: `nR1_textbank_pilot_long.py:15` vs control `pilot_10k_r1_long.py:13`, both `use_sigmoid_loss=True`. 1M: `sub1m_nR1_s42.py:31` vs control `sub1m_r1both_s42.py:26`, both True — and `sub1m_nR1_s42.py:3` says its **only** addition is `criterion.text_bank`. `ROADMAP` itself labels the control 「SigLIP 制度无 bank」 |
+
+⇒ **The measured +3.9 R-Sum is a delta *within* the SigLIP regime**, and SigLIP is separately
+measured as **significantly negative vs softmax** (1M `r1a` vs `r0`: DSL r_mean −0.95
+[−1.68, −0.20], R-Sum −5.70, both protocols). So the shipped C3 combination (sigmoid + bank)
+is plausibly **net-negative against the locked baseline**, and **the one configuration that
+could rescue it — softmax + bank — has never been run, because the code cannot express it.**
+
+> ⚠️ **Do not add +3.9 and −5.70.** They come from **different tiers** (10k × 40 epochs vs
+> 1M × 3 epochs), and the three-tier rule says the 10k tier **cannot rank arms**. "≈ −1.8" is
+> *indicative arithmetic, not a measurement.* **The way to settle it is to run the softmax+bank
+> arm**, which is ~40 lines: `_init_text_bank`/`_sample_text_bank` (`mobileviclip_small.py:168-219`)
+> already implement the pre-projection cache, per-step re-projection with the live projection,
+> `idx` positive-masking and `dedup_cos` — they are simply wired to the wrong loss.
+
+This is the cheapest high-stakes item in rounds 4–5 combined: **~1 hour of reading to confirm,
+zero GPU.** `ROADMAP`'s R1 status row has been amended accordingly.
+
+### §9.1 Reframe: the model is **transfer-limited**, not data-saturated — and one free test decides it
+
+Three measured numbers, read together: image-init floor → final = **54.82 → 61.47** (the video
+stage buys +6.65); **1M → 10M data buys only +0.82**; and the control **degrades ep0→ep1**
+(r_mean 90.2 → 85.4, reproduced 3×).
+
+A fitting-limited model improves with data (it doesn't). A capacity-limited model shows
+train/val divergence (the signature here is worse — degradation *on the eval distribution*).
+One mechanism explains all three: **InternVid-10M-FLT captions are machine-generated, short and
+appearance-tagged; MSR-VTT/DiDeMo captions are human-written ⇒ the eval set is OOD w.r.t. the
+training objective.** More InternVid ⇒ better InternVid fit ⇒ ≈0 transfer; longer training ⇒
+more drift off the image manifold; anything constraining drift ⇒ a win *regardless of its
+stated purpose* (which is exactly the R1 bank's measured mechanism).
+
+> **Free falsification, from files that may already exist:** if any run logged a held-out
+> **InternVid** val loss, plot it against the ep0/ep1 MSR-VTT numbers. **Held-out InternVid loss
+> still falling while MSR-VTT degrades ⇒ transfer-limited, confirmed at zero cost.**
+
+**Unstated consequence for C1:** if the binding constraint is *distribution match*, recaptioning
+is a **distribution-shift** lever, not a "quality" lever — and the field's reflex (denser, longer,
+ShareGPT4V-style) is the **wrong direction** for retrieval against short human queries. Target
+~10–20 words in human descriptive register, and follow **LaCLIP** (NeurIPS'23, arXiv:2305.20088):
+its winning recipe is **randomly sampling among caption variants per step**, not replacing and
+not concatenating (its own ablation shows concatenation underperforms). Keep a substantial
+fraction of original captions in the mix. Free sharpening of a plan item that has a script and
+zero embeddings extracted.
+
+### §9.2 Survivors (ranked)
+
+**A · WiSE-FT / LiNeS weight-space interpolation to the image init — eval-only, 0 GPU-days.**
+*Wortsman et al., CVPR'22, arXiv:2109.01903; LiNeS, ICLR'25, arXiv:2410.17146.*
+θ(α) = α·θ_video + (1−α)·θ_S2 over the shared spatial tensors — gate ① already established all
+80 comparable tensors exist and differ, so the map is complete; α=0 is essentially the 54.82
+floor. Sweep α ∈ {0,…,1} on the **existing 75-s `gate_checks.py` harness ⇒ ~15 min**. The LiNeS
+variant makes α depth-dependent and yields a **per-depth forgetting profile** that tells later
+arms which stages to open. Published: WiSE-FT gains multiple OOD points at ≈no in-distribution
+loss; LiNeS retains 99.8%/97.9% target/control. **Estimate here: +1 to +4 R-Sum, with a real
+chance of 0.** Inference cost **exactly zero** (one static checkpoint, α=1 is bitwise baseline).
+**Not on any kill-list — weight-space merging appears in no round, and grep confirms no
+`model_ema`/soup/interpolation code exists.** **Kill:** if argmax α = 1.0, or the interior α
+fails either protocol / its CI includes 0. **That single free gate also de-motivates C, P8 and
+the LoRA variants at once.** Engineering win, not a paper — unless α\* turns out ordered across
+benchmarks by caption style.
+
+**B · Port the bank to the InfoNCE path and scale K′ to 64k–1M.**
+*LiT arXiv:2111.07991 (frozen tower ⇒ precompute); MoCo arXiv:1911.05722 as the contrast.*
+Because the text tower is frozen except a 512×512 projection, **every** caption embedding can be
+cached pre-projection and re-projected with the live projection each step — **exact, never stale,
+no momentum encoder.** 64k × 512 fp16 = 67 MB; the extra logits ≈ 17 GFLOP/step against
+477 GFLOP × 512 samples ⇒ **numerically free**, on a run at 0.67% MFU. **Estimate +1 to +4
+R-Sum with genuine downside ~0** (the measured evidence says this model is *not*
+contrastive-signal-limited) — but it is nearly free and it is **the experiment that resolves
+§9.0**. **Not killed:** kill-item #1 killed the *sigmoid link function*, not *extra negatives*;
+the code shows the two were never separable. **Kill:** 1M, 1 epoch, K′ ∈ {0,16k,128k}; kill on
+the house rule, or if ΔR-Sum is **non-monotone in K′** (that signature means false negatives
+dominate ⇒ raise `dedup_cos`, not K′). **The most novel item here** — "a frozen text tower turns
+the batch-size axis into a table lookup, giving exact 128k-way contrastive at batch 512 on 4
+GPUs" inverts the premise SigLIP exists to solve, and is publishable **even as a negative**.
+
+**C · Anchor distillation to MobileCLIP-S2's *own* image space.**
+*LwF arXiv:1606.09282; ZSCL ICCV'23 arXiv:2303.06628; L2-SP ICML'18 arXiv:1802.01483.*
+Two rungs: **L2-SP** (`λ‖θ_spatial − θ_S2‖²`, one AXPY/step, λ=0 bitwise-identical,
+`checkpoints/mobileclip_s2.pt` already on disk) then a **feature anchor**
+(`λ(1 − cos(f_student, f_S2))`, extractable inside C1's existing offline pass ⇒ marginal cost ≈0).
+**This is not C1:** InternVideo2 is a *different embedding space* and a **capability** teacher —
+it cannot protect the image init and may pull away from it. Same run, different ablation row.
+**Estimate +1 to +3 R-Sum.** **Kill:** λ ∈ {0.1,1.0} at 1M; kill on the house rule **or if it
+fails to beat Survivor A's free lerp** — if a 15-minute state-dict interpolation buys the same
+R-Sum, the 2.2-day arm is not warranted.
+
+**D · SemDeDup core-set selection, riding on C1's teacher pass.**
+*SemDeDup arXiv:2303.09540; D4 arXiv:2308.12284; JEST arXiv:2406.17711.*
+C1's pass already produces a video embedding for all ~10.65M clips — SemDeDup's exact input.
+k-means, drop within-cluster near-duplicates, **plus a video-specific step LAION has no analogue
+for: dedup by source-video id** (InternVid clips are cut from the same YouTube videos, which is
+why `get_mask` exists at all). **Estimate +0.5 to +2 R-Sum at equal steps, or the same accuracy
+in ~half the steps.** The stronger deliverable is free: **"random 1M ≈ full 10M" plus a dedup
+histogram converts the project's most awkward null into a data-centric result** about
+InternVid-10M-FLT's effective size. Orthogonal to the DFN gap §7 recorded with no owner (DFN
+removes *low-quality* pairs; SemDeDup removes *redundant* ones, and saturation says redundancy
+binds).
+
+### §9.3 🔴 The §4 disagreement is settleable in an afternoon — **and it may retro-invalidate how the −13 is described**
+
+Literature **cannot** discriminate variance-reduction from coverage: both give `a − b/T` to
+leading order. It is an identifiability problem, not a gap. **But P5's own β already answers it.**
+For unit-norm frame embeddings with mean within-clip pairwise cosine ρ:
+
+  **β = Σ‖f_t‖ / ‖Σ f_t‖ ≈ √( T / (1 + (T−1)ρ) )**
+
+- ρ ≈ 0.9 at T=8 ⇒ **β ≈ 1.05**, ~1.2 effective directions ⇒ **variance reduction**; the
+  aggregator axis is capped at ~1.4 points exactly as the fit says, and **P6/P9/FILIP should all
+  be dropped.**
+- ρ ≈ 0.5 ⇒ **β ≈ 1.33**, ~2.7 effective directions ⇒ **coverage is real**; MaxSim/top-2 has
+  headroom and P9 gets a prior.
+
+> 🔴 **And it retro-explains GATE-0's −13, possibly fatally.** If ρ is high, one frame's
+> *direction* is within cos ≈ 0.97 of the mean — **a −13 R@1 cannot be a direction/information
+> effect at that geometry.** It would have to come from the β term, which collapses from
+> β(v) ∈ [1,T] to **exactly 1** when all eight frames are identical. I.e. **the −13 may be
+> substantially a scoring artifact of pooling-before-normalizing, not evidence that frames carry
+> complementary content** — and it has been cited as the latter across five rounds, including in
+> the brief that produced this section.
+
+**Cost to settle: one afternoon, zero GPU, ~8 MB** — MSR-VTT-1k cached features only (1000×8×512),
+**not** the 87 GB tier-0 cache. Compute the distribution of within-clip `cos(f_t, f_s)`,
+`cos(f_t, mean)`, per-video β, and each clip's participation ratio; then **re-run the freeze
+ablation with the score divided by β** to split the −13 into information loss vs β-inflation.
+**Do this before the 4-GPU-h P6 sweep, which it gates**, and before spending on P9 or FILIP.
+
+### §9.4 Considered and rejected (accuracy round)
+
+| Candidate | Why it dies |
+|---|---|
+| **SogCLR / iSogCLR** (ICML'22, arXiv:2202.12387) — the textbook small-batch contrastive fix | Its per-anchor moving average `u_i` needs **many visits per sample**; you run **3 epochs** (1 for ranking arms) ⇒ `u_i` never leaves initialization and it degenerates to in-batch InfoNCE plus bookkeeping. **Strictly dominated by Survivor B**, which is exact and stale-free |
+| **MoCo-style momentum queue on the video side** | Needs a second 36M vision tower + momentum update ⇒ ~+35% step time on the *only* expensive tower, at 6.6 d/run, for **stale** negatives |
+| **Temperature sweep / learnable τ** (`temp=0.01`, a plain scalar) | Not worthless — softening τ *is* anti-forgetting — but one scalar costs a 2.2-GPU-day arm, novelty 0, and it is **confounded with every lever above**. Run as a 2-point sanity arm *after* Survivor A, never as a first ranking slot |
+| **Unfreezing text / LoRA on text** | The text tower is the only part currently **immune** to the measured failure mode, and InternVid captions are the OOD distribution ⇒ predicted **negative in sign**. One deliberately-negative ablation row at most |
+| **Semantic hard-negative mining from teacher embeddings** | The R1 mechanism is measured to be anti-forgetting, not hard-negativeness; InternVid caption redundancy means this **maximizes the false-negative rate** exactly where captions repeat |
+| **DaWin** (arXiv:2410.03782) / per-sample dynamic weight interpolation | Computes interpolation coefficients **per test sample** = data-dependent control flow over the *weights*. **Disqualified by T2.** Static α is fine; dynamic α is not |
+| **Full online JEST** | Needs a super-batch scored by learner *and* reference every step; published gains are **from-scratch at 40B examples**, not a 3-epoch fine-tune. Do Survivor D's offline rung first |
+| **LoRA / surgical fine-tuning as standalone lanes** (arXiv:2405.09673; arXiv:2210.11466) | Good argument (target delta is only +6.65 ⇒ "learn less, forget less" is cheap; LoRA merges at export for +0) but they are the **structural member of Survivor C's family**. **Folded in**: use LiNeS' depth profile to choose which stages to open |
+| **Caption ensembling at eval** | In retrieval the caption **is** the query — there are no templates to ensemble. Non-applicable |
+| **MobileCLIP2-S2 init swap** (architecture-identical, drop-in) | Possibly the largest single available delta, but costs a **full 6.6-day R0 re-run** and breaks comparability with the replication target ⇒ belongs in the final-model run, not the ranking arms. Note it would give Survivor A **two** image-space endpoints to interpolate toward |
+
+### §9.5 Sequencing (everything before step 5 is zero GPU-days)
+
+1. **Reconcile §9.0 with `r1-implementation-plan.md` §9.4's own write-up of the +3.9** — the code side is settled here; ~1 h to make the prose state the SigLIP-regime scope. **Highest value in rounds 4–5.**
+2. **Plot any logged held-out InternVid val loss vs the ep0/ep1 MSR-VTT numbers** (§9.1) — confirms or destroys the reframe from existing files.
+3. **Survivor A's α sweep + LiNeS depth profile** (~15 min of eval) — gates C, P8 and the LoRA variants; may ship a free win.
+4. **The β/ρ decomposition on cached MSR-VTT-1k features** (§9.3, one afternoon, 8 MB) — gates P6/P9/FILIP **and audits how the −13 is described in the paper**.
+5. **Survivor B** (port the bank to `vtc_loss`; K′ ∈ {0,16k,128k}) → **C** (L2-SP first) → **D** (selected-1M vs random-1M).
+
+**Provenance.** Accuracy/objective panel, resumed 2026-07-31. **Re-verified directly against
+this worktree before landing:** the `text_bank`/`vtc_loss` asymmetry and the dispatch branch
+(§9.0), all four R1 configs' `use_sigmoid_loss=True`, the absence of any EMA/soup/interpolation
+code, and `temp` being a plain scalar. **Not verified here:** every quantitative gain estimate,
+the β/ρ algebra's applicability to this checkpoint (that *is* §9.3's measurement), and the
+published table values cited.
