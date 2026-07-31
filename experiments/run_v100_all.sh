@@ -10,11 +10,12 @@
 #   0  预检           git 状态 / 就绪自检 / 配置能否被解析        ~2 min
 #   1  🔺 冒烟        新代码 P9 + P1-trained 各几十步就停         ~10 min
 #   2  gate3/gate4    P1 与 P5 的配对 CI(把裸差变成判据)        ~4 min
-#   3  P7 分辨率      唯一存活效率线的精度轴                      ~5 min
+#   3  🔺 P7 前沿     分辨率 **× 帧数 T** —— 等像素前沿           ~20 min
 #   4  多基准锚点     k400 / ucf101 / hmdb51                      ~30 min
 #   5  2-D 前沿       分辨率 × 基准                               ~60 min
 #   6  🔺 10k 门      P9 / P1-trained 的链路 go/no-go + 强制检查   ~2 h
-#   7  汇总           一张表 + PASS/FAIL 清单                     ~1 min
+#   7  微检查         A2 SDPA / A7 MACs / A11 P15 / A12 BN / B1    ~5 min
+#   8  汇总           一张表 + PASS/FAIL 清单                     ~1 min
 #
 # 设计原则(踩过的坑都在这里):
 #   ① **阶段之间不 fail-fast**:一个阶段炸掉不该让后面 60 小时的排队全废。
@@ -33,7 +34,7 @@ CKPT=${CKPT:-./checkpoints/mobileviclip_small.pt}
 CFGDIR=${CFGDIR:-scripts/evaluation/clip/zero_shot/mobileviclip_small}
 LOGDIR=${LOGDIR:-logs/v100_all}
 NGPU=${NGPU:-1}
-STAGES=${*:-0 1 2 3 4 5 6 7}
+STAGES=${*:-0 1 2 3 4 5 6 7 8}
 
 export PYTHONPATH="${PYTHONPATH:-}:."
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
@@ -179,11 +180,24 @@ fi
 
 # ------------------------------------------------------------------ 3 分辨率
 if has 3; then
-  hdr "阶段 3 · round4-P7 分辨率前沿(P11 关线后唯一存活的效率线)"
+  hdr "阶段 3 · 🔺 round4-P7 前沿:分辨率 **× 帧数 T**(P11 关线后唯一存活的效率线)"
+  echo "为什么必须带 T:P7 的主张是**等像素**前沿 —— (256²,T=8) ≡ (181²,T=16) ≡ (128²,T=32)。"
+  echo "只扫分辨率、把 T 钉在 8,拿到的是一条 1-D 切片,**回答不了 P7 问的那个 2-D 问题**。"
+  # ① 分辨率轴(T=8,与既有基线锚点同口径)
   for R in 128 160 181 224 256; do
-    run_eval "res${R}" "$CFGDIR/config_msrvtt.py" "eval_res${R}" \
+    run_eval "res${R}_T8" "$CFGDIR/config_msrvtt.py" "eval_res${R}_T8" \
              inputs.image_res "$R" model.vision_encoder.img_size "$R"
   done
+  # ② 等像素网格:像素预算 ∝ T·R² ⇒ 沿对角线走才是「同成本换配比」
+  for R in 128 181 256; do
+    for T in 4 16; do
+      run_eval "res${R}_T${T}" "$CFGDIR/config_msrvtt.py" "eval_res${R}_T${T}" \
+               inputs.image_res "$R" model.vision_encoder.img_size "$R" \
+               num_frames_test "$T"
+    done
+  done
+  echo "   读法:比较**同一像素预算 T·R²** 的格子。已知 T-curve r_mean ≈ 63.0 − 15.2/T(GATE-0),"
+  echo "   所以「降分辨率换更多帧」有没有净赚,是这张表唯一要回答的问题。"
 fi
 
 # ------------------------------------------------------------------ 4 多基准
@@ -256,9 +270,25 @@ PY
   fi
 fi
 
-# ------------------------------------------------------------------ 7 汇总
+# ------------------------------------------------------------------ 7 微检查
 if has 7; then
-  hdr "阶段 7 · 汇总"
+  hdr "阶段 7 · 微检查(A2 SDPA恒等 / A7 分辨率MACs / A11 P15等价 / A12 BN双更新 / B1 词表)"
+  echo "A7 是**阶段 3 的成本轴** —— 没有它,阶段 3 的精度轴无法解读成前沿。"
+  python experiments/v100_micro_checks.py all >"$LOGDIR/micro_checks.log" 2>&1
+  mrc=$?
+  while IFS= read -r line; do
+    case "$line" in
+      "[PASS]"*) note PASS "${line#\[PASS\] }" "" ;;
+      "[FAIL]"*) note FAIL "${line#\[FAIL\] }" "见 $LOGDIR/micro_checks.log" ;;
+    esac
+  done < <(grep -E '^\[(PASS|FAIL)\]' "$LOGDIR/micro_checks.log" 2>/dev/null)
+  grep -E '^    ' "$LOGDIR/micro_checks.log" 2>/dev/null | head -20
+  [ $mrc -eq 0 ] || echo "   ⇒ 有微检查未过,细节见 $LOGDIR/micro_checks.log"
+fi
+
+# ------------------------------------------------------------------ 8 汇总
+if has 8; then
+  hdr "阶段 8 · 汇总"
   python experiments/collect_results.py --dirs . --out experiments/v100_all_results.md >/dev/null 2>&1 \
     && echo "全量表 → experiments/v100_all_results.md" \
     || echo "⚠️ collect_results 失败"
