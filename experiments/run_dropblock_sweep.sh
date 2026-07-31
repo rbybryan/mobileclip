@@ -67,23 +67,36 @@ for i in $(seq "$LO" "$HI"); do
   #    落盘的是 `eval_res*.json`(结构 {protocol: {metric: value}}),
   #    不是 `ret_test_emb.json`。初版猜错了,两个臂都打印成 `?`。
   read -r RAW DSL < <(python - "$OUT" <<'PY'
-import sys, os
-sys.path.insert(0, "experiments")          # 本脚本约定从仓库根跑
+import sys, os, json
+# 只用标准库直接读 eval_res*.json —— 不 import collect_results,
+# 免得 sys.path / 工作目录出一点差错就整列打印 `?`(2026-07-31 踩过一次)。
 raw = dsl = "?"
-try:
-    from collect_results import find_results, load_result
-    for _run, _bench, path in find_results(sys.argv[1]):
-        for proto, m in load_result(path).items():
-            p = proto.strip("/").replace("/", "_")
-            if p == "ret_test_emb" and "r_mean" in m:
-                raw = f"{m['r_mean']:.2f}"
-            elif p == "ret_test" and "r_mean" in m:
-                dsl = f"{m['r_mean']:.2f}"
-except Exception:
-    pass
+names = ("eval_res.json", "eval_res_best.json", "eval_res_latest.json")
+for dirpath, _d, files in os.walk(sys.argv[1]):
+    hit = next((f for f in names if f in files), None)
+    if not hit:
+        continue
+    try:
+        with open(os.path.join(dirpath, hit)) as f:
+            blob = json.load(f)
+    except Exception:
+        continue
+    for proto, m in blob.items():
+        if not isinstance(m, dict) or "r_mean" not in m:
+            continue
+        p = proto.strip("/").replace("/", "_")
+        if p == "ret_test_emb":
+            raw = f"{m['r_mean']:.2f}"
+        elif p == "ret_test":
+            dsl = f"{m['r_mean']:.2f}"
 print(raw, dsl)
 PY
 )
+  # 两列都 `?` 通常= 没 pull 到修好的版本,或 eval_res*.json 不在该目录下
+  if [ "$RAW" = "?" ] && [ "$DSL" = "?" ]; then
+    FOUND=$(find "$OUT" -name 'eval_res*.json' 2>/dev/null | head -1)
+    [ -n "$FOUND" ] && RAW="见↓" && DSL="见↓"
+  fi
   NOTE="$OUT"
   # 配对 CI 需要逐查询 rank;没有就当场说,别等到 --compare 时才发现
   if [ -z "$(find "$OUT" -name 'ranks_*.npz' 2>/dev/null | head -1)" ]; then
