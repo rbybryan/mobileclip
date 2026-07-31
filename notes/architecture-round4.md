@@ -782,9 +782,26 @@ the same lesson as §1's "count transposes, not FLOPs", now quantified for the d
 Numbering continues §2's P-series (P1–P9 are taken). **All costs assume the standing
 4×H100 / 6.6-day-per-run budget.**
 
-#### P11 · Latency-weighted structured **depth** pruning — decided by a training-free gate sweep
+#### P11 · Latency-weighted structured **depth** pruning — 🔴 **RUN, AND CLOSED (2026-07-31)**
 *NetAdapt (ECCV'18, arXiv:1804.03230) for latency-table-driven pruning; Gromov et al.
 arXiv:2403.17887 and ShortGPT arXiv:2403.03853 for layer-drop sensitivity probes.*
+
+> 🔴 **OUTCOME — the kill criterion below fired as pre-registered. This lane is closed;
+> the budget goes to round4-P7 (resolution).** All 40 blocks measured on MSR-VTT.
+> The cheapest 6 blocks sum to **3.20 r_mean (raw) / 4.06 (DSL)** against a 2.0 threshold,
+> both protocols agreeing. Exactly 6 blocks cost <1.0, so clause ① failed while ② fired.
+> Full table, the two refuted structural hypotheses, and the one pre-registered path that
+> could reopen it: [`experiments/dropblock_results.md`](../experiments/dropblock_results.md).
+>
+> Two findings worth carrying forward even though the lane is dead:
+> **(a)** blocks adjacent to a stage transition on **either** side are undeletable —
+> `{0, 4, 15, 16, 39}` all collapse to chance, and **b15 (last block of s2) is the single
+> most expensive block in the model**, which the "stage-*first*" rule stated in earlier
+> revisions of this file missed entirely; **b21** collapses with no boundary explanation.
+> **(b)** s3 positions 13–18 are a genuinely cheap plateau — but 5 of the 6 cheapest blocks
+> are **contiguous**, so their individual costs almost certainly do not add.
+> Sensitivity here is **learned, not structural** (all 24 s3 blocks are identical
+> repmixer blocks at 157.29 MMACs each), so it cannot be predicted — only measured.
 
 **Mechanism — and it needs no code change.** Verified in code: `RepMixer.forward:743-746` is
 `x = x + λ_1d·(mixer_1d − norm_1d)` then `x = x + λ·(mixer − norm)`, and
@@ -812,6 +829,11 @@ Stage 4's 4 `AttentionBlock`s have a different gate structure (`:1111-1188`) and
 - **Estimated (soft):** 4–8 stage-3 blocks removable for <1.0 r_mean after a short heal ⇒
   8–16% MACs. **The estimate is soft; the sensitivity curve is not — it costs one GPU-hour and
   either exists or doesn't.**
+  > 🔴 **Measured, and the soft estimate was too optimistic.** Exactly **6** blocks of 40 cost
+  > <1.0 r_mean, and they sum to 3.20 — so "4–8 blocks for <1.0 r_mean" holds only per-block,
+  > never in aggregate. Note the estimate said "after a short heal"; **the sweep is
+  > zero-retraining**, so it does not test the healed case — see §0 of the results file for
+  > why that scope distinction is stated but not used to keep the lane open.
 - **Mandatory control:** dropping a block shifts every downstream BN's input distribution. **Run
   forward-only BN recalibration before each eval** (`experiments/per_t_bn.py` already exists and
   is the same machinery round4-P7's sweep needs) or you are measuring distribution shift, not
@@ -822,6 +844,9 @@ Stage 4's 4 `AttentionBlock`s have a different gate structure (`:1111-1188`) and
   inputs ⇒ **T2-clean** (dense, static, shape-invariant).
 - **Kill:** if no single block costs <+1.0 r_mean, or the cheapest 6 sum to >2.0 r_mean, depth is
   not redundant in this checkpoint — close the lane and put the budget into round4-P7.
+  > 🔴 **FIRED.** Cheapest 6 = **3.20 raw / 4.06 DSL** > 2.0, both protocols. Lane closed
+  > 2026-07-31. The criterion was **not** revised after the fact; it was declined twice at
+  > 10 and 14 blocks with the reasons recorded in advance, and those reasons ran out at 40.
 - **Paper or engineering:** **both, and it is the strongest paper item this round.** "Where does
   a distilled mobile video-CLIP put its compute, and what does each block buy?" plus §8.2's
   MACs-uniform/bytes-non-uniform result — a defensible cost-frontier figure **with zero training
