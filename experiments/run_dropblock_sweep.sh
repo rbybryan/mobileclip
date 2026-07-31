@@ -40,8 +40,8 @@ for i in $(seq "$LO" "$HI"); do
   LOG="$LOGDIR/b${i}.log"
   ABL="$TMPDIR_CKPT/_drop_b${i}.pt"
 
-  # ---- 可续跑:两个 ranks 都在就算完成 ----
-  if [ -f "$OUT/ranks_ret_test.npz" ] && [ -f "$OUT/ranks_ret_test_emb.npz" ]; then
+  # ---- 可续跑:有 eval_res*.json 就算完成(和 collect_results.py 同一判据)----
+  if [ -n "$(find "$OUT" -name 'eval_res*.json' 2>/dev/null | head -1)" ]; then
     printf '%-6s %-10s %-9s %-9s %s\n' "$i" "跳过" "-" "-" "已有结果"
     continue
   fi
@@ -63,20 +63,33 @@ for i in $(seq "$LO" "$HI"); do
   fi
 
   # ---- ③ 只把两个 r_mean 摘出来上屏 ----
+  # ⚠️ 复用 collect_results.py 自己的读取器,别再自己猜文件名 ——
+  #    落盘的是 `eval_res*.json`(结构 {protocol: {metric: value}}),
+  #    不是 `ret_test_emb.json`。初版猜错了,两个臂都打印成 `?`。
   read -r RAW DSL < <(python - "$OUT" <<'PY'
-import sys, os, json
-d = sys.argv[1]; vals = {}
-for tag, fn in (("raw", "ret_test_emb"), ("dsl", "ret_test")):
-    p = os.path.join(d, f"{fn}.json")
-    try:
-        with open(p) as f:
-            vals[tag] = f"{json.load(f).get('r_mean', float('nan')):.2f}"
-    except Exception:
-        vals[tag] = "?"
-print(vals.get("raw", "?"), vals.get("dsl", "?"))
+import sys, os
+sys.path.insert(0, "experiments")          # 本脚本约定从仓库根跑
+raw = dsl = "?"
+try:
+    from collect_results import find_results, load_result
+    for _run, _bench, path in find_results(sys.argv[1]):
+        for proto, m in load_result(path).items():
+            p = proto.strip("/").replace("/", "_")
+            if p == "ret_test_emb" and "r_mean" in m:
+                raw = f"{m['r_mean']:.2f}"
+            elif p == "ret_test" and "r_mean" in m:
+                dsl = f"{m['r_mean']:.2f}"
+except Exception:
+    pass
+print(raw, dsl)
 PY
 )
-  printf '%-6s %-10s %-9s %-9s %s\n' "$i" "完成" "$RAW" "$DSL" "$OUT"
+  NOTE="$OUT"
+  # 配对 CI 需要逐查询 rank;没有就当场说,别等到 --compare 时才发现
+  if [ -z "$(find "$OUT" -name 'ranks_*.npz' 2>/dev/null | head -1)" ]; then
+    NOTE="$OUT  ⚠️无 ranks_*.npz(配对 CI 做不了)"
+  fi
+  printf '%-6s %-10s %-9s %-9s %s\n' "$i" "完成" "$RAW" "$DSL" "$NOTE"
   [ "${KEEP_CKPT:-0}" = "1" ] || rm -f "$ABL"
 done
 
