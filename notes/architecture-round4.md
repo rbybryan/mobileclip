@@ -852,6 +852,12 @@ bad kernels (rungs 1–2). Busy ≪ 1 ⇒ host-side stall (rungs 3–4). Note §
 does **not** rule out a host stall: it measured worker output rate in a *separate process*, not
 the main loop's consume path (shm deserialization of a ~400 MB batch + H2D + DeepSpeed syncs).
 
+> 🔴 **This ladder was audited 2026-07-31 and THREE OF ITS FIVE RUNGS ARE WORTH 0%.**
+> `cudnn.benchmark` is **already `True`**; the fp16 loss scaler was **measured at zero
+> overflows**; `find_unused_parameters` is **dead code** because DeepSpeed never constructs DDP.
+> The `channels_last` estimate is inflated ~2×. **Read §11 before acting on any row below** —
+> §11.2 gives the corrected ladder, and §11.1 shows the real suspect is the one §8.4 dismissed.
+
 Ladder, all grounded in this worktree, cheapest first:
 
 | # | Suspect | Evidence here | Est. win | Effort |
@@ -916,7 +922,7 @@ vocab + merge list to tokens the train/eval corpora actually produce — deletin
 | **MobileOne/RepVGG over-parameterization of RepMixer's dw3×3** | 0.59% of MACs — same category error as AC5: right technique, wrong term |
 | **Cross-block weight sharing (ALBERT-style) in stage 3** | Saves params, saves **zero** FLOPs and zero bytes. Vision tower is 36M — params are the *text*-side problem (P13), not the vision-side one |
 | **`torch.compile` / CUDA-graph capture as the MFU fix** | Now **available** (§8.1 corrects the panel, which thought it was pin-blocked) — but **still not the story**: ~4,400 kernels/iteration at 9.18 s/it ⇒ launch overhead ≈ **0.4%**. Keep it as a later multiplier, not a suspect |
-| **Chasing the temporal branch's 80 permutes for MFU** | Costed: ~43 GB permute traffic/forward/GPU ×3 ≈ 129 GB ⇒ **~38 ms of a 9,182 ms iteration = 0.4%.** §1's 18.1% is a **CPU-inference** figure and does not transfer to the H100 training loop. Delete the branch for **export** reasons (round4-P1), not MFU |
+| ~~**Chasing the temporal branch's 80 permutes for MFU**~~ 🔴 **RETRACTED 2026-07-31 — this row is wrong, see §11.1** | ~~Costed: ~43 GB permute traffic ×3 ≈ 129 GB ⇒ ~38 ms of 9,182 ms = 0.4%.~~ **The costing was wrong three ways**: it divided by *peak* bandwidth (these are the least-coalesced kernels in the model), it counted only the permutes and not the 4 BN1d + 2 Conv1d + ~7 elementwise ops that also live in the transposed domain, and it used the **ONNX** transpose count when in eager PyTorch there is **no transpose node at all** — the cost hides inside `clone` and inside the shape of every downstream kernel. **Measured: the branch is ~33% of training memory traffic and 15 of 33 full-activation kernels per block.** It is the ladder's biggest rung, not a non-issue |
 | **Winograd / FFT convolution** | 1×1 convs — 86.5% of the model — gain nothing from either |
 
 #### P14 · (parked, low confidence) Train-time-only over-parameterization *inside* ConvFFN
@@ -1148,9 +1154,430 @@ ablation with the score divided by β** to split the −13 into information loss
 4. **The β/ρ decomposition on cached MSR-VTT-1k features** (§9.3, one afternoon, 8 MB) — gates P6/P9/FILIP **and audits how the −13 is described in the paper**.
 5. **Survivor B** (port the bank to `vtc_loss`; K′ ∈ {0,16k,128k}) → **C** (L2-SP first) → **D** (selected-1M vs random-1M).
 
-**Provenance.** Accuracy/objective panel, resumed 2026-07-31. **Re-verified directly against
+**Provenance (§9).** Accuracy/objective panel, resumed 2026-07-31. **Re-verified directly against
 this worktree before landing:** the `text_bank`/`vtc_loss` asymmetry and the dispatch branch
 (§9.0), all four R1 configs' `use_sigmoid_loss=True`, the absence of any EMA/soup/interpolation
 code, and `temp` being a plain scalar. **Not verified here:** every quantitative gain estimate,
 the β/ρ algebra's applicability to this checkpoint (that *is* §9.3's measurement), and the
 published table values cited.
+
+---
+
+## §10. Round 5, on-device quantization / latency panel (2026-07-31)
+
+*The second of the three resumed panels. **MFU is the only one still outstanding.***
+
+### §10.0 🔴 P2's retraction **over-corrected**. The honest statement is "under one bit", not "survives".
+
+**Verified arithmetic here.** `gate5-fused` compared `|w_1d − δ|` against a *fixed* 3.937e-3 and
+reported "only 36.2% zeroed ⇒ the branch survives". Re-read the **same quantiles in LSB units**
+(LSB = 1/127 = 7.874e-3; round-to-zero at 0.5 LSB = 3.937e-3 ✓):
+
+| p05 | p25 | **p50** | p75 | p95 |
+|---|---|---|---|---|
+| 0.06 LSB | 0.32 LSB | **0.78 LSB** | 1.59 LSB | 3.66 LSB |
+
+The median channel codes the **entire** temporal perturbation in **0.78 LSB**, and ~72% of the
+9920 channels code it in **0 or 1 LSB** (36.2% → 0, ~36% → 1). Effective resolution
+**b_eff ≈ 0.7 bits of 8.**
+
+⇒ **All three statements the project has made about this are now orderable:** "INT8 annihilates
+it" (original) — **false**. "The temporal term survives INT8" (the retraction) — **true but
+badly under-stated**; it survives at *sub-one-bit* resolution. The correct claim is
+**"INT8 codes the temporal branch at under one bit."** That is a *better* finding than either,
+and **AC9 does not need burying yet — it needs re-founding on this.**
+
+**Corrected law** (replaces §2 P2's `SNR ∝ 127·λ·|Δ|`, which was right in form but had no
+reference point):
+
+  **n_LSB = 127·λ·|Δ|_max ⁄ max|δ + λΔ| ≈ 127·λ·|Δ|_max**,  **b_eff ≈ b − log₂(1/(λ·|Δ|))**
+
+### §10.1 ✅ **P1 deletes every temporal Conv1d in the model — so P3 has nothing left to rewrite**
+
+**Verified here by arithmetic that closes exactly.** `layers=[4,12,24,4]` ⇒ stages 1–3 hold
+**4+12+24 = 40** RepMixerBlocks (= the 40 `layer_scale_1d`), and their channel sum is
+**4·80 + 12·160 + 24·320 = 9920** — *exactly* the n gate5-fused measured. Stage 4 is
+`AttentionBlock`s and has no temporal Conv1d at all.
+
+⇒ **round4-P1 removes all 40 temporal branches.** Therefore **P3 (the filmstrip rewrite) is a
+contingency for "P1 is rejected on accuracy", not a live proposal** — and the ANE
+large-dilation question that P3's ⚠ flags is **off the critical path**. Do not spend on-device
+time on it until P1's fate is known.
+
+*(Answered anyway, for the contingency: **the panel's call is that large-dilation depthwise does
+NOT stay on the ANE fast path, ~85% confidence.** Mechanistic argument, which is stronger than
+the empirical report it cites: your dilation is `(H,1)` with H = 64/32/16/8, so an NPU line
+buffer would need `d_h·(k_h−1)+1` = **129 live rows of a 512-row filmstrip at stage 1** — a
+different dataflow, not a parameter tweak. Accelerators that support dilation support small
+ones (2–4) via `space_to_batch`. **Failure mode is worse than a mild regression**: the conv
+falls to CPU/GPU, forcing an ANE↔CPU round-trip **per block, 40× per forward**. If ever tested,
+test the exact shapes and read back **per-op device assignment** via `MLComputePlan` (iOS 17+) —
+total latency won't tell you why. Stage 3 (dilation 16) has a materially better chance than
+stage 1 (dilation 64).)*
+
+### §10.2 ✅ Root cause of the 1–2-order-of-magnitude `|Δ|` miss — verified, and transferable
+
+`Δ = mixer_1d.reparam_conv.weight − norm_1d.reparam_conv.weight` (`:766-777`). **Verified in
+code:** `norm` and `norm_1d` are built with **`use_scale_branch=False, num_conv_branches=0`**
+(`:659-686`) — i.e. they have **no conv branches at all**; reparameterized, they are a
+**pure BatchNorm folded into a kernel**.
+
+⇒ **Δ is dominated by γ/σ, a BN normalizer — not by a conv weight.** O(0.1–1) is the right prior
+for a conv weight; **O(1–10) is the right prior for γ/σ** when activation variance is small.
+The team applied a conv-weight prior to a BN-scale quantity, and got |Δ| ≈ 7.7 instead of ≈0.5.
+**Write this down — it generalizes to every reparameterized block in the MobileOne/FastViT
+lineage.**
+
+> ⚠️ **Free footgun worth one grep:** if `reparameterize_model()` ever runs on an **fp16** module,
+> `δ + λ(mixer − norm)` subtracts two O(7.7) tensors (fp16 ULP ≈ 7.8e-3) and scales by λ ≈ 8e-4.
+> **Assert fp32 at reparameterization time**, cast afterwards.
+
+### §10.3 The recipe — and why the "unfuse for quantization" fix is rejected
+
+| Option | Verdict |
+|---|---|
+| **PTQ, per-channel symmetric weights, fp16 activations** | ✅ **Do first.** The 86.5% pointwise has no identity tap and quantizes normally |
+| **Mixed precision: INT8 pointwise, fp16 the 40 dw3×3 + 40 dw7×7** | ✅ **Second, only if arm 1 loses.** Leaves 3.90% of MACs in fp16 |
+| **Deploy unfused** (§2 P2's proposed fix) | ❌ **Reject — quantified below** |
+| **QARepVGG branch-scale constraints** | ❌ **Reject on mechanism** |
+| **LSQ/PACT/RepQ QAT** | ⏸ **Last**, and not authorized until PTQ is *measured* to lose end-to-end |
+
+**Why unfusing is rejected** (§2 P2 proposed it as the fix; it costs more than the disease):
+graph **+160 nodes = +14%** of the post-P1 1141-node graph, in the currency §1 says to count;
+activation traffic **+20–25% with epilogue fusion, +70% without**, in stages that are
+memory-bound (60–240 FLOP/byte vs ANE ridge ~230) so that traffic is latency ~1:1. **And it does
+not even work:** unfused, `mixer(x)` and `norm(x)` are two comparable-magnitude activations whose
+*difference* is the signal — you move catastrophic cancellation from the weight domain into the
+**activation** domain, where INT8 error does *not* cancel. All to protect a branch bounded at
+**≤0.82 r_mean that P1 deletes** (§10.1).
+
+**Why QARepVGG's mechanism does not transfer** (this is the paper-differentiating point):
+QARepVGG's pathology is that RepVGG's identity branch carries **its own BatchNorm**, giving a
+heavy-tailed fused weight distribution *and* depth-growing activation variance — an
+**activation-range** problem. RepMixer is structurally the opposite: the identity is
+`mixer.id_tensor`, an **exact δ with no BN**, and λ actively *suppresses* the branch.
+**RepMixer's failure mode is branch starvation, not branch explosion.** Applying QARepVGG's
+fixes would treat the wrong disease.
+
+> 🔴 **AC9 novelty warning.** Two papers already occupy the space AC9 was going to claim:
+> **RepQ** (BMVC'23 oral, arXiv:2311.05317 — QAT treating test-time weights as a differentiable
+> function of train params) and **PTQ for Reparameterization via Coarse & Fine Weight Splitting**
+> (arXiv:2312.10588 — splits the fused weight *precisely because one component dominates the
+> range*, i.e. your identity-tap problem, already published). **AC9's remaining defensible
+> novelty is the temporal axis and the measurement, not the technique.**
+> *(Also flagged: QARepVGG's arXiv id 2212.01593 was not verified this session — check before citing.)*
+
+### §10.4 The next measurements — and the cheap one is not the histogram
+
+🔺 **Run this first: a 4-arm fake-quant sweep through the existing 75-s eval + paired bootstrap**
+(~1 h code, ~5 min GPU). Arms: (1) fp32 baseline (61.55 raw / 62.28 DSL); (2) per-channel INT8
+**all** convs; (3) INT8 **pointwise only**, depthwise fp16; (4) INT8 pointwise + dw7×7, the 40
+dw3×3 mixers fp16. **This settles AC9 empirically, satisfies the two-protocol + paired-CI rule,
+and cannot be misread the way the LSB argument was.** If arm 2 sits inside the paired band,
+everything above is moot and you ship arm 2.
+
+**Then the spatial-mixer histogram** (the still-unverified half of P2 — §8's tier-A5):
+- **Which tensors:** the **40** matched by `endswith("layer_scale") and "token_mixer" in k`.
+  The *other* 40 (block-level, `RepMixerBlock.forward:1075`) scale the **ConvFFN residual**, are
+  **never folded into any kernel**, and are irrelevant here. `gate_checks.py:169` already
+  implements this discriminator — **reuse it, don't rewrite it.**
+- **Post-reparameterization, key on modules not names:** select modules having **both**
+  `reparam_conv` and `reparam_conv_1d` (excludes stem/downsample/ConvFFN MobileOneBlocks, which
+  also expose `reparam_conv`).
+- **Two assertions that would have caught the 40-vs-80 error:** `n_modules == 40` and
+  `Σ out_channels == 9920`.
+- ⚠️ **Two shape traps** that would silently give a wrong number: the spatial kernel is
+  `(C,1,3,3)` ⇒ reduce with `amax(dim=(1,2,3))`, **not** `(1,2)`; and `identity_kernel_like` must
+  put the 1 at **`[1,1]`** for a 3×3, not at the 1-D centre index.
+- **Headline quantity: `ρ_c = ‖ŵ_c − w_c‖₂ / ‖w_c − δ‖₂`** with `ŵ_c = s_c·round(w_c/s_c)`,
+  `s_c = max|w_c|/127`. Three lines, no assumptions. **Run it on the temporal kernel too**, for a
+  like-for-like number superseding the 36.2%.
+
+**Panel's pre-registered prediction:** spatial λ ≈ 1.3e-2, so if |Δ_spatial| ≈ |Δ_temporal| ≈ 7.7
+then λ|Δ| ≈ 0.10 ⇒ **n ≈ 12 LSB, b_eff ≈ 4.7 bits, ρ ≈ 0.02–0.05** ⇒ the *"spatial mixer runs at
+1–3 LSB / ~2 effective bits"* claim is predicted **wrong in the conservative direction**.
+Decision table: **ρ_median < 0.10** ⇒ spatial quantizes cleanly, **bury AC9's reparam-specific
+rationale**, publish the one-paragraph mechanism note; **0.10–0.35** ⇒ AC9 collapses to a
+one-line deployment rule (keep the 40 dw3×3 in fp16 = 0.59% of MACs), no QAT; **≥0.35** ⇒ AC9
+gets its new rationale (sub-2-bit branch coding), fix still fp16-on-depthwise, still not QAT.
+
+*Bonus 10-minute check that settles "should we unfuse" empirically: one forward pass recording
+`‖mixer(x) − norm(x)‖ / ‖mixer(x)‖` per stage. If ≪1, the cancellation argument in §10.3 becomes
+measured rather than estimated.*
+
+### §10.5 🔺 The highest-value on-device number is available **today**, from graphs already exported
+
+Activation traffic ≈ **86.4 MB/frame** (independently re-derived: 5.24·4 + 2.62·12 + 1.31·24 +
+0.655·4 = 86.4 ✓ against §8.2) ⇒ **~693 MB at T=8**. Vision weights = 36M = **72 MB fp16**.
+
+- **If Core ML amortizes weights across the T=8 frame batch:** total ≈ 765 MB ⇒ weight-only INT8
+  saves 36 MB = **4.7%** ⇒ weight quantization is a **size** lever, not a speed one.
+- **If the runtime re-reads weights per frame:** 693 + 576 = 1269 MB ⇒ INT8 saves **23%**.
+
+> **Measure it in 30 minutes with what you already have:** you have Core ML exports at
+> T ∈ {2,4,8,16}. **Plot latency vs T. Exactly linear ⇒ weights are not amortized. Sublinear with
+> a positive intercept ⇒ they are.** This single unmeasured fact swings the quantization win from
+> ~5% to ~23%, and it answers the `dynamic_axes` question for free.
+
+**Predicted latency split (estimates, flagged as such):** **stage 1 is the surprise cost centre**
+— 8.2% of MACs but 24.2% of bytes at intensity 60 vs ANE ridge 230 ⇒ ~26% of peak ⇒ expect
+**20–30% of wall-clock, ~3× its MAC share**. **Stage 4 will be cheap** (≤8%, the only
+compute-bound stage). **The 340 layout ops will cost more than their 21.5% share** on a
+fixed-layout engine — expect **25–40%**, so P1's removal of 440 nodes / 80 full-tensor transposes
+should buy **20–35% on ANE**, more than its 18.1% CPU figure. **GELU/BN are not free** (~5–15%,
+pure bandwidth over 693 MB).
+
+**On "1 checkpoint → N graphs":** **Core ML — essentially a non-issue if you use
+`ct.EnumeratedShapes`** (pre-compiled per shape, stays ANE-eligible; one `.mlpackage`, **one
+weight blob**, N shape specializations). ⚠️ **`RangeDim` / ONNX `dynamic_axes` is the wrong path
+— it pushes the model off the ANE.** **TFLite/Android — real**: NNAPI/QNN recompile on resize and
+often fall back to CPU, so ship static shapes; given `litert-torch` is blocked, **scope the paper
+claim to Core ML and say so.** Structural fix, post-P1: 40 of 44 blocks become pure per-frame ⇒
+split into a per-frame image graph with enumerated *batch* (~97% of weights) + a small stage-4/head
+graph per T ⇒ N × (small graph). **Another item where P1 does the work.**
+
+### §10.6 ✅ Indexing vs query — the open question §8.3 raised, now answered with a number
+
+Text tower ≈ **1.22 GMACs/query** vs vision **63.97 GMACs/video** at T=8 ⇒ **the text tower is
+1.9% of the vision tower.** If the product were query-latency-bound, the entire 86.5% analysis
+would be optimizing the 98% that runs offline.
+
+**Verdict: the paper's latency table is an indexing-throughput number, it should stay that way,
+and the paper must say so in one sentence.** The deployable product for an on-device video-CLIP is
+**indexing the user's own library** (the Photos-search shape) — that is where battery, thermals,
+and "it took 40 minutes to index my library" live, and it is why MobileCLIP/MobileViCLIP report
+*encoder* latency.
+
+**Consequences that reorder §8:** **P11 + round4-P7 stay the main efficiency lane — confirmed.**
+**P13 is a *size* item, not a latency item** (0 MACs) and must not be argued as an efficiency
+result. **P8 stays demoted.** **But report the query path once anyway** — the two numbers are
+~50× apart and a reviewer will ask.
+
+### §10.7 What the plan is missing
+
+- 🔺 **The gallery index dwarfs the model, and P6 makes it 8× worse.** 512-d fp16 = **1 KB/video**
+  ⇒ 1M videos = **1 GB** vs a 72 MB model (**14–28×**). **round4-P6 (MaxSim) needs T=8 embeddings
+  per video ⇒ 8 KB/video ⇒ 8 GB at 1M.** The plan prices P6 at "~4 GPU-h to test" and **does not
+  price its 8× index cost at all — that belongs in P6's kill criteria.**
+  Conversely **ANN *search compute* is a non-issue**: brute-force 512-d over 100k vectors = 51.2
+  MMACs = **0.08% of one video encode** ⇒ use flat/IVF, **not HNSW** (whose graph costs
+  1.1–1.5× vector memory to accelerate something that isn't the bottleneck).
+- 🔺 **Matryoshka is a scheduling dependency nobody flagged.** 512 → 64/128-d truncation gives
+  **4–8× index reduction** — but it is a **training-side loss change**, so it must be decided
+  **before** the 6.6-day run, not bolted on after. P10 is currently parked as "a bonus loop inside
+  C1"; that parking has a deadline.
+- 🔺 **Video decode is not in the efficiency budget at all.** If the claim is indexing throughput,
+  end-to-end per-video includes H.264/HEVC decode + sampling + resize + normalize ≈ **5–20 ms**,
+  against an encoder plausibly at 30–60 ms ⇒ **decode is 10–40% of end-to-end**, and a reviewer
+  will note that a 20% model speedup is a 12% product speedup. Also: put resize/normalize *inside*
+  the Core ML graph via an `ImageType` input so the ANE/GPU does it, not the CPU.
+- **Weight-only vs activation quantization:** on ANE fp16 is native and INT8 weights are
+  decompressed on the fly unless you take the iOS 17+ W8A8 path. Activations are ~10× weights ⇒
+  **weight-only INT8 ≈ 5% latency / 2× size. If you want latency you need *activation*
+  quantization**, where the identity-tap analysis is irrelevant and ordinary calibration/outlier
+  problems take over. The plan discusses only weights.
+- **Free:** state that the text tower is frozen and inherited, so nobody reads it as this
+  project's contribution being slow.
+
+### §10.8 Benchmarking protocol (for C4's table)
+
+**Devices:** **iPhone 12 Pro Max** is non-negotiable — it is the reference device for
+MobileOne/FastViT/MobileCLIP and the only way to put your numbers on the same axis as the
+baselines you cite; plus one current iPhone; plus one Android flagship **only if** TFLite actually
+works, else omit and scope the claim.
+**Protocol:** fixed OS/coremltools/Xcode versions **reported**; airplane mode, ≥80% battery,
+unplugged; **50 warmup discarded, ≥1000 timed, report median + [p10,p90]** (matches what
+FastViT/MobileCLIP report — a free reviewer defence); **compute-unit setting stated** and the
+**actual dispatch reported** via `MLComputePlan` ("% ops on ANE" belongs in the table); 5-min
+cooldown between models, **randomized model order**, plus a **3-min sustained-throughput** number;
+load/compile time reported separately and excluded; **state T, resolution, batch, and whether
+latency is per-video or per-frame.**
+**What reviewers attack, most lethal first:** ① **competitor numbers copied from their papers**
+(fatal, and the most common) — **measure every comparison yourself, same device, same day**;
+② compute unit / ANE-fraction unstated; ③ **precision mismatch** between an fp32 accuracy table
+and an INT8 latency table; ④ no thermal/sustained number; ⑤ mean instead of median, no dispersion;
+⑥ per-frame vs per-video ambiguity; ⑦ end-to-end excluded (§10.7's decode point).
+
+> ⚠️ **Amendment to §3's standing rule.** "*No training run is authorized for an efficiency claim
+> until the random-init variant has a measured on-device number*" is correct for **dense fp16 and
+> dense INT8**, but has one carve-out: **Core ML palettization and sparsity kernels are
+> weight-value-dependent** — random weights are neither clusterable nor sparse, so a random-init
+> measurement **understates** the palettized/sparse speedup. **Any P13(a) claim needs real weights.**
+
+### §10.9 Considered and rejected (quantization round)
+
+| Candidate | Why it dies |
+|---|---|
+| **GPTQ / AWQ / SmoothQuant** | LLM weight-only methods for the memory-bound *decode* regime with huge GEMMs. No ANE/TFLite-NPU kernel path for grouped INT4 dequant, and this model is **activation**-bound |
+| **INT4 weights on the vision tower** | Depthwise layers are the classic low-bit casualty and the win is size-only. **Keep INT4 for the embedding table (P13a)** — a pure lookup with no accumulation |
+| **Deploy unfused** | §10.3: +14% nodes, +20–70% activation traffic, moves cancellation into the activation domain, destroys the reparameterization pillar — to protect a branch P1 deletes |
+| **QARepVGG branch-scale constraints** | §10.3: wrong disease (activation-variance explosion from a **BN'd** identity vs RepMixer's exact un-BN'd δ) |
+| **RepOptimizer / RepOpt-VGG** | The elegant answer in principle (deploys a plain convnet) but needs a full retrain **plus** a hyper-search for branch scales, and RepMixer is not the constant-scale BN-free form RepOpt handles. 6.6 days for an unmeasured problem |
+| **Cross-Layer Equalization (Nagel 2019)** | Recovers what per-channel weight quantization already gives you; coremltools and TFLite both do per-channel. Redundant |
+| **Per-tensor weight scales** | Strictly worse, no upside |
+| **LSQ/PACT QAT now** | Violates the standing rule twice: no on-device number exists, and no end-to-end evidence PTQ loses |
+| **AdaRound / BRECQ / QDrop** | **Not rejected — held in reserve.** The correct escalation *only if* §10.4's 4-arm sweep shows plain PTQ losing >1.0 r_mean in both protocols |
+| **`RangeDim` / ONNX `dynamic_axes` for elastic T** | Pushes the model off the ANE. Use `ct.EnumeratedShapes` |
+| **HNSW for the on-device gallery** | Accelerates a search costing 0.08% of one encode, at +1.1–1.5× vector memory — the one scarce resource |
+
+**Provenance (§10).** Quantization/deployment panel, resumed 2026-07-31. **Re-verified directly
+against this worktree:** the LSB re-reading (§10.0, arithmetic), the 40-blocks/9920-channels
+identity proving P1 subsumes P3 (§10.1), `norm`/`norm_1d` being pure-BN via
+`use_scale_branch=False, num_conv_branches=0` at `:659-686` (§10.2), and the 86.4 MB/frame
+traffic re-derivation (§10.5). **Not verified here:** every latency prediction and percentage
+split, the ANE dilation call, the index-size and decode estimates, and all cited paper numbers —
+**including two arXiv ids the panel itself flagged as unchecked.**
+
+---
+
+## §11. Round 5, MFU panel (2026-07-31) — **the last of the three; round 5 is now complete**
+
+**It corrects §8.3's P12 ladder in three rungs and retracts one row of §8.4 (both mine).**
+
+### §11.0 The roofline was wrong in a way that *shrinks* the prize — and that is the useful part
+
+§8.3 estimated ~96 GB/s ≈ 2.9% of HBM. **Corrected by a dispatch trace run in this worktree:**
+one `RepMixerBlock` forward issues **55 aten calls, 33 of them touching a full-activation tensor,
+moving ≈92 N** (N = activation numel) — because at *train* time `MobileOneBlock` is 3-branch, so a
+block carries **9 BatchNorms and 7 convs** (verified module counts: `BatchNorm2d:5, Conv2d:5,
+BatchNorm1d:4, Conv1d:2`). Summing over the real geometry: **~511 GB/iteration/GPU forward**, ×4
+for fwd+recompute+bwd ⇒ **~2.04 TB/iteration/GPU = 222 GB/s = 6.6% of HBM3** — the earlier
+estimate was low by **2.3×** (its ×2.5 fudge over ConvFFN never accounted for those 9 BNs, 4 extra
+convs and ~20 elementwise ops).
+
+**The reframing matters more than the correction.** Per sample that is **31.9 GB** against 477
+GFLOP ⇒ **the training step runs at ~15 FLOP/byte**, not the 60–240 of §8.2 — because **§8.2's
+intensity table describes the *reparameterized inference* graph**, and the thing that trains is
+4–16× more memory-bound. Against an H100 ridge of ~295:
+
+> **MFU ceiling for this implementation = 15/295 = 5.1%. Measured 0.67% is 13.3% of its own
+> roofline ceiling ⇒ real headroom is ~7.5×, not ~150×.**
+
+This splits the win cleanly: **Axis A, kernel efficiency** (7.5× to reach HBM peak) and
+**Axis B, bytes** (another 4–16× by raising intensity toward the inference graph — fusion,
+deleting the temporal branch, `channels_last`, less recompute).
+
+### §11.1 🔴 The missing suspect is the one §8.4 dismissed: **the temporal branch is ~33% of training traffic for 0.20% of MACs**
+
+Verified structure at `:739-745`: the `reshape → permute(1,3,4,2,0) → reshape` chain
+materializes as **two `aten::clone` calls per block** (measured, with source strides captured).
+At B=64/T=8/stage-1 the first clone's innermost target axis is `t`, whose **source stride is
+B·C·H·W = 41.9 MB** — a warp of 32 lanes reads 32 addresses 41.9 MB apart ⇒ **up to 16× DRAM
+read amplification plus TLB thrash over a 335 MB working set.**
+
+Everything between the clones then runs on shape `(B·H·W, C, T) = (262144, 80, 8)`, strides
+`(640, 8, 1)` — **measured** — which is pathological twice over: the **contiguous run is T = 8
+halves = 16 bytes** (every access wastes ≥50% of a 32-byte sector), and BN1d launches **one block
+per channel = 80 blocks on 132 SMs** with only 8 of 32 lanes active.
+
+**Accounting: ≈32 N of 96 N = 33% of all training memory traffic, and 15 of 33 full-activation
+kernels per block. Estimated 50–70% of the 9.18 s iteration ⇒ removing it is worth 1.8–3×** —
+larger than every rung of the original ladder combined, and **round4-P1 already deletes it for
+export reasons.** (Why §8.4's 0.4% was wrong: see the retracted row there.)
+
+> 🆕 **P15 · batch-offset temporal mixing — exact, zero layout ops, ~15 lines.** If the branch must
+> survive (P4's controlled experiment needs it), it needs **no reshape at all**: frames sit at
+> batch positions `t·B + b`, so a depthwise Conv1d over `t` is three scaled adds with a batch
+> offset on the **contiguous NCHW** tensor. **Verified in float64 in this worktree:
+> `max|batch-offset − reshape/permute/conv1d| = 4.44e-16`.** And BN1d over `(B·H·W, C, T)` reduces
+> over **exactly the same element set per channel** as BN2d over `(T·B, C, H, W)`, so `norm_1d`
+> becomes an ordinary NCHW BN2d. The branch goes from **≈32 N of mostly-uncoalesced traffic to
+> ≈6 N fully-coalesced**, exact on current weights, no retraining. **Strictly better than P3**
+> (filmstrip), which still needs one clone *and* produces the large-dilation depthwise conv2d
+> §10.1 flags as an ANE-fast-path risk. **P15 has no layout op at all.**
+
+### §11.2 The corrected P12 ladder
+
+| rung | §8.3 claimed | **corrected** | evidence |
+|---|---|---|---|
+| `channels_last` | 2–4× | **1.2–1.5×**, and it is rung **4** | NVIDIA's 2–4× is measured on ≥90% **k×k dense** convnets. Here 86.5% is **1×1**, which maps *directly* onto a GEMM with **no layout transform** (1.1–1.4×); the real wins are depthwise (3–8×, but 3.9% of MACs) and **BatchNorm (1.5–3×, which the ladder never mentioned)**. Time-weighted ⇒ ~1.3× |
+| `cudnn.benchmark` | 10–30% | 🔴 **0% — already `True`** | `train_media_types` = sorted **set** over corpora (`dataset/__init__.py:172`); `internvid_all` expands to v1–v11, **all `media_type="video"`** ⇒ set = `{"video"}` ⇒ len 1 ⇒ `True`. Only fires if an image corpus is added (e.g. P8's replay). Keep as an unconditional guard; book nothing |
+| fp16 loss scaling | 5–50% | 🔴 **0%** | `config.py:140`: 「2026-07-22 实测:scale=32 全程**零** OVERFLOW」. **And bf16 would not help**: ATen's cuDNN-BN predicate excludes bf16 explicitly |
+| `find_unused_parameters` | 10–40% | 🔴 **0% — dead code** | DDP is constructed **only in the non-DeepSpeed `else` branch** (`shared_utils.py:72-83`); with `deepspeed.enable=True` control goes to `:137`, `model = model_without_ddp`, `deepspeed.initialize`. **DDP is never instantiated.** Delete the flag as hygiene |
+| selective checkpointing | +18% | **+8–10%** | +18% priced recompute as *FLOPs*; at 15 FLOP/byte it costs a full extra pass of **traffic** (511 GB of 2.04 TB = 25%). Skipping stages 3+4 removes 40% of that ⇒ ~10%. Sequence **after** §11.1, which changes forward traffic |
+
+> 🆕 **New rung, and it outranks four of the five above: `model.half()` disables cuDNN
+> BatchNorm for ~396 BN layers.** Verified: `shared_utils.py:66` does `model = model.half()`,
+> casting BN `weight`/`bias`/`running_*` to fp16; `pretrain.py:112` then enters
+> `autocast(float16)`. **This is not mixed precision — it is pure fp16 with fp16 norm params.**
+> *(Inferred, and M5 settles it in 20 lines:)* ATen's cuDNN-BN predicate requires
+> `input != kHalf || weight == kFloat`; fp16 input **and** fp16 weight makes it false ⇒ dispatch
+> falls to `native_batch_norm` (two full passes, grid = C blocks) instead of cuDNN's fused
+> persistent BN. Those BNs carry **~20% of forward traffic**. **Fix is two lines** — `.half()`
+> then `.float()` the norm modules, standard AMP practice — **estimated 10–20%**, with the
+> side benefit of removing fp16 `running_var` accumulation, a real numerical hazard for a model
+> whose eval path depends on running stats.
+
+**Also checked and closed:** **SyncBatchNorm is absent** (zero grep hits) — cost 0, and **do not
+add it**: 396 layers × 2 (recompute) all-reduces per step would plausibly *be* a 2× regression.
+**ZeRO-1 comm ≤ 0.2%** (≈36–40 M trainable ⇒ ~72 MB all-reduce) — not a suspect at this size.
+**Host/eager overhead ~0.1–0.5%** (~7,000 kernels/iteration at 9.18 s = 1.3 ms per kernel, three
+orders above dispatch cost), though `pretrain.py:140,143` force a device sync every iteration and
+`log_freq=1` formats a line every step — fix if free. **Wave quantization is a non-issue for the
+convs** (stage-1 GEMM N = 2.097 M ⇒ 16,384 tiles) — but **K = 80…640 is small**, so a fp16
+tensor-core GEMM has a 1.25-deep k-loop and typically reaches only **20–35% of peak**. That is
+architectural; budget it as residual, not as a rung.
+
+### §11.3 🔴 Correctness bug (not MFU): checkpointing **double-updates every BatchNorm's running stats**
+
+**Independently reproduced here.** One step, `nn.BatchNorm2d`, `use_reentrant=False`:
+
+```
+no-ckpt : num_batches_tracked=1   running_mean[:2]=[-0.002902, 0.004248]
+w/ ckpt : num_batches_tracked=2   running_mean[:2]=[-0.005514, 0.008071]
+```
+
+The backward recompute re-runs BN in training mode, applying the EMA a **second time on the same
+batch**. With `gradient_checkpointing=True` (default) and ~396 BN layers, **every checkpoint this
+repo has trained has BN running stats with effective momentum ≈0.19 instead of 0.10.**
+
+⚠️ **Note the irony to record:** `use_reentrant=False` was added *deliberately* (#316) to fix the
+DDP `marked as ready twice` crash. **One fix introduced the other bug.**
+
+Accuracy impact is probably small (faster EMA, same fixed point), but it is systematic and it
+**interacts directly with P11's mandatory BN-recalibration control** — the recalibration pass
+**must run with `with_cp=False`**, or it inherits the same doubling.
+
+### §11.4 Measurement plan and the corrected action ladder
+
+**Run M0+M1+M2 first — one profiler script, ~40 minutes, and it decides the whole ladder.**
+- **M0** `torch.profiler(CUDA)`, 20 steady steps after 10 warmup ⇒ **Σ(kernel durations)/wall**.
+  **< 0.85 ⇒ host stall; ≥ 0.85 ⇒ bad kernels.**
+- **M1** same trace, `key_averages()` top-30. **`clone`/`copy_`/`batch_norm*` in the top 5 ⇒
+  §11.1+§11.2's new rung confirmed**; ≥60% in gemm/conv ⇒ the model is genuinely GEMM-bound.
+- **M2 (highest value)** baseline vs `layer_scale_1d = 0` **and** the `:739-745` reshape chain
+  bypassed. **Δ ≥ 40% ⇒ §11.1 confirmed. Δ < 10% ⇒ §8.4 was right after all and §11.1 drops.**
+- Then as needed: **M3** `ncu` sectors/request on the clones (≥8 of 32 ⇒ the 16× amplification is
+  real); **M4** `dram__bytes` vs the 2.04 TB model; **M5** the 20-line cuDNN-BN fp16-vs-fp32-weight
+  timing; **M6** `num_alloc_retries`; **M9** an isolated 1×1 conv to find the hard GEMM ceiling.
+
+**Corrected ladder:** ① **P1 delete the temporal branch** (already decided) **or P15** if P4 needs
+it alive — **1.8–3×** · ② **BN params in fp32** (2 lines) — **1.10–1.25×** · ③ **`channels_last`**
+(must follow ①) — **1.2–1.5×** · ④ selective checkpointing — **1.08–1.12×** · ⑤ `torch.compile`
+/ manual BN+GELU+residual fusion — 1.2–1.6× after ①–③ · ⑥ hygiene (unconditional
+`cudnn.benchmark`, delete `find_unused_parameters`, raise `log_freq`, drop the per-step
+`.item()`s) — ~1.0× · ⑦ fix §11.3 (correctness, not speed).
+
+> **Compounded, realistic: 3–6× ⇒ 9.18 s/it → 1.5–3.0 s/it ⇒ 6.6 days → 1.1–2.2 days per
+> 3-epoch run.** That is the single largest change to this project's planning constant.
+
+**Stopping rule — when 6.6 days is physics.** **Tier 1:** if M0 busy > 0.90 *and* M2 Δ < 10%,
+§11.1 is wrong and only kernel quality remains. **Tier 2:** run M9 — if an isolated stage-1 1×1
+conv in fp16/`channels_last` with no framework overhead achieves **< 60 TFLOP/s**, then ~6% MFU is
+the machine's answer for this op shape; combined with §11.0's 5.1% ceiling the honest target is
+**~3–5% MFU ⇒ ~5–7× total**, and anything beyond needs changing the **model** (round4-P7
+resolution, P11 depth), not the code. **Tier 3:** if rungs ①–③ together deliver **< 1.5×**
+measured, **stop**, write the negative down with §11.0's arithmetic, restore 6.6 days as a hard
+planning constant, and redirect into P11 × round4-P7 — which cut the *work* rather than the
+*overhead*.
+
+**Provenance (§11).** MFU panel, resumed 2026-07-31, run on a CPU-only node — so everything is
+read from code, executed on CPU here, or explicitly marked inferred. **Re-verified in this
+worktree before landing:** `model.half()` at `shared_utils.py:66`; DDP never constructed under
+DeepSpeed (`:72-83` vs `:137-149`); `train_media_types == ["video"]` ⇒ `cudnn.benchmark` already
+`True`; the zero-overflow note at `config.py:140`; and **§11.3's BN double-update, reproduced
+independently**. **Panel-measured on CPU (not re-run by me):** the 55-call/33-op/92 N dispatch
+trace, the module counts, the clone strides, and P15's 4.44e-16 float64 equivalence.
+**Inferred, flagged by the panel itself:** the cuDNN-BN dispatch predicate (M5 settles it), the
+BN kernel grid/thread geometry, the 16× coalescing amplification (M3 settles it), backward ≈ 2×
+forward, and **every per-rung speedup magnitude.**
