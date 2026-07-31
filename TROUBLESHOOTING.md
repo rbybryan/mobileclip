@@ -2799,3 +2799,55 @@ nvidia-smi --query-gpu=index,memory.used --format=csv    # 4 张卡 memory.used 
 ```
 若仍有几十 G 被占 = 有孤儿 worker,按 PID/PGID 精确清(严禁 pkill,见 `COMMANDS.md` §4),
 清干净再重跑。
+
+## `run_dropblock_sweep.sh` 的 raw/DSL 两列全打 `?`(而 `collect_results.py` 明明读得到)
+
+```
+块    状态     raw_rmean DSL_rmean 备注
+16     完成     ?         ?         eval_drop_b16
+```
+
+紧接着 `python experiments/collect_results.py --dirs .` 却能正常列出该臂的
+`ret_test_emb/` 与 `ret_test/` r_mean。
+
+### Cause —— **不是解析器坏了,是服务器跑的是旧版脚本**
+
+2026-07-31 为这个 `?` 连改两版都没命中,原因是每次都在猜解析逻辑:
+
+| 版本 | 解析方式 | 解不出时打印 |
+|---|---|---|
+| #392 `5de2ba1` | 猜文件名 `ret_test_emb.json`(不存在) | `?` |
+| #393 `a6626c0` | `from collect_results import ...`(sys.path 一歪就炸) | `?` |
+| #395 `eb0536e`+ | 纯标准库 `os.walk` 读 `eval_res*.json` | **`见↓`**,不会是 `?` |
+
+判据就在这张表里:**#395 之后的脚本在「文件存在但没解出来」时打的是 `见↓`,永远不会打 `?`**。
+所以只要还看到 `?`,跑的就必然是 #395 之前的版本 —— 与解析逻辑无关。
+
+佐证(同一屏就能看出来):`⚠️无 ranks_*.npz` **没有**报警,说明 `ranks_*.npz` 在 `$OUT` 里找到了;
+而 `eval_res*.json` 和 `ranks_*.npz` 是同一个 rank-0 分支写进**同一个** `config.output_dir` 的
+(`tasks_clip/retrieval.py:225` 落 ranks、`:245` 落 `eval_res_latest.json`)。
+一个找得到、另一个"找不到",在同一份脚本里不可能发生。
+
+这是 [服务器长期站在滞留分支](#补记2026-07-29上两条pull-没生效divergent的共同病根--服务器长期站在滞留工作分支上)
+的**第三次**下游表现。
+
+### Fix
+
+```bash
+cd ~/mobileclip
+git log --oneline -1        # 括号里必须是 (HEAD -> main, origin/main)
+git pull
+bash experiments/run_dropblock_sweep.sh 16 16   # 头部现在会打印「解析器 v3 · 脚本 commit <sha>」
+```
+
+**数字本身没丢** —— `?` 只是上屏摘要没解析出来,`eval_res*.json` 一直在盘上:
+
+```bash
+python experiments/collect_results.py --dirs . | grep -B2 -A6 eval_drop_b16
+```
+
+### 已加的防复发措施(#397)
+
+1. 脚本头部打印 **`解析器 v3 · 脚本 commit <sha>`** —— 一眼分辨「解析器坏了」和「没 pull」。
+2. 解不出时**当场**把诊断印在同一行:文件在就打 JSON 顶层键,文件不在就打 `ls` 结果。
+   之前正是缺了这一步,才让同一个 `?` 被误诊两次。

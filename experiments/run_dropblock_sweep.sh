@@ -32,6 +32,10 @@ mkdir -p "$LOGDIR" "$TMPDIR_CKPT"
 
 echo "块 $LO..$HI · 权重 $CKPT"
 echo "每臂日志 → $LOGDIR/b<i>.log ;终端只出一行/臂"
+# 版本戳:2026-07-31 花了三轮才定位到「r_mean 列打印 `?`」的真因 ——
+# 服务器上跑的是**旧版脚本**(解析器 v1/v2),不是解析逻辑错。
+# 有了这行,以后一眼就能分辨「解析器坏了」和「没 pull」。
+echo "解析器 v3 · 脚本 commit $(git rev-parse --short HEAD 2>/dev/null || echo '非 git 工作树')"
 echo "--------------------------------------------------------------"
 printf '%-6s %-10s %-9s %-9s %s\n' 块 状态 raw_rmean DSL_rmean 备注
 
@@ -92,15 +96,24 @@ for dirpath, _d, files in os.walk(sys.argv[1]):
 print(raw, dsl)
 PY
 )
-  # 两列都 `?` 通常= 没 pull 到修好的版本,或 eval_res*.json 不在该目录下
+  # 两列都 `?` ⇒ **当场把目录内容打出来**,别再让人去猜是解析器还是文件。
+  # 2026-07-31:这一步缺席导致同一个 `?` 被误诊两次(先怪文件名、再怪 import),
+  # 真因其实是服务器没 pull。诊断信息必须和症状印在同一屏。
+  NOTE="$OUT"
   if [ "$RAW" = "?" ] && [ "$DSL" = "?" ]; then
     FOUND=$(find "$OUT" -name 'eval_res*.json' 2>/dev/null | head -1)
-    [ -n "$FOUND" ] && RAW="见↓" && DSL="见↓"
+    if [ -n "$FOUND" ]; then
+      # 文件在,却没解析出来 ⇒ 这才是真的解析器/结构问题,把顶层键打出来
+      NOTE="$OUT  🔴 有 $FOUND 却没解出 r_mean —— 顶层键:$(python -c \
+        "import json,sys;print(list(json.load(open(sys.argv[1])).keys()))" "$FOUND" 2>/dev/null)"
+    else
+      NOTE="$OUT  🔴 目录下没有 eval_res*.json;实有文件:$(ls "$OUT" 2>/dev/null | tr '\n' ' ' | cut -c1-120)"
+    fi
   fi
-  NOTE="$OUT"
   # 配对 CI 需要逐查询 rank;没有就当场说,别等到 --compare 时才发现
+  # (**追加**而不是覆盖 —— 上面的 `?` 诊断和这条可能同时成立)
   if [ -z "$(find "$OUT" -name 'ranks_*.npz' 2>/dev/null | head -1)" ]; then
-    NOTE="$OUT  ⚠️无 ranks_*.npz(配对 CI 做不了)"
+    NOTE="$NOTE  ⚠️无 ranks_*.npz(配对 CI 做不了)"
   fi
   printf '%-6s %-10s %-9s %-9s %s\n' "$i" "完成" "$RAW" "$DSL" "$NOTE"
   [ "${KEEP_CKPT:-0}" = "1" ] || rm -f "$ABL"
