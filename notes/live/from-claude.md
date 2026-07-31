@@ -23,6 +23,120 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-31 (75) — V100 两小时执行单(逐条命令)+ H100「新想法」排队;顺带:**gate3/gate4 早就跑完了,没人写下来**
+
+**背景**:P11 全 40 块测完、判据②触发、该线已关(#400),P14 随之关闭
+⇒ **round4-P7(分辨率)是唯一存活的效率线**。完整计划 #401:
+执行单 [`v100-10k-advance-tests.md`](../v100-10k-advance-tests.md) **§6**,
+1M 排队 [`verification-tier-1m-zh.md`](../verification-tier-1m-zh.md) **§8/§9**。
+
+### 🔴 先看这个:两条早就测完、却没进任何文档的结果
+
+`collect_results.py` 的输出里一直有 `eval_gate3` 和 `eval_gate4`。查了
+`gate_checks.py:534-535`:**`gate3` = 删时序分支(融合核 := δ)、`gate4` = 置零
+`temporal_embedding`** —— 也就是 **P1 和 P5 各自的那一次判定评测**。基线 raw 61.55 / DSL 62.28:
+
+| 臂 | 是什么 | raw r_mean | DSL r_mean | Δ raw | Δ DSL |
+|---|---|---|---|---|---|
+| `eval_gate3` | **P1**:删时序分支 | 61.12 | 61.95 | **−0.43** | **−0.33** |
+| `eval_gate4` | **P5**:删 `temporal_embedding` | 62.25 | 62.95 | **+0.70** | **+0.67** |
+
+- **P1 的预登记判据是「Δr_mean > 1.0(两口径同号)⇒ 杀」。实测 −0.43 / −0.33,
+  远在阈值内 ⇒ P1 通过,时序分支可删。** 代价是 −0.43 r_mean,换来
+  **440 个 ONNX 节点(27.8%)、80 次全张量转置、CPU mixer 路径 −18%**。
+- **`temporal_embedding` 删掉之后两个口径都更好(+0.70/+0.67,同号)。** 与 F2 的预测一致
+  (加性码被 mean readout 湮灭),但**实测是「删了更好」而不只是「删了不亏」**。
+
+⚠️ **这两条都还没走配对 bootstrap,现在只是裸差。** 先补上(每条约 1 分钟,纯前向):
+
+```bash
+cd ~/mobileclip && git pull
+python experiments/collect_results.py --compare eval_gate3 eval_base
+python experiments/collect_results.py --compare eval_gate3 eval_base --prefix ret_test/
+python experiments/collect_results.py --compare eval_gate4 eval_base
+python experiments/collect_results.py --compare eval_gate4 eval_base --prefix ret_test/
+```
+
+**判读**:两口径同号 + CI 不含 0 ⇒ 可写进论文。gate4 若显著为正,那是**免费的 +0.7**,
+而且它让 C2 的「未见过的 T」从插值技巧变成**结构性**的(塔里再没有 T 形状的参数)。
+
+---
+
+### V100 · 两小时执行单(照序跑,约 100 分钟)
+
+**第 0 步(1 分钟)—— 它决定第 5 步做不做:**
+```bash
+cd ~/mobileclip && git pull
+export MVC_DATA_DIR=/home/vca1/datasets      # 按本机实际改
+python experiments/check_readiness.py
+```
+盯 `msrvtt`(应当 `[OK ]`)以及 **`k400` / `ucf101` / `hmdb51` 这三行**。
+
+**第 1 步(5 分钟)· A12 BN 双更新** —— 跑一步训练,打印任一 BN 的 `num_batches_tracked`;
+`== 2` 即确认。**后果**:此后所有 BN 重校准必须 `with_cp=False`。
+⚠️ **不要因此改动正在跑的 1M campaign**(见下方「不要动」)。
+
+**第 2 步(20 分钟)· A7 分辨率成本轴** —— `torch.utils.flop_counter`,随机输入,零数据,
+对 `img_size ∈ {128,160,181,224,256}` 各数一次 MACs;顺带复核「每块 157.29 MMACs」。
+
+**第 3 步(5 分钟)· 🔺 P7 分辨率精度轴 —— 唯一存活效率线的第一份实测:**
+```bash
+bash experiments/run_resolution_sweep.sh
+python experiments/collect_results.py --dirs . --out experiments/resolution_all.md
+```
+脚本会同时改 `inputs.image_res` 与 `model.vision_encoder.img_size`(只改一个会静默不一致)。
+🔴 **这是趋势筛不是判据**:换分辨率会改**每一层**的激活统计,BN 漂移远大于 P11 删块。
+
+**第 4 步(10 分钟)· B1 词表覆盖率** —— 见 `v100-10k-advance-tests.md` B1;结论标 **10k-zh 口径**。
+
+**第 5 步(30 分钟,仅当第 0 步显示三个基准 `[OK ]`)· 多基准 R-Sum 探路** ——
+用官方权重把 k400 / ucf101 / hmdb51 各跑一遍(`COMMANDS.md` §3.11 配方,换 config)。
+**为什么值**:`verification-tier-1m-zh.md` §6 已把多基准 R-Sum 从「纪律」升级为**「必须」**
+(MSR-VTT 1k 在 1M 尺度上 10× 数据只涨 +0.82,落在 ±1.6 带内);DiDeMo/ANet 的 anno 拿不到,
+**但这三个的 anno 一直是齐的**。通了 ⇒ 每条已训 ckpt 多三个独立测量面,
+**比再花 15 小时训一条臂划算得多**。
+
+**第 6 步(有余量才做)· A5 空间 mixer 的 ρ 直方图** —— 单独决定 AC9 的生死,照 §10.4 的收紧规格。
+
+---
+
+### H100 · **新模型改动**里,哪些真的需要训练(答你的问题)
+
+第四/五轮的提案里,**绝大多数是零训练的评测项,不该占 H100**:
+
+| 提案 | 需要训练? | 怎么办 |
+|---|---|---|
+| P1 删时序分支 · P5 β/`temporal_embedding` · P6 聚合 · P7 分辨率 · P13 词表/量化 · P3/P15 等价改写 | ❌ **不需要** | 全在 V100 上评测决定(P1/P5 **已经测完**,见本块开头) |
+| **P9 统计池化** | ✅ | **排第 1** |
+| **P8 图文回放(T=1 通道)** | ✅ | **排第 2** |
+| **P1-trained(整条时序分支删掉后重训)** | ✅ | **排第 3** |
+| **P4 修正版 AC5** | ✅(还要自带对照 = 2 臂) | **排最后** |
+
+**建议排队(等当前在跑的臂空出来之后):**
+```bash
+# 先确认当前在跑什么(块 74:r1b_s42 曾被信号打断并重挂)
+nvidia-smi; ls -lt experiments/runs/ | head
+# 然后追加(runner 串行):
+bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_P9_s42 sub1m_P8_s42
+```
+⚠️ **`sub1m_P9_s42` / `sub1m_P8_s42` 这两个 config 还不存在** —— 需要我先写。
+理由与优先级见 [`verification-tier-1m-zh.md`](../verification-tier-1m-zh.md) **§9**。
+**回一句「写吧」我就把两个 config + 必要的模型改动落地。**
+
+---
+
+### 不要动的两件事
+
+1. **A12 的 BN 双更新(动量实际 0.19 而非 0.10)不要在 campaign 中途修** ——
+   它对所有臂一视同仁、不偏袒任何一臂;**中途改会让新旧 run 不可比**,毁掉已花掉的 GPU 小时。
+   记进论文 limitations,不修改。
+2. **不要把 8 条 `sub1m_*` 排满** —— §6 已定:1M 层**只能否决,不能排序**。
+
+**Then report back** in from-server.md:①第 0 步 `check_readiness` 的三行;
+②第 3 步分辨率表;③开头那四条配对 bootstrap 的 CI;④要不要我写 P9/P8 的 config。
+
+---
+
 ## 2026-07-30 (74) — ⚠️ `sub1m_r1b_s42` 被信号打断,整条 runner 死了;续训重跑(挂后台)
 
 **发生了什么**:`sub1m_r1b_s42.log` 尾部 `SignalException: Process 4004093 got signal:` ——
