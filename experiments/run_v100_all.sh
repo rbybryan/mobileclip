@@ -14,8 +14,9 @@
 #   4  多基准锚点     k400 / ucf101 / hmdb51                      ~30 min
 #   5  2-D 前沿       分辨率 × 基准                               ~60 min
 #   6  🔺 10k 门      P9 / P1-trained 的链路 go/no-go + 强制检查   ~2 h
-#   7  微检查         A2 SDPA / A7 MACs / A11 P15 / A12 BN / B1    ~5 min
+#   7  微检查         A2/A7/A9/A10/A11/A12/A13/B1(全零数据)       ~20 min
 #   9  A5 空间mixer   INT8 的 rho 直方图 —— 单独决定 AC9 生死       ~10 min
+#  10  C-2 + C-4      聚合扫描 + 方差-vs-覆盖判别(一次前向多种打分) ~40 min
 #   8  汇总           一张表 + PASS/FAIL 清单(永远放最后)         ~1 min
 #
 # 设计原则(踩过的坑都在这里):
@@ -35,7 +36,7 @@ CKPT=${CKPT:-./checkpoints/mobileviclip_small.pt}
 CFGDIR=${CFGDIR:-scripts/evaluation/clip/zero_shot/mobileviclip_small}
 LOGDIR=${LOGDIR:-logs/v100_all}
 NGPU=${NGPU:-1}
-STAGES=${*:-0 1 2 3 4 5 6 7 9 8}
+STAGES=${*:-0 1 2 3 4 5 6 7 9 10 8}
 
 export PYTHONPATH="${PYTHONPATH:-}:."
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
@@ -324,6 +325,22 @@ if has 9; then
   else
     note FAIL "A5 空间mixer" "见 $LOGDIR/gate5_spatial.log"
     sed -n 's/^/   | /p' <(tail -n 15 "$LOGDIR/gate5_spatial.log")
+  fi
+fi
+
+# ------------------------------------------------------------------ 10 C-2/C-4
+if has 10; then
+  hdr "阶段 10 · C-2 聚合扫描 + C-4 方差-vs-覆盖判别(§4 那个给出**相反处方**的判别实验)"
+  echo "一次前向拿逐帧嵌入,再用 {mean,max,LSE,top-2,单帧} 各打一次分 —— 不必重跑评测。"
+  echo "读法:oracle(max) − mean **>1.0** ⇒ 覆盖说(处方=late-interaction);"
+  echo "      ≈0 ⇒ 方差缩减说(处方=继续一阶池化,P9 那类二阶统计要另找立论)。"
+  if python experiments/frame_agg_probe.py --config "$CFGDIR/config_msrvtt.py" \
+       --ckpt "$CKPT" --ts 8,16 >"$LOGDIR/frame_agg.log" 2>&1; then
+    note PASS "C-2/C-4 聚合判别" "$(grep -E '^\*\*oracle|⇒' "$LOGDIR/frame_agg.log" | head -2 | tr '\n' ' ' | cut -c1-110)"
+    grep -E '^T=' "$LOGDIR/frame_agg.log" | head -12
+  else
+    note FAIL "C-2/C-4 聚合判别" "见 $LOGDIR/frame_agg.log"
+    sed -n 's/^/   | /p' <(tail -n 20 "$LOGDIR/frame_agg.log")
   fi
 fi
 
