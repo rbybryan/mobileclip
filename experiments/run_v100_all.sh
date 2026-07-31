@@ -107,6 +107,15 @@ if has 0; then
 
   [ -f "$CKPT" ] && note PASS "权重" "$CKPT" || note FAIL "权重" "缺 $CKPT"
 
+  # configs/data.py:20-21 —— 这两个环境变量是训练/评测**唯一的隐式依赖**,
+  # 没设就默认 data/ 与 anno_downstream/,在 101vector 上对不上。
+  note PASS "数据环境变量" "MVC_DATA_DIR=${MVC_DATA_DIR:-<未设→data>} MVC_ANNO_DIR=${MVC_ANNO_DIR:-<未设→anno_downstream>}"
+  for f in "${MVC_ANNO_DIR:-anno_downstream}/internvid_zh_10k_pilot.json" \
+           "${MVC_ANNO_DIR:-anno_downstream}/internvid_zh_10k_pilot_val.json"; do
+    [ -s "$f" ] && note PASS "10k anno" "$(basename "$f")" \
+                || note FAIL "10k anno" "缺 $f ⇒ 阶段 1/6 必炸(tools/make_pilot_anno.py 生成)"
+  done
+
   python experiments/check_readiness.py >"$LOGDIR/readiness.log" 2>&1
   note PASS "就绪自检" "见 $LOGDIR/readiness.log"
   for b in msrvtt k400 ucf101 hmdb51; do
@@ -141,7 +150,20 @@ if has 1; then
     bash experiments/run_pretrain.sh "experiments/configs/${c}.py" "$NGPU" debug True \
       >"$L" 2>&1
     rc=$?
-    if [ $rc -ne 0 ]; then note FAIL "冒烟:$c" "退出码 $rc → $L"; SMOKE_OK=0; continue; fi
+    if [ $rc -ne 0 ]; then
+      note FAIL "冒烟:$c" "退出码 $rc → $L"; SMOKE_OK=0
+      echo "   ---- $L 末 25 行 ----"
+      sed -n 's/^/   | /p' <(tail -n 25 "$L")
+      # 最常见的三类原因,直接在这里点名,省一轮往返
+      grep -qiE "MVC_DATA_DIR|No such file|FileNotFoundError" "$L" && \
+        echo "   💡 像是数据/路径:确认 export MVC_DATA_DIR=/home/vca1/datasets"
+      grep -qiE "ModuleNotFoundError|ImportError" "$L" && \
+        echo "   💡 像是缺包:看上一行是哪个模块"
+      grep -qiE "AssertionError.*layer_scale_1d" "$L" && \
+        echo "   💡 P1 的 40 断言没过:说明 layer_scale_1d 数目不是 40,先跑 gate 普查"
+      echo "   --------------------------------"
+      continue
+    fi
 
     if [ "$c" = "pilot_10k_P1trained" ]; then
       # P1 的 flag 若没生效,臂**看起来照跑**,只是时序分支还活着 —— 静默失效,必须显式验
@@ -237,6 +259,8 @@ if has 6; then
           note PASS "10k:$c" "训练完成"
         else
           note FAIL "10k:$c" "见 $LOGDIR/${c}.log"
+          echo "   ---- $LOGDIR/${c}.log 末 20 行 ----"
+          sed -n 's/^/   | /p' <(tail -n 20 "$LOGDIR/${c}.log")
         fi
       fi
     done
