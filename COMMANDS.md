@@ -1132,10 +1132,9 @@ PY
 (157.29 M = 逐帧 2.04%)**,「stage 3 占一半」其实只是 `layers[2]=24`。⇒ 删**深度**是
 第一次真正作用在 86.5% 主导项上的杠杆,而且**可以零训练地量出每一块值多少分**。
 
-> ⚠️ **这个子命令还不存在,需要先写。** `gate_checks.py` 目前只有
-> `gate1/gate3/gate4/gate5/gate5-fused/self-test`(`experiments/gate_checks.py:467-485`)。
-> 下面是**规格**,不是可直接粘的命令 —— 照它加一个 `gate6-dropblock` 子命令即可复用
-> 现成的「探模式 → 0 匹配就抛错不落盘」骨架。
+> ✅ **已实现(2026-07-31)。** `gate_checks.py gate6-dropblock` 现在存在,并复用了
+> 「探模式 → 不匹配就抛错、绝不落盘」的骨架:它断言**恰好命中 3 个门**、断言**恰好 40 个块**、
+> 拒绝在**重参数化态**权重上运行,`--block` 越界直接退出。
 
 **要置零的张量(每块 3 个,少一个就不是恒等)**:
 
@@ -1172,16 +1171,29 @@ PY
 
 **扫描循环(40 块;stage 4 的 4 个 `AttentionBlock` 门结构不同、`:1111-1188` **未核**,先别纳入)**:
 
+**用脚本跑,不要手写 for 循环:**
+
 ```bash
-for i in $(seq 0 39); do
-  python experiments/gate_checks.py gate6-dropblock \
-      --ckpt checkpoints/mobileviclip_small.pt \
-      --block "$i" --out "checkpoints/_drop_b${i}.pt"      # 内部断言命中 3 个键
-  # ⚠️ 每臂必须单独 output_dir,否则 rank 文件互相覆盖(§3.9 那个坑)
-  bash scripts/evaluation/clip/zero_shot/mobileviclip_small/eval_msrvtt.sh \
-      "checkpoints/_drop_b${i}.pt" "drop_b${i}"
-done
-python experiments/collect_results.py --compare drop_b7 base    # 逐块配对 CI
+bash experiments/run_dropblock_sweep.sh            # 全 40 块
+bash experiments/run_dropblock_sweep.sh 0 9        # 只跑 0..9
+```
+
+终端**每臂只出一行**(块号 / 状态 / raw r_mean / DSL r_mean),完整输出落
+`logs/dropblock/b<i>.log`;**第一个臂失败就停**;已完成的臂**自动跳过**,断了重跑同一条命令即可。
+
+> 🔴 **2026-07-31 修正:本节初版给的循环有两个错,别再用。**
+> ① `gate6-dropblock` 当时**还不存在** ⇒ 40 次全是 argparse 报错。
+> ② 更隐蔽:**`eval_msrvtt.sh` 不接受任何位置参数** —— 它把 `output_dir` 写死在脚本里。
+> 所以 `eval_msrvtt.sh <ckpt> <tag>` 会**忽略那个 ckpt**(评的其实是配置里的基线权重)
+> 并让 **40 个臂全写进同一个目录**,`ranks_*.npz` 互相覆盖 ⇒ **配对 CI 直接做不了**
+> (正是 §3.9 那个坑)。正确做法是覆盖 **`pretrained_path` + `output_dir`** 两个键,
+> 与 §3.11 的 `run ()` 一致 —— 脚本里已经这么做了。
+
+**判读**(⚠️ 上表的裸差**不是**判据):
+
+```bash
+# 先确保基线臂存在(§3.11 的 run base ...),再逐块配对
+python experiments/collect_results.py --compare eval_drop_b7 eval_base
 ```
 
 **两条强制纪律**:

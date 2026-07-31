@@ -62,6 +62,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from typing import Dict, List, Tuple
 
@@ -355,6 +356,67 @@ def cmd_gate4(args) -> int:
 # ----------------------------------------------------------------- gate 1
 
 
+def block_prefixes(sd: Dict[str, torch.Tensor]) -> List[str]:
+    """40 个 RepMixerBlock 的键前缀,按 (阶段, 块) 自然序。
+
+    锚点用 `.token_mixer.layer_scale_1d` —— 每个 RepMixerBlock 恰好一个,
+    且 stage 4 的 AttentionBlock 没有,所以这一步顺带把 40/44 的歧义去掉。
+    """
+    suf = ".token_mixer.layer_scale_1d"
+    pre = [k[: -len(suf)] for k in sd if k.endswith(suf)]
+    # 自然序:按键里出现的整数排,否则 block 10 会排在 block 2 前面
+    return sorted(pre, key=lambda s: [int(t) for t in re.findall(r"\d+", s)])
+
+
+def cmd_gate6_dropblock(args) -> int:
+    """把第 i 个 RepMixerBlock 变成**精确恒等**(P11 逐块深度敏感度扫描)。
+
+    依据(源码核实):
+      RepMixer.forward:743-746  x = x + λ_1d·(mixer_1d−norm_1d); x = x + λ·(mixer−norm)
+      RepMixerBlock.forward:1075 x = token_mixer(x); x = x + drop_path(layer_scale·convffn(x))
+    ⇒ 三个门全置零 ⇒ 该块 f(x) = x。**少置一个就不是恒等。**
+
+    🔴 全模型 `layer_scale` 共 80 个 = 40 个 token_mixer(空间 mixer)+ 40 个块级
+    (ConvFFN 门)。混池正是 §0.1 里 gate5 分母取错的同一个坑 —— 所以这里**断言恰好命中 3 个**。
+    """
+    full = torch.load(args.ckpt, map_location="cpu", weights_only=False)
+    sd = full
+    for k in ("model", "module", "state_dict"):
+        if isinstance(full, dict) and k in full and isinstance(full[k], dict):
+            sd = full[k]
+            break
+    tensors = {k: v for k, v in sd.items() if isinstance(v, torch.Tensor)}
+    mode = detect_mode(tensors)
+    if mode != "training":
+        raise SystemExit(
+            f"[gate6] 需要 training-态权重(有 layer_scale),实测形态={mode}。\n"
+            "        重参数化后的权重里门已被折进核,逐块恒等要改的东西不一样,"
+            "本子命令拒绝在该形态下写出任何文件。"
+        )
+
+    pre = block_prefixes(tensors)
+    if len(pre) != 40:
+        raise SystemExit(f"[gate6] 期望 40 个 RepMixerBlock,实际 {len(pre)} —— 先跑 `inspect` 看键名。")
+    if not (0 <= args.block < len(pre)):
+        raise SystemExit(f"[gate6] --block 必须在 0..{len(pre)-1},收到 {args.block}")
+
+    p = pre[args.block]
+    want = [f"{p}.token_mixer.layer_scale_1d",   # 时序 mixer 残差门
+            f"{p}.token_mixer.layer_scale",      # 空间 mixer 残差门
+            f"{p}.layer_scale"]                  # 块级 ConvFFN 门
+    miss = [k for k in want if k not in sd]
+    if miss:
+        raise SystemExit(f"[gate6] 块 {args.block} ({p}) 缺门:{miss} —— 不写出任何文件。")
+
+    for k in want:
+        sd[k] = torch.zeros_like(sd[k])
+    assert len(want) == 3, "每块必须恰好 3 个门"
+    print(f"[gate6] 块 {args.block}/40 前缀={p}")
+    print(f"        已置零 3 个门(通道数 {[tuple(sd[k].shape) for k in want]}) ⇒ 该块现在是恒等")
+    _save(full, args.out)
+    return 0
+
+
 def cmd_gate1(args) -> int:
     """空间参数是否与图像 ckpt 逐位相同 ⇒ 骨干是否被冻结。
 
@@ -482,11 +544,16 @@ def main(argv=None) -> int:
     q = sub.add_parser("gate1", help="空间参数是否与图像 ckpt 逐位相同(骨干是否被冻)")
     q.add_argument("--ckpt", required=True)
     q.add_argument("--image-ckpt", required=True)
+    q = sub.add_parser("gate6-dropblock", help="把第 i 个 RepMixerBlock 变成恒等(P11 逐块扫描)")
+    q.add_argument("--ckpt", required=True)
+    q.add_argument("--block", required=True, type=int, help="0..39,按 (阶段,块) 自然序")
+    q.add_argument("--out", required=True)
     sub.add_parser("self-test", help="合成权重自检,零依赖")
 
     a = p.parse_args(argv)
     return {"inspect": cmd_inspect, "gate5": cmd_gate5, "gate3": cmd_gate3,
             "gate4": cmd_gate4, "gate1": cmd_gate1, "gate5-fused": cmd_gate5_fused,
+            "gate6-dropblock": cmd_gate6_dropblock,
             "self-test": cmd_selftest}[a.cmd](a)
 
 
