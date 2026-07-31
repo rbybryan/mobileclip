@@ -1475,6 +1475,10 @@ class FastViT(nn.Module):
         x_temp = self.conv_exp(x_temp) 
         x_temp = self.head(x_temp)
         x_new_stack = x_temp.reshape(T,B,x_temp.shape[-1])
+        # C-2(P6 聚合扫描)/ C-4(方差-vs-覆盖判别)需要**逐帧**嵌入。
+        # 默认 False ⇒ 现有评测路径**逐位不变**;只有 experiments/frame_agg_probe.py 会打开它。
+        if getattr(self, "return_frames", False):
+            return x_new_stack.permute(1, 0, 2)          # (B,T,D)
         if self.temporal_pool is not None:
             # attention pooling over frames (query = mean of frame embeddings)
             x_new_stack = self.temporal_pool(x_new_stack.permute(1, 0, 2))
