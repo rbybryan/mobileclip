@@ -62,6 +62,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import re
 import sys
 from typing import Dict, List, Tuple
@@ -290,6 +291,88 @@ def cmd_gate5_fused(args) -> int:
         if erased > 0.5 else
         "**未坐实**:时序项在 INT8 下存活 ⇒ round4 §2 P2 的机制不成立,须改写"))
     return 0
+
+
+def cmd_gate5_spatial(args) -> int:
+    """**A5 / §10.4**:空间 mixer 那一半的 INT8 判据 —— §8 明确标注「未验证」的那条。
+
+    `gate5-fused` 只量过**时序**核。配套那句「空间 mixer 只跑在 1–3 LSB / ~2 有效 bit」
+    **至今没人量过**;而时序那次的解析估计错了 1–2 个数量级(假设 |Δ|=O(0.1–1),实际 ≈7.7)
+    ⇒ **默认它也是错的,直到量出来**。
+
+    🔴 **别再用固定阈值。** `gate5-fused` 拿 |w−δ| 去比一个固定的 3.937e-3,
+    **隐含假设每通道的 INT8 scale 分母恒为 1** —— 那正是它把结论说反的原因
+    (§10.0:换成 LSB 单位后中位数是 0.78 LSB,不是「存活」)。这里一律按**每通道** scale 算。
+
+    每通道:s_c = max|w_c|/127 · ŵ_c = s_c·round(w_c/s_c)
+        ① a_c = max|w_c|                          真正的 per-channel scale 分母
+        ② n_c = 127·max|w_c − δ| / a_c            该支路占多少 LSB(尺度无关)
+        ③ ρ_c = ‖ŵ_c − w_c‖₂ / ‖w_c − δ‖₂        **头条**:量化误差相对该支路本身的大小
+    """
+    from models.backbones.internvideo2.mobileclip.modules.common.mobileone import (
+        reparameterize_model,
+    )
+    from utils.config import Config
+    from models.mobileviclip_small import MobileViCLIP_Small
+
+    cfg = Config.from_file(args.config)
+    model = MobileViCLIP_Small(config=cfg, tokenizer=None, is_pretrain=False)
+    sd = load_state(args.ckpt)
+    missing, unexpected = model.load_state_dict(sd, strict=False)
+    vis_missing = [k for k in missing if not k.startswith("text_encoder.")]
+    print(f"load_state_dict: missing={len(missing)} "
+          f"(text_encoder={len(missing) - len(vis_missing)},属预期) unexpected={len(unexpected)}")
+    if len(vis_missing) > 20:
+        raise SystemExit(f"[FAIL] 视觉塔权重没对上;前 5: {vis_missing[:5]}")
+
+    model.eval()
+    model = reparameterize_model(model)
+
+    # **按模块选,不按名字**:只取同时有 reparam_conv 与 reparam_conv_1d 的模块,
+    # 这样能排掉 stem / downsample / ConvFFN 里同样暴露 reparam_conv 的 MobileOneBlock。
+    mods = [m for _, m in model.named_modules()
+            if hasattr(m, "reparam_conv") and hasattr(m, "reparam_conv_1d")]
+    tot_c = sum(m.reparam_conv.weight.shape[0] for m in mods)
+    # 两条断言 —— 当年就是少了它们才出的 40-vs-80 错(§0.1 的 gate5 分母事故)
+    assert len(mods) == 40, f"期望 40 个 RepMixer,实际 {len(mods)}"
+    assert tot_c == 9920, f"期望 Σ out_channels = 9920,实际 {tot_c}"
+    print(f"[OK] 选中 {len(mods)} 个 RepMixer,Σ out_channels = {tot_c}")
+
+    ns, rhos = [], []
+    for m in mods:
+        w = m.reparam_conv.weight.detach().float()      # (C,1,3,3)
+        # ⚠️ 空间核是 4 维 ⇒ 归约必须 amax(dim=(1,2,3));写成 (1,2) 会静默算错
+        a = w.abs().amax(dim=(1, 2, 3)).clamp_min(1e-12)
+        delta = torch.zeros_like(w)
+        delta[:, :, 1, 1] = 1.0                          # 恒等核的 1 在 [1,1],不是一维中心下标
+        dev = (w - delta)
+        ns.append(127.0 * dev.abs().amax(dim=(1, 2, 3)) / a)
+        s = (a / 127.0).view(-1, 1, 1, 1)
+        wq = s * torch.round(w / s)
+        num = (wq - w).flatten(1).norm(dim=1)
+        den = dev.flatten(1).norm(dim=1).clamp_min(1e-12)
+        rhos.append(num / den)
+
+    n = torch.cat(ns); rho = torch.cat(rhos)
+    print(f"\n空间 mixer,逐通道(channels={n.numel()})")
+    print("    分位   n(LSB)   b_eff(bit)   rho")
+    for q in (0.05, 0.25, 0.50, 0.75, 0.95):
+        nq = n.quantile(q).item()
+        print(f"    p{int(q*100):02d}   {nq:8.3f}   {math.log2(max(nq,1e-9)):9.2f}   {rho.quantile(q).item():.4f}")
+
+    med = rho.quantile(0.5).item()
+    print(f"\n  **头条:rho 中位数 = {med:.4f}**")
+    if med < 0.10:
+        print("  ⇒ 空间量化很干净 ⇒ **埋掉 AC9 的重参数化专属立论**。发一段机制说明即可:")
+        print("     RepMixer 的恒等抽头是**未经 BN 的精确 δ**,与 RepVGG 不同,所以它对量化是良性的。")
+    elif med < 0.35:
+        print("  ⇒ AC9 缩成**一行部署规则**:40 个 dw3×3 留 fp16(= 0.59% MACs)。**不做 QAT。**")
+    else:
+        print("  ⇒ AC9 拿到**新立论**(亚 2-bit 支路编码);修法仍是 fp16-on-depthwise。")
+    print("\n  (面板预登记的预测是 n≈12 LSB / b_eff≈4.7 bit / rho≈0.02–0.05 ——")
+    print("   即「空间 mixer 只有 1–3 LSB / ~2 bit」是**保守方向上的错**。对照上表看它中没中。)")
+    return 0
+
 
 
 # ----------------------------------------------------------------- gates 3 / 4
@@ -541,6 +624,11 @@ def main(argv=None) -> int:
     q.add_argument("--ckpt", required=True)
     q.add_argument("--config", required=True,
                    help="任一 eval config,例如 scripts/evaluation/clip/zero_shot/mobileviclip_small/config_msrvtt.py")
+    q = sub.add_parser("gate5-spatial",
+                       help="A5:空间 mixer 的 INT8 判据(per-channel scale + rho),决定 AC9 生死")
+    q.add_argument("--ckpt", required=True)
+    q.add_argument("--config", required=True,
+                   help="任一 eval config,例如 scripts/evaluation/clip/zero_shot/mobileviclip_small/config_msrvtt.py")
     q = sub.add_parser("gate1", help="空间参数是否与图像 ckpt 逐位相同(骨干是否被冻)")
     q.add_argument("--ckpt", required=True)
     q.add_argument("--image-ckpt", required=True)
@@ -554,6 +642,7 @@ def main(argv=None) -> int:
     return {"inspect": cmd_inspect, "gate5": cmd_gate5, "gate3": cmd_gate3,
             "gate4": cmd_gate4, "gate1": cmd_gate1, "gate5-fused": cmd_gate5_fused,
             "gate6-dropblock": cmd_gate6_dropblock,
+            "gate5-spatial": cmd_gate5_spatial,
             "self-test": cmd_selftest}[a.cmd](a)
 
 

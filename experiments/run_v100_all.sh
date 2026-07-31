@@ -15,7 +15,8 @@
 #   5  2-D 前沿       分辨率 × 基准                               ~60 min
 #   6  🔺 10k 门      P9 / P1-trained 的链路 go/no-go + 强制检查   ~2 h
 #   7  微检查         A2 SDPA / A7 MACs / A11 P15 / A12 BN / B1    ~5 min
-#   8  汇总           一张表 + PASS/FAIL 清单                     ~1 min
+#   9  A5 空间mixer   INT8 的 rho 直方图 —— 单独决定 AC9 生死       ~10 min
+#   8  汇总           一张表 + PASS/FAIL 清单(永远放最后)         ~1 min
 #
 # 设计原则(踩过的坑都在这里):
 #   ① **阶段之间不 fail-fast**:一个阶段炸掉不该让后面 60 小时的排队全废。
@@ -34,7 +35,7 @@ CKPT=${CKPT:-./checkpoints/mobileviclip_small.pt}
 CFGDIR=${CFGDIR:-scripts/evaluation/clip/zero_shot/mobileviclip_small}
 LOGDIR=${LOGDIR:-logs/v100_all}
 NGPU=${NGPU:-1}
-STAGES=${*:-0 1 2 3 4 5 6 7 8}
+STAGES=${*:-0 1 2 3 4 5 6 7 9 8}
 
 export PYTHONPATH="${PYTHONPATH:-}:."
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
@@ -308,6 +309,22 @@ if has 7; then
   done < <(grep -E '^\[(PASS|FAIL)\]' "$LOGDIR/micro_checks.log" 2>/dev/null)
   grep -E '^    ' "$LOGDIR/micro_checks.log" 2>/dev/null | head -20
   [ $mrc -eq 0 ] || echo "   ⇒ 有微检查未过,细节见 $LOGDIR/micro_checks.log"
+fi
+
+# ------------------------------------------------------------------ 9 A5
+if has 9; then
+  hdr "阶段 9 · A5 空间 mixer 的 INT8 rho 直方图 —— 单独决定 AC9 是重新立论还是该埋"
+  echo "§8 把这一项明确标注为「未验证」。gate5-fused 只量过**时序**核;"
+  echo "配套那句「空间 mixer 只跑在 1–3 LSB」至今没人量过,而时序那次估计错了 1–2 个数量级。"
+  if python experiments/gate_checks.py gate5-spatial \
+       --ckpt "$CKPT" --config "$CFGDIR/config_msrvtt.py" \
+       >"$LOGDIR/gate5_spatial.log" 2>&1; then
+    note PASS "A5 空间mixer" "$(grep -E '头条|⇒' "$LOGDIR/gate5_spatial.log" | head -2 | tr '\n' ' ' | cut -c1-110)"
+    grep -E '^    (分位|p[0-9])' "$LOGDIR/gate5_spatial.log" | head -8
+  else
+    note FAIL "A5 空间mixer" "见 $LOGDIR/gate5_spatial.log"
+    sed -n 's/^/   | /p' <(tail -n 15 "$LOGDIR/gate5_spatial.log")
+  fi
 fi
 
 # ------------------------------------------------------------------ 8 汇总
