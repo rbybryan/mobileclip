@@ -181,14 +181,19 @@ class MobileViCLIP_Small(nn.Module):
         import os
         for _p in (cfg["path"], cfg["idx_path"]):
             if not os.path.exists(_p):
+                # 不在这里给 --anno:bank 必须与**该臂的训练语料**同源(10k 试点用
+                # pilot anno,1M 层用 InternVid-10M-flt_1.json),模型层不知道语料是谁。
+                # 早先这里硬编码了 10k pilot 的 anno,在 1M 臂上照抄会建出一个
+                # 10k 文本冒充的 "1m" bank —— 静默错误,训完才发现。
                 raise FileNotFoundError(
-                    f"[R1] text bank cache missing: {_p!r}. Build it FIRST (single line, no "
-                    f"backslash-continuation — that is what mangles when pasted):\n"
-                    f"    python experiments/r1_build_textbank.py --anno "
-                    f"anno_downstream/internvid_zh_10k_pilot.json --out-feats {cfg['path']} "
+                    f"[R1] text bank cache missing: {_p!r}. Build it FIRST with "
+                    f"experiments/r1_build_textbank.py, using the --anno of THIS arm's "
+                    f"training corpus — the exact single-line command is in the arm "
+                    f"config's docstring (e.g. experiments/configs/sub1m_nR1_*.py) and "
+                    f"COMMANDS.md §3.4. Target paths: --out-feats {cfg['path']} "
                     f"--out-idx {cfg['idx_path']}\n"
-                    f"See COMMANDS.md §3.4. (--ckpt is irrelevant here: the pre-projection "
-                    f"feature comes from the frozen text base in the eval config, not --ckpt.)"
+                    f"(--ckpt is irrelevant here: the pre-projection feature comes from "
+                    f"the frozen text base in the eval config, not --ckpt.)"
                 )
         feats = np.load(cfg["path"])          # [K, C_pre] pre-projection text features
         bidx = np.load(cfg["idx_path"])       # [K] caption_to_idx
