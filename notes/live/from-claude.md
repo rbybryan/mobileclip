@@ -23,6 +23,35 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-08-03 (78) — 🔍 「两台都没有 k400/ucf101/hmdb51」先别下结论 —— §5/§6 的数字就是在它们上测的
+
+**矛盾**:`v100_sweep_results.md` §5/§6(P7 分辨率否决、多基准锚点)是这三个基准的**实测数**
+(07-31,#414)。最可能的解释:视频一直在 V100 旧 `MVC_DATA_DIR` 根(`/home/vca1/datasets`)下,
+#418 修复 `unset` 后只软链了 10k ⇒ 三个基准被**同一个根机制**断开,「没有」= 路径断开。
+
+**V100 上先探(1 分钟)**:
+```bash
+find /home/vca1/datasets -maxdepth 2 -type d \
+     \( -iname "*kinetics*" -o -iname "*ucf*" -o -iname "*hmdb*" \) 2>/dev/null
+```
+
+**找到 ⇒ 三条幂等软链(前缀按 find 输出改),readiness 应转 `[OK ]`,然后 §8 第 3 步照跑**:
+```bash
+ln -sfn /home/vca1/datasets/kinetics_400_val_10s_320p data/kinetics_400_val_10s_320p
+ln -sfn /home/vca1/datasets/ucf101                    data/ucf101
+ln -sfn /home/vca1/datasets/hmdb51                    data/hmdb51
+python experiments/check_readiness.py
+```
+
+**真没有(find 为空)⇒** ① 🔴 把空输出贴回 from-server.md,§5/§6 的出处要审计;
+② 兜底二选一:下载 UCF101(~6.9 GB)+ HMDB51(~2 GB)补齐(k400 先跳过),
+或放弃多基准保险、P1trained 只靠 MSR-VTT 配对 CI + s43。
+
+**b100 队列不变**(flash A/B → 1M 教师抽取,COMMANDS §3.10);
+块 77 里「若 b100 有三基准就在 b100 评」那一条**作废**。
+
+---
+
 ## 2026-08-03 (77) — 🏁 全轮收官后的下一步:H100 = 一条确认臂 + C1 阶梯;V100 = 阶段 10/7 重跑 + 多基准面
 
 **现状一句话**:1M 层 8 臂全收(§10):5 个精度改进**全否**,唯一通过的是**减法**
