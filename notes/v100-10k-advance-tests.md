@@ -512,11 +512,30 @@ B1 决定 P13(b) 裁词表的生死(结论记 **10k-zh 口径**)。
 **最少集合**:`sub1m_r0_s42` 与 `sub1m_P1trained_s42`(判非劣);
 `r1b_s42/s43` 有余量再补(= 种子地板的多基准版,免费的方法学数据)。
 
+> 🔴 **2026-08-03 更正:维护者确认 b100 与 101vector 当前都「看不到」这三个基准。**
+> 但 `v100_sweep_results.md` §5/§6 的数字就是在它们上面测的(07-31,#414)—— 数不会凭空来。
+> 最可能:视频一直在 V100 的旧 `MVC_DATA_DIR` 根(`/home/vca1/datasets`)下,
+> #418 的修复 `unset` 之后只软链了 10k ⇒ **三个基准被同一个根机制断开了**。先探,别下结论:
+>
+> ```bash
+> # V100 上,1 分钟:
+> find /home/vca1/datasets -maxdepth 2 -type d \
+>      \( -iname "*kinetics*" -o -iname "*ucf*" -o -iname "*hmdb*" \) 2>/dev/null
+> ```
+> **找到 ⇒ 三条幂等软链(与 10k 同款修法;前缀按 find 实际输出改),readiness 应转 `[OK ]`:**
+> ```bash
+> ln -sfn /home/vca1/datasets/kinetics_400_val_10s_320p data/kinetics_400_val_10s_320p
+> ln -sfn /home/vca1/datasets/ucf101                    data/ucf101
+> ln -sfn /home/vca1/datasets/hmdb51                    data/hmdb51
+> python experiments/check_readiness.py
+> ```
+> **两台都真没有 ⇒ 两个后果分开处理**:
+> ① 🔴 §5/§6(P7 分辨率否决 + 多基准锚点)的**出处必须审计** —— 把 find 的空输出发回来,审计步骤我来定;
+> ② 本步的替代:UCF101(~6.9 GB)+ HMDB51(~2 GB)可下载补齐(k400 val 太大先跳过),
+>    或者放弃多基准保险,P1trained 只靠 MSR-VTT 配对 CI + s43 —— 下不下载维护者定。
+
 ```bash
-# ① 权重与数据在哪边,就在哪边跑:
-#    先在 b100 上 `python experiments/check_readiness.py` 看 k400/ucf101/hmdb51 是否 [OK ];
-#    是 ⇒ 直接在 b100 跑下面 ②(单卡分钟级,不占训练队列);
-#    否 ⇒ 把 ckpt 拉到本机(单臂只需 ckpt_02.pth 目录里的 mp_rank_00_model_states.pt):
+# ① ckpt 从 b100 拉到本机(单臂只需 ckpt_02.pth 目录里的 mp_rank_00_model_states.pt):
 rsync -av <b100>:~/mobileclip/experiments/runs/sub1m_r0_s42/ckpt_02.pth \
       experiments/runs/sub1m_r0_s42/
 rsync -av <b100>:~/mobileclip/experiments/runs/sub1m_P1trained_s42/ckpt_02.pth \
