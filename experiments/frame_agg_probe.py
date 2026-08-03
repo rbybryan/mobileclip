@@ -69,7 +69,6 @@ def main():
     from utils.config import Config, eval_dict_leaf
     from dataset import create_dataset, create_loader
     from models.mobileviclip_small import MobileViCLIP_Small, set_num_frames
-    from tasks_clip.retrieval_utils import extract_text_feats
 
     rows = []
     for T in [int(x) for x in args.ts.split(",")]:
@@ -107,22 +106,29 @@ def main():
             collate_fns=[None] * len(test_datasets),
         )[0]
 
-        # 文本:完全照 retrieval_utils.evaluation 的算法,别自己造
-        max_txt_l = cfg.inputs.max_txt_l
-        if not isinstance(max_txt_l, int):
-            max_txt_l = max_txt_l[loader.dataset.media_type]
+        # 🔴 照 `evaluation_video_clip`(retrieval_utils.py:107-150)抄 —— 那才是本模型
+        #   真正走的评测路径。两处必须照搬,否则要么报错、要么**静默算出对不上的数**:
+        #   ① 文本用 `model.encode_text(tokenizer(text).to(device))`。**不要**用
+        #      retrieval_utils.py:19 那个 InternVideo2 的 HF-tokenizer 取特征函数 ——
+        #      它会去取 `text_input.attention_mask`,而 ClipTokenizer 返回**裸 Tensor**,
+        #      于是 `'Tensor' object has no attribute 'attention_mask'`。
+        #   ② **两侧都不再单独乘投影头** —— 投影已经在塔内(`GlobalPool2D(out_dim=512)`),
+        #      `encode_vision` / `encode_text` 的输出就是最终嵌入。多乘一次不会报错,
+        #      只会得到和既有口径对不上的数,**那比报错更糟**。
+        texts = loader.dataset.text
         with torch.no_grad():
-            text_feats, _atts = extract_text_feats(
-                loader.dataset.text, max_txt_l, model.tokenizer, model, device)
-            Tx = torch.nn.functional.normalize(
-                model.text_proj(text_feats[:, 0]), dim=-1).float().cpu()
+            tfs = []
+            for i0 in range(0, len(texts), 256):
+                tf = model.encode_text(model.tokenizer(texts[i0:i0 + 256]).to(device))
+                tfs.append(tf.float().cpu())
+            Tx = torch.nn.functional.normalize(torch.cat(tfs), dim=-1)
 
             vfeats = []
-            for image, _ in loader:                     # 载入器产出 (image, idx)
+            for image, _ in loader:                    # 载入器产出 (image, idx)
                 image = image.to(device, non_blocking=True)
-                f = model.vision_proj(model.encode_vision(image, test=True))  # (B,T,D)
+                f = model.encode_vision(image, test=True)         # (B,T,D),return_frames 已开
                 vfeats.append(torch.nn.functional.normalize(f, dim=-1).float().cpu())
-        V = torch.cat(vfeats)                           # (Nv,T,D)
+        V = torch.cat(vfeats)                          # (Nv,T,D)
         if V.ndim != 3:
             raise SystemExit(f"[FAIL] 期望逐帧 (Nv,T,D),拿到 {tuple(V.shape)} "
                              "⇒ return_frames 没生效")
