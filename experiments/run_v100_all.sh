@@ -111,7 +111,22 @@ if has 0; then
 
   # configs/data.py:20-21 —— 这两个环境变量是训练/评测**唯一的隐式依赖**,
   # 没设就默认 data/ 与 anno_downstream/,在 101vector 上对不上。
-  note PASS "数据环境变量" "MVC_DATA_DIR=${MVC_DATA_DIR:-<未设→data>} MVC_ANNO_DIR=${MVC_ANNO_DIR:-<未设→anno_downstream>}"
+  # 🔴 2026-07-31:上一版只把这两个变量**打印**出来就记 PASS,于是
+  #    「MVC_DATA_DIR=<未设→data>」这行明明白白摆在屏幕上,却没人当回事 ——
+  #    阶段 1 随后连崩两次,真因就是它(解码器去读不存在的 data/internvid_zh_10k/videos)。
+  #    **能自动判定的事,不许只打印。** 现在:能自动补就补,补不上就 FAIL。
+  if [ -z "${MVC_DATA_DIR:-}" ] && [ -d /home/vca1/datasets/internvid_zh_10k/videos ]; then
+    export MVC_DATA_DIR=/home/vca1/datasets      # configs/data.py:104 记的就是这个路径
+    note PASS "数据环境变量" "MVC_DATA_DIR 未设 → 自动补为 $MVC_DATA_DIR"
+  else
+    note PASS "数据环境变量" "MVC_DATA_DIR=${MVC_DATA_DIR:-<未设→data>} MVC_ANNO_DIR=${MVC_ANNO_DIR:-<未设→anno_downstream>}"
+  fi
+  VIDROOT="${MVC_DATA_DIR:-data}/internvid_zh_10k/videos"
+  if [ -d "$VIDROOT" ] && [ -n "$(find "$VIDROOT" -name '*.mp4' 2>/dev/null | head -1)" ]; then
+    note PASS "10k 视频根" "$VIDROOT"
+  else
+    note FAIL "10k 视频根" "🔴 $VIDROOT 不存在或没有 mp4 ⇒ 阶段 1/6 必炸。修法:export MVC_DATA_DIR=/home/vca1/datasets"
+  fi
   for f in "${MVC_ANNO_DIR:-anno_downstream}/internvid_zh_10k_pilot.json" \
            "${MVC_ANNO_DIR:-anno_downstream}/internvid_zh_10k_pilot_val.json"; do
     [ -s "$f" ] && note PASS "10k anno" "$(basename "$f")" \
