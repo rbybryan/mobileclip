@@ -2851,3 +2851,46 @@ python experiments/collect_results.py --dirs . | grep -B2 -A6 eval_drop_b16
 1. 脚本头部打印 **`解析器 v3 · 脚本 commit <sha>`** —— 一眼分辨「解析器坏了」和「没 pull」。
 2. 解不出时**当场**把诊断印在同一行:文件在就打 JSON 顶层键,文件不在就打 `ls` 结果。
    之前正是缺了这一步,才让同一个 `?` 被误诊两次。
+
+## `AssertionError: ${available_corpus[${train_corpus}]}` —— 自写脚本里 `Config.from_file` 没做插值
+
+### Symptom
+
+自己写的脚本(不是 `tasks_clip/*.py` 那几个入口)调 `create_dataset` / `setup_dataloaders` 时:
+
+```
+File ".../dataset/__init__.py", line 222, in create_dataset
+    assert isinstance(config.train_file, dict), config.train_file
+AssertionError: ${available_corpus[${train_corpus}]}
+```
+
+### Cause —— 两个独立的坑叠在一起
+
+1. **`Config.from_file()` 只读文件,不做 `${...}` 插值。** 插值那一步是
+   `eval_dict_leaf(cfg)`,写在 `Config.get_config()` 里(`utils/config.py:112`),
+   而 `get_config()` 要解析 `argv`。所以**任何绕过 `setup_main()` 的脚本**拿到的
+   `cfg` 里,`${available_corpus[${train_corpus}]}` 还是一个**字面字符串**。
+2. **`setup_dataloaders(cfg, mode="ret")` 会先建训练集**(`pretrain.py:193`),
+   而**评测 config 的 `train_file` 本来就不是给它用的** —— 于是第一个碰到的就是它。
+
+### Fix
+
+```python
+from utils.config import Config, eval_dict_leaf
+cfg = eval_dict_leaf(Config.from_file(path))     # ← 补上插值
+
+# 只要评测集就别用 setup_dataloaders(它连训练集一起建)
+from dataset import create_dataset, create_loader
+test_datasets, names = create_dataset("ret_eval", cfg)
+loader = create_loader(test_datasets, [None] * len(test_datasets),
+                       batch_size=[cfg.inputs.batch_size_test[d.media_type] for d in test_datasets],
+                       num_workers=[cfg.num_workers] * len(test_datasets),
+                       is_trains=[False] * len(test_datasets),
+                       collate_fns=[None] * len(test_datasets))[0]
+```
+
+⚠️ **插值会把 `${num_frames_test}` 一次性固化。** 之后再改 `cfg.num_frames_test` **不会**
+传导到 `cfg.inputs.video_input.num_frames_test` —— 两处都要显式覆盖,否则你以为在跑 T=16,
+实际还是 T=8。
+
+实例:`experiments/frame_agg_probe.py`(C-2 聚合扫描 + C-4 方差-vs-覆盖判别)。

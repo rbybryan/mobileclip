@@ -66,17 +66,23 @@ def main():
     args = ap.parse_args()
 
     sys.path.insert(0, ".")
-    from utils.config import Config
+    from utils.config import Config, eval_dict_leaf
+    from dataset import create_dataset, create_loader
     from models.mobileviclip_small import MobileViCLIP_Small, set_num_frames
-    from tasks_clip.pretrain import setup_dataloaders
-
-    cfg = Config.from_file(args.config)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    from tasks_clip.retrieval_utils import extract_text_feats
 
     rows = []
     for T in [int(x) for x in args.ts.split(",")]:
+        # 🔴 `Config.from_file` **不做** ${...} 插值 —— 插值在 `get_config` 里,
+        #    而那条路要解析 argv。不自己补 eval_dict_leaf,train_file 会保持字面量
+        #    `${available_corpus[${train_corpus}]}`(2026-07-31 就是这样炸的)。
+        cfg = eval_dict_leaf(Config.from_file(args.config))
         cfg.num_frames_test = T
+        # 插值已经把它固化成 8 了,所以**必须**再显式覆盖一次
         cfg.inputs.video_input.num_frames_test = T
+        cfg.distributed = False
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         model = MobileViCLIP_Small(config=cfg, tokenizer=None, is_pretrain=False)
         sd = torch.load(args.ckpt, map_location="cpu", weights_only=False)
         for k in ("model", "module", "state_dict"):
@@ -87,42 +93,56 @@ def main():
         if len(vis_missing) > 20:
             raise SystemExit(f"[FAIL] 视觉塔没对上;前 5: {vis_missing[:5]}")
         model = model.to(device).eval()
-        model.vision_encoder.return_frames = True       # ← 唯一的开关
+        model.vision_encoder.return_frames = True      # ← 唯一的开关(默认 False)
         set_num_frames(T)
 
-        _, test_loaders, _ = setup_dataloaders(cfg, mode="ret")
-        loader = list(test_loaders.values())[0] if isinstance(test_loaders, dict) else test_loaders[0]
+        # **只建评测集** —— setup_dataloaders 会连训练集一起建,而 eval config 的
+        # train_file 本来就不是给它用的(同上,那正是炸点)。
+        test_datasets, _names = create_dataset("ret_eval", cfg)
+        loader = create_loader(
+            test_datasets, [None] * len(test_datasets),
+            batch_size=[cfg.inputs.batch_size_test[d.media_type] for d in test_datasets],
+            num_workers=[cfg.num_workers] * len(test_datasets),
+            is_trains=[False] * len(test_datasets),
+            collate_fns=[None] * len(test_datasets),
+        )[0]
 
-        vfeats, tfeats = [], []
+        # 文本:完全照 retrieval_utils.evaluation 的算法,别自己造
+        max_txt_l = cfg.inputs.max_txt_l
+        if not isinstance(max_txt_l, int):
+            max_txt_l = max_txt_l[loader.dataset.media_type]
         with torch.no_grad():
-            for batch in loader:
-                image = batch[0].to(device, non_blocking=True)
-                text = batch[1]
-                f = model.encode_vision(image, test=True)        # (B,T,D)
-                f = model.vision_proj(f)
+            text_feats, _atts = extract_text_feats(
+                loader.dataset.text, max_txt_l, model.tokenizer, model, device)
+            Tx = torch.nn.functional.normalize(
+                model.text_proj(text_feats[:, 0]), dim=-1).float().cpu()
+
+            vfeats = []
+            for image, _ in loader:                     # 载入器产出 (image, idx)
+                image = image.to(device, non_blocking=True)
+                f = model.vision_proj(model.encode_vision(image, test=True))  # (B,T,D)
                 vfeats.append(torch.nn.functional.normalize(f, dim=-1).float().cpu())
-                tok = model.tokenizer(text) if callable(getattr(model, "tokenizer", None)) else text
-                t = model.encode_text(tok)
-                t = model.text_proj(t[:, 0] if t.ndim == 3 else t)
-                tfeats.append(torch.nn.functional.normalize(t, dim=-1).float().cpu())
-        V = torch.cat(vfeats)          # (Nv,T,D)
-        Tx = torch.cat(tfeats)         # (Nt,D)
+        V = torch.cat(vfeats)                           # (Nv,T,D)
+        if V.ndim != 3:
+            raise SystemExit(f"[FAIL] 期望逐帧 (Nv,T,D),拿到 {tuple(V.shape)} "
+                             "⇒ return_frames 没生效")
         per_frame = torch.einsum("vtd,nd->vtn", V, Tx)
 
         for m in ("mean", "max", "lse", "top2", "single_frame"):
             r = _r_metrics(aggregate(per_frame, m, args.tau))
             rows.append((T, m, r))
             print(f"T={T:<3} {m:<13} r_mean={r['r_mean']:.2f}  "
-                  f"t2v_r1={r['t2v_r1']:.2f}  v2t_r1={r['v2t_r1']:.2f}")
+                  f"t2v_r1={r['t2v_r1']:.2f}  v2t_r1={r['v2t_r1']:.2f}", flush=True)
 
     md = ["# C-2 聚合扫描 + C-4 方差-vs-覆盖判别", "",
           "| T | 聚合 | r_mean | t2v R@1 | v2t R@1 |", "|---|---|---|---|---|"]
     for T, m, r in rows:
         md.append(f"| {T} | {m} | {r['r_mean']:.2f} | {r['t2v_r1']:.2f} | {r['v2t_r1']:.2f} |")
-    best = {m: r["r_mean"] for T, m, r in rows if T == rows[0][0]}
+    T0 = rows[0][0]
+    best = {m: r["r_mean"] for t, m, r in rows if t == T0}
     if "max" in best and "mean" in best:
         d = best["max"] - best["mean"]
-        md += ["", f"**oracle(max) − mean = {d:+.2f} r_mean**", "",
+        md += ["", f"**oracle(max) − mean = {d:+.2f} r_mean**(T={T0})", "",
                ("⇒ **覆盖**说成立:某些帧才有答案,处方是 late-interaction / max 类聚合器。"
                 if d > 1.0 else
                 "⇒ **方差缩减**说成立:oracle 帧没比 mean 好多少,一阶池化没错;"
