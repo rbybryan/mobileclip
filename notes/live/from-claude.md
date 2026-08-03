@@ -23,6 +23,68 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-08-03 (77) — 🏁 1M 全轮收官后的下一步:**停止小改,主时钟转 C1 教师蒸馏**;顺带补齐唯一存活结论(P1trained)的第二 seed
+
+**Diagnosis(结论先行):1M 验证层这一整轮结束了,且结论是干净的「否」。**
+- 8 条臂全跑完 + 补跑离线 re-eval + 配对 bootstrap(§10)。**5 个精度改进全否,唯一非劣通过的是「减法」**:
+  `r1a`(sigmoid)显著负 · `r1b`(attn 池化)**不复现**(seed42 那个 +2.8 = §10.2 刚实测出的种子地板)·
+  `nA1`(surprise)干净零 · `nR1`(文本负例库)**塌 40 分**(实现坏了:陈旧特征 + 同语料假负例,不是想法被证伪)·
+  `P9`(stats 池化)对 r0 **和** r1b 都显著负。**只有 `P1trained`(删时序分支)非劣通过。**
+- **种子地板 δ 实测 = 2.5 R_sum(点)/ 5.5(CI 上界)**;旧的 0.3 小了 8 倍,已作废。此后非劣判定一律用这个。
+  副产:同臂比较里单指标 `img_r1` 被判「显著」⇒ **单指标显著性在 n=1000 下是假阳性,终点只认 R_sum/r_mean。**
+- **V100 侧同向**(`experiments/v100_sweep_results.md`,07-31):P5(删 `temporal_embedding`)显著 **+0.67**、
+  P1 检索测不出差且吃 **46% CPU** 墙钟、P7 的「2× 免费」被否(224² 近免费 / 181² 付 2–5 点)、AC9 关闭。
+  ⇒ **两台机器信号一致:能量在「减法 / 效率」,不在「加结构」。**
+- ⇒ §10.4 的战略判断成立:**已经没有精度改进可拿去 10M 验证了。** 继续在架构/损失上小改期望收益很低。
+  **唯一既未检验、又有明确上行的方向是 C1 教师蒸馏** —— 主时钟从这一轮起转过去。
+
+**Do this next(H100,按顺序):**
+
+**0) 排队前先查现状**(#420,只读 ~30s,训练在跑也能跑):
+```bash
+cd ~/mobileclip && git pull
+python experiments/status_1m.py
+```
+只有打印 `⚪ 没检测到在跑的训练进程` **且**没有 🔴/⚠️ 行,才往下走(串行 runner,盲排会抢卡)。
+
+**1) 主时钟 → C1:先拿干净吞吐,再定语料范围(U7-1)。** §10.5 的 1.8 clip/s 是和 `sub1m_P9_s42`
+**共卡**量的(污染);P9 已 06:12 结束 ⇒ 现在**独占卡**重测:
+```bash
+CUDA_VISIBLE_DEVICES=0 python experiments/extract_teacher.py run \
+  --anno data/anno_pretrain/internvid_v1.jsonl \
+  --out  experiments/teacher/iv2s2_100k \
+  --teacher-ckpt checkpoints/InternVideo2-stage2_1b-224p-f4.pt \
+  --limit 100000 --batch-size 8 --num-workers 8 --amp bf16
+```
+读稳定后的 `clip/s`(独占卡)× 语料规模 → 定 **curated 2–3M vs 全量 10M**,更新 §10.5 / U7-1。
+**这是整个下一阶段的定速决策**,定完再按 `COMMANDS.md` §3.10 的 shard 命令铺开全语料。
+
+**2) 补齐唯一存活结论:P1trained 第二 seed**(config 已随本次提交建好 = `sub1m_P1trained_s43`)。
+非劣结论现在只有 1 个 seed,而它是**真要出货的模型**,house rule 要两 seed 同向。~15h,一条臂,
+用**另一组卡**和步骤 1 并行(**务必分卡**,别重演 §10.5 的共卡污染):
+```bash
+bash experiments/run_verify_1m.sh 4,5,6,7 sub1m_P1trained_s43
+```
+判据:两 seed 同向、Δ 在 δ=2.5 内 ⇒ 非劣坐实,可放心把「训练时删时序分支」带上 10M 做效率叙事。
+
+**3) 免费收尾:取 P9 的 W₂ 范数**(§10.6,定 P9 失败该归因给「想法」还是「`different_lr` 扰动」;
+一条命令,注意 ckpt 是 DeepSpeed **目录**):
+```bash
+python -c "import torch;sd=torch.load('experiments/runs/sub1m_P9_s42/ckpt_02.pth/mp_rank_00_model_states.pt',map_location='cpu');sd=sd.get('module',sd.get('model',sd));[print(k,float(v.float().norm())) for k,v in sd.items() if 'temporal_pool' in k]"
+```
+
+**不要做的:**
+- ❌ 不要再排任何 1M **小改臂**(§10.4:5 连败已是最强信号)。
+- ❌ 10M 现在唯一正当用途是把 **P1trained 的效率结论**在大数据上坐实(部署叙事:同精度、模型显著更省),
+  **不是**验证某个精度增益 —— 已经没有了。
+
+**Then report back(写进 `from-server.md`):**
+1. `status_1m.py` 顶部那行(idle / running)+ 有没有 🔴/⚠️;
+2. `extract_teacher` **独占卡**稳定后的 `clip/s`(用来定语料范围);
+3. `sub1m_P1trained_s43` 起没起(确认和步骤 1 **分卡**)。
+
+---
+
 ## 2026-07-31 (76) — ✅ **10k 门全过 ⇒ H100 两条臂现在就能排**;阶段 10 挂在数据根冲突(已修)
 
 **结论先行**:阶段 0/1/6 全 PASS。两条强制检查都过了 ——
