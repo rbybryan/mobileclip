@@ -23,6 +23,76 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-07-31 (76) — ✅ **10k 门全过 ⇒ H100 两条臂现在就能排**;阶段 10 挂在数据根冲突(已修)
+
+**结论先行**:阶段 0/1/6 全 PASS。两条强制检查都过了 ——
+**P1**:`flag 生效,40 个 layer_scale_1d 已冻结`;
+**P9**:`‖W2‖ = 0.092874`,比阈值 `1e-4` 大近 1000 倍 ⇒ 二阶统计**确实学动了**,
+不是 nA1 那种「alpha ≲0.01 ⇒ 结果不可判读」的空跑。
+**链路 go/no-go 通过,H100 那两条 15 小时的臂可以上。**
+
+### 1. 现在就排 H100(这是本轮唯一的阻塞项,先做)
+
+```bash
+cd ~/mobileclip && git pull
+bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_P1trained_s42 sub1m_P9_s42
+```
+
+排队理由见 [`verification-tier-1m-zh.md`](../verification-tier-1m-zh.md) §9。
+提醒:1M 档**只有否决权,不能排名**(§2)—— 它能判 P9/P1 是不是白给,
+判不了「P9 比 P1 好多少」。
+
+### 2. V100:阶段 10 重跑(先 pull,数据根冲突已在 stage 0 自动修)
+
+```bash
+cd ~/mobileclip && git pull
+unset MVC_DATA_DIR            # ← 关键:别再 export 它,理由见下
+bash experiments/run_v100_all.sh 0 10
+```
+
+### 🔴 数据根冲突:`export MVC_DATA_DIR` 是个**换边**,不是修复
+
+上一轮我让你 `export MVC_DATA_DIR=/home/vca1/datasets`。它修好了 10k 训练,
+**同时打掉了所有 MSR-VTT 评测**:
+
+```
+RuntimeError: Error reading /home/vca1/datasets/MSRVTT_Videos/video7020.mp4...
+```
+
+因为 `configs/data.py` 把**所有**数据集拼在**同一个**根下(`__data()`, :20/:29):
+
+| 数据集 | 配置里的路径 | 101vector 上的真实位置 |
+|---|---|---|
+| 10k pilot | `$ROOT/internvid_zh_10k/videos` (:107/:114) | `/home/vca1/datasets/internvid_zh_10k/videos` |
+| MSR-VTT 1K-A | `$ROOT/MSRVTT_Videos` (:50) | 仓库本地 `data/MSRVTT_Videos` |
+
+两份东西**不在同一个父目录下**,所以 `MVC_DATA_DIR` 取任何值都会顶掉另一个 ——
+一个变量,两个根,无解。**正解是补一条软链,让两者落进同一个 `data/`**:
+
+```bash
+ln -sfn /home/vca1/datasets/internvid_zh_10k data/internvid_zh_10k
+unset MVC_DATA_DIR
+```
+
+`data/` 是 gitignore 的,软链幂等,`rm data/internvid_zh_10k` 即可撤销。
+`run_v100_all.sh` 阶段 0 现在**自动做这件事**:缺软链就建、`MVC_DATA_DIR` 里没有
+`MSRVTT_Videos` 就本次 unset、并对**本轮真正会用到的每一个**视频根分别判 PASS/FAIL。
+完整记录见 `TROUBLESHOOTING.md` 的
+「`MVC_DATA_DIR` root collision」一节。
+
+**顺带**:阶段 10 这次崩在 dataloader,说明 #416 的文本路径修复**已经生效**
+(文本编码跑在取视频之前,先过了才轮到解码器报错)——
+`'Tensor' object has no attribute 'attention_mask'` 那条已经不会再出现。
+
+### 这两轮的两条教训(已写进阶段 0)
+
+1. **能自动判定的事,不许只打印。** 第一版阶段 0 把 `MVC_DATA_DIR=<未设→data>`
+   打在屏幕上还记 PASS,两次冒烟就死在它上面。
+2. **预检要验完这一轮会用到的全部数据根,不能只验刚出过事的那一个。** 第二版只验了
+   10k,于是把 MSR-VTT 换到了坏的一边。
+
+---
+
 ## 2026-07-31 (75) — V100 两小时执行单(逐条命令)+ H100「新想法」排队;顺带:**gate3/gate4 早就跑完了,没人写下来**
 
 **背景**:P11 全 40 块测完、判据②触发、该线已关(#400),P14 随之关闭
