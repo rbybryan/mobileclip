@@ -759,16 +759,60 @@ CUDA_VISIBLE_DEVICES=0 python experiments/extract_teacher.py run \
 ```
 日志每块打 `clip/s`;拿它乘语料规模就是两档的 GPU 时数,决策留到数据出来那天。
 
-**全语料按 shard 并行**(每卡一个 shard,彼此不通信,挂了各自续跑;块已存在即跳过):
+**上全量之前:flash-attn 吞吐 A/B**(`verification-tier-1m-zh.md` §11.5-1;~1 小时,一张闲卡)——
+100k 切片用的是**朴素注意力**;`--use-flash-attn` 缺 fused ops 时自动降级(#415),sm90 上
+大概率显著更快。同参数各跑 2 块(`--limit 4096`),谁快用谁;**全语料只用一种设置**
+(manifest 记协议,别混):
+
+```bash
+export CUDA_VISIBLE_DEVICES=0        # 换成 nvidia-smi 里空闲的那张
+nohup bash -c '
+  for v in naive flash; do
+    extra=""; [ $v = flash ] && extra="--use-flash-attn"
+    python experiments/extract_teacher.py run \
+      --anno data/anno_pretrain/internvid_v1.jsonl \
+      --out  experiments/teacher/_ab_$v \
+      --teacher-ckpt checkpoints/InternVideo2-stage2_1b-224p-f4.pt \
+      --limit 4096 --batch-size 8 --num-workers 8 --amp bf16 \
+      --per-frame --subset-ts 2,4,8 $extra
+  done' > experiments/teacher/ab_flash.log 2>&1 &
+echo "A/B PID = $!"
+# 跑完读数(前 2 块 = naive,后 2 块 = flash;各取第 2 块的 clip/s):
+grep "clip/s" experiments/teacher/ab_flash.log
+```
+
+**数值等价自检**(cos ≈ 1.000 才放行 flash;抽帧是确定性 middle,两臂行对齐):
+```bash
+python - <<'PY'
+import glob, numpy as np
+pa = sorted(glob.glob('experiments/teacher/_ab_naive/**/block_000000.npz', recursive=True))[0]
+pb = sorted(glob.glob('experiments/teacher/_ab_flash/**/block_000000.npz', recursive=True))[0]
+a, b = np.load(pa), np.load(pb)
+va, vb = a['video_emb'].astype('f4'), b['video_emb'].astype('f4')
+ok = a['ok'] & b['ok']
+cos = (va[ok]*vb[ok]).sum(1)/(np.linalg.norm(va[ok],axis=1)*np.linalg.norm(vb[ok],axis=1)+1e-8)
+print('n =', int(ok.sum()), ' cos min/mean =', float(cos.min()), float(cos.mean()))
+PY
+# 胜者定了再启动下面的 shard 命令(flash 胜 ⇒ 每个 shard 加 --use-flash-attn);
+# 之后 rm -rf experiments/teacher/_ab_naive experiments/teacher/_ab_flash
+```
+
+**1M 分片(`internvid_v1` = sub1m 训练语料)按 shard 并行**(每卡一个 shard,彼此不通信,
+挂了各自续跑;块已存在即跳过。`--per-frame` 存储 ≈24 KB/片 ⇒ 1M 片 ~25 GB,先 `df -h .`):
 ```bash
 for k in 0 1 2 3; do
   CUDA_VISIBLE_DEVICES=$k nohup python experiments/extract_teacher.py run \
     --anno data/anno_pretrain/internvid_v1.jsonl \
-    --out  experiments/teacher/iv2s2_full \
+    --out  experiments/teacher/iv2s2_1m \
     --teacher-ckpt checkpoints/InternVideo2-stage2_1b-224p-f4.pt \
-    --shard-id $k --num-shards 4 --batch-size 8 --num-workers 8 \
-    > experiments/teacher/extract_$k.log 2>&1 &
+    --shard-id $k --num-shards 4 --batch-size 8 --num-workers 8 --amp bf16 \
+    --per-frame --subset-ts 2,4,8 \
+    > experiments/teacher/extract_1m_$k.log 2>&1 &
+  echo "shard $k PID = $!"
 done
+# A/B 若 flash 胜:上面每个 shard 追加 --use-flash-attn
+# 悲观 ETA(1.8 clip/s):4 卡 ~39 h;按 A/B 实测缩放
+# 跑完必须 merge + verify(见下),verify 不干净别接训练
 ```
 
 **逐帧 + 低 T 子集嵌入(U7-2 的「保险」)** —— 加 `--per-frame`。只多几次极廉价的池化,
@@ -780,8 +824,8 @@ python experiments/extract_teacher.py run ... --per-frame --subset-ts 2,4,8
 
 **合并 + 体检**(体检不过就别往下接):
 ```bash
-python experiments/extract_teacher.py merge  --out experiments/teacher/iv2s2_full
-python experiments/extract_teacher.py verify --out experiments/teacher/iv2s2_full
+python experiments/extract_teacher.py merge  --out experiments/teacher/iv2s2_1m
+python experiments/extract_teacher.py verify --out experiments/teacher/iv2s2_1m
 ```
 `verify` 关注三格:`rows_unique`(行号唯一)、`fail_rate`(解码失败率)、
 **`zero_emb_but_ok`**(标了成功却是零向量 ⇒ **教师前向出问题**,不是解码问题,必须查)。
