@@ -107,11 +107,13 @@ def a7_macs_vs_resolution():
     sys.path.insert(0, ".")
     from experiments.export_smoke import build_vision_tower
 
+    from models.mobileviclip_small import set_num_frames
     tower = build_vision_tower(False, False).eval()
+    set_num_frames(1)                       # 逐帧成本 ⇒ T=1
     base = None
     print("    边长   GMACs/帧   相对 256²")
     for r in (128, 160, 181, 224, 256):
-        x = torch.randn(1, 3, r, r)
+        x = torch.randn(1, 3, 1, r, r)      # [B,C,T,H,W] —— 5 维,见 FastViT.forward
         with torch.no_grad(), FlopCounterMode(display=False) as f:
             tower(x)
         g = f.get_total_flops() / 2 / 1e9          # FLOPs → MACs
@@ -137,7 +139,7 @@ def b1_vocab_coverage(anno):
     if not anno or not os.path.exists(anno):
         return _ok("B1 词表覆盖", False, f"找不到 anno:{anno}(用 --anno 指定)")
     sys.path.insert(0, ".")
-    from models.backbones.internvideo2.mobileclip.clip_tokenizer import ClipTokenizer  # noqa
+    from models.backbones.internvideo2 import ClipTokenizer   # 顶层导出,见 mobileviclip_small.py:13
 
     recs = json.load(open(anno))
     caps = [r.get("caption") for r in recs if isinstance(r, dict) and r.get("caption")]
@@ -147,7 +149,8 @@ def b1_vocab_coverage(anno):
         "./models/backbones/internvideo2/mobileclip/configs/mobileclip_s2.json")))
     cnt = collections.Counter()
     for c in caps:
-        cnt.update(tok.encode(c)[:32] if hasattr(tok, "encode") else [])
+        ids = tok(c)                       # ClipTokenizer 是 nn.Module ⇒ 用 __call__
+        cnt.update([int(v) for v in ids.flatten()[:32]])
     tot = sum(cnt.values())
     if not tot:
         return _ok("B1 词表覆盖", False, "tokenizer 接口对不上,需按仓库实际 API 调整")
