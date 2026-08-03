@@ -31,12 +31,30 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 不是 nA1 那种「alpha ≲0.01 ⇒ 结果不可判读」的空跑。
 **链路 go/no-go 通过,H100 那两条 15 小时的臂可以上。**
 
-### 1. 现在就排 H100(这是本轮唯一的阻塞项,先做)
+### 1. H100:**先查现状,再排队**(顺序不能反)
 
 ```bash
 cd ~/mobileclip && git pull
+python experiments/status_1m.py          # ← 30 秒,只读,训练在跑时也能跑
+```
+
+只有当它打印 **`⚪ 没检测到在跑的训练进程 ⇒ 可以排新任务`** 且**没有 🔴/⚠️ 行**时,才执行:
+
+```bash
 bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_P1trained_s42 sub1m_P9_s42
 ```
+
+**为什么加这一步**:`run_verify_1m.sh` 是**串行**的,盲排会和在跑的臂抢同一组卡;
+而且「跑完」不等于「跑满」—— `sub1m_r1b_s42` 曾**只跑 2:12:39**(参考 15:11:58)
+就出现在完成清单里,那种臂的结论是**无效**,不是「结果为负」。
+把这两件事交给 `status_1m.py` 自动判,不靠人扫日志(用法见 `COMMANDS.md` §3.7b)。
+
+它输出五种状态:`未排队` / `🟢 运行中` / `✅ 已完成` / `🔴 可疑`(有结果但墙钟过短)/
+`⚠️ 中断`(有 ckpt 无 eval,`auto_resume` 可续),后两种会直接附上续跑命令。
+
+**如果 🔴/⚠️ 里出现 `sub1m_r1b_s42` 或 `sub1m_nA1_s42`**:先把它们续完再排新臂 ——
+§8 把这两条列为「仅剩的两条方向未知臂」,它们的结论是整个 C3 配方判断的支点,
+用一条只跑了 2 小时的臂去下结论,比没有结论更糟。
 
 排队理由见 [`verification-tier-1m-zh.md`](../verification-tier-1m-zh.md) §9。
 提醒:1M 档**只有否决权,不能排名**(§2)—— 它能判 P9/P1 是不是白给,
