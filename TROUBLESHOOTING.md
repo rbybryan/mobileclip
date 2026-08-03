@@ -1061,6 +1061,10 @@ Read the two lines it prints before moving on:
 Then continue with §2b steps 2–4 (`export MVC_DATA_DIR`, the sm_70 pre-flight,
 smoke, and the equal-step r0/r1 A/B pair).
 
+> ⚠️ **Do not `export MVC_DATA_DIR=/home/vca1/datasets` on 101vector.** It fixes the
+> 10k pilot and simultaneously breaks every MSR-VTT eval — see the next section.
+> Symlink instead.
+
 ### Variant: `make_pilot_anno.py` exits with `没有可用记录`
 
 If step 1 above prints only
@@ -1106,6 +1110,72 @@ Re-run step 1 after pulling. Read the breakdown it prints:
 > Chinese caption through an English BPE tokenizer is a different experiment,
 > not a drop-in substitute, and would invalidate comparison with the baseline.
 > Report it instead.
+
+---
+
+## `MVC_DATA_DIR` root collision: fixing the 10k pilot breaks every MSR-VTT eval
+
+### Symptom
+
+Two failures that look unrelated but are the same bug, one on each side of a
+single `export`:
+
+```
+# MVC_DATA_DIR unset — training dies, eval fine
+Caught exception Error reading data/internvid_zh_10k/videos/InternVId-FLT_9/shard_00063/...
+
+# MVC_DATA_DIR=/home/vca1/datasets — training fine, eval dies
+RuntimeError: Error reading /home/vca1/datasets/MSRVTT_Videos/video7020.mp4...
+ERROR opening: /home/vca1/datasets/MSRVTT_Videos/video9021.mp4, No such file or directory
+```
+
+In `run_v100_all.sh` terms: stages 1/6 (10k training) and stages 2/3/4/5/10
+(MSR-VTT eval) can never both pass by choosing a value for `MVC_DATA_DIR`.
+
+### Cause
+
+`configs/data.py` resolves **every** dataset against **one** root (`__data()`,
+`configs/data.py:20,29`):
+
+| Dataset | Config path | Real location on 101vector |
+|---|---|---|
+| 10k pilot | `$ROOT/internvid_zh_10k/videos` (`:107`, `:114`) | `/home/vca1/datasets/internvid_zh_10k/videos` |
+| MSR-VTT 1K-A | `$ROOT/MSRVTT_Videos` (`:50`) | repo-local `data/MSRVTT_Videos` |
+
+The two corpora live under **different parents**, so no single `$ROOT` covers
+both. `MVC_DATA_DIR` is one variable; the datasets need two roots. Setting it
+does not "fix paths" — it moves the breakage from training to eval.
+
+### Fix
+
+Give the repo-local `data/` root a symlink to the 10k corpus, then leave
+`MVC_DATA_DIR` **unset** so both resolve under `data/`:
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+ln -sfn /home/vca1/datasets/internvid_zh_10k data/internvid_zh_10k
+unset MVC_DATA_DIR
+
+# verify both roots under the same parent before running anything
+ls data/internvid_zh_10k/videos | head -3
+ls data/MSRVTT_Videos | head -3
+```
+
+`data/` is gitignored, the symlink is idempotent, and `rm data/internvid_zh_10k`
+reverts it. `experiments/run_v100_all.sh` stage 0 now does this automatically:
+it creates the symlink when missing, **un-sets** an `MVC_DATA_DIR` that lacks
+`MSRVTT_Videos`, and FAILs separately on each video root that the requested
+stages actually need.
+
+### Why it cost two rounds
+
+The first version of stage 0 only *printed* `MVC_DATA_DIR=<未设→data>` and scored
+it PASS — the answer was on screen while two smoke runs died of it. The fix for
+that (auto-export) then validated only the root that had just failed, and
+knocked out the other one. Two rules came out of it, both now in stage 0:
+
+1. **Anything a script can decide, it must not merely print.**
+2. **Validate every data root the run will touch, not just the one that broke last.**
 
 ---
 
