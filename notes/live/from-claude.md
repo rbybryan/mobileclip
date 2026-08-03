@@ -23,6 +23,59 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-08-03 (77) — 🏁 全轮收官后的下一步:H100 = 一条确认臂 + C1 阶梯;V100 = 阶段 10/7 重跑 + 多基准面
+
+**现状一句话**:1M 层 8 臂全收(§10):5 个精度改进**全否**,唯一通过的是**减法**
+(P1trained 非劣);H100 队列已空。⇒ 配方微调这条线停了,下一轮的完整排队理由见
+[`verification-tier-1m-zh.md`](../verification-tier-1m-zh.md) **§11**(H100)与
+[`v100-10k-advance-tests.md`](../v100-10k-advance-tests.md) **§8**(V100)。
+
+### H100(b100)· 按序
+
+```bash
+cd ~/mobileclip && git pull
+# 1) 零成本收尾(§11.0,全部只读/分钟级):
+python experiments/status_1m.py                     # 应显示 ⚪ 可排新任务
+python -c "import torch;sd=torch.load('experiments/runs/sub1m_P9_s42/ckpt_02.pth/mp_rank_00_model_states.pt',map_location='cpu');sd=sd.get('module',sd.get('model',sd));[print(k,float(v.float().norm())) for k,v in sd.items() if 'temporal_pool' in k]"
+python experiments/collect_results.py --compare experiments/runs/sub1m_r1both_s42 experiments/runs/sub1m_r1a_s42
+python experiments/collect_results.py --compare experiments/runs/sub1m_r1both_s42 experiments/runs/sub1m_r1a_s42 --prefix ret_test/
+grep -A2 "block 1[1-9]/" experiments/runs/extract_teacher*.log | tail -20   # C1 干净吞吐(P9 结束后的 block)
+
+# 2) 确认 ⚪ 后排唯一的确认臂(config 本次已建,15 h):
+nohup bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_P1trained_s43 > experiments/runs/verify_1m_p1s43.log 2>&1 &
+echo "verify-1m PID = $!"
+```
+
+**读法**:P9 的 `W₂` 范数明显长大 ⇒ stats 池化想法本身被否;仍≈0 ⇒ 归因 `different_lr`、
+想法未被检验(§11.0-2)。`r1both−r1a ≈ 0` ⇒ 那 5 分就是 sigmoid@512 的已知代价(§11.0-3)。
+P1trained_s43 跑完按 §11.1 跨 seed 对 `r0_s42` 配对判读(δ=2.5)。
+
+**C1 阶梯(§11.2,§10.4 指定的主方向)**:① 干净吞吐(上面那句 grep)→ 定 U7-1;
+② `internvid_v1` 1M 分片教师嵌入(4 卡 `--num-shards 4 --shard-id 0..3`,悲观 ~1.6 天)
+可在 s43 臂之后排;③ **训练侧接线(Dataset / 投影 / vtc_kd + 先修 `loss_weight` 假开关)
+还没有代码 —— 回「写吧」我就落地**,那是 KD 臂(⑤)的前提。
+
+### V100(101vector)· 按 §8 的序
+
+```bash
+cd ~/mobileclip && git pull
+unset MVC_DATA_DIR
+bash experiments/run_v100_all.sh 0 10      # 阶段 10:C-2/C-4 —— 唯一可能再开一条精度线的实验
+bash experiments/run_v100_all.sh 7         # 阶段 7:A7 成本轴 + B1 词表覆盖率
+# 然后照 §8 第 3 步给 r0_s42 / P1trained_s42 补 k400/ucf101/hmdb51 三个测量面(命令在 §8)
+# 第 4 步:gate3/gate4 的 raw 配对 CI(块 75 开头那四条,若上轮没跑)
+```
+
+**需要我先写代码的两件(§8 第 5 步 / §11.3)**:BN 重校准 CLI、P1 结构性旁路 + 导出 diff;
+另有可选臂 `sub1m_lean`(P1trained + 删 `temporal_embedding`)要一个 ~5 行训练期 flag。
+**回「写吧」并指明哪件。**
+
+**Then report back** in from-server.md:① `status_1m.py` 全文;② P9 的 `temporal_pool.*` 范数;
+③ r1both−r1a 两口径 CI;④ C1 block 11+ 的干净 clip/s;⑤ 阶段 10 的 C-2/C-4 判别结果;
+⑥ P1trained vs r0 的三基准配对 CI;⑦ 要不要写(以及先写哪个):KD 接线 / BN CLI / P1 旁路 / lean flag。
+
+---
+
 ## 2026-07-31 (76) — ✅ **10k 门全过 ⇒ H100 两条臂现在就能排**;阶段 10 挂在数据根冲突(已修)
 
 **结论先行**:阶段 0/1/6 全 PASS。两条强制检查都过了 ——

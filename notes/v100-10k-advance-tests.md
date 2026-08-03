@@ -467,3 +467,89 @@ DiDeMo/ANet 的 anno 拿不到,**但 k400/ucf101/hmdb51 的 anno 一直是齐的
 
 ⚠️ **不要把这条当成拦住 H100 的理由** —— 精度臂本身是独立且有效的,
 只是**报结果时必须把两件事分开写**,别让「精度没掉」被读成「效率已兑现」。
+
+---
+
+## §8. 🔺 2026-08-03 下一窗口执行单 —— 全轮收官后,V100 的四件事
+
+**背景**:1M 层收官(`verification-tier-1m-zh.md` §10):5 个精度改进全否,
+**P1trained 非劣通过成为头条**;AC9 关闭、P7 只剩「224² 近免费」一档。
+本窗口职责不变:给 H100 的下一步(§11 的队列)供判据,并把头条结论的测量面补厚。
+**全部零训练。** H100 侧的排队见 `verification-tier-1m-zh.md` **§11**。
+
+### 第 0 步 · git pull + 阶段 0(数据根冲突已自动修,#418)
+
+```bash
+cd ~/mobileclip && git pull
+unset MVC_DATA_DIR      # 别再 export;阶段 0 会自建软链并逐根 PASS/FAIL
+bash experiments/run_v100_all.sh 0
+```
+
+### 第 1 步 · 阶段 10 重跑(C-2 聚合扫描 + C-4 方差-vs-覆盖判别)—— 上轮挂在数据根,已修
+
+```bash
+bash experiments/run_v100_all.sh 10
+```
+
+**为什么它仍是本机最高优先**:P9 死后,「时序信息怎么用」只剩评测侧一条活路 ——
+C-4 判「T 的价值是**方差缩减**还是**覆盖**」,两个答案给出**相反**的处方
+(方差 ⇒ 均值池化已最优,精度线到此为止;覆盖 ⇒ late-interaction / top-k 聚合
+(P6,零训练)是下一条精度线)。**这是当前唯一可能再开一条精度线的实验,而它不要训练。**
+
+### 第 2 步 · 阶段 7 重跑(A7 成本轴 + B1 词表覆盖率)—— #410 已修
+
+```bash
+bash experiments/run_v100_all.sh 7
+```
+
+A7 把 §5(`v100_sweep_results.md`)的分辨率表从曲线变**前沿**(等像素比较要成本轴);
+B1 决定 P13(b) 裁词表的生死(结论记 **10k-zh 口径**)。
+
+### 第 3 步 · 🔺 给已训 1M ckpt 补多基准面 —— 头条结论(P1trained 非劣)的第二道保险
+
+三个锚点(k400/ucf101/hmdb51,官方权重)已就位(`v100_sweep_results.md` §6);
+现在把**已训臂**也过一遍,非劣判读的测量面 ×4。
+**最少集合**:`sub1m_r0_s42` 与 `sub1m_P1trained_s42`(判非劣);
+`r1b_s42/s43` 有余量再补(= 种子地板的多基准版,免费的方法学数据)。
+
+```bash
+# ① 权重与数据在哪边,就在哪边跑:
+#    先在 b100 上 `python experiments/check_readiness.py` 看 k400/ucf101/hmdb51 是否 [OK ];
+#    是 ⇒ 直接在 b100 跑下面 ②(单卡分钟级,不占训练队列);
+#    否 ⇒ 把 ckpt 拉到本机(单臂只需 ckpt_02.pth 目录里的 mp_rank_00_model_states.pt):
+rsync -av <b100>:~/mobileclip/experiments/runs/sub1m_r0_s42/ckpt_02.pth \
+      experiments/runs/sub1m_r0_s42/
+rsync -av <b100>:~/mobileclip/experiments/runs/sub1m_P1trained_s42/ckpt_02.pth \
+      experiments/runs/sub1m_P1trained_s42/
+
+# ② 每臂 × 每基准一次(~分钟级/次):
+for arm in sub1m_r0_s42 sub1m_P1trained_s42; do
+  for b in k400 ucf101 hmdb51; do
+    bash experiments/run_eval.sh small "$b" \
+         "experiments/runs/$arm/ckpt_02.pth" "experiments/evals/$arm/$b"
+  done
+done
+
+# ③ 配对判读。⚠️ 动作基准的结果键前缀不是 ret_test*(参考:k400 是 act_val/ 一族)——
+#    先看一眼实际键名,再把它传给 --prefix(两口径都比):
+python -c "import json;print(list(json.load(open('experiments/evals/sub1m_r0_s42/k400/eval_res.json'))))"
+python experiments/collect_results.py \
+    --compare experiments/evals/sub1m_P1trained_s42/k400 experiments/evals/sub1m_r0_s42/k400 \
+    --prefix <上面看到的前缀>     # ucf101 / hmdb51 同理
+```
+
+**判读**:P1trained 在三个基准上的配对 CI 若都不显著负(带着 §10.2 的种子地板 δ=2.5 读)
+⇒ 非劣结论多了三个独立测量面;**任何一个基准显著负 ⇒ 保险丝熔断**,上 10M 之前必须先解释。
+
+### 第 4 步 · 两口径补齐(若上轮没跑)—— gate3/gate4 的 raw 配对 CI(4 条命令,~4 分钟)
+
+块 75 开头那四条 `collect_results.py --compare`(gate3/gate4 × 两口径);
+`v100_sweep_results.md` §1/§2 标的「待补」以此销账。
+
+### 第 5 步 · 需要 Claude 先写代码的两件(回「写吧」并指明哪件)
+
+1. **BN 重校准 CLI** —— §5 的正式数、「224² 近免费」的论文主张都卡在它
+   (纪律见 §3;工具底座 `experiments/per_t_bn.py` 已有,缺的是串成一条命令)。
+2. **P1 结构性旁路 + 导出 diff**(§7 的两步)—— P1trained 已是头条,但其效率数
+   (440 节点 / −18% CPU)仍是「声称」:旁路 + `export_smoke` diff
+   (基线 1581 节点 vs 声称 1141)+ A9 复测,把声称变实测。**这是论文效率章的硬前提。**
