@@ -384,6 +384,22 @@ def build_teacher(ckpt: str, num_frames: int, img_size: int, device: str,
     from models.backbones.internvideo2.internvideo2_clip_vision import InternVideo2
     from models.backbones.internvideo2.pos_embed import interpolate_pos_embed
 
+    if use_flash_attn:
+        # 上游断言三开关必须一致(internvideo2_clip_vision.py:379),而
+        # `import flash_attn` 成功 ≠ 融合算子可用:dropout-layer-norm / fused-dense
+        # 是单独编译的扩展,缺了时模块顶层把 DropoutAddRMSNorm/FusedMLP 置 None,
+        # 到 partial(None) 才炸出 "first argument must be callable"(b100 2026-08-02
+        # 实测)。这里先探一遍,缺任何一件就整体降级为朴素注意力。
+        try:
+            from flash_attn.ops.rms_norm import DropoutAddRMSNorm  # noqa: F401
+            from flash_attn.modules.mlp import FusedMLP  # noqa: F401
+        except ImportError as e:
+            logger.warning(
+                "--use-flash-attn 被请求,但融合算子不可用(%s)—— 自动降级为朴素"
+                "注意力。注意:朴素路径会显式物化注意力矩阵,T=16/224p 下 batch 8 "
+                "单次分配约 8GiB,共卡时建议 --batch-size 4 以下。", e)
+            use_flash_attn = False
+
     model = InternVideo2(
         img_size=img_size,
         num_frames=num_frames,
