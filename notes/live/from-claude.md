@@ -23,6 +23,48 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-08-03 (79) — ▶️ 维护者拍板:现在就训改进版模型 —— 一条命令排「P1trained_s43 训练 → 1M 教师抽取」
+
+改进版模型 = **P1trained**(删时序分支,全轮唯一过关的改动)。它的下一步训练就是
+`sub1m_P1trained_s43`(config 已在,#421)—— 这既是「训改进版」也是它上 10M 前的第二个 seed 保险。
+再往上的两档(**lean** = P1trained+删 `temporal_embedding`;**10M 论文数版**)都还缺 config/flag,
+回「写吧」我落地;10M 按 §11.4 仍要等两道保险。
+
+**先跑 flash A/B(块 77 第 2 步,~1 小时)定抽取用不用 `--use-flash-attn`,然后一条命令排完两件事**
+(runner 串行;训练 ~15 h 完了自动接抽取 ~39 h,总 ~55 h 不用管):
+
+```bash
+cd ~/mobileclip && git pull
+python experiments/status_1m.py        # 必须 ⚪ 才排
+nohup bash -c '
+  bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_P1trained_s43
+  for k in 0 1 2 3; do
+    CUDA_VISIBLE_DEVICES=$k python experiments/extract_teacher.py run \
+      --anno data/anno_pretrain/internvid_v1.jsonl \
+      --out  experiments/teacher/iv2s2_1m \
+      --teacher-ckpt checkpoints/InternVideo2-stage2_1b-224p-f4.pt \
+      --shard-id $k --num-shards 4 --batch-size 8 --num-workers 8 --amp bf16 \
+      --per-frame --subset-ts 2,4,8 > experiments/teacher/extract_1m_$k.log 2>&1 &
+  done
+  wait
+' > experiments/runs/queue_0803.log 2>&1 &
+echo "queue PID = $!"
+```
+
+(flash A/B 若胜,给上面 extract 那条加 `--use-flash-attn` 再启动;全语料只用一种设置。)
+
+**训练跑完的判读(15 h 后,CPU 即可)** —— 跨 seed 对 `r0_s42`,§10.3(b) 惯例,δ=2.5:
+
+```bash
+python experiments/collect_results.py --compare experiments/runs/sub1m_P1trained_s43 experiments/runs/sub1m_r0_s42
+python experiments/collect_results.py --compare experiments/runs/sub1m_P1trained_s43 experiments/runs/sub1m_r0_s42 --prefix ret_test/
+```
+
+两口径点估计为正或 CI 下界 > −2.5 ⇒ 非劣在第二个 seed 复现,10M 的第一道保险到手;
+显著负过 δ ⇒ 保险丝熔断,10M 停,先归因。
+
+---
+
 ## 2026-08-03 (78) — 🔍 「两台都没有 k400/ucf101/hmdb51」先别下结论 —— §5/§6 的数字就是在它们上测的
 
 **矛盾**:`v100_sweep_results.md` §5/§6(P7 分辨率否决、多基准锚点)是这三个基准的**实测数**
