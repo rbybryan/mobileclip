@@ -782,6 +782,23 @@ the same lesson as §1's "count transposes, not FLOPs", now quantified for the d
 Numbering continues §2's P-series (P1–P9 are taken). **All costs assume the standing
 4×H100 / 6.6-day-per-run budget.**
 
+> ## 🔴 2026-07-31 V100 首轮全量扫描 —— 5 项判据落地
+> 完整结果:[`experiments/v100_sweep_results.md`](../experiments/v100_sweep_results.md)
+>
+> | 提案 | 实测 | 判定 |
+> |---|---|---|
+> | **P5** 删 `temporal_embedding` | Δ **+0.67** DSL,CI [+0.17,+1.15] | 🟢 **显著为正**,且让 C2 的未见 T 变成结构性 |
+> | **P1** 删时序分支 | Δ −0.33,**CI 含 0**;A9 实测该分支吃 **46.1%** CPU 墙钟 / 0.20% MACs | 🟢 检索上**测不出差别**;§1 的 ~18% 是低估 |
+> | **AC9** | ρ 中位 **0.0207** < 0.10 | 🔴 **按预登记判据关闭**(见 §10.4 决策表) |
+> | **量化杠杆** | 延迟-vs-T 截距 ≈ 0 ⇒ 权重未摊销 | INT8 是**速度**杠杆(~23%),不是尺寸杠杆 |
+> | **round4-P7** | 224² −0.72(≈23% MACs);181² −2~−5 | 🟡 **「2× 免费」被否**;能拿的是 1.3× 近免费 |
+>
+> ⚠️ **A13 实测 0 个整张量 `clone`,面板说 2 个** ⇒ §11.1 的「warp 读 32 个相隔 41.9MB
+> 的地址」**目前没有实证基础**,查清前别引用。
+>
+> ⚠️ P1 的**效率**数仍未测:置零门是**数学恒等**,删不掉图里的算子(见
+> [`v100-10k-advance-tests.md`](v100-10k-advance-tests.md) §7)。
+
 #### P11 · Latency-weighted structured **depth** pruning — 🔴 **RUN, AND CLOSED (2026-07-31)**
 *NetAdapt (ECCV'18, arXiv:1804.03230) for latency-table-driven pruning; Gromov et al.
 arXiv:2403.17887 and ShortGPT arXiv:2403.03853 for layer-drop sensitivity probes.*
