@@ -489,3 +489,75 @@ bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_P1trained_s42 sub1m_P9_s42
 
 ⚠️ 40 这个数字是**断言**而不是打印:`layer_scale` 一共有 80 个(40 个空间 + 40 个 block 级),
 只有 `layer_scale_1d` 才是时序门。`gate5` 当初就是把 80 个一起动了才报出一个虚假的 2.42%。
+
+---
+
+## 11. 🔺 2026-08-03 下一轮排队 —— 先零成本收尾,再一条确认臂,然后把时钟交给 C1
+
+§10 收官后 H100 队列已空(`status_1m.py` 应显示 ⚪)。按 §10.4 的判断,「小改配方」这条线
+已连续 5 负,**不再往里排新的配方微调臂**;下一轮只有下面三类东西值得占卡。
+V100 侧的配套执行单见 [`v100-10k-advance-tests.md`](v100-10k-advance-tests.md) **§8**。
+
+### 11.0 先做零成本收尾(全部只读 / 分钟级,不占训练队列)
+
+1. **队列现状**:`python experiments/status_1m.py` —— 确认真空、没有 🔴/⚠️ 臂(`COMMANDS.md` §3.7b)。
+2. **P9 归因:读 `W₂` 范数**(§10.6 的现成命令)。读法:
+   `‖W₂‖` 明显长大(对照 10k 门的 0.0929 量级)⇒ stats 池化**想法本身被否**,P9 线彻底关;
+   仍在零初始化附近 ⇒ 那 −4.3 归因给 `different_lr` 的参数组扰动,**想法未被检验** ——
+   如要复检,唯一合法形态是「去掉 `different_lr` 的 P9′」,但按 §10.4 它排在 C1 之后,默认不排。
+3. **`r1both` 低 5 分之谜(§10.3(a) 尾注)的免费归因**(ranks npz 都在,两条命令):
+   ```bash
+   python experiments/collect_results.py --compare experiments/runs/sub1m_r1both_s42 experiments/runs/sub1m_r1a_s42
+   python experiments/collect_results.py --compare experiments/runs/sub1m_r1both_s42 experiments/runs/sub1m_r1a_s42 --prefix ret_test/
+   ```
+   读法:`r1both − r1a ≈ 0` ⇒ 那 5 分基本就是 sigmoid 在 batch 512 的已知代价
+   (r1a−r0 = −3.8 raw / −5.7 DSL),R1 接线本身无额外成本;显著负 ⇒ attn/caption_idx
+   接线另有成本,追加进 §10.3(a) 的复活条件。
+
+### 11.1 队列位 1 · `sub1m_P1trained_s43`(15 h)—— 给全轮唯一的正面结论补第二个 seed
+
+- **为什么**:§10.6 欠账。P1trained 现在是整轮头条(也是 10M 剩下的唯一用途,§10.4),
+  而它的非劣结论只有单 seed;r1b 的教训(§10.3(b))就是单 seed 的 +2.8 整个是种子地板。
+- **config 已建**:`experiments/configs/sub1m_P1trained_s43.py`(s42 孪生,唯一差异 seed / output_dir)。
+- **读法沿用 §10.3(b) 的跨 seed 惯例**:`P1trained_s43 − r0_s42`,配对 bootstrap,两口径;
+  判据 = CI 下界仍在实测 δ=2.5(保守 5.5)之内。`r0_s43`(config 已在)**只在结果落在
+  模糊带时才补**,不预排 —— 别为一个可能用不上的对照先烧 15 h。
+- **排队**(11.0 第 1 条确认空闲后):
+  ```bash
+  nohup bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_P1trained_s43 > experiments/runs/verify_1m_p1s43.log 2>&1 &
+  echo "verify-1m PID = $!"
+  ```
+- 它与 **多基准面**(v100 §8 第 3 步)一起构成上 10M 前的**两道保险**。
+
+### 11.2 队列位 2 · C1 阶梯 —— §10.4 指定的主方向,按最小可否决单元推进
+
+C1 不是一条 15 h 的臂,是一串有依赖的台阶;1M 层在其中仍只当**否决器**(§2)。
+
+| 台阶 | 内容 | 成本 | 状态 |
+|---|---|---|---|
+| ① 干净吞吐 | 用 `extract_teacher` 日志 **block 11 起**(P9 已于 06:12 结束)的独占数字更新 §10.5 表与 U7-1 | 零(读日志) | 服务器一句 grep |
+| ② 1M 分片教师嵌入 | 对 `internvid_v1`(sub1m 训练用的那 1M)全量抽取 —— **任何 KD 臂的硬前提**。4 卡分片:同一命令跑 4 份,`--num-shards 4 --shard-id 0..3` | 悲观口径(1.8 clip/s)~154 GPU-h ⇒ 4 卡 ~1.6 天;①若更快按新数缩 | 脚本就位(`extract_teacher.py`) |
+| ③ 训练侧接线 | 教师嵌入 Dataset、D→512 投影、`vtc_kd`(~30 行)。⚠️ **先修 `loss_weight` 只是日志开关那个坑**(round2 §5 P2 / U9),否则 KD 以隐式 1.0 入损失,以后消融全假 | Claude 写(回「写吧」) | ⬜ 整段未动(ROADMAP 2.2c) |
+| ④ 10k 门 | B2 三条 + 强制检查(KD loss 有限且下降、教师嵌入命中率 100%、**关 KD 时 bitwise 等于 r0**) | V100 半天 | 依赖 ③ |
+| ⑤ `sub1m_C1kd_s42` | 唯一变化 = 加 `vtc_kd`;对 `r0_s42` 配对判读 + 多基准面。负 ≠ 方向死(KD 权重/温度是超参),但 1M 层不给刷超参的面 —— 最多一次重试且参数预登记 | 15 h | 依赖 ②③④ |
+
+**排序理由**:② 占卡、③ 是代码,可并行;① 决定 ② 的规模数字。整梯队从今天算 ~4–5 天
+到第一份 KD 判读 —— 与其把这 4 天再花在一条配方微调上(先验:0/5),不如花在唯一
+未检验、且有明确上行空间的方向上(教师 IV2-stage2 与学生差着一个代际)。
+
+### 11.3 可选队列位 3 · `sub1m_lean_s42`(P1trained + 删 `temporal_embedding`)—— 出货配置的保险丝
+
+- **动机**:P5 的评测版已显著为正(+0.67 DSL,`v100_sweep_results.md` §1),P1trained 非劣
+  ⇒ 出货配置自然是**两个减法一起**。但「从头就没有 `temporal_embedding`」和「训完再删」
+  是两个问题(与 P1 / P1-trained 同构)。
+- ⚠️ **代码缺口**:`temporal_embedding` 目前是无条件相加(`models/mobileviclip_small.py:1197`),
+  没有训练期开关;需要一个 ~5 行 flag + 10k 门(off-path 必须 bitwise 等于 P1trained)。回「写吧」即落地。
+- **优先级**:排在 11.1 / 11.2 之后。它的收益上限已知(≈+0.7),不抢 C1 的时钟。
+
+### 11.4 明确不排的
+
+- **P8(T=1 图文回放)**:nR1 已死、`r1both` 自身低 5 分未明,「回放 vs bank」的机制对照
+  已无对象;且 §10.4 的信号就是停掉配方微调。设计保留(`architecture-round4.md` §P8),
+  本轮不写代码、不排臂。
+- **被否臂的 seed-43 补种**:1M 层否决单 seed 即足(§10.6),不烧确认性的 15 h。
+- **10M**:在 11.1 的 s43 + 多基准面两道保险到手之前**不开**。
