@@ -1,5 +1,6 @@
 import datetime
 import logging
+import os
 import time
 
 import numpy as np
@@ -146,8 +147,35 @@ def evaluation_video_clip(model, data_loader, tokenizer, device, config):
         image_feats.append(image_feat.cpu())
     image_feats = torch.cat(image_feats, dim=0)
     logger.info("Finished feature extraction")
+
+    # §11.8-N1 混合预算评测的原料落盘:设了 MVC_DUMP_EMB_DIR 就把**未归一化**的
+    # 池化嵌入存下来(归一化在 get_sim 里做 ⇒ 离线线性组合与在线计算严格一致)。
+    # 与 rank 落盘同款纪律:失败绝不能弄崩评测。
+    _dump_dir = os.environ.get("MVC_DUMP_EMB_DIR", "")
+    if _dump_dir:
+        try:
+            import json as _json
+            import numpy as _np
+            os.makedirs(_dump_dir, exist_ok=True)
+            _np.savez_compressed(
+                os.path.join(_dump_dir, "emb_dump.npz"),
+                video_emb=image_feats.float().numpy().astype(_np.float16),
+                text_emb=text_feats.float().numpy().astype(_np.float16),
+            )
+            _maps = {}
+            for _k in ("txt2img", "img2txt"):
+                _v = getattr(data_loader.dataset, _k, None)
+                if _v is not None:
+                    _maps[_k] = _v
+            if _maps:
+                with open(os.path.join(_dump_dir, "id_maps.json"), "w") as _f:
+                    _json.dump(_maps, _f)
+            logger.info(f"嵌入已落盘(混合预算评测用):{_dump_dir}/emb_dump.npz")
+        except Exception as e:
+            logger.warning(f"嵌入落盘失败(不影响本次评测结果):{e}")
+
     logger.info("Computing ITC scores [dot-product]")
-    i2t_scores, t2i_scores = get_sim(image_feats.to('cuda'), text_feats.to('cuda')) 
+    i2t_scores, t2i_scores = get_sim(image_feats.to('cuda'), text_feats.to('cuda'))
     del image_feats, text_feats
     logger.info("Computing ITC scores [dot-product], done!")
 

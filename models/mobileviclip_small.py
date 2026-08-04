@@ -55,6 +55,21 @@ def get_num_frames() -> int:
     return _NUM_FRAMES
 
 
+# round-5 全减法闸门(§11.7-2)/ 混合预算评测(§11.8-N1)的「逐帧独立域」开关。
+# True ⇒ stage-4 MHSA 只在帧内注意(等价于对联合注意力矩阵取帧内块对角),
+# 跨帧耦合精确为零。与 _NUM_FRAMES 同款的模块级单值约束。
+_PER_FRAME_ATTENTION = False
+
+
+def set_per_frame_attention(enabled: bool) -> None:
+    global _PER_FRAME_ATTENTION
+    _PER_FRAME_ATTENTION = bool(enabled)
+
+
+def get_per_frame_attention() -> bool:
+    return _PER_FRAME_ATTENTION
+
+
 def resize_temporal_embedding(emb: torch.Tensor, t: int) -> torch.Tensor:
     """把 (1, C, T0) 的 temporal_embedding 沿时间轴线性插值到 (1, C, t)。
 
@@ -135,7 +150,7 @@ class MobileViCLIP_Small(nn.Module):
             config.model.get("extra_ckpt_path", None)
         )
 
-        # round-5 的三个结构 flag(P1 / P5 / P1-旁路)。
+        # round-5 的结构 flag(P1 / P5 / P1-旁路 / 帧内注意力)。
         # 🔴 **必须放在 load_checkpoint 之后** —— 放前面会被随后的权重加载覆盖,
         #    那是一个静默失效(臂看起来跑了,其实时序分支还活着)。同理:任何**外部**
         #    再次 load_state_dict(评测的 pretrained_path、probe/bn_recalibrate 的
@@ -156,7 +171,7 @@ class MobileViCLIP_Small(nn.Module):
         self._init_text_bank()
 
     def apply_arch_flags(self):
-        """round-5 的三个结构 flag(幂等,可重复调用)。
+        """round-5 的四个结构 flag(幂等,可重复调用)。
 
         🔴 调用时机是这组 flag 的全部难点:置零是**对参数值**的操作,任何 load 都会把它
         冲掉。__init__ 里在 load_checkpoint 之后调一次;若之后还有**外部** load(评测的
@@ -166,11 +181,16 @@ class MobileViCLIP_Small(nn.Module):
         (λ_1d 本来就存零)重复调用是纯 no-op。
         """
         ve_cfg = self.config.model.vision_encoder
+        # 环境变量兜底(#437 引入,评测场景 eval config 里可能没有这些键;
+        # config 键 / --set 仍是首选,训练一律走 config)。
+        _env_p1 = os.environ.get("MVC_DISABLE_TEMPORAL_BRANCH", "") == "1"
+        _env_p5 = os.environ.get("MVC_DISABLE_TEMPORAL_EMBEDDING", "") == "1"
+        _env_pfa = os.environ.get("MVC_PER_FRAME_ATTENTION", "") == "1"
 
         # **P1**:整条时序分支从 stage 1–3 删除(disable_temporal_branch = True)。
         # 机制:`RepMixer.forward` 是 x = x + λ_1d·(mixer_1d − norm_1d),
         # 所以 λ_1d ≡ 0 且**不训练** ⇒ 该支路恒等 ⇒ 等价于它不存在。
-        if ve_cfg.get("disable_temporal_branch", False):
+        if ve_cfg.get("disable_temporal_branch", False) or _env_p1:
             n = 0
             for name, p in self.vision_encoder.named_parameters():
                 if "layer_scale_1d" in name:
@@ -188,7 +208,7 @@ class MobileViCLIP_Small(nn.Module):
         # 零初始化;置零且不训练 ⇒ 加法恒等 ⇒ 等价于它不存在。
         # 评测版判定(eval_gate4)两口径显著为正(v100_sweep_results §1)。
         # (mobileviclip_tiny 未同步加此 flag —— sub1m 层只用 Small。)
-        if ve_cfg.get("disable_temporal_embedding", False):
+        if ve_cfg.get("disable_temporal_embedding", False) or _env_p5:
             n = 0
             for name, p in self.vision_encoder.named_parameters():
                 if name.endswith("temporal_embedding"):
@@ -219,6 +239,14 @@ class MobileViCLIP_Small(nn.Module):
                     n += 1
             assert n == 40, f"skip_temporal_branch 期望命中 40 个 RepMixer,实际 {n}"
             logger.info(f"[P1-旁路] 时序支路已结构性跳过:{n} 个 RepMixer")
+
+        # 全减法闸门(§11.7-2)/ 混合预算评测(§11.8-N1):stage-4 MHSA 改为帧内注意力
+        # (块对角)。P1 + P5 + 本项全开 ⇒ 整塔逐帧严格独立,clip 嵌入 = 帧嵌入的线性平均
+        # ⇒ mixed_budget_eval 的分组线性组合是**精确**的。缺省 False,off-path 不变。
+        # (设的是模块级全局,不是参数 ⇒ 不怕 load 冲掉;放这里图口径统一。)
+        if ve_cfg.get("per_frame_attention", False) or _env_pfa:
+            set_per_frame_attention(True)
+            logger.info("[per-frame-attn] stage-4 注意力已切为帧内(块对角);跨帧耦合 = 0")
 
     def no_weight_decay(self):
         ret = {"temp", "logit_scale", "logit_bias"}
@@ -597,6 +625,28 @@ class MHSA(nn.Module):
         #     x = x.transpose(-2, -1).reshape(B, C, H, W)
 
         # return x
+
+        if get_per_frame_attention():
+            # 帧内注意力(§11.7-2 闸门 / §11.8-N1 逐帧独立域):把 (T·B, C, H, W)
+            # 直接当独立帧的 batch,N = H·W —— 数学上等价于对联合注意力矩阵
+            # 取帧内块对角,跨帧耦合精确为零。配合 disable_temporal_branch
+            # (+ 已置零的 temporal_embedding)⇒ 整塔逐帧严格独立。
+            Bf, C, H, W = x.shape
+            N = H * W
+            y = torch.flatten(x, start_dim=2).transpose(-2, -1)  # (T·B, N, C)
+            qkv = (
+                self.qkv(y)
+                .reshape(Bf, N, 3, self.num_heads, self.head_dim)
+                .permute(2, 0, 3, 1, 4)
+            )
+            q, k, v = qkv.unbind(0)
+            attn = (q * self.scale) @ k.transpose(-2, -1)
+            attn = attn.softmax(dim=-1)
+            attn = self.attn_drop(attn)
+            y = (attn @ v).transpose(1, 2).reshape(Bf, N, C)
+            y = self.proj(y)
+            y = self.proj_drop(y)
+            return y.transpose(-2, -1).reshape(Bf, C, H, W)
 
         t_frames = get_num_frames()  # C2:动态 T(旧代码硬编码 8)
         x = x.reshape(t_frames,int(x.shape[0]/t_frames),x.shape[1],x.shape[2],x.shape[3])
