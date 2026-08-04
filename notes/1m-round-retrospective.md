@@ -441,6 +441,27 @@ python experiments/collect_results.py --compare \
 # 其余同法:P9↔r0、P9↔r1b、nR1↔r1both、r1b_s43↔r0 …(去掉 --prefix 即 DSL 口径)
 ```
 
-- **仍缺 `r0_s42`(共享基线)与 `r1a_s42`:** 本次 glob 在 `experiments/runs/sub1m_r0_s42/` 下**没找到**
-  `eval_res*.json`(结果目录名/位置可能不同)。r0 是几乎所有比较的基线,补它最要紧 —— 确认 r0 的 eval 路径
-  后同法 dump,或直接用上面的 `--compare` 出「臂 − r0」的逐指标差值。r1a(§7 只转录了它的 R@1)同理。
+- **仍缺 `r0_s42`(共享基线)与 `r1a_s42`。** `r0_s42` 是在**逐查询 rank 落盘(2026-07-29)之前**评的
+  ⇒ 既没有 `ranks_*.npz`(配对 CI 做不了,`--compare` 会 `FileNotFoundError`),`eval_res.json` 也不在上面
+  glob 的路径里。**一次前向重评即可两者兼得**(MSR-VTT 1k 约 1 分钟,详见 `COMMANDS.md` §3.8):
+
+  ```bash
+  source experiments/env_b100.sh && export CUDA_VISIBLE_DEVICES=3
+  bash experiments/run_eval.sh small msrvtt \
+       experiments/runs/sub1m_r0_s42/ckpt_02.pth \
+       experiments/evals/sub1m/sub1m_r0_s42 num_frames_test 8
+  # ⚠️ 重评后必做自检,否则会把「权重没加载」的假数字(r_mean≈54.82)当真:
+  grep "Load pretrained model from" experiments/evals/sub1m/sub1m_r0_s42/train.log
+  ```
+
+  重评把 `eval_res.json`(六指标)与 `ranks_*.npz` 都写进 `experiments/evals/sub1m/sub1m_r0_s42/`。之后跑
+  与 §10 同源的配对比较,**base 指向这个 evals 目录**(arm 的 rank 在各自 `runs/` 里):
+
+  ```bash
+  python experiments/collect_results.py --compare \
+      experiments/runs/sub1m_P1trained_s42 \
+      experiments/evals/sub1m/sub1m_r0_s42 --prefix ret_test_emb/
+  ```
+
+  `r1a_s42` 是在 rank-dump 之后评的,`runs/` 里应已有 ranks;它的六指标把 `sub1m_r1a_s42` 加进上面
+  C.3 的 JSON dump 臂列表即可。r1a(§7 只转录了它的 R@1)同理。
