@@ -104,6 +104,10 @@ def main():
     ap.add_argument("--dump-dir", default="experiments/frame_agg",
                     help="逐查询 rank 落盘根目录(每方法一个子目录,可喂 collect_results --compare)")
     ap.add_argument("--out", default="experiments/frame_agg_results.md")
+    ap.add_argument("--set", nargs=2, action="append", default=[], metavar=("KEY", "VALUE"),
+                    help="配置覆盖(可重复)。示例:LSE×gate4 可加性 = "
+                         "--set model.vision_encoder.disable_temporal_embedding true "
+                         "--dump-dir experiments/frame_agg_gate4(⚠️ 换 dump-dir,别覆盖基线 rank)")
     args = ap.parse_args()
 
     sys.path.insert(0, ".")
@@ -111,6 +115,10 @@ def main():
     from dataset import create_dataset, create_loader
     from models.mobileviclip_small import MobileViCLIP_Small, set_num_frames
     from experiments.paired_bootstrap import save_ranks, paired_bootstrap, recalls_from_ranks
+    from experiments.bn_recalibrate import set_dotted, parse_value
+
+    if args.set and args.dump_dir == "experiments/frame_agg":
+        print("⚠️ 开了 --set 但 --dump-dir 还是默认值 —— 会覆盖基线 rank,建议换目录", flush=True)
 
     taus = [float(x) for x in args.taus.split(",")]
     # (标签, method, tau)。mean 是配对基线;single_frame 只进 C-4 读数,不进 CI。
@@ -130,6 +138,9 @@ def main():
         # 插值已经把它固化成 8 了,所以**必须**再显式覆盖一次
         cfg.inputs.video_input.num_frames_test = T
         cfg.distributed = False
+        for k, v in args.set:               # --set 覆盖(插值之后,建模之前)
+            set_dotted(cfg, k, parse_value(v))
+            print(f"[set] {k} = {parse_value(v)}", flush=True)
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model = MobileViCLIP_Small(config=cfg, tokenizer=None, is_pretrain=False)
@@ -141,6 +152,10 @@ def main():
         vis_missing = [k for k in missing if not k.startswith("text_encoder.")]
         if len(vis_missing) > 20:
             raise SystemExit(f"[FAIL] 视觉塔没对上;前 5: {vis_missing[:5]}")
+        # 🔴 结构 flag(--set disable_temporal_* 等)是**置零参数**,刚被上面的 load 冲掉
+        #    ⇒ 载后必须重放,否则 flag 静默失效(gate 评测当年为此被迫用消融 ckpt 绕路)
+        if hasattr(model, "apply_arch_flags"):
+            model.apply_arch_flags()
         model = model.to(device).eval()
         model.vision_encoder.return_frames = True      # ← 唯一的开关(默认 False)
         set_num_frames(T)

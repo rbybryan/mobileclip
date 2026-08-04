@@ -211,6 +211,11 @@ def setup_model(
             msg = model_without_ddp.load_state_dict(state_dict, strict=False)
             logger.info(msg)
             logger.info(f"Loaded checkpoint from {config.pretrained_path}")
+            # 🔴 round-5 结构 flag(disable_temporal_* / skip_temporal_branch)是「置零参数」,
+            #    刚被上面的 load 覆盖 ⇒ 必须重放一次,否则带 flag 的评测静默退回原架构。
+            #    对 P1trained 一族 ckpt(本来就存零)是纯 no-op。
+            if hasattr(model_without_ddp, "apply_arch_flags"):
+                model_without_ddp.apply_arch_flags()
         else:
             # 评测/显式给了权重却没加载上 = 结果必然是垃圾,必须炸,不能只 warning。
             # (2026-07-29:目录式 ckpt 在这里被静默跳过,补评白跑还差点把数字当真。)

@@ -605,8 +605,10 @@ C1 不是一条 15 h 的臂,是一串有依赖的台阶;1M 层在其中仍只当
    - **M0/M1/M2 profiler 三件套**(`architecture-round4.md` §11.4)—— **~40 分钟,H100 专属**:
      M0 = kernel 忙碌占比、M1 = top-30 kernel、M2 = 删时序分支 + 旁路 reshape 链的 Δs/it。
      它裁的是 **6.6 天/全量轮这个规划常数能不能砍 3–6×** —— 10M P1trained 上马之前跑,
-     省的就是它自己的墙钟。M2 的旁路与 v100 §8 第 5 步-2(P1 结构性旁路)是**同一份代码**,
-     合并成一个交付。
+     省的就是它自己的墙钟。M2 的旁路与 v100 §8 第 5 步-2(P1 结构性旁路)是**同一份代码**
+     —— ✅ **已落地(2026-08-04)**:`model.vision_encoder.skip_temporal_branch` flag
+     (须与 `disable_temporal_branch` 同开;等价性单测 `tests/test_skip_temporal.py`)。
+     M2 只差 profiler 接线。
 
 仍不排(§11.4 不变):P8、被否臂的 seed 补种、10M。
 
