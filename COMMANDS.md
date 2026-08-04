@@ -609,12 +609,21 @@ python experiments/status_1m.py
 
 | 问题 | 为什么不能靠肉眼 |
 |---|---|
-| **还有臂在跑吗?** | `run_verify_1m.sh` 是**串行**的。再起一条会和在跑的抢同一组卡。脚本用 `pgrep` 直接查。 |
-| **"跑完"的臂墙钟对吗?** | 参考 ~15 h/臂(`sub1m_r0_s42` 实测 15:11:58)。**短于一半 ⇒ 没跑满 epoch,结论无效**,不是"结果为负"。`sub1m_r1b_s42` 曾只跑 2:12:39 就进了"完成"清单。 |
+| **还有臂在跑吗?** | `run_verify_1m.sh` 是**串行**的。再起一条会和在跑的抢同一组卡。脚本用 `pgrep` 直接查(`extract_teacher.py` 也查:可共卡,但互相污染吞吐/墙钟)。 |
+| **"跑完"的臂墙钟对吗?** | 参考 ~15 h/臂(`sub1m_r0_s42` 实测 15:11:58)。**短于一半 ⇒ 没跑满 epoch,结论无效**,不是"结果为负"。 |
 | **哪些真有结果?** | **有 ckpt ≠ 有结论**。要有 `eval_res*.json` 才算测过;只有 ckpt 的是中断,`auto_resume` 可续。 |
 
 输出的五种状态:`未排队` / `🟢 运行中` / `✅ 已完成` / `🔴 可疑`(有结果但墙钟过短)/
 `⚠️ 中断`(有 ckpt 无 eval)。带 🔴 或 ⚠️ 的臂会附上**续跑命令**。
+
+⚠️ **两个墙钟假象,脚本都已自动排除(2026-08-03 修)**,人肉判读时同样别踩:
+
+- **日志墙钟会低估**:runner 旧版每次调用**覆盖写** `<臂>.log`,被打断再 `auto_resume`
+  的臂只剩续跑腿(`sub1m_r1b_s42`:全程 >15 h,日志只剩 2:12:39)。脚本现在同时看
+  **ckpt mtime 跨度**,两个时钟**都**短才判 🔴;runner 也已改成追加(`>>`)+ 分隔行。
+- **eval 有两个落点**:训练内评测在 `runs/<臂>/`,**§3.8 离线补评在
+  `evals/sub1m/<臂>/`**(`--evals-dir` 可改)。只看 runs/ 会把 r0_s42 / r1a_s42
+  这类"环内评测被跳过、靠离线补评收官"的臂误报成 ⚠️ 中断。
 
 ⚠️ **「运行中」要两个时钟同时新**:文件 mtime 会被 `git pull` / `cp` / `rsync` 无意刷新,
 单看它会把三天前就死掉的日志报成在跑,于是**挡住本来可以排的队**;所以脚本同时读
@@ -722,6 +731,18 @@ python experiments/collect_results.py --compare \
 2026-07-29 才开始存的**。在那之前评过的臂(如首版 `sub1m_r0_s42`)没有,
 **重跑一次评测即可**(纯前向,MSR-VTT 1k 约 1 分钟,命令见 §3.8)。
 
+⚠️ **ranks 在哪个目录,取决于那条臂是怎么评的**(2026-08-03 实踩:`--compare` 传了
+`runs/` 路径,r1a 报 FileNotFoundError,其实文件一直在 `evals/` 下):
+
+| 评测方式 | ranks 落点 |
+|---|---|
+| 训练内环内评测(post-fix 的臂) | `experiments/runs/<臂>/ranks_*.npz` |
+| §3.8 离线补评(r0_s42 / r1a_s42 这类) | `experiments/evals/sub1m/<臂>/ranks_*.npz` |
+
+`--compare` 的两个参数就是**装着 npz 的目录**,两边各自指对即可,允许一边 runs/
+一边 evals/(同一 ckpt、同一套评测脚本,逐查询配对不受影响)。先
+`ls experiments/{runs,evals/sub1m}/<臂>/ranks_*.npz` 看一眼再传。
+
 #### 自比对自检(拿到第一份 `ranks_*.npz` 后必做一次)
 
 把**同一个目录**同时当臂和基线传进去。配对正确时两侧逐 bootstrap 抽到的是同一组
@@ -758,6 +779,28 @@ CUDA_VISIBLE_DEVICES=0 python experiments/extract_teacher.py run \
   --limit 100000 --batch-size 8 --num-workers 8 --amp bf16
 ```
 日志每块打 `clip/s`;拿它乘语料规模就是两档的 GPU 时数,决策留到数据出来那天。
+
+⚠️ **日志在哪:脚本只往 stdout 打**(`logging.basicConfig`),文件位置=你重定向到哪。
+本节的 A/B 与 1M 分片命令分别写 `experiments/teacher/ab_flash.log` 与
+`experiments/teacher/extract_1m_<k>.log`;100k 切片那条**没带重定向**,前台跑就只在
+终端里(找不到就 `grep -rl "clip/s" ~/nohup.out experiments/teacher 2>/dev/null`)。
+**吞吐不必依赖日志** —— 每块落盘时间差就是墙钟,直接从块文件 mtime 读(零 GPU):
+
+```bash
+python - <<'PY'
+import glob, os, datetime
+fs = sorted(glob.glob('experiments/teacher/iv2s2_100k/**/block_*.npz', recursive=True))
+prev = None
+for f in fs:
+    t = os.path.getmtime(f)
+    note = '' if prev is None else f'{t-prev:7.1f}s  {2048/(t-prev):5.2f} clip/s'
+    print(os.path.basename(f), datetime.datetime.fromtimestamp(t).strftime('%m-%d %H:%M'), note)
+    prev = t
+PY
+```
+
+(块定长 2048;首块无前差不计。用它读「独占卡之后」的干净吞吐:P9 训练 2026-08-03
+06:12 结束,取 mtime 在这之后的块。)
 
 **上全量之前:flash-attn 吞吐 A/B**(`verification-tier-1m-zh.md` §11.5-1;~1 小时,一张闲卡)——
 100k 切片用的是**朴素注意力**;`--use-flash-attn` 缺 fused ops 时自动降级(#415),sm90 上

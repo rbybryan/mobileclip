@@ -426,6 +426,18 @@ P9 的通过条件是**同时打赢 r0 和 r1b**(r1b 是它的工程孪生基线
 
 4 张表的 `R_sum` 与 `r_mean` **全部**显著为负,幅度超过种子地板。没有解释空间。
 
+**✅ 归因已闭合(2026-08-03,服务器实测)** —— `sub1m_P9_s42/ckpt_02` 的 `temporal_pool.*` 范数:
+
+| 参数 | 初始化 | 训后范数 | 读法 |
+|---|---|---:|---|
+| `w2.weight` | **全零** | **1.688** | 10k 门实测 0.0929 的 **18 倍**,比「没学动」阈值 1e-4 大 4 个量级 |
+| `ln_std.weight` | 全 1(‖·‖=√512≈22.63) | 21.707 | 离开初值,std 支路整体在训练 |
+| `ln_std.bias` | 全零 | 0.669 | 同上 |
+
+模块**确实收到梯度并大幅移动** ⇒ 「W₂≈0、退化成 mean、锅在 `different_lr`」这条退路**关死**。
+−4.3 归因给 stats 池化**想法本身**:学到的二阶统计是有害的。**P9 线彻底关**,
+§11.5-2 的条件臂 P9′(去 `different_lr` 复检)**资格取消,不排**。
+
 ### 10.4 对 10M 的含义 —— **10M 的用途变了**
 
 原计划里 10M 是去验证「某个精度改进能否 scale」。**现在没有精度改进可验证。**
@@ -459,16 +471,13 @@ P9 已于 06:12 结束,**block 11 起是独占卡的干净数字** —— 用它
 
 ### 10.6 本轮欠的东西(诚实记下)
 
-- **`P9` 的 `temporal_pool.w2` 范数未取**。§9.3 明确要求「必须显式验证 `W₂` 真收到梯度」,
-  这个数字决定 P9 的失败该归因给谁:范数明显长大 ⇒ stats 池化学到的东西有害,想法本身被否;
-  范数仍在零初始化附近 ⇒ 模块几乎没动、数值上约等于基线,那 −4.3 就该归因到 `different_lr`
-  那个参数组扰动了训练,**想法其实没被真正检验**。命令(注意 ckpt 是 DeepSpeed **目录**):
-  ```bash
-  python -c "import torch;sd=torch.load('experiments/runs/sub1m_P9_s42/ckpt_02.pth/mp_rank_00_model_states.pt',map_location='cpu');sd=sd.get('module',sd.get('model',sd));[print(k,float(v.float().norm())) for k,v in sd.items() if 'temporal_pool' in k]"
-  ```
+- ~~**`P9` 的 `temporal_pool.w2` 范数未取**~~ **✅ 已取(2026-08-03)**:`‖W₂‖ = 1.688`
+  (零初始化起步,10k 门的 18 倍),`ln_std` 两参数也都离开初值 ⇒ **范数明显长大**这一支成立,
+  −4.3 归因给想法本身,P9 线关死。数字与读法已并入 §10.3(d)。
 - **seed 43 只跑了 `r1b`**。r1a/nA1/P1trained/P9 的 seed 43 未跑。对已被否决的臂无所谓
   (1M 层只用于否决,单 seed 的显著负已足够),但 **P1trained 的非劣结论目前只有一个 seed**。
-- `r1both` 相对 r0 低 5 分那条差距未查(见 §10.3(a) 末尾)。
+- `r1both` 相对 r0 低 5 分那条差距未查(见 §10.3(a) 末尾)。**命令见 §11.0-3
+  (2026-08-03 路径修正版:r1a 的 ranks 在 `evals/sub1m/` 下,首版指错到 `runs/`)。**
 
 ### 9.4 ✅ 10k 链路 go/no-go 结果(2026-07-31)—— **两条臂都放行**
 
@@ -501,18 +510,27 @@ V100 侧的配套执行单见 [`v100-10k-advance-tests.md`](v100-10k-advance-tes
 ### 11.0 先做零成本收尾(全部只读 / 分钟级,不占训练队列)
 
 1. **队列现状**:`python experiments/status_1m.py` —— 确认真空、没有 🔴/⚠️ 臂(`COMMANDS.md` §3.7b)。
-2. **P9 归因:读 `W₂` 范数**(§10.6 的现成命令)。读法:
-   `‖W₂‖` 明显长大(对照 10k 门的 0.0929 量级)⇒ stats 池化**想法本身被否**,P9 线彻底关;
-   仍在零初始化附近 ⇒ 那 −4.3 归因给 `different_lr` 的参数组扰动,**想法未被检验** ——
-   如要复检,唯一合法形态是「去掉 `different_lr` 的 P9′」,但按 §10.4 它排在 C1 之后,默认不排。
-3. **`r1both` 低 5 分之谜(§10.3(a) 尾注)的免费归因**(ranks npz 都在,两条命令):
+   ⚠️ **首跑(2026-08-03)打出的 3 条 🔴/⚠️(r0_s42 / r1a_s42 / r1b_s42)全是假警报**
+   (离线补评落点 + runner 覆盖写日志两个盲区,详见 `TROUBLESHOOTING.md` 末节),
+   脚本已修,`git pull` 后重跑应全 ✅ —— **仍有 🔴/⚠️ 才需要处理**。
+2. ~~**P9 归因:读 `W₂` 范数**~~ **✅ 已答(2026-08-03)**:`‖W₂‖ = 1.688`,明显长大那一支
+   成立 ⇒ stats 池化**想法本身被否**,P9 线彻底关,P9′ 复检**资格取消**(数字见 §10.3(d))。
+3. **`r1both` 低 5 分之谜(§10.3(a) 尾注)的免费归因**(ranks npz 都在,两条命令)。
+   ⚠️ **路径修正(首版写错,实踩 FileNotFoundError)**:r1a_s42 是离线补评的臂,
+   它的 ranks 在 `evals/sub1m/` 不在 `runs/`(规矩见 `COMMANDS.md` §3.9);
+   r1both_s42 是环内评测,在 `runs/`。先看一眼再比:
    ```bash
-   python experiments/collect_results.py --compare experiments/runs/sub1m_r1both_s42 experiments/runs/sub1m_r1a_s42
-   python experiments/collect_results.py --compare experiments/runs/sub1m_r1both_s42 experiments/runs/sub1m_r1a_s42 --prefix ret_test/
+   ls experiments/{runs,evals/sub1m}/sub1m_r1{both,a}_s42/ranks_*.npz 2>/dev/null
+   python experiments/collect_results.py --compare experiments/runs/sub1m_r1both_s42 experiments/evals/sub1m/sub1m_r1a_s42
+   python experiments/collect_results.py --compare experiments/runs/sub1m_r1both_s42 experiments/evals/sub1m/sub1m_r1a_s42 --prefix ret_test/
    ```
+   (若上面的 `ls` 显示 r1a 在 evals/ 下也没有 ranks ⇒ 按 §3.8 补一次评测,~1 分钟,
+   再跑 compare。)
    读法:`r1both − r1a ≈ 0` ⇒ 那 5 分基本就是 sigmoid 在 batch 512 的已知代价
    (r1a−r0 = −3.8 raw / −5.7 DSL),R1 接线本身无额外成本;显著负 ⇒ attn/caption_idx
    接线另有成本,追加进 §10.3(a) 的复活条件。
+   (预判:§10.1 绝对分推出 r1both−r1a 点估计 ≈ −1.2 raw / −1.8 DSL,都在种子地板
+   δ=2.5 之内 ⇒ 大概率是「≈0」那支,但以配对 CI 为准。)
 
 ### 11.1 队列位 1 · `sub1m_P1trained_s43`(15 h)—— 给全轮唯一的正面结论补第二个 seed
 
@@ -573,10 +591,9 @@ C1 不是一条 15 h 的臂,是一串有依赖的台阶;1M 层在其中仍只当
      但全语料只用一种设置(manifest 记协议,别混)。快 2–3× ⇒ 那 ~39 h 直接砍半以上。
    - **多基准评测搬到本机**:若 b100 的 `check_readiness.py` 显示 k400/ucf101/hmdb51 `[OK ]`,
      v100 §8 第 3 步的 6 次评测直接在 b100 跑(单卡分钟级,免 rsync)。
-2. **条件臂(先看 §11.0-2 的一个数)**
-   - **P9′ = stats 池化去掉 `different_lr`**(15 h):仅当 `‖W₂‖ ≈ 0`(说明 −4.3 是
-     `different_lr` 的扰动、想法未被检验)才有资格排;范数明显长大 ⇒ 想法已被否,不排。
-     config 由 Claude 写(一行之差)。
+2. **条件臂(先看 §11.0-2 的一个数)** —— **❌ 条件已揭晓,本档清空(2026-08-03)**
+   - ~~**P9′ = stats 池化去掉 `different_lr`**(15 h)~~:实测 `‖W₂‖ = 1.688`(§10.3(d)),
+     走的是「范数明显长大 ⇒ 想法已被否」那一支 ⇒ **P9′ 资格取消,永不排**。
 3. **等一小段代码(回「写吧」)**
    - **`sub1m_lean_s42`**(§11.3,15 h)—— 除 KD 外唯一站得住的新训练臂。
    - **M0/M1/M2 profiler 三件套**(`architecture-round4.md` §11.4)—— **~40 分钟,H100 专属**:

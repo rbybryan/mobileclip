@@ -43,10 +43,15 @@ for c in "${CONFIGS[@]}"; do
     cfg="experiments/configs/${c}.py"
     [[ -f "$cfg" ]] || { echo "!! missing $cfg — skip"; continue; }
     echo "════════ $(date '+%F %T')  START ${c} ════════"
+    # ⚠️ 追加(>>)而不是覆盖(>):续跑(auto_resume)时覆盖会把前一腿的日志抹掉,
+    # 墙钟看起来只剩续跑那一段(r1b_s42 实例:>15h 的臂只剩 2:12:39),
+    # status_1m.py 会把好臂误判成 🔴。分隔行用于把两腿切开。
+    echo "════════ $(date '+%F %T')  (re)start ${c} — runner append ════════" \
+        >> "experiments/runs/${c}.log"
     CUDA_VISIBLE_DEVICES="$GPUS" bash experiments/run_pretrain.sh \
         "$cfg" "$NG" \
         use_bf16 True bf16 True auto_resume True \
-        > "experiments/runs/${c}.log" 2>&1
+        >> "experiments/runs/${c}.log" 2>&1
     echo "════════ $(date '+%F %T')  DONE  ${c}  (log: experiments/runs/${c}.log) ════════"
 done
 
