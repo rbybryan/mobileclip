@@ -23,7 +23,7 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
-## 2026-08-04 (80) — ✅ 阶段 0/7/10 + gate 两口径全收;C-4 判「方差」但 LSE 是免费增益候选;下一步:probe v2 重跑阶段 10 + 多基准补已训臂
+## 2026-08-04 (81) — ✅ 阶段 0/7/10 + gate 两口径全收;C-4 判「方差」但 LSE 是免费增益候选;下一步:probe v2 重跑阶段 10 + 多基准补已训臂
 
 **Diagnosis(全部已落盘,细节见 `experiments/v100_sweep_results.md` §8 与改判后的 §1/§2):**
 
@@ -57,6 +57,35 @@ bash experiments/run_v100_all.sh 10
 
 **Then report back** in from-server.md:① 阶段 10 的 `[verdict]` + `[CI]` 行(整段贴回);
 ② 多基准的 6 份 `--compare` 表;③ 若 rsync 不通,贴 b100 侧 `ls experiments/runs/*/ckpt_02.pth`。
+
+---
+
+## 2026-08-03 (80) — 📋 下一轮 refinement 训练手册已落:MC2-init + lean(config/flag 全就位)
+
+选臂理由与阶梯见 `verification-tier-1m-zh.md` §11.6;**逐步执行手册(含全部命令与决策表)=
+[`next-training-round-zh.md`](../next-training-round-zh.md)**。本轮落了:
+`disable_temporal_embedding` flag(`models/mobileviclip_small.py`,P1 同模式,缺省不变)、
+`sub1m_mc2init_s42.py`(双塔换 MobileCLIP2-S2 init)、`sub1m_lean_s42.py`(两减法合体)。
+
+**现在就能做(不占训练卡,~10 分钟)** —— 手册 §0:
+
+```bash
+cd ~/mobileclip && git pull
+wget -O checkpoints/mobileclip2_s2.pt \
+  "https://huggingface.co/apple/MobileCLIP2-S2/resolve/main/mobileclip2_s2.pt"
+# 然后跑手册 §0 的键集一致性闸门(强制)+ 配置解析闸门
+```
+
+**当前队列(s43 训练 → 1M 抽取)跑完后**:先手册 §1 冒烟门(10 分钟),再:
+
+```bash
+python experiments/status_1m.py        # ⚪ 才排
+nohup bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_mc2init_s42 sub1m_lean_s42 \
+  > experiments/runs/verify_1m_round2.log 2>&1 &
+echo "round2 PID = $!"
+```
+
+**Then report back** in from-server.md:手册 §0 闸门 A 输出、§1 三行断言、跑完后 §3 的 CI 表。
 
 ---
 

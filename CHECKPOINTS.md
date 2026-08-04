@@ -32,6 +32,16 @@ checkpoints
   the same state-dict conversion. Improved arms use it as init; R0 keeps the original
   `mobileclip_s2.pt` to anchor reproduction.
 
+  ```bash
+  wget -O checkpoints/mobileclip2_s2.pt \
+    "https://huggingface.co/apple/MobileCLIP2-S2/resolve/main/mobileclip2_s2.pt"
+  ```
+  ⚠️ Before training with it, run the **key-set identity gate** in
+  `notes/next-training-round-zh.md` §0 (the loader is `strict=False` — a key mismatch
+  silently loads nothing). Consumed by `experiments/configs/sub1m_mc2init_s42.py`
+  (both towers swapped — the frozen text tower defines the output space, so a
+  vision-only swap would break step-0 alignment).
+
 - **InternVideo2-stage2 1B (C1 teacher, required by `experiments/extract_teacher.py`):**
   https://huggingface.co/OpenGVLab/InternVideo2-Stage2_1B-224p-f4 — **必须是 stage2**,
   不是 stage1、不是 CLIP-only 变体。理由(评审 U7-4,2026-07-27 定案):stage2 是

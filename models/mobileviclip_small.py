@@ -157,6 +157,24 @@ class MobileViCLIP_Small(nn.Module):
             assert n == 40, f"disable_temporal_branch 期望命中 40 个 layer_scale_1d,实际 {n}"
             logger.info(f"[P1] 时序分支已删除:{n} 个 layer_scale_1d 置零并冻结")
 
+        # round-5 **P5 / lean**:删掉 temporal_embedding(config:
+        # model.vision_encoder.disable_temporal_embedding = True)。
+        # 机制:它是塔里唯一的 T 形状参数,前向是 x = x + resize(temporal_embedding, t)
+        # (:1197),零初始化;置零且不训练 ⇒ 加法恒等 ⇒ 等价于它不存在。
+        # 评测版判定(eval_gate4)两口径显著为正(v100_sweep_results §1);
+        # 本 flag 回答的是「从一开始就没有它,训出来会怎样」(与 P1/P1trained 同构)。
+        # 🔴 同 P1:必须放在 load_checkpoint 之后,防静默失效。
+        # (mobileviclip_tiny 未同步加此 flag —— sub1m 层只用 Small。)
+        if self.config.model.vision_encoder.get("disable_temporal_embedding", False):
+            n = 0
+            for name, p in self.vision_encoder.named_parameters():
+                if name.endswith("temporal_embedding"):
+                    p.data.zero_()
+                    p.requires_grad = False
+                    n += 1
+            assert n == 1, f"disable_temporal_embedding 期望恰好 1 个 temporal_embedding,实际 {n}"
+            logger.info("[P5] temporal_embedding 已置零并冻结(塔中不再有任何 T 形状参数)")
+
         # criterions
         self.clip_loss = VTC_VTM_Loss(False)
 
