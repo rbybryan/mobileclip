@@ -635,3 +635,29 @@ probe 目前不吃 config 覆盖,叠加实验要等一个小改(给 probe 加 `-
 | 按 τ 扫描的最优 τ 换头条 | 测试集选超参;换 τ 要先在别的基准/验证集复核 |
 | 阶段 3/5 重跑 | 数没变;正式数仍卡 BN 重校准 CLI(回「写吧」) |
 | 10k 冒烟排查(§7-1) | 不 gate 本窗口任何一步;单独排 |
+
+### §9 回执更新(2026-08-04 · 第三轮全量队列,commit 87307a9)
+
+**第 1 步 ✅ 认证通过**:LSE(τ=0.05)− mean 在**两口径 × 两 T 四格全显著**
+(T=16 raw **+1.57 [+1.05, +2.08]**,R_sum +9.40 [+6.30, +12.50];其余三格同向全显著)。
+τ ∈ 0.02–0.2 是增益平台,τ≥0.5 塌回 mean;预登记的 0.05 恰在平台顶点 ⇒ 无事后选 τ 问题。
+细节、机制表(硬选帧被认证有害)、部署语义:`experiments/v100_sweep_results.md` **§9**。
+
+**新增第 1b 步(零 GPU,~2 分钟)· 跨 T 配对 CI —— 把「换聚合器 ≈ 白赚 2× 帧预算」变判据**:
+
+```bash
+python experiments/collect_results.py --compare experiments/frame_agg/T8_lse_tau0.05 experiments/frame_agg/T16_mean
+python experiments/collect_results.py --compare experiments/frame_agg/T8_lse_tau0.05 experiments/frame_agg/T16_mean --prefix ret_test/
+```
+
+读法:CI 下界 ≥ 0 ⇒「省一半帧还更好」认证;含 0 但点估计为正 ⇒ 写成「省一半帧不掉点」。
+(rank 都在盘上,配对合法:同一测试集、同一查询顺序。)
+
+**第 2 步(多基准补已训臂)仍未跑** —— 还是只差从 b100 rsync 两个 ckpt(§8 第 3 步原文)。
+它仍是 P1trained 上 10M 前的第二道保险,当前 V100 侧价值最高的未跑项。
+
+**等「写吧」的代码**(优先级顺序):① probe `--set key value` 透传 —— 解锁 LSE×gate4
+可加性与跨基准(k400/ucf101/hmdb51)LSE 复核;② BN 重校准 CLI(§7-5);③ P1 结构性旁路(§7-7)。
+
+⚠️ 汇总尾注那句「H100 可排 … sub1m_P9_s42」是过期文案(P9 已于 1M 关线),
+本轮已从脚本删除;H100 排队一律以 `status_1m.py` + `verification-tier-1m-zh.md` §11 为准。

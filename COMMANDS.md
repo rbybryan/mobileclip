@@ -1328,7 +1328,8 @@ r_mean** ⇒ 这份权重里深度不冗余,**关掉这条线**,预算全给 rou
 
 一次前向拿逐帧嵌入,{mean, max, top-2/4, 单帧, LSE(τ 扫描)} 各打一次分,
 每个聚合器 vs mean 出**逐查询配对 CI**(10000 次,seed=0)+ **两口径**(raw + DSL),
-逐查询 rank 落盘可事后任意重比。首轮结果与判读见 `experiments/v100_sweep_results.md` §8.1。
+逐查询 rank 落盘可事后任意重比。首轮结果与判读见 `experiments/v100_sweep_results.md` §8.1;
+✅ **认证已达成(2026-08-04 第三轮:LSE@0.05 两口径 × 两 T 四格 CI 全显著)**,见同文件 §9。
 
 ```bash
 # 评测,双根规则:先 unset(README §3.0)
@@ -1355,11 +1356,21 @@ python experiments/collect_results.py --compare \
     experiments/frame_agg/T16_lse_tau0.05 experiments/frame_agg/T16_mean --prefix ret_test/
 ```
 
+**跨 T 也合法**(同一测试集、同一查询顺序)—— 帧预算问题「LSE@T=8 是否 ≥ mean@T=16」:
+
+```bash
+python experiments/collect_results.py --compare \
+    experiments/frame_agg/T8_lse_tau0.05 experiments/frame_agg/T16_mean
+python experiments/collect_results.py --compare \
+    experiments/frame_agg/T8_lse_tau0.05 experiments/frame_agg/T16_mean --prefix ret_test/
+```
+
 **三条纪律**:① 头条只认 **τ=0.05**(v1 写死的默认 = 预登记;τ 扫描只当敏感度曲线,
 不许事后挑最好的 τ);② 判据 = `[CI]` 行两口径同向且 CI 不含 0,别看裸差;
 ③ 报收益必须连部署成本一起报 —— 相似度级聚合 ⇒ 索引存 **T 份**逐帧嵌入(×T 存储/点积)。
 ⚠️ probe 自建前向,绝对值与 `retrieval.py` 管线差 ~0.8 ⇒ **脚本内差值可判,跨管线绝对值不可比**。
 
+<<<<<<< HEAD
 ### 3.12 C1 KD 训练侧(ROADMAP 2.2c,2026-08-04 落地)—— 闸门与冒烟
 
 完整执行单(闸门顺序、判读、预登记)= **`notes/c1-kd-training-manual-zh.md`**。速查:
@@ -1380,6 +1391,53 @@ python utils/teacher_bank.py verify --out experiments/teacher/iv2s2_1m \
 对应键会**启动即炸**(这是特性:堵隐式 1.0);② KD 只认「idx = anno 行号」——
 `caption_idx`、多语料拼接、去掉 `jump_filter` 都会被 `build_teacher_bank` 拒绝;
 ③ 教师 `teacher_dim` 以抽取 manifest 的 `embed_dim` 为准,IV2-1B 预期 768。
+=======
+### 3.16 全减法闸门 + 混合预算 (T×R) 评测(零训练;§11.7-2 / §11.8-N1 / C2-2D 闸门 1)
+
+**逐帧独立域三开关**(评测用环境变量,训练一律走 config 键;实现在
+`models/mobileviclip_small.py`,缺省全关、off-path 不变):
+
+| 环境变量 | 等价 config 键 | 作用 |
+|---|---|---|
+| `MVC_DISABLE_TEMPORAL_BRANCH=1` | `disable_temporal_branch` | P1:40 个 `layer_scale_1d` 置零冻结 |
+| `MVC_DISABLE_TEMPORAL_EMBEDDING=1` | `disable_temporal_embedding` | P5:唯一 T 形状参数置零冻结 |
+| `MVC_PER_FRAME_ATTENTION=1` | `per_frame_attention` | **新**:stage-4 MHSA 帧内块对角,跨帧耦合=0 |
+
+**闸门 A · 全减法(§11.7-2)** —— 三开关 vs 基线,判据沿用 P1 的预登记
+(两口径同号且 Δ > 1.0 ⇒ 杀;CI 含 0 或小负 ⇒ 训练臂放行):
+
+```bash
+cd ~/mobileclip && git pull
+D=experiments/evals/pfattn_gate
+MVC_DISABLE_TEMPORAL_BRANCH=1 MVC_DISABLE_TEMPORAL_EMBEDDING=1 MVC_PER_FRAME_ATTENTION=1 \
+  bash experiments/run_eval.sh small msrvtt checkpoints/mobileviclip_small.pt "$D"
+python experiments/collect_results.py --compare "$D" eval_base
+python experiments/collect_results.py --compare "$D" eval_base --prefix ret_test/
+# 顺带把从没在真 ckpt 上跑过的静态审计补掉(零 GPU):
+python experiments/temporal_capacity_audit.py checkpoints/mobileviclip_small.pt
+```
+
+**闸门 B · 混合预算(C2-2D 升级条件 1)** —— 单点评测落嵌入(`MVC_DUMP_EMB_DIR`),
+组合与打表离线做:
+
+```bash
+# 1) 打印 ~14 条单点命令(每条 ~1 分钟,自动带三开关与落盘变量):
+python experiments/mixed_budget_eval.py --print-unit-commands \
+    --ckpt checkpoints/mobileviclip_small.pt --root experiments/evals/mb
+# 2) 照打印逐条跑完后,出结果表(含 cost 列,按预算排序):
+python experiments/mixed_budget_eval.py --root experiments/evals/mb \
+    --out experiments/mixed_budget_results.md
+# 3) 关键对(同预算档)配对显著性,例:
+python experiments/collect_results.py --compare \
+    experiments/evals/mb/alloc_1r256_4r128 experiments/evals/mb/alloc_8r128
+```
+
+**判读**:某个混合分配在 ≤ 自己 cost 的所有均匀分配上 Pareto 胜出且配对 CI 不含 0
+⇒ **闸门 1 PASS,C2-2D 升级成立**(`publishability-assessment.md` §1.1);
+全档均匀不输 ⇒ 记 null,C2 保持 1D,零损失。
+**为什么组合是精确的**:三开关下整塔逐帧独立、clip 嵌入 = 帧嵌入线性平均、
+落盘的是未归一化嵌入 ⇒ 分组加权平均逐位等于真跑混合分配。
+>>>>>>> origin/main
 
 ## 4. Training (pretraining)
 

@@ -23,7 +23,7 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
-## 2026-08-04 (83) — ✍️ C1 KD 训练侧代码已全部落地(含 U9 `loss_weight` 假开关修复);执行手册 = notes/c1-kd-training-manual-zh.md
+## 2026-08-04 (85) — ✍️ C1 KD 训练侧代码已全部落地(含 U9 `loss_weight` 假开关修复);执行手册 = notes/c1-kd-training-manual-zh.md
 
 维护者拍板「写 C1 代码 + 1M 训练手册」—— 本块交付。**§11.2 阶梯 ③ 关闭**,
 ⑤(`sub1m_C1kd_s42`,15 h)只差抽取(块 79 已排)+ 手册里的闸门。
@@ -54,6 +54,81 @@ python utils/teacher_bank.py align \
 **Then report back** in from-server.md:① pytest 与 align 的输出(尤其 align 是否全行一致);
 ② 抽取 merge 后 `teacher_bank.py verify` 打印的 coverage 与 embed_dim(≠768 要改 config,
 手册有注释位);③ 冒烟的 4 条判据行。
+
+---
+
+## 2026-08-04 (84) — 🚪 C2-2D 的两道免费闸门已落代码:全减法(闸门 A)+ 混合预算(闸门 B)
+
+论文创新点 C2-2D(`publishability-assessment.md` §1.1)的升级条件 1,以及 §11.7-2 全减法
+终点的评测闸门,**代码全部就位**:`per_frame_attention` flag(stage-4 帧内块对角注意力)、
+三个减法开关的环境变量兜底、评测嵌入落盘(`MVC_DUMP_EMB_DIR`)、离线组合器
+`experiments/mixed_budget_eval.py`(预注册 14 种分配)。**全部零训练,msrvtt 在哪台就在哪台跑**
+(V100 即可,不占 b100 队列)。完整命令与判读 = `COMMANDS.md` **§3.16**。
+
+```bash
+cd ~/mobileclip && git pull
+
+# 闸门 A · 全减法(~2 分钟 + 一次配对比较)
+D=experiments/evals/pfattn_gate
+MVC_DISABLE_TEMPORAL_BRANCH=1 MVC_DISABLE_TEMPORAL_EMBEDDING=1 MVC_PER_FRAME_ATTENTION=1 \
+  bash experiments/run_eval.sh small msrvtt checkpoints/mobileviclip_small.pt "$D"
+python experiments/collect_results.py --compare "$D" eval_base
+python experiments/collect_results.py --compare "$D" eval_base --prefix ret_test/
+python experiments/temporal_capacity_audit.py checkpoints/mobileviclip_small.pt   # 零 GPU,补欠账
+
+# 闸门 B · 混合预算(~15 分钟:14 条单点 × ~1 分钟,再离线组合)
+python experiments/mixed_budget_eval.py --print-unit-commands \
+    --ckpt checkpoints/mobileviclip_small.pt --root experiments/evals/mb
+# ← 照它打印的命令逐条跑完,然后:
+python experiments/mixed_budget_eval.py --root experiments/evals/mb \
+    --out experiments/mixed_budget_results.md
+```
+
+**判读**(细节在 §3.16):闸门 A 两口径 Δ ≤ 1.0 或 CI 含 0 ⇒ 全减法训练臂放行;
+闸门 B 任一混合分配对同预算均匀分配 Pareto 胜出且配对 CI 不含 0 ⇒ **C2-2D 升级成立**。
+**与块 83 的关系**:LSE@0.05 是相似度级聚合(索引存 T 份),混合预算是编码级分配 ——
+两者正交、可叠加;闸门 B 的表出来后我会连着 LSE 一起排 2D Pareto。
+
+**Then report back** in from-server.md:① 闸门 A 的两口径 CI + audit 输出;
+② `mixed_budget_results.md` 全文。两个都到手,我来写升级/降级的最终判定与
+elastic-(T,R) 训练臂的 config。
+
+---
+
+## 2026-08-04 (83) — 🏆 LSE(τ=0.05)认证通过:两口径 × 两 T 四格 CI 全显著;下一步:2 条跨 T 命令 + 多基准 rsync 仍欠
+
+**Diagnosis(全量队列 31 PASS / 0 FAIL,细节全在 `experiments/v100_sweep_results.md` §9):**
+
+1. **认证达成**:LSE@0.05 − mean 四格全显著 —— T=8 raw **+1.15 [+0.63,+1.67]** /
+   DSL **+1.57 [+1.03,+2.12]**;T=16 raw **+1.57 [+1.05,+2.08]** / DSL **+1.45 [+0.93,+1.97]**;
+   R_sum +6.9~+9.4。**本仓第二条(量级最大)通过完整纪律的评测侧正向结论,零训练。**
+2. **τ 是平台不是刀尖**:0.02–0.2 几乎全显著,τ≥0.5 塌回 mean;预登记的 0.05 恰在平台顶点
+   ⇒ 头条无需也不许换 τ。
+3. **机制收紧**:hard-max 在 T=8 被认证**有害**(raw −1.27*/DSL −1.08*),top-k 摸不到 LSE
+   ⇒ 增益特指**平滑证据加权**,不是选帧;C-4 的「方差缩减」判据不变。
+4. **部署语义(写论文照抄)**:LSE 只用视频自己的 T 帧 ⇒ **非 transductive、端上可用**
+   (与 DSL 本质不同);成本 = 索引存 T 份逐帧嵌入;模型内部 mean 池化未动,任何已训 ckpt 直接受益。
+5. ⚠️ 汇总尾注「H100 可排 … sub1m_P9_s42」是**过期文案**(P9 已结案,见块 82)——
+   本 PR 已从脚本里删掉;排队一律 `status_1m.py` + verification-tier §11(当前链条 = 块 79/80)。
+
+**Do this next:**
+
+```bash
+cd ~/mobileclip && git pull
+
+# ① 跨 T 配对 CI(零 GPU,~2 分钟):「换聚合器 ≈ 白赚 2× 帧预算」变判据
+python experiments/collect_results.py --compare experiments/frame_agg/T8_lse_tau0.05 experiments/frame_agg/T16_mean
+python experiments/collect_results.py --compare experiments/frame_agg/T8_lse_tau0.05 experiments/frame_agg/T16_mean --prefix ret_test/
+
+# ② 多基准补已训臂(块 81 第 2 条,仍欠;软链已就位,只差 ckpt):
+#    rsync sub1m_r0_s42 / sub1m_P1trained_s42 的 ckpt_02.pth → 每臂 × k400/ucf101/hmdb51
+#    → compare(--prefix 按实际键名)。命令块:v100-10k-advance-tests.md §8 第 3 步。
+```
+
+①读法:Δ(LSE@8 − mean@16)CI 下界 ≥ 0 ⇒「省一半帧还更好」;含 0 且点估计为正 ⇒「省一半帧不掉点」。
+
+**Then report back** in from-server.md:① 两张跨 T 表;② 多基准 6 张 compare 表
+(或 rsync 的具体障碍 + b100 侧 `ls experiments/runs/*/ckpt_02.pth` 输出)。
 
 ---
 

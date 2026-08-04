@@ -56,6 +56,21 @@ def get_num_frames() -> int:
     return _NUM_FRAMES
 
 
+# round-5 全减法闸门(§11.7-2)/ 混合预算评测(§11.8-N1)的「逐帧独立域」开关。
+# True ⇒ stage-4 MHSA 只在帧内注意(等价于对联合注意力矩阵取帧内块对角),
+# 跨帧耦合精确为零。与 _NUM_FRAMES 同款的模块级单值约束。
+_PER_FRAME_ATTENTION = False
+
+
+def set_per_frame_attention(enabled: bool) -> None:
+    global _PER_FRAME_ATTENTION
+    _PER_FRAME_ATTENTION = bool(enabled)
+
+
+def get_per_frame_attention() -> bool:
+    return _PER_FRAME_ATTENTION
+
+
 def resize_temporal_embedding(emb: torch.Tensor, t: int) -> torch.Tensor:
     """把 (1, C, T0) 的 temporal_embedding 沿时间轴线性插值到 (1, C, t)。
 
@@ -145,7 +160,12 @@ class MobileViCLIP_Small(nn.Module):
         # 依据:上面 freeze 分支的注释说得很清楚 ——「temporal parts are absent from the
         # image-pretrained checkpoint ... else they are frozen at zero forever」。
         # 那句话原本是在**警告**这个后果;P1 要的**正是**这个后果。
-        if self.config.model.vision_encoder.get("disable_temporal_branch", False):
+        # 环境变量兜底(评测场景:eval config 里没有这些键,CLI 覆盖机制能否新增
+        # 嵌套键未经验证;MVC_DATA_DIR 同款先例)。config 键仍是首选,训练一律走 config。
+        _env_p1 = os.environ.get("MVC_DISABLE_TEMPORAL_BRANCH", "") == "1"
+        _env_p5 = os.environ.get("MVC_DISABLE_TEMPORAL_EMBEDDING", "") == "1"
+        _env_pfa = os.environ.get("MVC_PER_FRAME_ATTENTION", "") == "1"
+        if self.config.model.vision_encoder.get("disable_temporal_branch", False) or _env_p1:
             n = 0
             for name, p in self.vision_encoder.named_parameters():
                 if "layer_scale_1d" in name:
@@ -166,7 +186,7 @@ class MobileViCLIP_Small(nn.Module):
         # 本 flag 回答的是「从一开始就没有它,训出来会怎样」(与 P1/P1trained 同构)。
         # 🔴 同 P1:必须放在 load_checkpoint 之后,防静默失效。
         # (mobileviclip_tiny 未同步加此 flag —— sub1m 层只用 Small。)
-        if self.config.model.vision_encoder.get("disable_temporal_embedding", False):
+        if self.config.model.vision_encoder.get("disable_temporal_embedding", False) or _env_p5:
             n = 0
             for name, p in self.vision_encoder.named_parameters():
                 if name.endswith("temporal_embedding"):
@@ -175,6 +195,14 @@ class MobileViCLIP_Small(nn.Module):
                     n += 1
             assert n == 1, f"disable_temporal_embedding 期望恰好 1 个 temporal_embedding,实际 {n}"
             logger.info("[P5] temporal_embedding 已置零并冻结(塔中不再有任何 T 形状参数)")
+
+        # round-5 全减法闸门(§11.7-2)/ 混合预算评测(§11.8-N1):
+        # stage-4 MHSA 改为帧内注意力(块对角)。三个开关全开(P1 + P5 + 本项)
+        # ⇒ 整塔逐帧严格独立,clip 嵌入 = 帧嵌入的线性平均 ⇒ mixed_budget_eval
+        # 的分组线性组合是**精确**的,不是近似。缺省 False,off-path 不变。
+        if self.config.model.vision_encoder.get("per_frame_attention", False) or _env_pfa:
+            set_per_frame_attention(True)
+            logger.info("[per-frame-attn] stage-4 注意力已切为帧内(块对角);跨帧耦合 = 0")
 
         # criterions
         self.clip_loss = VTC_VTM_Loss(False)
@@ -645,6 +673,28 @@ class MHSA(nn.Module):
         #     x = x.transpose(-2, -1).reshape(B, C, H, W)
 
         # return x
+
+        if get_per_frame_attention():
+            # 帧内注意力(§11.7-2 闸门 / §11.8-N1 逐帧独立域):把 (T·B, C, H, W)
+            # 直接当独立帧的 batch,N = H·W —— 数学上等价于对联合注意力矩阵
+            # 取帧内块对角,跨帧耦合精确为零。配合 disable_temporal_branch
+            # (+ 已置零的 temporal_embedding)⇒ 整塔逐帧严格独立。
+            Bf, C, H, W = x.shape
+            N = H * W
+            y = torch.flatten(x, start_dim=2).transpose(-2, -1)  # (T·B, N, C)
+            qkv = (
+                self.qkv(y)
+                .reshape(Bf, N, 3, self.num_heads, self.head_dim)
+                .permute(2, 0, 3, 1, 4)
+            )
+            q, k, v = qkv.unbind(0)
+            attn = (q * self.scale) @ k.transpose(-2, -1)
+            attn = attn.softmax(dim=-1)
+            attn = self.attn_drop(attn)
+            y = (attn @ v).transpose(1, 2).reshape(Bf, N, C)
+            y = self.proj(y)
+            y = self.proj_drop(y)
+            return y.transpose(-2, -1).reshape(Bf, C, H, W)
 
         t_frames = get_num_frames()  # C2:动态 T(旧代码硬编码 8)
         x = x.reshape(t_frames,int(x.shape[0]/t_frames),x.shape[1],x.shape[2],x.shape[3])
