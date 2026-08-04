@@ -550,6 +550,17 @@ python experiments/export_smoke.py           # 全尺寸,T∈{2,4,8,16}
 python experiments/export_smoke.py --inference-mode   # 重参数化后的部署形态
 ```
 
+**P1 效率主张的判据(2026-08-04 落地,round-5 §7 第 1 步)**:ONNX pass 行现在带
+**节点数 / layout-op 数**;`--skip-temporal` 让每个 RepMixer 结构性跳过整条时序支路
+(旁路等价性单测 `tests/test_skip_temporal.py`,训练态与重参数化态均逐位一致)。
+基线与旁路各跑一次、相减,即 P1 声称的 **1581 → 1141 节点**是否成立:
+
+```bash
+python experiments/export_smoke.py --inference-mode --outdir experiments/exports_base
+python experiments/export_smoke.py --inference-mode --skip-temporal --outdir experiments/exports_skip
+# mini 口径本地已实证方向:186 节点/44 layout → 165/26(每个 RepMixer 少 1 conv1d + 6 layout)
+```
+
 导出的是**视觉塔**(`FastViT`,架构参数与 `build_vision_encoder` 逐项一致 ⇒ 含全部
 时序算子);输入签名 `[B,T,C,H,W]` 与 `encode_vision` 对齐(脚本内做同一行 permute)。
 文本塔不导 —— 端侧文本 embedding 通常离线算好。
@@ -1365,6 +1376,25 @@ python experiments/collect_results.py --compare \
     experiments/frame_agg/T8_lse_tau0.05 experiments/frame_agg/T16_mean --prefix ret_test/
 ```
 
+**LSE × gate4 可加性(2026-08-04 落地)**:`--set` 把结构 flag 直通给 probe
+(载 ckpt 后 flag 会自动重放 —— `apply_arch_flags`,否则置零被权重加载冲掉、静默失效):
+
+```bash
+python experiments/frame_agg_probe.py \
+    --config scripts/evaluation/clip/zero_shot/mobileviclip_small/config_msrvtt.py \
+    --ckpt ./checkpoints/mobileviclip_small.pt --ts 8,16 \
+    --set model.vision_encoder.disable_temporal_embedding true \
+    --dump-dir experiments/frame_agg_gate4 --out experiments/frame_agg_gate4.md
+
+# 三问三比(跨臂配对合法,同一测试集同顺序):
+# LSE 在 gate4 上还灵吗 → probe 自己的 [CI] 行;可加性与 sanity 用 compare:
+python experiments/collect_results.py --compare \
+    experiments/frame_agg_gate4/T16_lse_tau0.05 experiments/frame_agg/T16_mean   # 两增益合计
+python experiments/collect_results.py --compare \
+    experiments/frame_agg_gate4/T16_mean experiments/frame_agg/T16_mean          # sanity ≈ +0.7
+# 各再跑一遍 --prefix ret_test/(两口径纪律照旧)
+```
+
 **三条纪律**:① 头条只认 **τ=0.05**(v1 写死的默认 = 预登记;τ 扫描只当敏感度曲线,
 不许事后挑最好的 τ);② 判据 = `[CI]` 行两口径同向且 CI 不含 0,别看裸差;
 ③ 报收益必须连部署成本一起报 —— 相似度级聚合 ⇒ 索引存 **T 份**逐帧嵌入(×T 存储/点积)。
@@ -1415,6 +1445,40 @@ python experiments/collect_results.py --compare \
 全档均匀不输 ⇒ 记 null,C2 保持 1D,零损失。
 **为什么组合是精确的**:三开关下整塔逐帧独立、clip 嵌入 = 帧嵌入线性平均、
 落盘的是未归一化嵌入 ⇒ 分组加权平均逐位等于真跑混合分配。
+
+### 3.17 BN 重校准 CLI —— 阶段 3/5 分辨率数从趋势筛升级为正式数(2026-08-04 落地)
+
+纪律出处:换分辨率/删块会移动**每一个 BN** 的输入分布(`dropblock_results.md` §4);
+且检查点会让 BN 双更新(A12)⇒ 本 CLI 强制 `gradient_checkpointing=False` 并在校准后
+断言 `num_batches_tracked == batch 数`,不对拒绝落盘。底座 `experiments/per_t_bn.py`。
+
+```bash
+unset MVC_DATA_DIR
+# 每档:校准(默认 100 batch,10k pilot val,训练域零测试泄漏)→ 产出打过 BN 补丁的 ckpt
+# → 用现有评测链路直接评(pretrained_path 换成补丁 ckpt,零改动)。256 也要校准 —— 同处理才公平。
+for R in 160 181 224 256; do
+  python experiments/bn_recalibrate.py \
+      --config scripts/evaluation/clip/zero_shot/mobileviclip_small/config_msrvtt.py \
+      --ckpt ./checkpoints/mobileviclip_small.pt \
+      --res $R --t 8 --out experiments/bn_ckpts/recal_res${R}_T8.pt
+  python -m torch.distributed.run --nproc_per_node=1 \
+      --master_port=$((10000 + RANDOM % 20000)) \
+      tasks_clip/retrieval.py scripts/evaluation/clip/zero_shot/mobileviclip_small/config_msrvtt.py \
+      pretrained_path experiments/bn_ckpts/recal_res${R}_T8.pt \
+      output_dir eval_res${R}_T8_bncal \
+      inputs.image_res $R model.vision_encoder.img_size $R
+done
+
+# 判读(配对 CI,两口径):
+python experiments/collect_results.py --compare eval_res224_T8_bncal eval_res224_T8       # 重校准回收了多少
+python experiments/collect_results.py --compare eval_res224_T8_bncal eval_res256_T8_bncal # 正式前沿(224 vs 256,同处理)
+```
+
+- 侧车 `<out>.json` 记录校准口径(语料/batch 数/漂移 mean_z)—— 报数时一起交。
+- `--calib-corpus` 默认 `internvid_zh_10k_pilot_val`(**训练域**)。换成
+  `msrvtt_1k_test` = 在测试分布上校准,只准当诊断用,论文口径必须声明。
+- `--set` 支持结构 flag(如 lean 一族:`--set model.vision_encoder.disable_temporal_branch true`),
+  载 ckpt 后自动重放。
 
 ## 4. Training (pretraining)
 

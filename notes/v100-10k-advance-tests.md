@@ -661,3 +661,15 @@ python experiments/collect_results.py --compare experiments/frame_agg/T8_lse_tau
 
 ⚠️ 汇总尾注那句「H100 可排 … sub1m_P9_s42」是过期文案(P9 已于 1M 关线),
 本轮已从脚本删除;H100 排队一律以 `status_1m.py` + `verification-tier-1m-zh.md` §11 为准。
+
+### §9 追记(2026-08-04 晚)·「写吧」三件已交付 —— 全部零训练,命令见块 85 / COMMANDS §3.6/§3.15/§3.17
+
+| # | 交付 | 内容 | 本地验证 |
+|---|---|---|---|
+| ① | probe `--set` 直通 + **载后 flag 重放** | `--set model.vision_encoder.disable_temporal_embedding true` 即 LSE×gate4 可加性;顺手修掉一个静默失效:结构 flag 是「置零参数」,任何外部 load(pretrained_path / --ckpt)都会冲掉它 ⇒ 三处载点(probe / bn_recalibrate / shared_utils)现在都在载后重放 `apply_arch_flags()`(gate 评测当年被迫用消融 ckpt 绕路,根因就是它) | 桩件端到端 |
+| ② | **BN 重校准 CLI**(`experiments/bn_recalibrate.py`) | 产出打过 BN 补丁的完整 ckpt,现有评测链路零改动直接吃;强制 `gradient_checkpointing=False` + 校准后断言 `num_batches_tracked == batch 数`(A12 判据),不对拒绝落盘;校准语料默认 10k pilot val(训练域零泄漏);侧车 json 记口径与漂移 | 桩件端到端(含 A12 断言、绕圈取批、bank 落盘) |
+| ③ | **P1 结构性旁路 + 导出 diff 判据** | `RepMixer.skip_temporal` + wrapper flag `skip_temporal_branch`(强制与 `disable_temporal_branch` 同开,防止效率开关偷偷变成精度消融);`export_smoke.py --skip-temporal` + ONNX 节点/layout-op 计数 | `tests/test_skip_temporal.py` 4 条全过(训练态/重参数化态**逐位一致** + 非零门必须不等的护栏);mini 导出 diff 实证 186 节点/44 layout → 165/26 |
+
+**仍然明确不做(记下理由,别反复起念)**:跨基准(k400/ucf101/hmdb51)的 LSE 复核 ——
+probe 按对角线正例打分,动作基准要 `txt2img/img2txt` 多正例映射 + `num_prompts` 展开,
+是一次真正的改造;等 LSE×gate4 与多基准已训臂两件先落,再决定值不值。

@@ -108,6 +108,24 @@ def build_vision_tower(mini: bool = False, inference_mode: bool = False):
     return model.eval()
 
 
+def apply_skip_temporal(tower) -> int:
+    """round-5 §7 P1 结构性旁路:让每个 RepMixer 直接跳过时序支路。
+
+    效率量测不需要零门(延迟/图规模不依赖权重值,§3 检查 8),所以这里**不**要求
+    λ_1d 已置零 —— 与 `MobileViCLIP_Small` 的 skip_temporal_branch flag(精度路径,
+    强制先置零)刻意不同。返回命中的 RepMixer 数(全尺寸=40,mini=3)。
+    """
+    from models.mobileviclip_small import RepMixer
+
+    n = 0
+    for m in tower.modules():
+        if isinstance(m, RepMixer):
+            m.skip_temporal = True
+            n += 1
+    assert n > 0, "没有找到 RepMixer —— --skip-temporal 无处生效"
+    return n
+
+
 def _wrap(tower):
     """把 [B,T,C,H,W] 的部署输入签名包上去。
 
@@ -140,11 +158,21 @@ def route_onnx(model, example, out_path, opset: int):
         input_names=["video"], output_names=["embed"],
         opset_version=opset, dynamic_axes=None,        # U1 要静态图
     )
-    onnx.checker.check_model(onnx.load(out_path))
+    g = onnx.load(out_path)
+    onnx.checker.check_model(g)
     sess = ort.InferenceSession(out_path, providers=["CPUExecutionProvider"])
     out = sess.run(None, {"video": example.numpy()})[0]
+    # 图规模统计:P1 效率主张(基线 1581 节点 / 340 layout op vs 旁路 1141)的判据。
+    # layout op 口径 = 纯数据搬运/变形,不算任何 FLOP。
+    hist = {}
+    for node in g.graph.node:
+        hist[node.op_type] = hist.get(node.op_type, 0) + 1
+    layout_kinds = ("Transpose", "Reshape", "Unsqueeze", "Squeeze", "Flatten", "Expand")
     return {"loaded_ok": True, "out_shape": list(out.shape),
-            "bytes": os.path.getsize(out_path)}
+            "bytes": os.path.getsize(out_path),
+            "nodes": len(g.graph.node),
+            "layout_ops": sum(hist.get(k, 0) for k in layout_kinds),
+            "op_hist_top": sorted(hist.items(), key=lambda kv: -kv[1])[:8]}
 
 
 class BackendUnavailable(Exception):
@@ -259,7 +287,8 @@ def run_one(name, fn, ext, deps, model, example, outdir, t, opset):
 # ---------------------------------------------------------------- 报告
 def render(results, ts, meta):
     L = [f"# 导出冒烟结果(ROADMAP 1.5 / U1)\n",
-         f"- 模型:{meta['model']}(随机权重,`inference_mode={meta['inference_mode']}`)",
+         f"- 模型:{meta['model']}(随机权重,`inference_mode={meta['inference_mode']}`,"
+         f"`skip_temporal={meta.get('skip_temporal', False)}`)",
          f"- 输入:`[{meta['batch']}, T, 3, {meta['img']}, {meta['img']}]`,ONNX opset {meta['opset']}",
          f"- torch {meta['torch']} · 本表**不含延迟**(第二档仍在第 8 周)\n",
          "| T | " + " | ".join(n for n, *_ in ROUTES) + " |",
@@ -274,6 +303,8 @@ def render(results, ts, meta):
                 cell += f"({r['reason']})"
             elif r["status"] == "fail" and r["ops"]:
                 cell += f" — `{'`, `'.join(r['ops'][:3])}`"
+            elif r["status"] == "pass" and "nodes" in r:
+                cell += f"({r['nodes']}n/{r['layout_ops']}l)"
             row.append(f"| {cell} ")
         L.append("".join(row) + "|")
 
@@ -309,6 +340,10 @@ def main():
     ap.add_argument("--mini", action="store_true", help="缩小版,只用来自检脚本本身")
     ap.add_argument("--inference-mode", action="store_true",
                     help="重参数化后的部署形态(RepMixer 合并分支)")
+    ap.add_argument("--skip-temporal", action="store_true",
+                    help="P1 结构性旁路:RepMixer 跳过整条时序支路(round-5 §7)。"
+                         "与基线各跑一次、diff ONNX 节点数即为 P1 的效率判据;"
+                         "⚠️ 用不同 --outdir,否则文件互相覆盖")
     ap.add_argument("--outdir", default="experiments/exports")
     ap.add_argument("--json", default=None, help="默认写到 <outdir>/export_smoke.json")
     args = ap.parse_args()
@@ -321,7 +356,11 @@ def main():
 
     print(f"构造视觉塔({'mini' if args.mini else '全尺寸'},"
           f"inference_mode={args.inference_mode})…", flush=True)
-    tower = _wrap(build_vision_tower(args.mini, args.inference_mode))
+    inner = build_vision_tower(args.mini, args.inference_mode)
+    if args.skip_temporal:
+        n = apply_skip_temporal(inner)
+        print(f"[P1-旁路] 已在 {n} 个 RepMixer 上开启 skip_temporal", flush=True)
+    tower = _wrap(inner)
 
     results = {}
     for t in ts:
@@ -338,13 +377,15 @@ def main():
             r = run_one(name, fn, ext, deps, tower, example, args.outdir, t, args.opset)
             results[str(t)][name] = r
             detail = r.get("reason") or r.get("error") or r.get("path", "")
+            if "nodes" in r:
+                detail += f" · {r['nodes']} 节点 / {r['layout_ops']} layout"
             print(f"   {name:<7} {r['status']:<5} {detail}", flush=True)
             if r.get("ops"):
                 print(f"           疑似算子: {', '.join(r['ops'][:6])}", flush=True)
 
     meta = {"model": "mini FastViT" if args.mini else "FastViT(= build_vision_encoder 同参)",
-            "inference_mode": args.inference_mode, "batch": args.batch,
-            "img": img, "opset": args.opset, "torch": torch.__version__}
+            "inference_mode": args.inference_mode, "skip_temporal": args.skip_temporal,
+            "batch": args.batch, "img": img, "opset": args.opset, "torch": torch.__version__}
     report = render(results, ts, meta)
     out_json = args.json or os.path.join(args.outdir, "export_smoke.json")
     with open(out_json, "w") as f:
