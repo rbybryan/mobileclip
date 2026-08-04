@@ -23,6 +23,35 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-08-03 (80) — 📋 下一轮 refinement 训练手册已落:MC2-init + lean(config/flag 全就位)
+
+选臂理由与阶梯见 `verification-tier-1m-zh.md` §11.6;**逐步执行手册(含全部命令与决策表)=
+[`next-training-round-zh.md`](../next-training-round-zh.md)**。本轮落了:
+`disable_temporal_embedding` flag(`models/mobileviclip_small.py`,P1 同模式,缺省不变)、
+`sub1m_mc2init_s42.py`(双塔换 MobileCLIP2-S2 init)、`sub1m_lean_s42.py`(两减法合体)。
+
+**现在就能做(不占训练卡,~10 分钟)** —— 手册 §0:
+
+```bash
+cd ~/mobileclip && git pull
+wget -O checkpoints/mobileclip2_s2.pt \
+  "https://huggingface.co/apple/MobileCLIP2-S2/resolve/main/mobileclip2_s2.pt"
+# 然后跑手册 §0 的键集一致性闸门(强制)+ 配置解析闸门
+```
+
+**当前队列(s43 训练 → 1M 抽取)跑完后**:先手册 §1 冒烟门(10 分钟),再:
+
+```bash
+python experiments/status_1m.py        # ⚪ 才排
+nohup bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_mc2init_s42 sub1m_lean_s42 \
+  > experiments/runs/verify_1m_round2.log 2>&1 &
+echo "round2 PID = $!"
+```
+
+**Then report back** in from-server.md:手册 §0 闸门 A 输出、§1 三行断言、跑完后 §3 的 CI 表。
+
+---
+
 ## 2026-08-03 (79) — ▶️ 维护者拍板:现在就训改进版模型 —— 一条命令排「P1trained_s43 训练 → 1M 教师抽取」
 
 改进版模型 = **P1trained**(删时序分支,全轮唯一过关的改动)。它的下一步训练就是

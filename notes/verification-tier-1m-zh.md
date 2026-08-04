@@ -550,8 +550,10 @@ C1 不是一条 15 h 的臂,是一串有依赖的台阶;1M 层在其中仍只当
 - **动机**:P5 的评测版已显著为正(+0.67 DSL,`v100_sweep_results.md` §1),P1trained 非劣
   ⇒ 出货配置自然是**两个减法一起**。但「从头就没有 `temporal_embedding`」和「训完再删」
   是两个问题(与 P1 / P1-trained 同构)。
-- ⚠️ **代码缺口**:`temporal_embedding` 目前是无条件相加(`models/mobileviclip_small.py:1197`),
-  没有训练期开关;需要一个 ~5 行 flag + 10k 门(off-path 必须 bitwise 等于 P1trained)。回「写吧」即落地。
+- ~~代码缺口~~ **✅ 2026-08-03 已落地**:`disable_temporal_embedding` flag 进了
+  `models/mobileviclip_small.py`(与 `disable_temporal_branch` 同模式:置零 + 冻结 + 断言恰 1 个,
+  flag 缺省 off-path 不变);config = `sub1m_lean_s42.py`。冒烟门与排队命令见
+  [`next-training-round-zh.md`](next-training-round-zh.md)。
 - **优先级**:排在 11.1 / 11.2 之后。它的收益上限已知(≈+0.7),不抢 C1 的时钟。
 
 ### 11.4 明确不排的
@@ -591,7 +593,9 @@ C1 不是一条 15 h 的臂,是一串有依赖的台阶;1M 层在其中仍只当
 ### 11.6 🔺 还有哪些 refinement training 值得上 H100(2026-08-03,盘点 round4 §9.2–§9.5 的幸存者)
 
 §10 杀掉的是「池化/损失小改」这一族;round4 精度评审(`architecture-round4.md` §9.2)里
-**有一批从未被测、也没被 §10 连坐**的候选。按「先免费闸门、再按闸门放行训练」排:
+**有一批从未被测、也没被 §10 连坐**的候选。按「先免费闸门、再按闸门放行训练」排。
+**已选中的下一轮(MC2-init + lean)的逐步执行手册见
+[`next-training-round-zh.md`](next-training-round-zh.md)**(config 已落,lean flag 已实现)。
 
 **第 0 层 · 两个零训练闸门(卡被 s43+抽取占着时就能准备,评测只要单卡分钟级)**
 
