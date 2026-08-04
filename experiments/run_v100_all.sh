@@ -338,7 +338,7 @@ PY
     if [ -z "$W2" ]; then
       note SKIP "P9:‖W2‖" "没找到 temporal_pool.w2(ckpt 还没落盘?)"
     elif python -c "import sys; sys.exit(0 if float('$W2')>1e-4 else 1)"; then
-      note PASS "P9:‖W2‖" "$W2 > 1e-4 ⇒ 学动了,可以上 H100"
+      note PASS "P9:‖W2‖" "$W2 > 1e-4 ⇒ 10k 门通过(链路检查;⚠️ P9 已于 1M 关线,这不是排队许可)"
     else
       note FAIL "P9:‖W2‖" "🔴 $W2 ≈ 0 ⇒ 退化成 mean,**别上 H100**,先调 different_lr"
     fi
@@ -415,9 +415,10 @@ echo "PASS $p · FAIL $f · SKIP $s"
 cat <<'EOF'
 
 下一步:
-  · 阶段 2 的 CI 不含 0 ⇒ P1 / P5 可写进论文
-  · 阶段 6 全 PASS 且 ‖W2‖ > 1e-4 ⇒ H100 可排:
-        bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_P1trained_s42 sub1m_P9_s42
+  · gate 判定已落账(P5 两口径认证、gate3 改判)⇒ 见 experiments/v100_sweep_results.md §1/§2,不用再跑
+  · LSE 聚合的认证结果 ⇒ experiments/frame_agg_results.md + v100_sweep_results.md §9
+  · H100 排队**不看本脚本**:python experiments/status_1m.py 确认队列,再按
+    notes/verification-tier-1m-zh.md §11 排(⚠️ P9 已于 1M 关线,别把它排上 H100)
 
 ⚠️ 阶段 3/5 未做 BN 重校准 ⇒ 只能当趋势筛。换分辨率改的是**每一层**的激活统计,
    漂移远大于 P11 删块;正式数要等 BN 重校准 CLI(per_t_bn.py 目前只有纯函数),
