@@ -23,11 +23,12 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
-## 2026-08-04 (78) — 块 77 四项收尾判读:P9 正式结案;三条 🔴/⚠️ 全是假警报,队列其实是空的;两条命令因路径盲区重发
+## 2026-08-04 (82) — 块 77 四项收尾判读:P9 正式结案;三条 🔴/⚠️ 全是假警报(还会卡住块 79 的排队闸门,已修);两条命令因路径盲区重发
 
-**一句话**:你贴的四段输出里,**唯一的真数字(P9 的 W₂ 范数)已把 P9 线关死**;
-其余三条(status 的 🔴/⚠️、compare 的 FileNotFoundError、grep 无文件)都是**块 77 给的
-路径/工具有盲区**,不是实验出了问题。工具已修、文档已改,按下面顺序走即可。
+**一句话**:你贴的四段输出(块 77 的 §11.0 收尾命令)里,**唯一的真数字(P9 的 W₂ 范数)
+已把 P9 线关死**;其余三条(status 的 🔴/⚠️、compare 的 FileNotFoundError、grep 无文件)
+都是**块 77 给的路径/工具有盲区**,不是实验出了问题。工具已修、文档已改;
+**尤其注意:不修的话,块 79 那条「必须 ⚪ 才排」的闸门会被这三条假警报永远卡死。**
 
 ### 判读(对应四段输出)
 
@@ -40,16 +41,20 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
      落在 `experiments/evals/sub1m/` —— 旧脚本只扫 `runs/` ⇒ 误报 ⚠️ 中断。
    - `r1b_s42`:runner 每次调用**覆盖写**日志,07-30 那次 auto_resume 把前一腿抹了,
      只剩续跑腿 2:12 ⇒ 误报 🔴。臂是完整的(它就是 §10.2 种子地板的一半)。
-   - 已修(`TROUBLESHOOTING.md` 末节):status_1m 兜底扫 evals/、加看 ckpt mtime 跨度、
+   - 已修(`TROUBLESHOOTING.md`「status_1m 把已收官的臂报成 🔴/⚠️」节):status_1m 兜底扫
+     evals/、加看 ckpt mtime 跨度、
      顺带监测 `extract_teacher.py`;runner 改追加写(`>>`)。
    - **⚠️ 千万别跑它上次附的三条「续跑命令」** —— 没坏的东西不用修。
 3. **r1both−r1a 比较 —— 块 77 给的路径错了**:r1a_s42 是离线补评的臂,ranks 在
    `evals/sub1m/` 不在 `runs/`(落点规矩已记 `COMMANDS.md` §3.9)。修正版在下面。
+   **同一个坑也埋在块 79 的判读命令里**:那两条 compare 的基线写的是
+   `experiments/runs/sub1m_r0_s42`,而 r0_s42 的 ranks 同样只在
+   `experiments/evals/sub1m/sub1m_r0_s42` —— 到时候照下面第 4 步的修正版跑。
 4. **C1 干净吞吐 —— 块 77 的 grep 路径也错了**:`extract_teacher.py` 只往 stdout 打,
    日志文件=当时重定向到哪(100k 那条怎么挂的我这边看不到)。**改用块文件 mtime 读吞吐,
    不依赖日志**(已记 §3.10),命令在下面。
 
-### Do this next(H100,按序;0–2 全是分钟级只读)
+### Do this next(H100,按序;0–2 全是分钟级只读,3–4 就是块 79 的原计划)
 
 ```bash
 git pull        # 仓库根目录
@@ -63,7 +68,7 @@ ls experiments/{runs,evals/sub1m}/sub1m_r1{both,a}_s42/ranks_*.npz 2>/dev/null
 python experiments/collect_results.py --compare experiments/runs/sub1m_r1both_s42 experiments/evals/sub1m/sub1m_r1a_s42
 python experiments/collect_results.py --compare experiments/runs/sub1m_r1both_s42 experiments/evals/sub1m/sub1m_r1a_s42 --prefix ret_test/
 
-# 2) C1 干净吞吐:块 mtime 直接算(P9 于 08-03 06:12 结束,看这之后的块;顺带看 100k 跑完没)
+# 2) C1 干净吞吐:块 mtime 直接算(P9 于 08-03 06:12 结束,看这之后的块;顺带看 100k 到没到 49/49)
 python - <<'PY'
 import glob, os, datetime
 fs = sorted(glob.glob('experiments/teacher/iv2s2_100k/**/block_*.npz', recursive=True))
@@ -75,24 +80,157 @@ for f in fs:
     prev = t
 PY
 
-# 3) flash-attn A/B(§3.10 现成命令,~1.2 h 一张闲卡)—— 放在 s43 之前:
-#    s43 一开就把 4 张卡占满 15 h,A/B 就只能等或被污染。
-#    开跑前 pgrep -af extract_teacher.py 确认 100k 没还在跑(新 status_1m 也会显示)。
-
-# 4) A/B 出结果后再排确认臂(块 77 原命令不变):
-nohup bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_P1trained_s43 > experiments/runs/verify_1m_p1s43.log 2>&1 &
-echo "verify-1m PID = $!"
+# 3) flash-attn A/B(§3.10 现成命令,~1 小时一张闲卡;pgrep -af extract_teacher.py 确认 100k 没还在跑)
+# 4) A/B 出结果 ⇒ 块 79 的一条命令排「s43 训练 → 1M 抽取」(flash 胜就给 extract 加 --use-flash-attn)
+#    ⚠️ 15 h 后块 79 的判读命令请用修正版(r0_s42 的 ranks 在 evals/ 下):
+#    python experiments/collect_results.py --compare experiments/runs/sub1m_P1trained_s43 experiments/evals/sub1m/sub1m_r0_s42
+#    python experiments/collect_results.py --compare experiments/runs/sub1m_P1trained_s43 experiments/evals/sub1m/sub1m_r0_s42 --prefix ret_test/
 ```
 
-顺序理由:3 要闲卡而 4 会占满 4 卡 15 小时,所以 3 在 4 前,代价只是 s43 晚开 ~1 小时。
-4 跑完后按 §11.2 排 C1 ②(1M 分片,用 A/B 胜者设置)。
 **读法预判(§11.0-3)**:由 §10.1 绝对分推 r1both−r1a 点估计 ≈ −1.2 raw / −1.8 DSL,
 都在种子地板 δ=2.5 内 ⇒ 大概率「≈0」那支(5 分=sigmoid@512 的已知代价),以配对 CI 为准。
-V100 侧照块 77 不变。
+V100 侧照块 81 不变。
 
 **Then report back** in from-server.md:① 新 status_1m 全文(应无 🔴/⚠️);
 ② r1both−r1a 两口径的 Δ 与 95% CI;③ 块 mtime 表的尾部(独占卡后的 clip/s、100k 是否已到
-49/49);④ flash A/B 的两个 clip/s + cos 等价自检;⑤ s43 的 runner PID。
+49/49);④ flash A/B 的两个 clip/s + cos 等价自检;⑤ 块 79 队列的 PID。
+
+---
+
+## 2026-08-04 (81) — ✅ 阶段 0/7/10 + gate 两口径全收;C-4 判「方差」但 LSE 是免费增益候选;下一步:probe v2 重跑阶段 10 + 多基准补已训臂
+
+**Diagnosis(全部已落盘,细节见 `experiments/v100_sweep_results.md` §8 与改判后的 §1/§2):**
+
+1. **gate4/P5 两口径认证通过**(raw +0.70*/DSL +0.67*,R_sum +4.2/+4.0,CI 均不含 0)⇒ **可写进论文**。
+2. **gate3「测不出差别」改判收回**:raw 口径显著为负(r_mean −0.43*,R_sum −2.60*)⇒
+   零训练删时序分支要付 ≈0.4 的真实小代价;P1 的立论回到 **P1trained**(训练把它买回来了)。
+3. **C-4 判「方差缩减」**(oracle−mean = −1.27/−0.65,远低于覆盖门槛)⇒ P6/FILIP **训练**族维持死亡。
+   **但 LSE(τ=0.05)+1.15/+1.56 同时赢 mean 和 hard-max** —— 评测侧唯一还开着的精度线索,
+   且 LSE@T=8 > mean@T=16(聚合器买得动帧预算)。裸差不算数,等下面第 1 步的配对 CI。
+4. A7 成本轴(224² = 0.765× MACs)、B1 词表(100%@8k,**仅 10k-zh 口径**,饱和干净反而要警惕)、
+   A9/A10/A13 第二轮复现 —— 全落地。
+5. **阶段 0 的 `MSRVTT 视频根` FAIL 是假警报**:`find` 默认不解引用**末级软链**,数据一直是好的
+   (同轮阶段 10 照常出数就是铁证)。已修 `find -L` + `TROUBLESHOOTING.md` 末节。**数据根别动。**
+
+**Do this next(细节与判读纪律见 `notes/v100-10k-advance-tests.md` §9):**
+
+```bash
+cd ~/mobileclip && git pull
+unset MVC_DATA_DIR
+
+# 1) 阶段 10 重跑(probe v2:τ 扫描 + 配对 CI + 两口径 + rank 落盘,~40 min)
+bash experiments/run_v100_all.sh 10
+
+# 2) 多基准补已训臂(§8 第 3 步原文照跑;软链已就位,只差 ckpt):
+#    rsync 两个 ckpt(sub1m_r0_s42 / sub1m_P1trained_s42)→ 每臂 × k400/ucf101/hmdb51
+#    → collect_results --compare(--prefix 按实际键名);命令块在 v100 §8 第 3 步。
+```
+
+判读要点:头条只认 **τ=0.05**(预登记,不许事后挑 τ);LSE@0.05 的 `[CI]` 行
+**两口径同向且不含 0** ⇒ 认证,连帧预算结论一起进论文;任一口径含 0 ⇒ 降级为附录趋势。
+
+**Then report back** in from-server.md:① 阶段 10 的 `[verdict]` + `[CI]` 行(整段贴回);
+② 多基准的 6 份 `--compare` 表;③ 若 rsync 不通,贴 b100 侧 `ls experiments/runs/*/ckpt_02.pth`。
+
+---
+
+## 2026-08-03 (80) — 📋 下一轮 refinement 训练手册已落:MC2-init + lean(config/flag 全就位)
+
+选臂理由与阶梯见 `verification-tier-1m-zh.md` §11.6;**逐步执行手册(含全部命令与决策表)=
+[`next-training-round-zh.md`](../next-training-round-zh.md)**。本轮落了:
+`disable_temporal_embedding` flag(`models/mobileviclip_small.py`,P1 同模式,缺省不变)、
+`sub1m_mc2init_s42.py`(双塔换 MobileCLIP2-S2 init)、`sub1m_lean_s42.py`(两减法合体)。
+
+**现在就能做(不占训练卡,~10 分钟)** —— 手册 §0:
+
+```bash
+cd ~/mobileclip && git pull
+wget -O checkpoints/mobileclip2_s2.pt \
+  "https://huggingface.co/apple/MobileCLIP2-S2/resolve/main/mobileclip2_s2.pt"
+# 然后跑手册 §0 的键集一致性闸门(强制)+ 配置解析闸门
+```
+
+**当前队列(s43 训练 → 1M 抽取)跑完后**:先手册 §1 冒烟门(10 分钟),再:
+
+```bash
+python experiments/status_1m.py        # ⚪ 才排
+nohup bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_mc2init_s42 sub1m_lean_s42 \
+  > experiments/runs/verify_1m_round2.log 2>&1 &
+echo "round2 PID = $!"
+```
+
+**Then report back** in from-server.md:手册 §0 闸门 A 输出、§1 三行断言、跑完后 §3 的 CI 表。
+
+---
+
+## 2026-08-03 (79) — ▶️ 维护者拍板:现在就训改进版模型 —— 一条命令排「P1trained_s43 训练 → 1M 教师抽取」
+
+改进版模型 = **P1trained**(删时序分支,全轮唯一过关的改动)。它的下一步训练就是
+`sub1m_P1trained_s43`(config 已在,#421)—— 这既是「训改进版」也是它上 10M 前的第二个 seed 保险。
+再往上的两档(**lean** = P1trained+删 `temporal_embedding`;**10M 论文数版**)都还缺 config/flag,
+回「写吧」我落地;10M 按 §11.4 仍要等两道保险。
+
+**先跑 flash A/B(块 77 第 2 步,~1 小时)定抽取用不用 `--use-flash-attn`,然后一条命令排完两件事**
+(runner 串行;训练 ~15 h 完了自动接抽取 ~39 h,总 ~55 h 不用管):
+
+```bash
+cd ~/mobileclip && git pull
+python experiments/status_1m.py        # 必须 ⚪ 才排
+nohup bash -c '
+  bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_P1trained_s43
+  for k in 0 1 2 3; do
+    CUDA_VISIBLE_DEVICES=$k python experiments/extract_teacher.py run \
+      --anno data/anno_pretrain/internvid_v1.jsonl \
+      --out  experiments/teacher/iv2s2_1m \
+      --teacher-ckpt checkpoints/InternVideo2-stage2_1b-224p-f4.pt \
+      --shard-id $k --num-shards 4 --batch-size 8 --num-workers 8 --amp bf16 \
+      --per-frame --subset-ts 2,4,8 > experiments/teacher/extract_1m_$k.log 2>&1 &
+  done
+  wait
+' > experiments/runs/queue_0803.log 2>&1 &
+echo "queue PID = $!"
+```
+
+(flash A/B 若胜,给上面 extract 那条加 `--use-flash-attn` 再启动;全语料只用一种设置。)
+
+**训练跑完的判读(15 h 后,CPU 即可)** —— 跨 seed 对 `r0_s42`,§10.3(b) 惯例,δ=2.5:
+
+```bash
+python experiments/collect_results.py --compare experiments/runs/sub1m_P1trained_s43 experiments/runs/sub1m_r0_s42
+python experiments/collect_results.py --compare experiments/runs/sub1m_P1trained_s43 experiments/runs/sub1m_r0_s42 --prefix ret_test/
+```
+
+两口径点估计为正或 CI 下界 > −2.5 ⇒ 非劣在第二个 seed 复现,10M 的第一道保险到手;
+显著负过 δ ⇒ 保险丝熔断,10M 停,先归因。
+
+---
+
+## 2026-08-03 (78) — 🔍 「两台都没有 k400/ucf101/hmdb51」先别下结论 —— §5/§6 的数字就是在它们上测的
+
+**矛盾**:`v100_sweep_results.md` §5/§6(P7 分辨率否决、多基准锚点)是这三个基准的**实测数**
+(07-31,#414)。最可能的解释:视频一直在 V100 旧 `MVC_DATA_DIR` 根(`/home/vca1/datasets`)下,
+#418 修复 `unset` 后只软链了 10k ⇒ 三个基准被**同一个根机制**断开,「没有」= 路径断开。
+
+**V100 上先探(1 分钟)**:
+```bash
+find /home/vca1/datasets -maxdepth 2 -type d \
+     \( -iname "*kinetics*" -o -iname "*ucf*" -o -iname "*hmdb*" \) 2>/dev/null
+```
+
+**找到 ⇒ 三条幂等软链(前缀按 find 输出改),readiness 应转 `[OK ]`,然后 §8 第 3 步照跑**:
+```bash
+ln -sfn /home/vca1/datasets/kinetics_400_val_10s_320p data/kinetics_400_val_10s_320p
+ln -sfn /home/vca1/datasets/ucf101                    data/ucf101
+ln -sfn /home/vca1/datasets/hmdb51                    data/hmdb51
+python experiments/check_readiness.py
+```
+
+**真没有(find 为空)⇒** ① 🔴 把空输出贴回 from-server.md,§5/§6 的出处要审计;
+② 兜底二选一:下载 UCF101(~6.9 GB)+ HMDB51(~2 GB)补齐(k400 先跳过),
+或放弃多基准保险、P1trained 只靠 MSR-VTT 配对 CI + s43。
+
+**b100 队列不变**(flash A/B → 1M 教师抽取,COMMANDS §3.10);
+块 77 里「若 b100 有三基准就在 b100 评」那一条**作废**。
 
 ---
 
