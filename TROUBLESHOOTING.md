@@ -2964,3 +2964,43 @@ loader = create_loader(test_datasets, [None] * len(test_datasets),
 实际还是 T=8。
 
 实例:`experiments/frame_agg_probe.py`(C-2 聚合扫描 + C-4 方差-vs-覆盖判别)。
+
+## 阶段 0 假 FAIL:`MSRVTT 视频根 没有 mp4 ⇒ 阶段 2/3/4/5/10 必炸`,同一轮阶段 10 却照常出数
+
+### Symptom
+
+`bash experiments/run_v100_all.sh 0 10`(2026-08-04,commit ec39100,`MVC_DATA_DIR` 已 unset):
+
+```
+FAIL   MSRVTT 视频根   🔴 data/MSRVTT_Videos 没有 mp4 ⇒ 阶段 2/3/4/5/10 必炸。修法:unset MVC_DATA_DIR(...)
+PASS   数据:msrvtt     视频就位
+...
+PASS   C-2/C-4 聚合判别      ← 阶段 10 真的去读了 MSR-VTT 视频,全量出数
+```
+
+三行互相矛盾:预检说必炸、readiness 说就位、真正读视频的阶段跑通。FAIL 给的"修法"
+(`unset MVC_DATA_DIR`)也已经做过了,照做不会有任何变化。
+
+### Cause —— `find` 默认不解引用**命令行参数上的软链**,而这个根的最后一级就是软链
+
+数据根修复(#418 及手动软链流程)之后,`data/MSRVTT_Videos` 这类基准根是指向真实数据
+目录的**软链**。预检用的是:
+
+```bash
+find "$ROOT/MSRVTT_Videos" -name '*.mp4' | head -1
+```
+
+GNU find 默认 `-P`:**连命令行参数本身是软链都不跟**,于是不进入目录、一个 mp4 也
+"找不到" ⇒ 假 FAIL。而 Python 侧(`check_readiness.py`、decord 解码)走的是 stat/open,
+天然解引用 ⇒ 同一轮里它们全 PASS。这就是三行矛盾的全部来历。
+
+10k 那行(`data/internvid_zh_10k/videos`)没触发同一个坑,纯属侥幸:它的软链在路径
+**中间**一级(`internvid_zh_10k`),路径解析会跟中间级软链,只有**最后一级**是软链才炸。
+
+### Fix
+
+已修(与本条同一个 PR):两个视频根检查都改成 `find -L`。服务器侧 `git pull` 即可,
+数据不用动 —— **它一直是好的**。
+
+判别口诀:**预检 FAIL 但真正读数据的阶段 PASS ⇒ 先怀疑检查本身**(尤其 `find`/`ls -l`
+这类不解引用的工具碰上软链),别按 FAIL 行给的修法去动数据根。

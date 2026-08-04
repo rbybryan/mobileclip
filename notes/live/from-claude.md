@@ -23,6 +23,43 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-08-04 (81) — ✅ 阶段 0/7/10 + gate 两口径全收;C-4 判「方差」但 LSE 是免费增益候选;下一步:probe v2 重跑阶段 10 + 多基准补已训臂
+
+**Diagnosis(全部已落盘,细节见 `experiments/v100_sweep_results.md` §8 与改判后的 §1/§2):**
+
+1. **gate4/P5 两口径认证通过**(raw +0.70*/DSL +0.67*,R_sum +4.2/+4.0,CI 均不含 0)⇒ **可写进论文**。
+2. **gate3「测不出差别」改判收回**:raw 口径显著为负(r_mean −0.43*,R_sum −2.60*)⇒
+   零训练删时序分支要付 ≈0.4 的真实小代价;P1 的立论回到 **P1trained**(训练把它买回来了)。
+3. **C-4 判「方差缩减」**(oracle−mean = −1.27/−0.65,远低于覆盖门槛)⇒ P6/FILIP **训练**族维持死亡。
+   **但 LSE(τ=0.05)+1.15/+1.56 同时赢 mean 和 hard-max** —— 评测侧唯一还开着的精度线索,
+   且 LSE@T=8 > mean@T=16(聚合器买得动帧预算)。裸差不算数,等下面第 1 步的配对 CI。
+4. A7 成本轴(224² = 0.765× MACs)、B1 词表(100%@8k,**仅 10k-zh 口径**,饱和干净反而要警惕)、
+   A9/A10/A13 第二轮复现 —— 全落地。
+5. **阶段 0 的 `MSRVTT 视频根` FAIL 是假警报**:`find` 默认不解引用**末级软链**,数据一直是好的
+   (同轮阶段 10 照常出数就是铁证)。已修 `find -L` + `TROUBLESHOOTING.md` 末节。**数据根别动。**
+
+**Do this next(细节与判读纪律见 `notes/v100-10k-advance-tests.md` §9):**
+
+```bash
+cd ~/mobileclip && git pull
+unset MVC_DATA_DIR
+
+# 1) 阶段 10 重跑(probe v2:τ 扫描 + 配对 CI + 两口径 + rank 落盘,~40 min)
+bash experiments/run_v100_all.sh 10
+
+# 2) 多基准补已训臂(§8 第 3 步原文照跑;软链已就位,只差 ckpt):
+#    rsync 两个 ckpt(sub1m_r0_s42 / sub1m_P1trained_s42)→ 每臂 × k400/ucf101/hmdb51
+#    → collect_results --compare(--prefix 按实际键名);命令块在 v100 §8 第 3 步。
+```
+
+判读要点:头条只认 **τ=0.05**(预登记,不许事后挑 τ);LSE@0.05 的 `[CI]` 行
+**两口径同向且不含 0** ⇒ 认证,连帧预算结论一起进论文;任一口径含 0 ⇒ 降级为附录趋势。
+
+**Then report back** in from-server.md:① 阶段 10 的 `[verdict]` + `[CI]` 行(整段贴回);
+② 多基准的 6 份 `--compare` 表;③ 若 rsync 不通,贴 b100 侧 `ls experiments/runs/*/ckpt_02.pth`。
+
+---
+
 ## 2026-08-03 (80) — 📋 下一轮 refinement 训练手册已落:MC2-init + lean(config/flag 全就位)
 
 选臂理由与阶梯见 `verification-tier-1m-zh.md` §11.6;**逐步执行手册(含全部命令与决策表)=
