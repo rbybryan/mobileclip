@@ -23,6 +23,43 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-08-04 (83) — 🏆 LSE(τ=0.05)认证通过:两口径 × 两 T 四格 CI 全显著;下一步:2 条跨 T 命令 + 多基准 rsync 仍欠
+
+**Diagnosis(全量队列 31 PASS / 0 FAIL,细节全在 `experiments/v100_sweep_results.md` §9):**
+
+1. **认证达成**:LSE@0.05 − mean 四格全显著 —— T=8 raw **+1.15 [+0.63,+1.67]** /
+   DSL **+1.57 [+1.03,+2.12]**;T=16 raw **+1.57 [+1.05,+2.08]** / DSL **+1.45 [+0.93,+1.97]**;
+   R_sum +6.9~+9.4。**本仓第二条(量级最大)通过完整纪律的评测侧正向结论,零训练。**
+2. **τ 是平台不是刀尖**:0.02–0.2 几乎全显著,τ≥0.5 塌回 mean;预登记的 0.05 恰在平台顶点
+   ⇒ 头条无需也不许换 τ。
+3. **机制收紧**:hard-max 在 T=8 被认证**有害**(raw −1.27*/DSL −1.08*),top-k 摸不到 LSE
+   ⇒ 增益特指**平滑证据加权**,不是选帧;C-4 的「方差缩减」判据不变。
+4. **部署语义(写论文照抄)**:LSE 只用视频自己的 T 帧 ⇒ **非 transductive、端上可用**
+   (与 DSL 本质不同);成本 = 索引存 T 份逐帧嵌入;模型内部 mean 池化未动,任何已训 ckpt 直接受益。
+5. ⚠️ 汇总尾注「H100 可排 … sub1m_P9_s42」是**过期文案**(P9 已结案,见块 82)——
+   本 PR 已从脚本里删掉;排队一律 `status_1m.py` + verification-tier §11(当前链条 = 块 79/80)。
+
+**Do this next:**
+
+```bash
+cd ~/mobileclip && git pull
+
+# ① 跨 T 配对 CI(零 GPU,~2 分钟):「换聚合器 ≈ 白赚 2× 帧预算」变判据
+python experiments/collect_results.py --compare experiments/frame_agg/T8_lse_tau0.05 experiments/frame_agg/T16_mean
+python experiments/collect_results.py --compare experiments/frame_agg/T8_lse_tau0.05 experiments/frame_agg/T16_mean --prefix ret_test/
+
+# ② 多基准补已训臂(块 81 第 2 条,仍欠;软链已就位,只差 ckpt):
+#    rsync sub1m_r0_s42 / sub1m_P1trained_s42 的 ckpt_02.pth → 每臂 × k400/ucf101/hmdb51
+#    → compare(--prefix 按实际键名)。命令块:v100-10k-advance-tests.md §8 第 3 步。
+```
+
+①读法:Δ(LSE@8 − mean@16)CI 下界 ≥ 0 ⇒「省一半帧还更好」;含 0 且点估计为正 ⇒「省一半帧不掉点」。
+
+**Then report back** in from-server.md:① 两张跨 T 表;② 多基准 6 张 compare 表
+(或 rsync 的具体障碍 + b100 侧 `ls experiments/runs/*/ckpt_02.pth` 输出)。
+
+---
+
 ## 2026-08-04 (82) — 块 77 四项收尾判读:P9 正式结案;三条 🔴/⚠️ 全是假警报(还会卡住块 79 的排队闸门,已修);两条命令因路径盲区重发
 
 **一句话**:你贴的四段输出(块 77 的 §11.0 收尾命令)里,**唯一的真数字(P9 的 W₂ 范数)

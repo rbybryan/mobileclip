@@ -1328,7 +1328,8 @@ r_mean** ⇒ 这份权重里深度不冗余,**关掉这条线**,预算全给 rou
 
 一次前向拿逐帧嵌入,{mean, max, top-2/4, 单帧, LSE(τ 扫描)} 各打一次分,
 每个聚合器 vs mean 出**逐查询配对 CI**(10000 次,seed=0)+ **两口径**(raw + DSL),
-逐查询 rank 落盘可事后任意重比。首轮结果与判读见 `experiments/v100_sweep_results.md` §8.1。
+逐查询 rank 落盘可事后任意重比。首轮结果与判读见 `experiments/v100_sweep_results.md` §8.1;
+✅ **认证已达成(2026-08-04 第三轮:LSE@0.05 两口径 × 两 T 四格 CI 全显著)**,见同文件 §9。
 
 ```bash
 # 评测,双根规则:先 unset(README §3.0)
@@ -1353,6 +1354,15 @@ python experiments/collect_results.py --compare \
     experiments/frame_agg/T16_lse_tau0.05 experiments/frame_agg/T16_mean
 python experiments/collect_results.py --compare \
     experiments/frame_agg/T16_lse_tau0.05 experiments/frame_agg/T16_mean --prefix ret_test/
+```
+
+**跨 T 也合法**(同一测试集、同一查询顺序)—— 帧预算问题「LSE@T=8 是否 ≥ mean@T=16」:
+
+```bash
+python experiments/collect_results.py --compare \
+    experiments/frame_agg/T8_lse_tau0.05 experiments/frame_agg/T16_mean
+python experiments/collect_results.py --compare \
+    experiments/frame_agg/T8_lse_tau0.05 experiments/frame_agg/T16_mean --prefix ret_test/
 ```
 
 **三条纪律**:① 头条只认 **τ=0.05**(v1 写死的默认 = 预登记;τ 扫描只当敏感度曲线,
