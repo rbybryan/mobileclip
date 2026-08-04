@@ -208,10 +208,24 @@ batch 仅 512(128×4),而 sigmoid 类损失的理论饱和点在 3 万量级,相
 删时序分支不是拍脑袋的假设,而是三次测量顺次逼出来的结论(提案编号 round4-P1,
 [`architecture-round4.md`](../notes/architecture-round4.md) §P1「largest *measured* win」):
 
-1. **诊断:GATE-0 时间维容量审计 —— 「这条支路几乎没在干活」。** 三条独立证据(详见 §4.4):
-   ① 打乱 8 帧检索得分不掉(帧序值≈0);② 时序卷积核的方向性与随机核无法区分(没学到方向);
-   ③ **时序分支的闸门 `layer_scale_1d` 只有同层空间闸门的 6.1%,且两者同初值 1e-5** —— 训练**自己**
-   把这条支路压低了约 16 倍。**其中「闸门被自我压制」这一条最直接:模型在用梯度告诉我们它不需要这个零件。**
+1. **诊断:GATE-0 时间维容量审计(temporal-capacity audit)—— 实测「这条支路几乎没在干活」。**
+   三条独立证据从**行为(behavioral)、参数(kernel)、训练动力学(gate)** 三个层面互相印证
+   (原始数据见 [`gate0_results.md`](../experiments/gate0_results.md) §8):
+
+   - **① 行为侧 · frame-shuffle probe:** 把 8 帧完全打乱输入,检索得分几乎不动
+     —— t2v R@1 **+0.1 / +0.2**(DSL / raw),raw `r_mean` 甚至与基线逐位相同的 **61.55**。作为 positive
+     control,把 8 帧换成单帧重复(freeze)则暴跌 **−13.0 / −12.1**。⇒ **帧「顺序」值 ≈ 0,帧「多样性」值 ≈ 13
+     R@1**;而 1D 时序卷积的职责恰恰是建模顺序。freeze 掉 13 分同时证明扰动钩子真的在改帧,故 shuffle 的 0
+     是 **a true zero, not a broken switch**。
+   - **② 参数侧 · kernel antisymmetry:** 能分辨时间方向(正放 vs 倒放)的滤波器**必须反对称**。实测 k=3 时序
+     卷积核的反对称占比中位数 **0.5011**,与「未训练随机核」的 null **0.4999** 在**每个分位点**都无法区分
+     (n = 9920 通道,偏离仅 **+0.0011**;DC/AC 0.593 vs null 0.589)。⇒ 该核 **statistically indistinguishable
+     from random**,没学到任何方向选择性。
+   - **③ 训练动力学侧 · gate self-suppression(最直接的一条):** 时序分支由 LayerScale 门 `layer_scale_1d`
+     控制强度,它与同层的空间门 `layer_scale` **初值完全相同(`layer_scale_init_value = 1e-5`)**。训练结束后:
+     空间门被推到中位 **|λ| = 0.0130**(≈ **1300×** 初值),时序门只到 **0.0008**(≈ **80×**)—— 时序/空间
+     **闸门比 = 0.0613 ≈ 1/16**。**从同一起点出发,模型用梯度亲手把这条支路压低了约 16 倍 —— 相当于直接
+     告诉我们它不需要这个零件。** 这不是初始化差异(同初值),而是纯粹的训练结果。
 2. **动机:CPU 逐路径 profiling(A9)—— 「而且它还特别贵」。** 实测该分支吃掉 **46.1% 的 CPU 墙钟,
    却只占 0.20% 的 MACs**([`architecture-round4.md`](../notes/architecture-round4.md) §8)。既然几乎不贡献精度,
    却占了近一半的 CPU 时间,删它就从「无害」升级为「划算」。
