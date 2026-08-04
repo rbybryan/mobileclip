@@ -1,5 +1,8 @@
 # 1M 验证层全轮复盘报告 —— 5 个精度改进全否,唯一通过的是「减法」
 
+> 📖 **想要不烧脑的大白话版**(把术语都翻译成生活化说法)见
+> [`1m-round-retrospective-plain.md`](1m-round-retrospective-plain.md)。本文是保留精确数字/置信区间的技术版。
+
 **日期:** 2026-08-03 · **档位:** 1M 子集验证层(`sub1m_*`,8 config)· **机器:** H100
 **权威判决表:** [`verification-tier-1m-zh.md`](verification-tier-1m-zh.md) §10 · **机制证据:** [`../experiments/gate0_results.md`](../experiments/gate0_results.md)
 **下一步(可执行版):** [`live/from-claude.md`](live/from-claude.md) (77)
