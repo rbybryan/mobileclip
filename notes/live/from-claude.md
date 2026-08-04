@@ -23,6 +23,80 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-08-04 (82) — 块 77 四项收尾判读:P9 正式结案;三条 🔴/⚠️ 全是假警报(还会卡住块 79 的排队闸门,已修);两条命令因路径盲区重发
+
+**一句话**:你贴的四段输出(块 77 的 §11.0 收尾命令)里,**唯一的真数字(P9 的 W₂ 范数)
+已把 P9 线关死**;其余三条(status 的 🔴/⚠️、compare 的 FileNotFoundError、grep 无文件)
+都是**块 77 给的路径/工具有盲区**,不是实验出了问题。工具已修、文档已改;
+**尤其注意:不修的话,块 79 那条「必须 ⚪ 才排」的闸门会被这三条假警报永远卡死。**
+
+### 判读(对应四段输出)
+
+1. **P9 归因 —— ✅ 结案,想法本身被否。** `‖W₂‖ = 1.688`(零初始化起步,10k 门 0.0929 的
+   **18 倍**),`ln_std` 的 weight/bias 也都离开初值 ⇒ 模块确实收到梯度并大幅移动,
+   「没学动、锅在 `different_lr`」这条退路**关死**。−4.3 归因给 stats 池化本身;
+   **§11.5-2 的条件臂 P9′ 资格取消,永不排**。已写进 §10.3(d) / §10.6 / §11.0-2。
+2. **status_1m 的 3 条 🔴/⚠️ 全是假警报 —— 队列其实是空的,什么都不用"续"。**
+   - `r0_s42` / `r1a_s42`:环内评测被跳过(块 60 讲过的 #334 时间差),数字靠 §3.8 离线补评,
+     落在 `experiments/evals/sub1m/` —— 旧脚本只扫 `runs/` ⇒ 误报 ⚠️ 中断。
+   - `r1b_s42`:runner 每次调用**覆盖写**日志,07-30 那次 auto_resume 把前一腿抹了,
+     只剩续跑腿 2:12 ⇒ 误报 🔴。臂是完整的(它就是 §10.2 种子地板的一半)。
+   - 已修(`TROUBLESHOOTING.md`「status_1m 把已收官的臂报成 🔴/⚠️」节):status_1m 兜底扫
+     evals/、加看 ckpt mtime 跨度、
+     顺带监测 `extract_teacher.py`;runner 改追加写(`>>`)。
+   - **⚠️ 千万别跑它上次附的三条「续跑命令」** —— 没坏的东西不用修。
+3. **r1both−r1a 比较 —— 块 77 给的路径错了**:r1a_s42 是离线补评的臂,ranks 在
+   `evals/sub1m/` 不在 `runs/`(落点规矩已记 `COMMANDS.md` §3.9)。修正版在下面。
+   **同一个坑也埋在块 79 的判读命令里**:那两条 compare 的基线写的是
+   `experiments/runs/sub1m_r0_s42`,而 r0_s42 的 ranks 同样只在
+   `experiments/evals/sub1m/sub1m_r0_s42` —— 到时候照下面第 4 步的修正版跑。
+4. **C1 干净吞吐 —— 块 77 的 grep 路径也错了**:`extract_teacher.py` 只往 stdout 打,
+   日志文件=当时重定向到哪(100k 那条怎么挂的我这边看不到)。**改用块文件 mtime 读吞吐,
+   不依赖日志**(已记 §3.10),命令在下面。
+
+### Do this next(H100,按序;0–2 全是分钟级只读,3–4 就是块 79 的原计划)
+
+```bash
+git pull        # 仓库根目录
+
+# 0) 验证假警报已清:预期 r0_s42/r1a_s42 → ✅(离线补评)、r1b_s42 → ✅(续跑截断件)
+#    若仍有 🔴/⚠️ ⇒ 贴回输出,先别排队
+python experiments/status_1m.py
+
+# 1) r1both−r1a(路径已修正;先 ls 确认 ranks 落点,r1a 若两处都没有则按 §3.8 补评一次 ~1 分钟)
+ls experiments/{runs,evals/sub1m}/sub1m_r1{both,a}_s42/ranks_*.npz 2>/dev/null
+python experiments/collect_results.py --compare experiments/runs/sub1m_r1both_s42 experiments/evals/sub1m/sub1m_r1a_s42
+python experiments/collect_results.py --compare experiments/runs/sub1m_r1both_s42 experiments/evals/sub1m/sub1m_r1a_s42 --prefix ret_test/
+
+# 2) C1 干净吞吐:块 mtime 直接算(P9 于 08-03 06:12 结束,看这之后的块;顺带看 100k 到没到 49/49)
+python - <<'PY'
+import glob, os, datetime
+fs = sorted(glob.glob('experiments/teacher/iv2s2_100k/**/block_*.npz', recursive=True))
+prev = None
+for f in fs:
+    t = os.path.getmtime(f)
+    note = '' if prev is None else f'{t-prev:7.1f}s  {2048/(t-prev):5.2f} clip/s'
+    print(os.path.basename(f), datetime.datetime.fromtimestamp(t).strftime('%m-%d %H:%M'), note)
+    prev = t
+PY
+
+# 3) flash-attn A/B(§3.10 现成命令,~1 小时一张闲卡;pgrep -af extract_teacher.py 确认 100k 没还在跑)
+# 4) A/B 出结果 ⇒ 块 79 的一条命令排「s43 训练 → 1M 抽取」(flash 胜就给 extract 加 --use-flash-attn)
+#    ⚠️ 15 h 后块 79 的判读命令请用修正版(r0_s42 的 ranks 在 evals/ 下):
+#    python experiments/collect_results.py --compare experiments/runs/sub1m_P1trained_s43 experiments/evals/sub1m/sub1m_r0_s42
+#    python experiments/collect_results.py --compare experiments/runs/sub1m_P1trained_s43 experiments/evals/sub1m/sub1m_r0_s42 --prefix ret_test/
+```
+
+**读法预判(§11.0-3)**:由 §10.1 绝对分推 r1both−r1a 点估计 ≈ −1.2 raw / −1.8 DSL,
+都在种子地板 δ=2.5 内 ⇒ 大概率「≈0」那支(5 分=sigmoid@512 的已知代价),以配对 CI 为准。
+V100 侧照块 81 不变。
+
+**Then report back** in from-server.md:① 新 status_1m 全文(应无 🔴/⚠️);
+② r1both−r1a 两口径的 Δ 与 95% CI;③ 块 mtime 表的尾部(独占卡后的 clip/s、100k 是否已到
+49/49);④ flash A/B 的两个 clip/s + cos 等价自检;⑤ 块 79 队列的 PID。
+
+---
+
 ## 2026-08-04 (81) — ✅ 阶段 0/7/10 + gate 两口径全收;C-4 判「方差」但 LSE 是免费增益候选;下一步:probe v2 重跑阶段 10 + 多基准补已训臂
 
 **Diagnosis(全部已落盘,细节见 `experiments/v100_sweep_results.md` §8 与改判后的 §1/§2):**
