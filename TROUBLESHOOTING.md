@@ -2964,3 +2964,85 @@ loader = create_loader(test_datasets, [None] * len(test_datasets),
 实际还是 T=8。
 
 实例:`experiments/frame_agg_probe.py`(C-2 聚合扫描 + C-4 方差-vs-覆盖判别)。
+
+## 阶段 0 假 FAIL:`MSRVTT 视频根 没有 mp4 ⇒ 阶段 2/3/4/5/10 必炸`,同一轮阶段 10 却照常出数
+
+### Symptom
+
+`bash experiments/run_v100_all.sh 0 10`(2026-08-04,commit ec39100,`MVC_DATA_DIR` 已 unset):
+
+```
+FAIL   MSRVTT 视频根   🔴 data/MSRVTT_Videos 没有 mp4 ⇒ 阶段 2/3/4/5/10 必炸。修法:unset MVC_DATA_DIR(...)
+PASS   数据:msrvtt     视频就位
+...
+PASS   C-2/C-4 聚合判别      ← 阶段 10 真的去读了 MSR-VTT 视频,全量出数
+```
+
+三行互相矛盾:预检说必炸、readiness 说就位、真正读视频的阶段跑通。FAIL 给的"修法"
+(`unset MVC_DATA_DIR`)也已经做过了,照做不会有任何变化。
+
+### Cause —— `find` 默认不解引用**命令行参数上的软链**,而这个根的最后一级就是软链
+
+数据根修复(#418 及手动软链流程)之后,`data/MSRVTT_Videos` 这类基准根是指向真实数据
+目录的**软链**。预检用的是:
+
+```bash
+find "$ROOT/MSRVTT_Videos" -name '*.mp4' | head -1
+```
+
+GNU find 默认 `-P`:**连命令行参数本身是软链都不跟**,于是不进入目录、一个 mp4 也
+"找不到" ⇒ 假 FAIL。而 Python 侧(`check_readiness.py`、decord 解码)走的是 stat/open,
+天然解引用 ⇒ 同一轮里它们全 PASS。这就是三行矛盾的全部来历。
+
+10k 那行(`data/internvid_zh_10k/videos`)没触发同一个坑,纯属侥幸:它的软链在路径
+**中间**一级(`internvid_zh_10k`),路径解析会跟中间级软链,只有**最后一级**是软链才炸。
+
+### Fix
+
+已修(与本条同一个 PR):两个视频根检查都改成 `find -L`。服务器侧 `git pull` 即可,
+数据不用动 —— **它一直是好的**。
+
+判别口诀:**预检 FAIL 但真正读数据的阶段 PASS ⇒ 先怀疑检查本身**(尤其 `find`/`ls -l`
+这类不解引用的工具碰上软链),别按 FAIL 行给的修法去动数据根。
+
+## `status_1m.py` 把已收官的臂报成 🔴/⚠️;`--compare` 对着 `runs/` 报 `找不到逐查询 rank`
+
+### Symptom
+
+§10 收官(8 臂全训完、全部有数字)之后,排队前的例行检查却打出三条"先处理":
+
+```
+sub1m_r0_s42   ⚠ 中断   有 ckpt 无 eval 结果(墙钟 15:12);auto_resume 可续
+sub1m_r1a_s42  ⚠ 中断   有 ckpt 无 eval 结果(墙钟 14:58);auto_resume 可续
+sub1m_r1b_s42  🔴 可疑   有结果但墙钟仅 2:12 ≪ 参考 15.2h ⇒ 结论无效
+```
+
+同一天,`collect_results.py --compare experiments/runs/sub1m_r1both_s42
+experiments/runs/sub1m_r1a_s42` 抛
+`FileNotFoundError: 找不到逐查询 rank:experiments/runs/sub1m_r1a_s42/ranks_ret_test_emb.npz`。
+
+### Cause —— 三条全是**假警报**,两个共同病根
+
+1. **eval 有两个落点,旧版 `status_1m.py` 只看一个。** 训练内环内评测落在
+   `experiments/runs/<臂>/`;而 r0_s42 / r1a_s42 的环内评测被跳过(修复 #334 落地前
+   33 分钟启动,见 `notes/live/from-claude.md` 块 60),数字全靠 §3.8 离线补评,落在
+   **`experiments/evals/sub1m/<臂>/`**。旧脚本只扫 runs/ ⇒ 误报 ⚠️ 中断;
+   `--compare` 传 runs/ 路径 ⇒ 同一个坑的另一张脸(ranks 就在 evals/ 下)。
+2. **runner 旧版每次调用覆盖写日志。** `run_verify_1m.sh` 用 `>` 重定向,
+   r1b_s42 被信号打断(07-30)再 auto_resume 后,日志只剩续跑腿的 2:12:39,
+   首尾时间戳一减就成了"墙钟 2:12"。臂本身是完整的(它是 §10.2 种子地板的一半)。
+
+### Fix
+
+```bash
+git pull    # 2026-08-03 起三处都已修
+```
+
+- `status_1m.py`:eval 兜底扫 `--evals-dir`(默认 `experiments/evals/sub1m`),命中标注
+  「(离线补评)」;墙钟同时看 **ckpt mtime 跨度**,日志与跨度**都**短才判 🔴,
+  只日志短则标注「续跑截断件」照常 ✅;顺带把 `extract_teacher.py` 加进在跑进程检测。
+- `run_verify_1m.sh`:日志改**追加**(`>>`)+ 每次调用写分隔行,以后续跑不再毁墙钟证据。
+- `--compare` 的目录选择规矩记在 `COMMANDS.md` §3.9(先 `ls` 两个落点再传;
+  允许一边 runs/ 一边 evals/)。
+
+**判读纪律不变**:真·🔴(日志和 ckpt 跨度都短)仍然=结论无效,先续跑再排新臂。

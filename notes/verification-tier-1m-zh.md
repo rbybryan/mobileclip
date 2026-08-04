@@ -426,6 +426,18 @@ P9 的通过条件是**同时打赢 r0 和 r1b**(r1b 是它的工程孪生基线
 
 4 张表的 `R_sum` 与 `r_mean` **全部**显著为负,幅度超过种子地板。没有解释空间。
 
+**✅ 归因已闭合(2026-08-03,服务器实测)** —— `sub1m_P9_s42/ckpt_02` 的 `temporal_pool.*` 范数:
+
+| 参数 | 初始化 | 训后范数 | 读法 |
+|---|---|---:|---|
+| `w2.weight` | **全零** | **1.688** | 10k 门实测 0.0929 的 **18 倍**,比「没学动」阈值 1e-4 大 4 个量级 |
+| `ln_std.weight` | 全 1(‖·‖=√512≈22.63) | 21.707 | 离开初值,std 支路整体在训练 |
+| `ln_std.bias` | 全零 | 0.669 | 同上 |
+
+模块**确实收到梯度并大幅移动** ⇒ 「W₂≈0、退化成 mean、锅在 `different_lr`」这条退路**关死**。
+−4.3 归因给 stats 池化**想法本身**:学到的二阶统计是有害的。**P9 线彻底关**,
+§11.5-2 的条件臂 P9′(去 `different_lr` 复检)**资格取消,不排**。
+
 ### 10.4 对 10M 的含义 —— **10M 的用途变了**
 
 原计划里 10M 是去验证「某个精度改进能否 scale」。**现在没有精度改进可验证。**
@@ -459,16 +471,13 @@ P9 已于 06:12 结束,**block 11 起是独占卡的干净数字** —— 用它
 
 ### 10.6 本轮欠的东西(诚实记下)
 
-- **`P9` 的 `temporal_pool.w2` 范数未取**。§9.3 明确要求「必须显式验证 `W₂` 真收到梯度」,
-  这个数字决定 P9 的失败该归因给谁:范数明显长大 ⇒ stats 池化学到的东西有害,想法本身被否;
-  范数仍在零初始化附近 ⇒ 模块几乎没动、数值上约等于基线,那 −4.3 就该归因到 `different_lr`
-  那个参数组扰动了训练,**想法其实没被真正检验**。命令(注意 ckpt 是 DeepSpeed **目录**):
-  ```bash
-  python -c "import torch;sd=torch.load('experiments/runs/sub1m_P9_s42/ckpt_02.pth/mp_rank_00_model_states.pt',map_location='cpu');sd=sd.get('module',sd.get('model',sd));[print(k,float(v.float().norm())) for k,v in sd.items() if 'temporal_pool' in k]"
-  ```
+- ~~**`P9` 的 `temporal_pool.w2` 范数未取**~~ **✅ 已取(2026-08-03)**:`‖W₂‖ = 1.688`
+  (零初始化起步,10k 门的 18 倍),`ln_std` 两参数也都离开初值 ⇒ **范数明显长大**这一支成立,
+  −4.3 归因给想法本身,P9 线关死。数字与读法已并入 §10.3(d)。
 - **seed 43 只跑了 `r1b`**。r1a/nA1/P1trained/P9 的 seed 43 未跑。对已被否决的臂无所谓
   (1M 层只用于否决,单 seed 的显著负已足够),但 **P1trained 的非劣结论目前只有一个 seed**。
-- `r1both` 相对 r0 低 5 分那条差距未查(见 §10.3(a) 末尾)。
+- `r1both` 相对 r0 低 5 分那条差距未查(见 §10.3(a) 末尾)。**命令见 §11.0-3
+  (2026-08-03 路径修正版:r1a 的 ranks 在 `evals/sub1m/` 下,首版指错到 `runs/`)。**
 
 ### 9.4 ✅ 10k 链路 go/no-go 结果(2026-07-31)—— **两条臂都放行**
 
@@ -501,18 +510,27 @@ V100 侧的配套执行单见 [`v100-10k-advance-tests.md`](v100-10k-advance-tes
 ### 11.0 先做零成本收尾(全部只读 / 分钟级,不占训练队列)
 
 1. **队列现状**:`python experiments/status_1m.py` —— 确认真空、没有 🔴/⚠️ 臂(`COMMANDS.md` §3.7b)。
-2. **P9 归因:读 `W₂` 范数**(§10.6 的现成命令)。读法:
-   `‖W₂‖` 明显长大(对照 10k 门的 0.0929 量级)⇒ stats 池化**想法本身被否**,P9 线彻底关;
-   仍在零初始化附近 ⇒ 那 −4.3 归因给 `different_lr` 的参数组扰动,**想法未被检验** ——
-   如要复检,唯一合法形态是「去掉 `different_lr` 的 P9′」,但按 §10.4 它排在 C1 之后,默认不排。
-3. **`r1both` 低 5 分之谜(§10.3(a) 尾注)的免费归因**(ranks npz 都在,两条命令):
+   ⚠️ **首跑(2026-08-03)打出的 3 条 🔴/⚠️(r0_s42 / r1a_s42 / r1b_s42)全是假警报**
+   (离线补评落点 + runner 覆盖写日志两个盲区,详见 `TROUBLESHOOTING.md` 末节),
+   脚本已修,`git pull` 后重跑应全 ✅ —— **仍有 🔴/⚠️ 才需要处理**。
+2. ~~**P9 归因:读 `W₂` 范数**~~ **✅ 已答(2026-08-03)**:`‖W₂‖ = 1.688`,明显长大那一支
+   成立 ⇒ stats 池化**想法本身被否**,P9 线彻底关,P9′ 复检**资格取消**(数字见 §10.3(d))。
+3. **`r1both` 低 5 分之谜(§10.3(a) 尾注)的免费归因**(ranks npz 都在,两条命令)。
+   ⚠️ **路径修正(首版写错,实踩 FileNotFoundError)**:r1a_s42 是离线补评的臂,
+   它的 ranks 在 `evals/sub1m/` 不在 `runs/`(规矩见 `COMMANDS.md` §3.9);
+   r1both_s42 是环内评测,在 `runs/`。先看一眼再比:
    ```bash
-   python experiments/collect_results.py --compare experiments/runs/sub1m_r1both_s42 experiments/runs/sub1m_r1a_s42
-   python experiments/collect_results.py --compare experiments/runs/sub1m_r1both_s42 experiments/runs/sub1m_r1a_s42 --prefix ret_test/
+   ls experiments/{runs,evals/sub1m}/sub1m_r1{both,a}_s42/ranks_*.npz 2>/dev/null
+   python experiments/collect_results.py --compare experiments/runs/sub1m_r1both_s42 experiments/evals/sub1m/sub1m_r1a_s42
+   python experiments/collect_results.py --compare experiments/runs/sub1m_r1both_s42 experiments/evals/sub1m/sub1m_r1a_s42 --prefix ret_test/
    ```
+   (若上面的 `ls` 显示 r1a 在 evals/ 下也没有 ranks ⇒ 按 §3.8 补一次评测,~1 分钟,
+   再跑 compare。)
    读法:`r1both − r1a ≈ 0` ⇒ 那 5 分基本就是 sigmoid 在 batch 512 的已知代价
    (r1a−r0 = −3.8 raw / −5.7 DSL),R1 接线本身无额外成本;显著负 ⇒ attn/caption_idx
    接线另有成本,追加进 §10.3(a) 的复活条件。
+   (预判:§10.1 绝对分推出 r1both−r1a 点估计 ≈ −1.2 raw / −1.8 DSL,都在种子地板
+   δ=2.5 之内 ⇒ 大概率是「≈0」那支,但以配对 CI 为准。)
 
 ### 11.1 队列位 1 · `sub1m_P1trained_s43`(15 h)—— 给全轮唯一的正面结论补第二个 seed
 
@@ -547,7 +565,8 @@ C1 不是一条 15 h 的臂,是一串有依赖的台阶;1M 层在其中仍只当
 
 ### 11.3 可选队列位 3 · `sub1m_lean_s42`(P1trained + 删 `temporal_embedding`)—— 出货配置的保险丝
 
-- **动机**:P5 的评测版已显著为正(+0.67 DSL,`v100_sweep_results.md` §1),P1trained 非劣
+- **动机**:P5 的评测版**两口径认证通过**(raw +0.70 / DSL +0.67,CI 均不含 0,
+  `v100_sweep_results.md` §1,2026-08-04 销账),P1trained 非劣
   ⇒ 出货配置自然是**两个减法一起**。但「从头就没有 `temporal_embedding`」和「训完再删」
   是两个问题(与 P1 / P1-trained 同构)。
 - ~~代码缺口~~ **✅ 2026-08-03 已落地**:`disable_temporal_embedding` flag 进了
@@ -576,10 +595,11 @@ C1 不是一条 15 h 的臂,是一串有依赖的台阶;1M 层在其中仍只当
    - ~~**多基准评测搬到本机**~~ **作废(2026-08-03)**:维护者确认 b100 上没有这三个基准的视频。
      多基准评测回到 V100 —— 但 V100 也报「没有」,而 §5/§6 的数字就是在它们上测的
      ⇒ 大概率是 #418 数据根修复把旧根断开了。**探测/软链/兜底流程见 v100 §8 第 3 步的更正框。**
-2. **条件臂(先看 §11.0-2 的一个数)**
-   - **P9′ = stats 池化去掉 `different_lr`**(15 h):仅当 `‖W₂‖ ≈ 0`(说明 −4.3 是
-     `different_lr` 的扰动、想法未被检验)才有资格排;范数明显长大 ⇒ 想法已被否,不排。
-     config 由 Claude 写(一行之差)。
+     ✅ **已解(2026-08-04)**:软链已就位,V100 阶段 0 `数据:k400/ucf101/hmdb51` 全 PASS
+     ⇒ 已训臂多基准面只差 rsync ckpt(v100 §9 第 2 步)。
+2. **条件臂(先看 §11.0-2 的一个数)** —— **❌ 条件已揭晓,本档清空(2026-08-04)**
+   - ~~**P9′ = stats 池化去掉 `different_lr`**(15 h)~~:实测 `‖W₂‖ = 1.688`(§10.3(d)),
+     走的是「范数明显长大 ⇒ 想法已被否」那一支 ⇒ **P9′ 资格取消,永不排**。
 3. **等一小段代码(回「写吧」)**
    - **`sub1m_lean_s42`**(§11.3,15 h)—— 除 KD 外唯一站得住的新训练臂。
    - **M0/M1/M2 profiler 三件套**(`architecture-round4.md` §11.4)—— **~40 分钟,H100 专属**:
@@ -602,7 +622,7 @@ C1 不是一条 15 h 的臂,是一串有依赖的台阶;1M 层在其中仍只当
 | 闸门 | 成本 | 它裁决什么 |
 |---|---|---|
 | **α 扫描(WiSE-FT 权重插值回图像初始化)+ LiNeS 深度剖面** | ~15 min 评测;插值脚本 ~30 行**待写** | ep0→ep1 坍塌(90.2→85.4,复现 3×)到底损失了多少、事后合并能不能白拿回来。**argmax α=1.0 ⇒ C/P8/LoRA/τ 全族不训**;内点 α 显著赢 ⇒ 反遗忘族放行,且插值本身可能就是免费的 +1~+4 R_sum |
-| **β/ρ 分解**(缓存 MSR-VTT 特征,~8 MB,一下午,零 GPU) | 零 | 「T 的价值是方差还是覆盖」+ **审计 GATE-0 那个 −13 是不是 pooling-before-norm 的评分伪影**(§9.3)。裁 P6/FILIP 一族的生死 |
+| **β/ρ 分解**(缓存 MSR-VTT 特征,~8 MB,一下午,零 GPU) | 零 | 「T 的价值是方差还是覆盖」+ **审计 GATE-0 那个 −13 是不是 pooling-before-norm 的评分伪影**(§9.3)。裁 P6/FILIP 一族的生死。**⚠️ 2026-08-04 前半已裁**(V100 阶段 10,`v100_sweep_results.md` §8.1):oracle−mean = −1.27/−0.65 ⇒ 判「**方差**」⇒ 训练族维持死亡;**评测侧 LSE 增益已认证(2026-08-04 第三轮:两口径 × 两 T 四格 CI 全显著,T=16 raw +1.57 [+1.05, +2.08] / R_sum +9.4;`v100_sweep_results.md` §9)**。GATE-0 伪影审计**仍未做** |
 
 **第 1 层 · 值得占 15 h 槽位的训练臂(按期望价值排)**
 
@@ -620,7 +640,10 @@ C1 不是一条 15 h 的臂,是一串有依赖的台阶;1M 层在其中仍只当
 EMA/raw 两套权重的对照,边际 GPU 成本≈0;τ 扫描只配在 α 扫描之后当 2 点 sanity 臂。
 
 **明确还是不做**(§9.4 kill 表全部维持):SogCLR、视频侧 MoCo 队列、解冻文本塔/文本 LoRA、
-教师嵌入难负例挖掘、DaWin、在线 JEST;池化/聚合一族除非 β/ρ 判「覆盖」否则保持死亡。
+教师嵌入难负例挖掘、DaWin、在线 JEST;池化/聚合一族除非 β/ρ 判「覆盖」否则保持死亡
+—— **判据已落(2026-08-04):判「方差」⇒ 训练族正式维持死亡**。唯一例外是**评测侧**
+LSE 聚合(零训练、不占 H100,×T 索引成本)——**已通过完整 CI 认证**
+(`v100_sweep_results.md` §9),不进本表。
 
 ### 11.7 🔺 创新点层(2026-08-03)—— 不是补测旧提案,而是新的可训主张
 

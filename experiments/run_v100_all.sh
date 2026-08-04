@@ -140,8 +140,13 @@ if has 0; then
     note PASS "数据环境变量" "MVC_DATA_DIR=${MVC_DATA_DIR:-<未设→data>} MVC_ANNO_DIR=${MVC_ANNO_DIR:-<未设→anno_downstream>}"
   fi
   ROOT="${MVC_DATA_DIR:-data}"
+  # 🔴 两个视频根检查都必须 `find -L`:数据根修复(#418/手动软链)之后,这些根的
+  #    **最后一级就是软链**,而 find 默认 -P 不解引用命令行参数上的软链 ⇒ 一个 mp4 都
+  #    "找不到",打出假 FAIL,同一轮里真正读视频的阶段却全 PASS(2026-08-04 实锤:
+  #    阶段 0 判 MSRVTT 必炸,阶段 10 照常出数)。Python 侧(readiness/decord)走 stat,
+  #    从来不受影响 —— 所以两边才会互相矛盾。
   # 10k 视频根(阶段 1/6 训练用)
-  if [ -n "$(find "$ROOT/internvid_zh_10k/videos" -name '*.mp4' 2>/dev/null | head -1)" ]; then
+  if [ -n "$(find -L "$ROOT/internvid_zh_10k/videos" -name '*.mp4' 2>/dev/null | head -1)" ]; then
     note PASS "10k 视频根" "$ROOT/internvid_zh_10k/videos"
   elif has 1 || has 6; then
     note FAIL "10k 视频根" "🔴 $ROOT/internvid_zh_10k/videos 没有 mp4 ⇒ 阶段 1/6 必炸。修法:ln -sfn $ALT_10K data/internvid_zh_10k && unset MVC_DATA_DIR"
@@ -149,7 +154,7 @@ if has 0; then
     note SKIP "10k 视频根" "$ROOT/internvid_zh_10k/videos 不可用,但本轮不跑阶段 1/6"
   fi
   # MSR-VTT 视频根(阶段 2/3/4/5/10 评测都要)
-  if [ -n "$(find "$ROOT/MSRVTT_Videos" -name '*.mp4' 2>/dev/null | head -1)" ]; then
+  if [ -n "$(find -L "$ROOT/MSRVTT_Videos" -name '*.mp4' 2>/dev/null | head -1)" ]; then
     note PASS "MSRVTT 视频根" "$ROOT/MSRVTT_Videos"
   elif has 2 || has 3 || has 4 || has 5 || has 10; then
     note FAIL "MSRVTT 视频根" "🔴 $ROOT/MSRVTT_Videos 没有 mp4 ⇒ 阶段 2/3/4/5/10 必炸。修法:unset MVC_DATA_DIR(MSR-VTT 在仓库本地 data/ 下)"
@@ -333,7 +338,7 @@ PY
     if [ -z "$W2" ]; then
       note SKIP "P9:‖W2‖" "没找到 temporal_pool.w2(ckpt 还没落盘?)"
     elif python -c "import sys; sys.exit(0 if float('$W2')>1e-4 else 1)"; then
-      note PASS "P9:‖W2‖" "$W2 > 1e-4 ⇒ 学动了,可以上 H100"
+      note PASS "P9:‖W2‖" "$W2 > 1e-4 ⇒ 10k 门通过(链路检查;⚠️ P9 已于 1M 关线,这不是排队许可)"
     else
       note FAIL "P9:‖W2‖" "🔴 $W2 ≈ 0 ⇒ 退化成 mean,**别上 H100**,先调 different_lr"
     fi
@@ -375,13 +380,15 @@ fi
 # ------------------------------------------------------------------ 10 C-2/C-4
 if has 10; then
   hdr "阶段 10 · C-2 聚合扫描 + C-4 方差-vs-覆盖判别(§4 那个给出**相反处方**的判别实验)"
-  echo "一次前向拿逐帧嵌入,再用 {mean,max,LSE,top-2,单帧} 各打一次分 —— 不必重跑评测。"
+  echo "一次前向拿逐帧嵌入,再用 {mean,max,LSE(τ 扫描),top-k,单帧} 各打一次分 —— 不必重跑评测。"
   echo "读法:oracle(max) − mean **>1.0** ⇒ 覆盖说(处方=late-interaction);"
-  echo "      ≈0 ⇒ 方差缩减说(处方=继续一阶池化,P9 那类二阶统计要另找立论)。"
+  echo "      ≈0 或为负 ⇒ 方差缩减说(一阶池化没错;P6 训练族维持死亡)。"
+  echo "v2:每个聚合器 vs mean 出**配对 CI + 两口径**([CI] 行);判据以 CI 是否含 0 为准。"
+  echo "    头条只认 τ=0.05(预登记);τ 扫描是敏感度曲线,不许事后挑最好的 τ。"
   if python experiments/frame_agg_probe.py --config "$CFGDIR/config_msrvtt.py" \
        --ckpt "$CKPT" --ts 8,16 >"$LOGDIR/frame_agg.log" 2>&1; then
-    note PASS "C-2/C-4 聚合判别" "$(grep -E '^\*\*oracle|⇒' "$LOGDIR/frame_agg.log" | head -2 | tr '\n' ' ' | cut -c1-110)"
-    grep -E '^T=' "$LOGDIR/frame_agg.log" | head -12
+    note PASS "C-2/C-4 聚合判别" "$(grep -E '^\[verdict\]' "$LOGDIR/frame_agg.log" | head -2 | tr '\n' ' ' | cut -c1-110)"
+    grep -E '^T=|^\[verdict\]|^\[CI\]' "$LOGDIR/frame_agg.log" | head -60
   else
     note FAIL "C-2/C-4 聚合判别" "见 $LOGDIR/frame_agg.log"
     sed -n 's/^/   | /p' <(tail -n 20 "$LOGDIR/frame_agg.log")
@@ -408,9 +415,10 @@ echo "PASS $p · FAIL $f · SKIP $s"
 cat <<'EOF'
 
 下一步:
-  · 阶段 2 的 CI 不含 0 ⇒ P1 / P5 可写进论文
-  · 阶段 6 全 PASS 且 ‖W2‖ > 1e-4 ⇒ H100 可排:
-        bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_P1trained_s42 sub1m_P9_s42
+  · gate 判定已落账(P5 两口径认证、gate3 改判)⇒ 见 experiments/v100_sweep_results.md §1/§2,不用再跑
+  · LSE 聚合的认证结果 ⇒ experiments/frame_agg_results.md + v100_sweep_results.md §9
+  · H100 排队**不看本脚本**:python experiments/status_1m.py 确认队列,再按
+    notes/verification-tier-1m-zh.md §11 排(⚠️ P9 已于 1M 关线,别把它排上 H100)
 
 ⚠️ 阶段 3/5 未做 BN 重校准 ⇒ 只能当趋势筛。换分辨率改的是**每一层**的激活统计,
    漂移远大于 P11 删块;正式数要等 BN 重校准 CLI(per_t_bn.py 目前只有纯函数),

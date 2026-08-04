@@ -23,13 +23,13 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
-## 2026-08-03 (81) — 🚪 C2-2D 的两道免费闸门已落代码:全减法(闸门 A)+ 混合预算(闸门 B)
+## 2026-08-04 (84) — 🚪 C2-2D 的两道免费闸门已落代码:全减法(闸门 A)+ 混合预算(闸门 B)
 
 论文创新点 C2-2D(`publishability-assessment.md` §1.1)的升级条件 1,以及 §11.7-2 全减法
 终点的评测闸门,**代码全部就位**:`per_frame_attention` flag(stage-4 帧内块对角注意力)、
 三个减法开关的环境变量兜底、评测嵌入落盘(`MVC_DUMP_EMB_DIR`)、离线组合器
 `experiments/mixed_budget_eval.py`(预注册 14 种分配)。**全部零训练,msrvtt 在哪台就在哪台跑**
-(V100 即可,不占 b100 队列)。完整命令与判读 = `COMMANDS.md` **§3.15**。
+(V100 即可,不占 b100 队列)。完整命令与判读 = `COMMANDS.md` **§3.16**。
 
 ```bash
 cd ~/mobileclip && git pull
@@ -50,12 +50,162 @@ python experiments/mixed_budget_eval.py --root experiments/evals/mb \
     --out experiments/mixed_budget_results.md
 ```
 
-**判读**(细节在 §3.15):闸门 A 两口径 Δ ≤ 1.0 或 CI 含 0 ⇒ 全减法训练臂放行;
+**判读**(细节在 §3.16):闸门 A 两口径 Δ ≤ 1.0 或 CI 含 0 ⇒ 全减法训练臂放行;
 闸门 B 任一混合分配对同预算均匀分配 Pareto 胜出且配对 CI 不含 0 ⇒ **C2-2D 升级成立**。
+**与块 83 的关系**:LSE@0.05 是相似度级聚合(索引存 T 份),混合预算是编码级分配 ——
+两者正交、可叠加;闸门 B 的表出来后我会连着 LSE 一起排 2D Pareto。
 
 **Then report back** in from-server.md:① 闸门 A 的两口径 CI + audit 输出;
 ② `mixed_budget_results.md` 全文。两个都到手,我来写升级/降级的最终判定与
 elastic-(T,R) 训练臂的 config。
+
+---
+
+## 2026-08-04 (83) — 🏆 LSE(τ=0.05)认证通过:两口径 × 两 T 四格 CI 全显著;下一步:2 条跨 T 命令 + 多基准 rsync 仍欠
+
+**Diagnosis(全量队列 31 PASS / 0 FAIL,细节全在 `experiments/v100_sweep_results.md` §9):**
+
+1. **认证达成**:LSE@0.05 − mean 四格全显著 —— T=8 raw **+1.15 [+0.63,+1.67]** /
+   DSL **+1.57 [+1.03,+2.12]**;T=16 raw **+1.57 [+1.05,+2.08]** / DSL **+1.45 [+0.93,+1.97]**;
+   R_sum +6.9~+9.4。**本仓第二条(量级最大)通过完整纪律的评测侧正向结论,零训练。**
+2. **τ 是平台不是刀尖**:0.02–0.2 几乎全显著,τ≥0.5 塌回 mean;预登记的 0.05 恰在平台顶点
+   ⇒ 头条无需也不许换 τ。
+3. **机制收紧**:hard-max 在 T=8 被认证**有害**(raw −1.27*/DSL −1.08*),top-k 摸不到 LSE
+   ⇒ 增益特指**平滑证据加权**,不是选帧;C-4 的「方差缩减」判据不变。
+4. **部署语义(写论文照抄)**:LSE 只用视频自己的 T 帧 ⇒ **非 transductive、端上可用**
+   (与 DSL 本质不同);成本 = 索引存 T 份逐帧嵌入;模型内部 mean 池化未动,任何已训 ckpt 直接受益。
+5. ⚠️ 汇总尾注「H100 可排 … sub1m_P9_s42」是**过期文案**(P9 已结案,见块 82)——
+   本 PR 已从脚本里删掉;排队一律 `status_1m.py` + verification-tier §11(当前链条 = 块 79/80)。
+
+**Do this next:**
+
+```bash
+cd ~/mobileclip && git pull
+
+# ① 跨 T 配对 CI(零 GPU,~2 分钟):「换聚合器 ≈ 白赚 2× 帧预算」变判据
+python experiments/collect_results.py --compare experiments/frame_agg/T8_lse_tau0.05 experiments/frame_agg/T16_mean
+python experiments/collect_results.py --compare experiments/frame_agg/T8_lse_tau0.05 experiments/frame_agg/T16_mean --prefix ret_test/
+
+# ② 多基准补已训臂(块 81 第 2 条,仍欠;软链已就位,只差 ckpt):
+#    rsync sub1m_r0_s42 / sub1m_P1trained_s42 的 ckpt_02.pth → 每臂 × k400/ucf101/hmdb51
+#    → compare(--prefix 按实际键名)。命令块:v100-10k-advance-tests.md §8 第 3 步。
+```
+
+①读法:Δ(LSE@8 − mean@16)CI 下界 ≥ 0 ⇒「省一半帧还更好」;含 0 且点估计为正 ⇒「省一半帧不掉点」。
+
+**Then report back** in from-server.md:① 两张跨 T 表;② 多基准 6 张 compare 表
+(或 rsync 的具体障碍 + b100 侧 `ls experiments/runs/*/ckpt_02.pth` 输出)。
+
+---
+
+## 2026-08-04 (82) — 块 77 四项收尾判读:P9 正式结案;三条 🔴/⚠️ 全是假警报(还会卡住块 79 的排队闸门,已修);两条命令因路径盲区重发
+
+**一句话**:你贴的四段输出(块 77 的 §11.0 收尾命令)里,**唯一的真数字(P9 的 W₂ 范数)
+已把 P9 线关死**;其余三条(status 的 🔴/⚠️、compare 的 FileNotFoundError、grep 无文件)
+都是**块 77 给的路径/工具有盲区**,不是实验出了问题。工具已修、文档已改;
+**尤其注意:不修的话,块 79 那条「必须 ⚪ 才排」的闸门会被这三条假警报永远卡死。**
+
+### 判读(对应四段输出)
+
+1. **P9 归因 —— ✅ 结案,想法本身被否。** `‖W₂‖ = 1.688`(零初始化起步,10k 门 0.0929 的
+   **18 倍**),`ln_std` 的 weight/bias 也都离开初值 ⇒ 模块确实收到梯度并大幅移动,
+   「没学动、锅在 `different_lr`」这条退路**关死**。−4.3 归因给 stats 池化本身;
+   **§11.5-2 的条件臂 P9′ 资格取消,永不排**。已写进 §10.3(d) / §10.6 / §11.0-2。
+2. **status_1m 的 3 条 🔴/⚠️ 全是假警报 —— 队列其实是空的,什么都不用"续"。**
+   - `r0_s42` / `r1a_s42`:环内评测被跳过(块 60 讲过的 #334 时间差),数字靠 §3.8 离线补评,
+     落在 `experiments/evals/sub1m/` —— 旧脚本只扫 `runs/` ⇒ 误报 ⚠️ 中断。
+   - `r1b_s42`:runner 每次调用**覆盖写**日志,07-30 那次 auto_resume 把前一腿抹了,
+     只剩续跑腿 2:12 ⇒ 误报 🔴。臂是完整的(它就是 §10.2 种子地板的一半)。
+   - 已修(`TROUBLESHOOTING.md`「status_1m 把已收官的臂报成 🔴/⚠️」节):status_1m 兜底扫
+     evals/、加看 ckpt mtime 跨度、
+     顺带监测 `extract_teacher.py`;runner 改追加写(`>>`)。
+   - **⚠️ 千万别跑它上次附的三条「续跑命令」** —— 没坏的东西不用修。
+3. **r1both−r1a 比较 —— 块 77 给的路径错了**:r1a_s42 是离线补评的臂,ranks 在
+   `evals/sub1m/` 不在 `runs/`(落点规矩已记 `COMMANDS.md` §3.9)。修正版在下面。
+   **同一个坑也埋在块 79 的判读命令里**:那两条 compare 的基线写的是
+   `experiments/runs/sub1m_r0_s42`,而 r0_s42 的 ranks 同样只在
+   `experiments/evals/sub1m/sub1m_r0_s42` —— 到时候照下面第 4 步的修正版跑。
+4. **C1 干净吞吐 —— 块 77 的 grep 路径也错了**:`extract_teacher.py` 只往 stdout 打,
+   日志文件=当时重定向到哪(100k 那条怎么挂的我这边看不到)。**改用块文件 mtime 读吞吐,
+   不依赖日志**(已记 §3.10),命令在下面。
+
+### Do this next(H100,按序;0–2 全是分钟级只读,3–4 就是块 79 的原计划)
+
+```bash
+git pull        # 仓库根目录
+
+# 0) 验证假警报已清:预期 r0_s42/r1a_s42 → ✅(离线补评)、r1b_s42 → ✅(续跑截断件)
+#    若仍有 🔴/⚠️ ⇒ 贴回输出,先别排队
+python experiments/status_1m.py
+
+# 1) r1both−r1a(路径已修正;先 ls 确认 ranks 落点,r1a 若两处都没有则按 §3.8 补评一次 ~1 分钟)
+ls experiments/{runs,evals/sub1m}/sub1m_r1{both,a}_s42/ranks_*.npz 2>/dev/null
+python experiments/collect_results.py --compare experiments/runs/sub1m_r1both_s42 experiments/evals/sub1m/sub1m_r1a_s42
+python experiments/collect_results.py --compare experiments/runs/sub1m_r1both_s42 experiments/evals/sub1m/sub1m_r1a_s42 --prefix ret_test/
+
+# 2) C1 干净吞吐:块 mtime 直接算(P9 于 08-03 06:12 结束,看这之后的块;顺带看 100k 到没到 49/49)
+python - <<'PY'
+import glob, os, datetime
+fs = sorted(glob.glob('experiments/teacher/iv2s2_100k/**/block_*.npz', recursive=True))
+prev = None
+for f in fs:
+    t = os.path.getmtime(f)
+    note = '' if prev is None else f'{t-prev:7.1f}s  {2048/(t-prev):5.2f} clip/s'
+    print(os.path.basename(f), datetime.datetime.fromtimestamp(t).strftime('%m-%d %H:%M'), note)
+    prev = t
+PY
+
+# 3) flash-attn A/B(§3.10 现成命令,~1 小时一张闲卡;pgrep -af extract_teacher.py 确认 100k 没还在跑)
+# 4) A/B 出结果 ⇒ 块 79 的一条命令排「s43 训练 → 1M 抽取」(flash 胜就给 extract 加 --use-flash-attn)
+#    ⚠️ 15 h 后块 79 的判读命令请用修正版(r0_s42 的 ranks 在 evals/ 下):
+#    python experiments/collect_results.py --compare experiments/runs/sub1m_P1trained_s43 experiments/evals/sub1m/sub1m_r0_s42
+#    python experiments/collect_results.py --compare experiments/runs/sub1m_P1trained_s43 experiments/evals/sub1m/sub1m_r0_s42 --prefix ret_test/
+```
+
+**读法预判(§11.0-3)**:由 §10.1 绝对分推 r1both−r1a 点估计 ≈ −1.2 raw / −1.8 DSL,
+都在种子地板 δ=2.5 内 ⇒ 大概率「≈0」那支(5 分=sigmoid@512 的已知代价),以配对 CI 为准。
+V100 侧照块 81 不变。
+
+**Then report back** in from-server.md:① 新 status_1m 全文(应无 🔴/⚠️);
+② r1both−r1a 两口径的 Δ 与 95% CI;③ 块 mtime 表的尾部(独占卡后的 clip/s、100k 是否已到
+49/49);④ flash A/B 的两个 clip/s + cos 等价自检;⑤ 块 79 队列的 PID。
+
+---
+
+## 2026-08-04 (81) — ✅ 阶段 0/7/10 + gate 两口径全收;C-4 判「方差」但 LSE 是免费增益候选;下一步:probe v2 重跑阶段 10 + 多基准补已训臂
+
+**Diagnosis(全部已落盘,细节见 `experiments/v100_sweep_results.md` §8 与改判后的 §1/§2):**
+
+1. **gate4/P5 两口径认证通过**(raw +0.70*/DSL +0.67*,R_sum +4.2/+4.0,CI 均不含 0)⇒ **可写进论文**。
+2. **gate3「测不出差别」改判收回**:raw 口径显著为负(r_mean −0.43*,R_sum −2.60*)⇒
+   零训练删时序分支要付 ≈0.4 的真实小代价;P1 的立论回到 **P1trained**(训练把它买回来了)。
+3. **C-4 判「方差缩减」**(oracle−mean = −1.27/−0.65,远低于覆盖门槛)⇒ P6/FILIP **训练**族维持死亡。
+   **但 LSE(τ=0.05)+1.15/+1.56 同时赢 mean 和 hard-max** —— 评测侧唯一还开着的精度线索,
+   且 LSE@T=8 > mean@T=16(聚合器买得动帧预算)。裸差不算数,等下面第 1 步的配对 CI。
+4. A7 成本轴(224² = 0.765× MACs)、B1 词表(100%@8k,**仅 10k-zh 口径**,饱和干净反而要警惕)、
+   A9/A10/A13 第二轮复现 —— 全落地。
+5. **阶段 0 的 `MSRVTT 视频根` FAIL 是假警报**:`find` 默认不解引用**末级软链**,数据一直是好的
+   (同轮阶段 10 照常出数就是铁证)。已修 `find -L` + `TROUBLESHOOTING.md` 末节。**数据根别动。**
+
+**Do this next(细节与判读纪律见 `notes/v100-10k-advance-tests.md` §9):**
+
+```bash
+cd ~/mobileclip && git pull
+unset MVC_DATA_DIR
+
+# 1) 阶段 10 重跑(probe v2:τ 扫描 + 配对 CI + 两口径 + rank 落盘,~40 min)
+bash experiments/run_v100_all.sh 10
+
+# 2) 多基准补已训臂(§8 第 3 步原文照跑;软链已就位,只差 ckpt):
+#    rsync 两个 ckpt(sub1m_r0_s42 / sub1m_P1trained_s42)→ 每臂 × k400/ucf101/hmdb51
+#    → collect_results --compare(--prefix 按实际键名);命令块在 v100 §8 第 3 步。
+```
+
+判读要点:头条只认 **τ=0.05**(预登记,不许事后挑 τ);LSE@0.05 的 `[CI]` 行
+**两口径同向且不含 0** ⇒ 认证,连帧预算结论一起进论文;任一口径含 0 ⇒ 降级为附录趋势。
+
+**Then report back** in from-server.md:① 阶段 10 的 `[verdict]` + `[CI]` 行(整段贴回);
+② 多基准的 6 份 `--compare` 表;③ 若 rsync 不通,贴 b100 侧 `ls experiments/runs/*/ckpt_02.pth`。
 
 ---
 
