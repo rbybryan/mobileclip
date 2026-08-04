@@ -199,6 +199,13 @@ cost cut at 1–3% accuracy drop.
    > plain attention pool to survive at all. Round 2's **R2 order-recoverable readout** is the
    > real fix for (c). A1 is explicitly **not** a paper contribution
    > (`neural-inspired-implementation.md §A1` novelty pin).
+   >
+   > 🔁 **Confirmed by literature check (2026-08-04, [`surprise-pooling-novelty.md`](surprise-pooling-novelty.md)).**
+   > The pooling half is **not novel** on any of three axes: mechanism (a constrained
+   > attention pool — AdaScan, Attentive Statistics Pooling, NetVLAD residuals),
+   > concept (surprise/prediction-error frame scoring — **SPIKE-RL** arXiv:2509.23433,
+   > **Swift Sampling** arXiv:2605.22678), narrative (Rao–Ballard is a rationale, not an
+   > implemented mechanism). Keep it as an ablation row; cite those works first.
 
 **The novelty is narrow and must be stated honestly (T1).** "Delta/predictive frame
 encoding" is *done* (ResidualViT). What is open: ResidualViT is a **ViT** method; porting
