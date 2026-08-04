@@ -17,6 +17,8 @@ from tasks_clip.retrieval_utils import evaluation_wrapper
 from tasks_clip.shared_utils import get_media_types, setup_model
 from utils.basic_utils import MetricLogger, SmoothedValue, setup_seed
 from utils.elastic_t import choose_step_t, subsample_frame_indices
+from utils.loss_weighting import weighted_loss_sum
+from utils.teacher_bank import TeacherBank
 from utils.config_utils import setup_main
 from utils.distributed import get_rank, is_main_process
 from utils.logger import log_dict_to_wandb, setup_wandb
@@ -25,6 +27,25 @@ logger = logging.getLogger(__name__)
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def build_teacher_bank(config, n_train_samples):
+    """C1 KD:按 `criterion.vtc_kd.enable` 建教师嵌入库;关着就返回 None(零接触)。
+
+    这里同时把所有会破坏「idx = anno 行号」这一对齐前提的配置挡在门外 ——
+    与其训练 15 h 后发现蒸馏白做,不如启动即炸(对齐机理见 utils/teacher_bank.py 顶注)。
+    """
+    kd_cfg = config.criterion.get("vtc_kd", None)
+    if not (kd_cfg and kd_cfg.get("enable", False)):
+        return None
+    train_files = [config.train_file] if isinstance(config.train_file, dict) else config.train_file
+    if len(train_files) != 1:
+        raise ValueError("[KD] 只支持单一训练语料:多语料 Concat 会给 idx 加偏移,行号对齐即碎")
+    if train_files[0].get("caption_idx", False):
+        raise ValueError("[KD] caption_idx=True 时 idx 是字幕哈希而不是 anno 行号,与教师库不可对齐")
+    bank = TeacherBank(kd_cfg["teacher_dir"], expect_rows=n_train_samples)
+    logger.info(f"[KD] teacher bank ready: {bank.summary()}")
+    return bank
 
 
 def train(
@@ -39,7 +60,8 @@ def train(
     scaler,
     config,
     data_type,
-    skip_num=0
+    skip_num=0,
+    kd_bank=None,
 ):
     model.train()
 
@@ -55,6 +77,9 @@ def train(
             metric_logger.add_meter(
                 f"{m}-{name}", SmoothedValue(window=100, fmt="{value:.4f}")
             )
+    if kd_bank is not None:
+        # 累计命中率:闸门要求全程 1.0000(教师库覆盖训练语料的每一行)
+        metric_logger.add_meter("kd_hit", SmoothedValue(window=1, fmt="{value:.4f}"))
 
     header = f"Train Epoch: [{epoch}]"
     log_freq = config.log_freq
@@ -105,13 +130,26 @@ def train(
         # the same"。见 TROUBLESHOOTING.md。这里显式对齐 dtype,不依赖 deepspeed 版本
         # (fp16 段的 `auto_cast: true` 只能救 fp16,bf16 段没有对应开关)。
         # 用 param_dtype 而非 data_type:见循环外的说明,精度开关有三处且不一致。
+        # C1 KD:趁 idx 还在 CPU 上查教师库(memmap 取行,~ms 级)。
+        # miss 行给零向量 + mask=False,模型侧按 mask 归一 —— 不会除到零行。
+        kd_kwargs = {}
+        if kd_bank is not None:
+            t_emb, t_ok = kd_bank.take(idx.numpy())
+            kd_kwargs = dict(
+                teacher_emb=torch.from_numpy(t_emb).to(device, dtype=param_dtype,
+                                                       non_blocking=True),
+                teacher_ok=torch.from_numpy(t_ok).to(device, non_blocking=True),
+            )
+
         image = image.to(device, dtype=param_dtype, non_blocking=True)
         idx = idx.to(device, non_blocking=True)
         text_input = tokenizer(text).to(device)
 
         with torch.cuda.amp.autocast(enabled=config.use_half_precision, dtype=data_type):
-            loss_dict = model(image, text_input, idx=idx)
-            loss = sum(loss_dict.values())
+            loss_dict = model(image, text_input, idx=idx, **kd_kwargs)
+            # U9 修复:loss_weight 是真权重(权重 1.0 跳过乘法 ⇒ 基线臂计算图逐位不变;
+            # loss_dict 里出现没有权重的键会立刻抛错,不再有隐式 1.0)。
+            loss = weighted_loss_sum(loss_dict, config.criterion.loss_weight)
         
         if hasattr(config, "deepspeed") and config.deepspeed.enable:
             model.backward(loss)
@@ -139,6 +177,8 @@ def train(
             value = loss_dict[name]
             value = value if isinstance(value, float) else value.item()
             metric_logger.update(**{f"{media_type}-{name}": value})
+        if kd_bank is not None:
+            metric_logger.update(kd_hit=kd_bank.hit_rate)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(temperature=model_without_ddp.temp.item())
 
@@ -184,6 +224,10 @@ def train(
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     logger.info(f"Averaged stats: {metric_logger.global_avg()}")
+    if kd_bank is not None:
+        # 闸门读这一行:必须是 1.000000(见 notes/c1-kd-training-manual-zh.md §2)
+        logger.info(f"[KD] cumulative hit rate = {kd_bank.hit_rate:.6f} "
+                    f"({kd_bank.n_hit}/{kd_bank.n_asked})")
     return global_step
 
 
@@ -254,6 +298,12 @@ def main(config):
                 "见 TROUBLESHOOTING.md「训练跑完但没有任何评测数字」。"
             )
 
+    # C1 KD:criterion.vtc_kd.enable 时建教师库(否则 None,一切照旧)。
+    # expect_rows 用真实训练集样本数 —— 与教师库 n_rows_total 不一致就启动即炸,
+    # 这是行号对齐的最后一道自动闸门(前两道见 KD 手册 §0/§1)。
+    kd_bank = build_teacher_bank(
+        config, n_train_samples=sum(len(l.dataset) for l in train_loaders))
+
     num_steps_per_epoch = sum(len(d) for d in train_loaders)
 
     config.scheduler.num_training_steps = num_steps_per_epoch * config.scheduler.epochs
@@ -308,7 +358,8 @@ def main(config):
                 scaler,
                 config,
                 data_type,
-                skip_num = global_step - start_step
+                skip_num = global_step - start_step,
+                kd_bank=kd_bank,
             )
 
         # save checkpoint befor evaluation

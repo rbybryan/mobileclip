@@ -278,9 +278,14 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       同法先试再定(U7-4)。合成字幕 K≥2 由 CapRL 产出侧保证(U7-3);
       相对 KD(`vtc_kd`/`kd_geo`)单一所有权并入同一消融表(U9)——
       ⚠️ U9 前先修 `loss_weight` 只是日志开关那个坑(round2 §5 P2)。
-- [ ] **2.2c 训练侧接线**(脚本不管这一段):教师嵌入读取 Dataset、
-      D→512 投影、`vtc_kd` 的 ~30 行新写(`data-quality-caprl-scheme.md` §6.2),
-      低 T KD 加权/课程。
+- [x] **2.2c 训练侧接线** —— ✅ 2026-08-04 落地(视频嵌入蒸馏形态):
+      `utils/teacher_bank.py`(按 anno 行号查表 + align/verify 闸门)、
+      `utils/loss_weighting.py`(**U9 的 `loss_weight` 假开关坑先修掉了**)、
+      `models/mobileviclip_small.py` 的 `loss_kd_feat`(D→512 投影 + 1−cos)与
+      `loss_kd_rel`(v2v 关系 KL,kd_geo 近亲,同表消融位)、臂 config
+      `sub1m_C1kd_s42.py`、13 项单测。执行单:`notes/c1-kd-training-manual-zh.md`。
+      ⚠️ 仍欠(不阻塞本臂):§6.2 的 video-text 矩阵 KD(等 `--stage text`)、
+      低 T KD 加权/课程(C2 线)。
 - [ ] **2.3(条件项)** H5 评测分片(大基准评测前)、P1 torch 升级
       (仅当显存/速度真卡住)。
 - [~] **2.4 R1 精确文本负例库 —— 🟢 试点级 A/B 已判 GO(两个种子),下一步 40-epoch 长档**

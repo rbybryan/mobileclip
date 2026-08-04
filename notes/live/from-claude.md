@@ -23,6 +23,40 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-08-04 (86) — ✍️ C1 KD 训练侧代码已全部落地(含 U9 `loss_weight` 假开关修复);执行手册 = notes/c1-kd-training-manual-zh.md
+
+维护者拍板「写 C1 代码 + 1M 训练手册」—— 本块交付。**§11.2 阶梯 ③ 关闭**,
+⑤(`sub1m_C1kd_s42`,15 h)只差抽取(块 79 已排)+ 手册里的闸门。
+
+**落了什么**(代码地图在手册开头):`utils/teacher_bank.py`(按 anno 行号查教师嵌入
++ align/verify 闸门 CLI)、`utils/loss_weighting.py`(**U9 修复:`loss_weight` 变真权重,
+无权重键启动即炸;权重 1.0 跳乘法 ⇒ 既有臂计算图逐位不变**)、模型侧 `loss_kd_feat`
+(教师 D→512 投影 + 1−cos)与 `loss_kd_rel`(v2v 关系 KL,默认 0)、`sub1m_C1kd_s42.py`、
+13 项单测(numpy-only,已在本机全绿)。默认 OFF ⇒ r0/一切既有臂零接触。
+
+**Do this next(零 GPU,现在就能做,不等抽取)**:
+
+```bash
+git pull
+python -m pytest tests/test_teacher_bank.py -q && python utils/teacher_bank.py self-test
+
+# 🔴 anno 对齐硬闸门:训练读 anno_downstream/InternVid/InternVid-10M-flt_1.json,
+# 抽取读你传给 --anno 的那份(b100 上手工放的 jsonl)。两份必须逐行同名,否则
+# KD = 拿别的视频的教师教这个视频,静默白做。<路径> 换成抽取实际用的:
+python utils/teacher_bank.py align \
+    --anno-a anno_downstream/InternVid/InternVid-10M-flt_1.json \
+    --anno-b <抽取时传给 --anno 的那份文件>
+```
+
+**抽取 merge 完之后**:手册 §0c(库体检)→ §1(b100 冒烟,10 分钟,4 条判据)→
+§2(排队,15 h)→ §3(判读;λ 与唯一重试位已预登记)。速查在 `COMMANDS.md` §3.12。
+
+**Then report back** in from-server.md:① pytest 与 align 的输出(尤其 align 是否全行一致);
+② 抽取 merge 后 `teacher_bank.py verify` 打印的 coverage 与 embed_dim(≠768 要改 config,
+手册有注释位);③ 冒烟的 4 条判据行。
+
+---
+
 ## 2026-08-04 (85) — 🛠「写吧」三件已交付:probe --set(LSE×gate4)/ BN 重校准 CLI / P1 结构性旁路 —— 四段命令,全零训练
 
 **交付内容**(细节 `notes/v100-10k-advance-tests.md` §9 追记;全部本地验证过 ——

@@ -1400,6 +1400,28 @@ python experiments/collect_results.py --compare \
 ③ 报收益必须连部署成本一起报 —— 相似度级聚合 ⇒ 索引存 **T 份**逐帧嵌入(×T 存储/点积)。
 ⚠️ probe 自建前向,绝对值与 `retrieval.py` 管线差 ~0.8 ⇒ **脚本内差值可判,跨管线绝对值不可比**。
 
+<<<<<<< HEAD
+### 3.12 C1 KD 训练侧(ROADMAP 2.2c,2026-08-04 落地)—— 闸门与冒烟
+
+完整执行单(闸门顺序、判读、预登记)= **`notes/c1-kd-training-manual-zh.md`**。速查:
+
+```bash
+# 零 GPU 三连(§0):单测 → anno 逐行对齐(🔴 硬闸门)→ 库体检
+python -m pytest tests/test_teacher_bank.py -q && python utils/teacher_bank.py self-test
+python utils/teacher_bank.py align \
+    --anno-a anno_downstream/InternVid/InternVid-10M-flt_1.json \
+    --anno-b <抽取时传给 --anno 的那份>
+python utils/teacher_bank.py verify --out experiments/teacher/iv2s2_1m \
+    --anno anno_downstream/InternVid/InternVid-10M-flt_1.json
+
+# 冒烟(§1,单卡 10 分钟)与排队(§2,15 h)见手册;臂 config = sub1m_C1kd_s42.py
+```
+
+⚠️ 三件不该踩的:① **U9 修复后**,模型新增损失若在 `criterion.loss_weight` 里没有
+对应键会**启动即炸**(这是特性:堵隐式 1.0);② KD 只认「idx = anno 行号」——
+`caption_idx`、多语料拼接、去掉 `jump_filter` 都会被 `build_teacher_bank` 拒绝;
+③ 教师 `teacher_dim` 以抽取 manifest 的 `embed_dim` 为准,IV2-1B 预期 768。
+=======
 ### 3.16 全减法闸门 + 混合预算 (T×R) 评测(零训练;§11.7-2 / §11.8-N1 / C2-2D 闸门 1)
 
 **逐帧独立域三开关**(评测用环境变量,训练一律走 config 键;实现在
@@ -1445,6 +1467,7 @@ python experiments/collect_results.py --compare \
 全档均匀不输 ⇒ 记 null,C2 保持 1D,零损失。
 **为什么组合是精确的**:三开关下整塔逐帧独立、clip 嵌入 = 帧嵌入线性平均、
 落盘的是未归一化嵌入 ⇒ 分组加权平均逐位等于真跑混合分配。
+>>>>>>> origin/main
 
 ### 3.17 BN 重校准 CLI —— 阶段 3/5 分辨率数从趋势筛升级为正式数(2026-08-04 落地)
 

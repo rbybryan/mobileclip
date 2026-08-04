@@ -4,6 +4,7 @@ import json
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 import numpy as np
 from PIL import Image
 import torchvision.transforms as transforms
@@ -170,6 +171,11 @@ class MobileViCLIP_Small(nn.Module):
         # R1 SigLIP-regime text negative pool (default OFF; notes/r1-implementation-plan.md §2/§7.6).
         self._init_text_bank()
 
+<<<<<<< HEAD
+        # C1 KD:教师视频嵌入蒸馏(默认 OFF;ROADMAP 2.2c / notes/c1-kd-training-manual-zh.md)。
+        # 关着时本段不建任何参数、不碰 RNG ⇒ r0 路径连初始化随机流都逐位不变。
+        self._init_vtc_kd()
+=======
     def apply_arch_flags(self):
         """round-5 的四个结构 flag(幂等,可重复调用)。
 
@@ -247,6 +253,7 @@ class MobileViCLIP_Small(nn.Module):
         if ve_cfg.get("per_frame_attention", False) or _env_pfa:
             set_per_frame_attention(True)
             logger.info("[per-frame-attn] stage-4 注意力已切为帧内(块对角);跨帧耦合 = 0")
+>>>>>>> origin/main
 
     def no_weight_decay(self):
         ret = {"temp", "logit_scale", "logit_bias"}
@@ -324,13 +331,84 @@ class MobileViCLIP_Small(nn.Module):
             "dedup_cos": self.text_bank_dedup_cos,
         }
 
-    def forward(self, image, text, idx):
+    def _init_vtc_kd(self):
+        """C1 KD 初始化(config: `criterion.vtc_kd`,默认 OFF ⇒ 整段休眠)。
+
+        形态(ROADMAP 2.2c「D→512 投影 + vtc_kd」的视频专用版 —— 抽取管线目前只出
+        **视频**教师嵌入,§6.2 的 video-text 相似度矩阵 KD 要等文本阶段,这里不冒充它):
+
+        - ``loss_kd_feat`` —— 嵌入蒸馏:`1 − cos(student_512, W·teacher_D)`,
+          W 是可学习 Linear(D→512, bias=False)。只在 `loss_weight.kd_feat ≠ 0` 时计算。
+        - ``loss_kd_rel`` —— batch 内 video-video 关系蒸馏(Tung-Mori/kd_geo 族,U9 说的
+          「近亲」):teacher/student 各自的行 softmax(去对角,温度 τ)做 KL×τ²。
+          无参数、维度无关。只在 `loss_weight.kd_rel ≠ 0` 时计算。
+
+        算哪几项由 `criterion.loss_weight` 决定 —— 与 U9 修复(utils/loss_weighting)
+        互为钳制:模型只算权重非零的,求和器发现「算了没权重 / 有权重没算」都直接炸。
+        """
+        crit = getattr(self.config, "criterion", None)
+        kd = crit.get("vtc_kd", None) if crit is not None else None
+        self.kd_enabled = bool(kd and kd.get("enable", False))
+        if not self.kd_enabled:
+            return
+        lw = crit.get("loss_weight", {})
+        self.kd_compute_feat = lw.get("kd_feat", 0) != 0
+        self.kd_compute_rel = lw.get("kd_rel", 0) != 0
+        if not (self.kd_compute_feat or self.kd_compute_rel):
+            raise ValueError("[KD] vtc_kd.enable=True 但 loss_weight.kd_feat/kd_rel 全为 0 —— "
+                             "要么给权重,要么别 enable(空转会白付教师查表成本)")
+        # 教师维度必须显式写在 config 里(IV2-1B 是 768),并与抽取 manifest 的
+        # embed_dim 一致 —— 手册 §0 的 verify 会对这个数;跑错了首个 forward 也会炸。
+        self.kd_teacher_dim = int(kd["teacher_dim"])
+        self.kd_tau = float(kd.get("tau", 0.07))
+        if self.kd_compute_feat:
+            student_dim = int(self.config.model.vision_encoder.clip_embed_dim)
+            self.kd_proj = nn.Linear(self.kd_teacher_dim, student_dim, bias=False)
+        logger.info(f"[KD] vtc_kd ON: teacher_dim={self.kd_teacher_dim} "
+                    f"feat={self.kd_compute_feat} rel={self.kd_compute_rel} tau={self.kd_tau}")
+
+    def _kd_losses(self, vision_embeds, teacher_emb, teacher_ok):
+        if teacher_emb is None or teacher_ok is None:
+            raise ValueError("[KD] vtc_kd.enable=True 但 forward 没收到 teacher_emb/teacher_ok "
+                             "—— 训练入口没接教师库(只有 tasks_clip/pretrain.py 接了)")
+        if teacher_emb.shape[-1] != self.kd_teacher_dim:
+            raise ValueError(f"[KD] 教师嵌入维度 {teacher_emb.shape[-1]} ≠ config 的 "
+                             f"teacher_dim={self.kd_teacher_dim} —— 抽取目录/维度写错")
+        out = {}
+        v = F.normalize(vision_embeds.float(), dim=-1)                    # [B, 512]
+        okf = teacher_ok.to(v.dtype)
+        n_ok = okf.sum().clamp(min=1.0)
+        if self.kd_compute_feat:
+            tgt = F.normalize(self.kd_proj(teacher_emb).float(), dim=-1)  # [B, 512]
+            # miss 行(零向量)被 okf 乘掉,不进分子;分母只数 ok 行
+            out["loss_kd_feat"] = ((1.0 - (v * tgt).sum(-1)) * okf).sum() / n_ok
+        if self.kd_compute_rel:
+            m = teacher_ok.bool()
+            if int(m.sum()) >= 2:
+                t = F.normalize(teacher_emb[m].float(), dim=-1)
+                s_t = t @ t.T / self.kd_tau
+                s_s = (v[m] @ v[m].T) / self.kd_tau
+                eye = torch.eye(s_t.shape[0], dtype=torch.bool, device=s_t.device)
+                s_t = s_t.masked_fill(eye, float("-inf"))                 # 去掉平凡自相似
+                s_s = s_s.masked_fill(eye, float("-inf"))
+                out["loss_kd_rel"] = F.kl_div(
+                    F.log_softmax(s_s, dim=-1), F.softmax(s_t, dim=-1),
+                    reduction="batchmean") * (self.kd_tau ** 2)
+            else:
+                # ok 行不足以构成关系;保持键存在(求和器按 loss_weight 对账)且梯度图连通
+                out["loss_kd_rel"] = (v.sum() * 0.0)
+        return out
+
+    def forward(self, image, text, idx, teacher_emb=None, teacher_ok=None):
         """forward and calculate loss.
 
         Args:
             image (torch.Tensor): The input images. Shape: [B,T,C,H,W].
             text (dict): TODO
             idx (torch.Tensor): TODO
+            teacher_emb (torch.Tensor, optional): C1 KD 教师视频嵌入 [B, D_t],
+                只在 `criterion.vtc_kd.enable` 时由 pretrain.py 传入。
+            teacher_ok (torch.Tensor, optional): [B] bool,该行教师嵌入是否可用。
 
         Returns: TODO
 
@@ -355,9 +433,13 @@ class MobileViCLIP_Small(nn.Module):
                 vision_embeds, text_embeds, idx, self.temp, all_gather=True
             )
 
-        return dict(
+        ret = dict(
             loss_vtc=loss_vtc,
         )
+        # C1 KD:只在训练态计入(评测走 encode_* 路径,不经过这里的损失)
+        if getattr(self, "kd_enabled", False) and self.training:
+            ret.update(self._kd_losses(vision_embeds, teacher_emb, teacher_ok))
+        return ret
 
     def encode_vision(self, image, test=False):
         """encode image / videos as features.
