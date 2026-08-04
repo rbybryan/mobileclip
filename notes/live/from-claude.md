@@ -23,6 +23,53 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-08-04 (85) — 🛠「写吧」三件已交付:probe --set(LSE×gate4)/ BN 重校准 CLI / P1 结构性旁路 —— 四段命令,全零训练
+
+**交付内容**(细节 `notes/v100-10k-advance-tests.md` §9 追记;全部本地验证过 ——
+旁路 4 条等价单测逐位通过、BN CLI 与 --set 桩件端到端、mini 导出 diff 实证 186→165 节点):
+
+1. **probe `--set` 直通结构 flag**,顺手修掉一个静默失效:结构 flag 是「置零参数」,
+   任何外部 load 都会冲掉它 ⇒ 三处载点(probe / bn_recalibrate / **评测 shared_utils**)
+   现在都在载后重放 `apply_arch_flags()`。gate 评测当年被迫用消融 ckpt 绕路,根因就是它。
+2. **`experiments/bn_recalibrate.py`**:产出打过 BN 补丁的完整 ckpt,现有评测链路零改动;
+   强制关检查点 + A12 断言(`num_batches_tracked == batch 数`),不对拒绝落盘。
+3. **P1 结构性旁路**:`skip_temporal_branch` flag(须与 `disable_temporal_branch` 同开)
+   + `export_smoke.py --skip-temporal` + ONNX 节点/layout 计数。
+
+**Do this next(按序;①③ 各 ~40/10 min,② ~1 h):**
+
+```bash
+cd ~/mobileclip && git pull
+unset MVC_DATA_DIR
+
+# ① LSE×gate4 可加性(COMMANDS §3.15 尾段原文)
+python experiments/frame_agg_probe.py \
+    --config scripts/evaluation/clip/zero_shot/mobileviclip_small/config_msrvtt.py \
+    --ckpt ./checkpoints/mobileviclip_small.pt --ts 8,16 \
+    --set model.vision_encoder.disable_temporal_embedding true \
+    --dump-dir experiments/frame_agg_gate4 --out experiments/frame_agg_gate4.md
+python experiments/collect_results.py --compare experiments/frame_agg_gate4/T16_lse_tau0.05 experiments/frame_agg/T16_mean
+python experiments/collect_results.py --compare experiments/frame_agg_gate4/T16_lse_tau0.05 experiments/frame_agg/T16_mean --prefix ret_test/
+python experiments/collect_results.py --compare experiments/frame_agg_gate4/T16_mean experiments/frame_agg/T16_mean
+python experiments/collect_results.py --compare experiments/frame_agg_gate4/T16_mean experiments/frame_agg/T16_mean --prefix ret_test/
+
+# ② BN 重校准 → 阶段 3 正式数(COMMANDS §3.17 原文:4 档循环 + 2 条判读 compare)
+# ③ P1 导出 diff(COMMANDS §3.6 尾段原文:exports_base vs exports_skip 两条命令)
+
+# ④ 仍欠(块 83):跨 T CI 2 条命令 + 多基准 rsync(v100 §8 第 3 步)
+```
+
+**判读**:① probe 的 `[CI]` 行答「LSE 在 gate4 上还灵吗」;`gate4_lse vs base_mean` 的
+Δ ≈ +0.7(P5)+1.5(LSE)≈ +2.2 且 CI 不含 0 ⇒ 两条免费增益**可叠加**,出货配置就是
+「gate4 + LSE 打分」;`gate4_mean vs base_mean` 是 sanity(应复现 ≈ +0.7)。
+② `224_bncal vs 256_bncal` CI 含 0 ⇒「224² 近免费」升级为论文数。
+③ 两次输出的「N 节点 / M layout」相减,对上 1581→1141 ⇒ P1 效率主张坐实;对不上就报实测数。
+
+**Then report back** in from-server.md:①的 probe `[verdict]/[CI]` 行 + 4 张 compare 表;
+②的每档 `[drift]` 行 + 2 张判读表;③的两行节点数;④若做了,照块 83 的清单。
+
+---
+
 ## 2026-08-04 (83) — 🏆 LSE(τ=0.05)认证通过:两口径 × 两 T 四格 CI 全显著;下一步:2 条跨 T 命令 + 多基准 rsync 仍欠
 
 **Diagnosis(全量队列 31 PASS / 0 FAIL,细节全在 `experiments/v100_sweep_results.md` §9):**

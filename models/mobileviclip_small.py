@@ -135,45 +135,12 @@ class MobileViCLIP_Small(nn.Module):
             config.model.get("extra_ckpt_path", None)
         )
 
-        # round-5 **P1**:整条时序分支从 stage 1–3 删除(config:
-        # model.vision_encoder.disable_temporal_branch = True)。
-        # 机制:`RepMixer.forward:743-746` 是 x = x + λ_1d·(mixer_1d − norm_1d),
-        # 所以 λ_1d ≡ 0 且**不训练** ⇒ 该支路恒等 ⇒ 等价于它不存在。
-        # 🔴 **必须放在 load_checkpoint 之后** —— 放 __init__ 前面会被随后的权重加载覆盖,
-        #    那是一个静默失效(臂看起来跑了,其实时序分支还活着)。
-        # 依据:上面 freeze 分支的注释说得很清楚 ——「temporal parts are absent from the
-        # image-pretrained checkpoint ... else they are frozen at zero forever」。
-        # 那句话原本是在**警告**这个后果;P1 要的**正是**这个后果。
-        if self.config.model.vision_encoder.get("disable_temporal_branch", False):
-            n = 0
-            for name, p in self.vision_encoder.named_parameters():
-                if "layer_scale_1d" in name:
-                    p.data.zero_()
-                    p.requires_grad = False
-                    n += 1
-            # 断言:本模型 stage 1–3 恰有 40 个 RepMixerBlock(layers=[4,12,24,4],
-            # stage 4 是 attention 块)。数不对就是选错了张量 —— 这正是 §0.1 里
-            # gate5 把 80 个 layer_scale 混池、凭空造出 2.42% 的同一个坑。
-            assert n == 40, f"disable_temporal_branch 期望命中 40 个 layer_scale_1d,实际 {n}"
-            logger.info(f"[P1] 时序分支已删除:{n} 个 layer_scale_1d 置零并冻结")
-
-        # round-5 **P5 / lean**:删掉 temporal_embedding(config:
-        # model.vision_encoder.disable_temporal_embedding = True)。
-        # 机制:它是塔里唯一的 T 形状参数,前向是 x = x + resize(temporal_embedding, t)
-        # (:1197),零初始化;置零且不训练 ⇒ 加法恒等 ⇒ 等价于它不存在。
-        # 评测版判定(eval_gate4)两口径显著为正(v100_sweep_results §1);
-        # 本 flag 回答的是「从一开始就没有它,训出来会怎样」(与 P1/P1trained 同构)。
-        # 🔴 同 P1:必须放在 load_checkpoint 之后,防静默失效。
-        # (mobileviclip_tiny 未同步加此 flag —— sub1m 层只用 Small。)
-        if self.config.model.vision_encoder.get("disable_temporal_embedding", False):
-            n = 0
-            for name, p in self.vision_encoder.named_parameters():
-                if name.endswith("temporal_embedding"):
-                    p.data.zero_()
-                    p.requires_grad = False
-                    n += 1
-            assert n == 1, f"disable_temporal_embedding 期望恰好 1 个 temporal_embedding,实际 {n}"
-            logger.info("[P5] temporal_embedding 已置零并冻结(塔中不再有任何 T 形状参数)")
+        # round-5 的三个结构 flag(P1 / P5 / P1-旁路)。
+        # 🔴 **必须放在 load_checkpoint 之后** —— 放前面会被随后的权重加载覆盖,
+        #    那是一个静默失效(臂看起来跑了,其实时序分支还活着)。同理:任何**外部**
+        #    再次 load_state_dict(评测的 pretrained_path、probe/bn_recalibrate 的
+        #    --ckpt)之后都必须**重新调用 apply_arch_flags()**,见方法 docstring。
+        self.apply_arch_flags()
 
         # criterions
         self.clip_loss = VTC_VTM_Loss(False)
@@ -187,6 +154,71 @@ class MobileViCLIP_Small(nn.Module):
 
         # R1 SigLIP-regime text negative pool (default OFF; notes/r1-implementation-plan.md §2/§7.6).
         self._init_text_bank()
+
+    def apply_arch_flags(self):
+        """round-5 的三个结构 flag(幂等,可重复调用)。
+
+        🔴 调用时机是这组 flag 的全部难点:置零是**对参数值**的操作,任何 load 都会把它
+        冲掉。__init__ 里在 load_checkpoint 之后调一次;若之后还有**外部** load(评测的
+        pretrained_path、`frame_agg_probe` / `bn_recalibrate` 的 --ckpt),载完必须再调
+        一次,否则 flag 静默失效 —— gate 评测当年被迫改用「消融 ckpt 文件」绕路,
+        根因就是这个(--set 直通 flag 的前提也是它)。对 P1trained 一族的 ckpt
+        (λ_1d 本来就存零)重复调用是纯 no-op。
+        """
+        ve_cfg = self.config.model.vision_encoder
+
+        # **P1**:整条时序分支从 stage 1–3 删除(disable_temporal_branch = True)。
+        # 机制:`RepMixer.forward` 是 x = x + λ_1d·(mixer_1d − norm_1d),
+        # 所以 λ_1d ≡ 0 且**不训练** ⇒ 该支路恒等 ⇒ 等价于它不存在。
+        if ve_cfg.get("disable_temporal_branch", False):
+            n = 0
+            for name, p in self.vision_encoder.named_parameters():
+                if "layer_scale_1d" in name:
+                    p.data.zero_()
+                    p.requires_grad = False
+                    n += 1
+            # 断言:本模型 stage 1–3 恰有 40 个 RepMixerBlock(layers=[4,12,24,4],
+            # stage 4 是 attention 块)。数不对就是选错了张量 —— 这正是 §0.1 里
+            # gate5 把 80 个 layer_scale 混池、凭空造出 2.42% 的同一个坑。
+            assert n == 40, f"disable_temporal_branch 期望命中 40 个 layer_scale_1d,实际 {n}"
+            logger.info(f"[P1] 时序分支已删除:{n} 个 layer_scale_1d 置零并冻结")
+
+        # **P5 / lean**:删掉 temporal_embedding(disable_temporal_embedding = True)。
+        # 机制:它是塔里唯一的 T 形状参数,前向是 x = x + resize(temporal_embedding, t),
+        # 零初始化;置零且不训练 ⇒ 加法恒等 ⇒ 等价于它不存在。
+        # 评测版判定(eval_gate4)两口径显著为正(v100_sweep_results §1)。
+        # (mobileviclip_tiny 未同步加此 flag —— sub1m 层只用 Small。)
+        if ve_cfg.get("disable_temporal_embedding", False):
+            n = 0
+            for name, p in self.vision_encoder.named_parameters():
+                if name.endswith("temporal_embedding"):
+                    p.data.zero_()
+                    p.requires_grad = False
+                    n += 1
+            assert n == 1, f"disable_temporal_embedding 期望恰好 1 个 temporal_embedding,实际 {n}"
+            logger.info("[P5] temporal_embedding 已置零并冻结(塔中不再有任何 T 形状参数)")
+
+        # §7 **P1 结构性旁路**(skip_temporal_branch = True)。
+        # 与 disable_temporal_branch(置零门,算子仍留在图里、照算再乘 0)不同:本 flag 让
+        # RepMixer.forward 直接跳过整条时序支路(训练态与重参数化态都跳)——
+        # P1 的效率主张(440 ONNX 节点 / −18% CPU)由它兑现,精度不该有任何变化。
+        # 🔴 必须与 disable_temporal_branch 同开:旁路只负责跳过算子,置零/冻结由后者完成
+        #    (同一次 apply 里它先跑),否则旁路会静默改变数值(效率开关变精度消融)。
+        # 等价性单测:tests/test_skip_temporal.py(训练态与重参数化态均逐位一致)。
+        if ve_cfg.get("skip_temporal_branch", False):
+            assert ve_cfg.get("disable_temporal_branch", False), (
+                "skip_temporal_branch 必须与 disable_temporal_branch 同开:旁路只负责"
+                "跳过算子,置零/冻结 λ_1d 由后者完成,否则数值会被静默改变")
+            bad = [name for name, p in self.vision_encoder.named_parameters()
+                   if "layer_scale_1d" in name and float(p.detach().abs().max()) != 0.0]
+            assert not bad, f"λ_1d 应已被 disable_temporal_branch 置零,非零示例:{bad[:3]}"
+            n = 0
+            for m in self.vision_encoder.modules():
+                if isinstance(m, RepMixer):
+                    m.skip_temporal = True
+                    n += 1
+            assert n == 40, f"skip_temporal_branch 期望命中 40 个 RepMixer,实际 {n}"
+            logger.info(f"[P1-旁路] 时序支路已结构性跳过:{n} 个 RepMixer")
 
     def no_weight_decay(self):
         ret = {"temp", "logit_scale", "logit_bias"}
@@ -765,8 +797,15 @@ class RepMixer(nn.Module):
         #     else:
         #         x = x + self.mixer(x) - self.norm(x)
         #     return x
+        # round-5 §7 **结构性旁路**(self.skip_temporal,默认 False ⇒ off-path 逐位不变):
+        # λ_1d ≡ 0 时时序残差恒为 0(训练态),折叠核恰为 δ、偏置为 0(重参数化态,
+        # reparam_conv_1d 是精确恒等)⇒ 跳过整条支路数值不变,但把 reshape/permute
+        # layout 链从图里删掉 —— P1 的效率主张(440 ONNX 节点 / 80 转置)由此兑现。
+        # 由 MobileViCLIP_Small 的 skip_temporal_branch flag 或 export_smoke 设置。
         t_frames = get_num_frames()  # C2:动态 T(旧代码硬编码 8)
         if hasattr(self, "reparam_conv"): #x:TB,C,H,W
+            if getattr(self, "skip_temporal", False):
+                return self.reparam_conv(x)
             # x = self.reparam_conv(x)
             x = x.reshape(t_frames,int(x.shape[0]/t_frames),x.shape[1],x.shape[2],x.shape[3])
             t,b,c,h,w = x.shape
@@ -779,18 +818,22 @@ class RepMixer(nn.Module):
             return x
         else:
             if self.use_layer_scale:
+                if getattr(self, "skip_temporal", False):
+                    return x + self.layer_scale * (self.mixer(x) - self.norm(x))
                 # print("1 x.shape:",x.shape) #torch.Size([512, 64, 64, 64])
                 # print("2 x.shape:",x.shape) #torch.Size([512, 64, 64, 64])
                 x = x.reshape(t_frames,int(x.shape[0]/t_frames),x.shape[1],x.shape[2],x.shape[3]) #t,b,c,h,w
                 t,b,c,h,w = x.shape
                 x = x.permute(1,3,4,2,0) #b,h,w,c,t
                 x = x.reshape(b*h*w,c,t) #b*h*w,c,t
-                x = x + self.layer_scale_1d * (self.mixer_1d(x) - self.norm_1d(x)) 
+                x = x + self.layer_scale_1d * (self.mixer_1d(x) - self.norm_1d(x))
                 #bxhxw,c,t->txb,c,h,w
                 x = x.reshape(b,h,w,c,t).permute(4,0,3,1,2).reshape(t*b,c,h,w)
                 x = x + self.layer_scale * (self.mixer(x) - self.norm(x))
                 # assert 1==2
             else:
+                if getattr(self, "skip_temporal", False):
+                    return x + self.mixer(x) - self.norm(x)
                 x = x + self.mixer_1d(x) - self.norm_1d(x)
                 x = x + self.mixer(x) - self.norm(x)
             return x
