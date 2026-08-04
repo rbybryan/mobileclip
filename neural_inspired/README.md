@@ -24,6 +24,17 @@ without touching the baseline.
 | `TemporalSurprisePool` | mean / attention temporal pooling | `model.vision_encoder.temporal_pooling = "surprise"` | N2 (predictive-coding surprise pooling), pool half |
 
 ### `TemporalSurprisePool`
+
+> ⚠️ **Novelty verdict (2026-08-04): not novel — ablation row only.** A literature
+> check ([`notes/surprise-pooling-novelty.md`](../notes/surprise-pooling-novelty.md))
+> found the mechanism is a *constrained* attention pool (score = residual energy;
+> cf. AdaScan, Attentive Statistics Pooling, NetVLAD residuals) and the concept
+> ("informative frame = frame that deviates from a prediction") is already taken by
+> SPIKE-RL (arXiv:2509.23433) and Swift Sampling (arXiv:2605.22678). Keep it as an
+> ablation, cite those first if it is ever written up, and **read the sign of `gamma`
+> before repeating the Rao–Ballard motivation below** — if `gamma < 0` the module is
+> doing precision weighting and that story is backwards.
+
 Predictive-coding surprise-weighted pooling over the T frame embeddings. The mean
 frame is the "prediction"; each frame is weighted by its prediction-error energy.
 Gated by `alpha` (init 0 → mean pooling). It is the **brain-inspired twin of
