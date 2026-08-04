@@ -1281,6 +1281,42 @@ r_mean** ⇒ 这份权重里深度不冗余,**关掉这条线**,预算全给 rou
 **顺带产出**:这条曲线本身就是论文的 Fig-1 级分析(「一个蒸馏出来的移动端视频 CLIP
 把算力放在哪、每一块买到了什么」),**零训练轮次**。
 
+### 3.15 C-2/C-4 聚合判别 v2 —— τ 扫描 + 配对 CI + 两口径(零训练,单卡 ~40 min)
+
+一次前向拿逐帧嵌入,{mean, max, top-2/4, 单帧, LSE(τ 扫描)} 各打一次分,
+每个聚合器 vs mean 出**逐查询配对 CI**(10000 次,seed=0)+ **两口径**(raw + DSL),
+逐查询 rank 落盘可事后任意重比。首轮结果与判读见 `experiments/v100_sweep_results.md` §8.1。
+
+```bash
+# 评测,双根规则:先 unset(README §3.0)
+unset MVC_DATA_DIR
+
+# 整段跑(推荐;含 [verdict]/[CI] 摘要行):
+bash experiments/run_v100_all.sh 10
+
+# 或直接调 probe(改 T / τ 网格时):
+python experiments/frame_agg_probe.py \
+    --config scripts/evaluation/clip/zero_shot/mobileviclip_small/config_msrvtt.py \
+    --ckpt ./checkpoints/mobileviclip_small.pt --ts 8,16 \
+    --taus 0.02,0.05,0.1,0.2,0.5,1.0
+```
+
+产出:表 + CI → `experiments/frame_agg_results.md`;
+逐查询 rank → `experiments/frame_agg/T{8,16}_<方法>/ranks_ret_test{,_emb}.npz`。
+事后任意两臂重比(与 §3.9 同一套机器):
+
+```bash
+python experiments/collect_results.py --compare \
+    experiments/frame_agg/T16_lse_tau0.05 experiments/frame_agg/T16_mean
+python experiments/collect_results.py --compare \
+    experiments/frame_agg/T16_lse_tau0.05 experiments/frame_agg/T16_mean --prefix ret_test/
+```
+
+**三条纪律**:① 头条只认 **τ=0.05**(v1 写死的默认 = 预登记;τ 扫描只当敏感度曲线,
+不许事后挑最好的 τ);② 判据 = `[CI]` 行两口径同向且 CI 不含 0,别看裸差;
+③ 报收益必须连部署成本一起报 —— 相似度级聚合 ⇒ 索引存 **T 份**逐帧嵌入(×T 存储/点积)。
+⚠️ probe 自建前向,绝对值与 `retrieval.py` 管线差 ~0.8 ⇒ **脚本内差值可判,跨管线绝对值不可比**。
+
 ## 4. Training (pretraining)
 
 **Preflight — run this before every pretraining launch, not just the first:**
