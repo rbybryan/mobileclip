@@ -1281,6 +1281,52 @@ r_mean** ⇒ 这份权重里深度不冗余,**关掉这条线**,预算全给 rou
 **顺带产出**:这条曲线本身就是论文的 Fig-1 级分析(「一个蒸馏出来的移动端视频 CLIP
 把算力放在哪、每一块买到了什么」),**零训练轮次**。
 
+### 3.15 全减法闸门 + 混合预算 (T×R) 评测(零训练;§11.7-2 / §11.8-N1 / C2-2D 闸门 1)
+
+**逐帧独立域三开关**(评测用环境变量,训练一律走 config 键;实现在
+`models/mobileviclip_small.py`,缺省全关、off-path 不变):
+
+| 环境变量 | 等价 config 键 | 作用 |
+|---|---|---|
+| `MVC_DISABLE_TEMPORAL_BRANCH=1` | `disable_temporal_branch` | P1:40 个 `layer_scale_1d` 置零冻结 |
+| `MVC_DISABLE_TEMPORAL_EMBEDDING=1` | `disable_temporal_embedding` | P5:唯一 T 形状参数置零冻结 |
+| `MVC_PER_FRAME_ATTENTION=1` | `per_frame_attention` | **新**:stage-4 MHSA 帧内块对角,跨帧耦合=0 |
+
+**闸门 A · 全减法(§11.7-2)** —— 三开关 vs 基线,判据沿用 P1 的预登记
+(两口径同号且 Δ > 1.0 ⇒ 杀;CI 含 0 或小负 ⇒ 训练臂放行):
+
+```bash
+cd ~/mobileclip && git pull
+D=experiments/evals/pfattn_gate
+MVC_DISABLE_TEMPORAL_BRANCH=1 MVC_DISABLE_TEMPORAL_EMBEDDING=1 MVC_PER_FRAME_ATTENTION=1 \
+  bash experiments/run_eval.sh small msrvtt checkpoints/mobileviclip_small.pt "$D"
+python experiments/collect_results.py --compare "$D" eval_base
+python experiments/collect_results.py --compare "$D" eval_base --prefix ret_test/
+# 顺带把从没在真 ckpt 上跑过的静态审计补掉(零 GPU):
+python experiments/temporal_capacity_audit.py checkpoints/mobileviclip_small.pt
+```
+
+**闸门 B · 混合预算(C2-2D 升级条件 1)** —— 单点评测落嵌入(`MVC_DUMP_EMB_DIR`),
+组合与打表离线做:
+
+```bash
+# 1) 打印 ~14 条单点命令(每条 ~1 分钟,自动带三开关与落盘变量):
+python experiments/mixed_budget_eval.py --print-unit-commands \
+    --ckpt checkpoints/mobileviclip_small.pt --root experiments/evals/mb
+# 2) 照打印逐条跑完后,出结果表(含 cost 列,按预算排序):
+python experiments/mixed_budget_eval.py --root experiments/evals/mb \
+    --out experiments/mixed_budget_results.md
+# 3) 关键对(同预算档)配对显著性,例:
+python experiments/collect_results.py --compare \
+    experiments/evals/mb/alloc_1r256_4r128 experiments/evals/mb/alloc_8r128
+```
+
+**判读**:某个混合分配在 ≤ 自己 cost 的所有均匀分配上 Pareto 胜出且配对 CI 不含 0
+⇒ **闸门 1 PASS,C2-2D 升级成立**(`publishability-assessment.md` §1.1);
+全档均匀不输 ⇒ 记 null,C2 保持 1D,零损失。
+**为什么组合是精确的**:三开关下整塔逐帧独立、clip 嵌入 = 帧嵌入线性平均、
+落盘的是未归一化嵌入 ⇒ 分组加权平均逐位等于真跑混合分配。
+
 ## 4. Training (pretraining)
 
 **Preflight — run this before every pretraining launch, not just the first:**

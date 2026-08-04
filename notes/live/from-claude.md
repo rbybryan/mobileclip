@@ -23,6 +23,42 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-08-03 (81) — 🚪 C2-2D 的两道免费闸门已落代码:全减法(闸门 A)+ 混合预算(闸门 B)
+
+论文创新点 C2-2D(`publishability-assessment.md` §1.1)的升级条件 1,以及 §11.7-2 全减法
+终点的评测闸门,**代码全部就位**:`per_frame_attention` flag(stage-4 帧内块对角注意力)、
+三个减法开关的环境变量兜底、评测嵌入落盘(`MVC_DUMP_EMB_DIR`)、离线组合器
+`experiments/mixed_budget_eval.py`(预注册 14 种分配)。**全部零训练,msrvtt 在哪台就在哪台跑**
+(V100 即可,不占 b100 队列)。完整命令与判读 = `COMMANDS.md` **§3.15**。
+
+```bash
+cd ~/mobileclip && git pull
+
+# 闸门 A · 全减法(~2 分钟 + 一次配对比较)
+D=experiments/evals/pfattn_gate
+MVC_DISABLE_TEMPORAL_BRANCH=1 MVC_DISABLE_TEMPORAL_EMBEDDING=1 MVC_PER_FRAME_ATTENTION=1 \
+  bash experiments/run_eval.sh small msrvtt checkpoints/mobileviclip_small.pt "$D"
+python experiments/collect_results.py --compare "$D" eval_base
+python experiments/collect_results.py --compare "$D" eval_base --prefix ret_test/
+python experiments/temporal_capacity_audit.py checkpoints/mobileviclip_small.pt   # 零 GPU,补欠账
+
+# 闸门 B · 混合预算(~15 分钟:14 条单点 × ~1 分钟,再离线组合)
+python experiments/mixed_budget_eval.py --print-unit-commands \
+    --ckpt checkpoints/mobileviclip_small.pt --root experiments/evals/mb
+# ← 照它打印的命令逐条跑完,然后:
+python experiments/mixed_budget_eval.py --root experiments/evals/mb \
+    --out experiments/mixed_budget_results.md
+```
+
+**判读**(细节在 §3.15):闸门 A 两口径 Δ ≤ 1.0 或 CI 含 0 ⇒ 全减法训练臂放行;
+闸门 B 任一混合分配对同预算均匀分配 Pareto 胜出且配对 CI 不含 0 ⇒ **C2-2D 升级成立**。
+
+**Then report back** in from-server.md:① 闸门 A 的两口径 CI + audit 输出;
+② `mixed_budget_results.md` 全文。两个都到手,我来写升级/降级的最终判定与
+elastic-(T,R) 训练臂的 config。
+
+---
+
 ## 2026-08-03 (80) — 📋 下一轮 refinement 训练手册已落:MC2-init + lean(config/flag 全就位)
 
 选臂理由与阶梯见 `verification-tier-1m-zh.md` §11.6;**逐步执行手册(含全部命令与决策表)=
