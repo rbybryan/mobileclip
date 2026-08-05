@@ -7,7 +7,7 @@
 >
 > 前置条件只有一个：**两台机器内网互通**（§3 有验证方法）。
 > 配套手册：[`setup-h100.md`](setup-h100.md)（H100 全量审查）、
-> [`setup-v100.md`](setup-v100.md)（V100 10k 审查）。
+> [`setup-v100.md`](../setup-v100.md)（V100 10k 审查）。
 
 ## 总览
 
@@ -258,7 +258,7 @@ JUDGE_N=500 bash recaption/scripts/run_v100.sh s2-judge
 模型给不了，**T4 的 action 一致率决策门无法用它复现**（那就走路线 D 的 D1–D4）。
 但 rubric 里 `trans_score` 是**明确定义为纯文本**的（"仅比较中英两条文本：
 翻译忠实+流畅度"，见 `vlm_audit.py` 的 `PROMPT`），纯文本模型可以独立复核它——
-而这恰好是 [`data-issues.md`](data-issues.md) §4 **决策 1（xling 阈值）**唯一依赖的分
+而这恰好是 [`data-issues.md`](../data-issues.md) §4 **决策 1（xling 阈值）**唯一依赖的分
 （`calibrate_xling.py` 的全部差率都来自 8B 的 `trans_score`）。
 所以纯文本端点仍能解掉决策 1 的可信度问题，只是解不掉决策 2。
 需要给 `vlm_audit.py` 加一个"不发帧"的文本模式（**尚未实现**，要用再提）。
@@ -289,7 +289,7 @@ python recaption/scripts/vlm_audit_hf.py \
 不能再按卡起 8 个进程（必 OOM）——单进程用 `--num-shards 1`。
 
 > 📖 **完整实操**（下载 / 校验 / 冒烟 / 两进程 ×4 卡把墙钟减半 / 一致率脚本 /
-> 常见问题）见 **[`setup-v100.md`](setup-v100.md) §4.3-本地**。上面这条命令
+> 常见问题）见 **[`setup-v100.md`](../setup-v100.md) §4.3-本地**。上面这条命令
 > 只是最小可跑版本。
 
 ### 路线 D：**完全没有大裁判**时的替代校准协议（H100 用不上时走这条）

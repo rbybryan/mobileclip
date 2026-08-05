@@ -8,7 +8,7 @@
 > 一版更好的 v0.2 数据。配套可执行工具在 `recaption/scripts/`（审核四阶段
 > S0–S3 + 落地脚本 `apply_buckets.py` 一一对应），完整命令见 §7 操作手册。
 >
-> 与 `recaption/docs/caprl-scheme.md`（CapRL 数据强化方案）的关系：本方案是
+> 与 `recaption/docs/archive/caprl-scheme.md`（CapRL 数据强化方案）的关系：本方案是
 > 它的**前置诊断层 + 中文化落地**——先量化 v0.1 的病灶分布，再决定重写预算投给谁；
 > v0.2 的重写形态直接复用该方案 §4.4 的「K 条 ≤32-token 短字幕」结论。
 
@@ -150,7 +150,7 @@ caprl-scheme §7：3M 片 × K=3 约 1.5k–3k A100·时。
 待报告评审后再启动。**
 
 > **按机器选手册**（分工不同，两份手册均含环境配置到 S3 全部命令）：
-> 8×H100-80G → `recaption/docs/setup-h100.md`：**全量 10M**，vLLM 路径
+> 8×H100-80G → `recaption/docs/archive/setup-h100.md`：**全量 10M**，vLLM 路径
 > （8B dp=8 + 235B-FP8 裁判本地 tp8），~1.5 天；
 > 8×V100-32G（101vector）→ `recaption/docs/setup-v100.md`：**仅本机
 > 1 万条预抽样**（没有全量数据），torch 须 cu118 构建、fp16、

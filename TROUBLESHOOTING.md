@@ -583,7 +583,7 @@ Then verify `data/hmdb51/videos_test/` holds ~6766 `.avi` and that
 ## `modelscope download` keeps failing: `IncompleteRead(... bytes read, ... more expected)` / `Max retries exceeded`
 
 Seen while pre-downloading Qwen3-VL weights for the data audit
-(`recaption/docs/setup-v100.md` §0 / `recaption/docs/setup-h100.md` §0):
+(`recaption/docs/setup-v100.md` §0 / `recaption/docs/archive/setup-h100.md` §0):
 
 ```
 WARNING | modelscope_hub.download | Download failed for model-00002-of-00004.safetensors:
@@ -738,7 +738,7 @@ wait. The ladder, cheapest first:
    intranet ≈ 110 MB/s puts 64 GB at ~10 minutes, beating any public channel:
    `rsync -avP --partial user@host:.../Qwen3-VL-32B-Instruct/ ckpts/Qwen3-VL-32B-Instruct/`
    (search the other machine first with the recipe in
-   `recaption/docs/setup-judge-api.md` §1.2).
+   `recaption/docs/archive/setup-judge-api.md` §1.2).
 5. **Downsize the model.** If every channel still says 5+ hours, a 17 GB
    alternative that runs tonight beats a 64 GB one that lands tomorrow.
 

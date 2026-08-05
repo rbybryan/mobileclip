@@ -463,7 +463,7 @@ def main():
     else:
         emit("✅ 判定可用。下一步（`recaption/docs/data-issues.md` §1「下一步做什么」）：")
         emit("1. `bash recaption/scripts/run_v100.sh xling-check` —— 裁决决策 1，阻塞 S3")
-        emit("2. 裁判档 500 条（`recaption/docs/setup-judge-relay.md`）+ Gradio 人工抽检 300，两者可并行")
+        emit("2. 裁判档 500 条（`recaption/docs/archive/setup-judge-relay.md`）+ Gradio 人工抽检 300，两者可并行")
         emit("3. 两个决策都裁完 → `bash recaption/scripts/run_v100.sh s3`")
     emit()
 

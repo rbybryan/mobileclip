@@ -172,7 +172,7 @@ python recaption/scripts/show_flags.py --flags outputs/audit_10k/s0_flags.jsonl 
 ~~从 101vector 直接打内网端点~~：**实测 101vector 连不上 `172.30.x.x`**
 （2026-07，见 §4.3-端点），所以这一步在本机无法进行。
 裁判链路的冒烟改在中转机上做，见
-[`setup-judge-relay.md`](setup-judge-relay.md) §5（那边 `--limit 5`，同样 5 条）。
+[`setup-judge-relay.md`](archive/setup-judge-relay.md) §5（那边 `--limit 5`，同样 5 条）。
 
 > 仍想在本机验证 `vlm_audit.py` 的**非网络**部分（路径解析→抽帧→base64）时，
 > 指一个本机能连的端点即可；纯粹验证抽帧的话直接看 §4.5 `s2-check` 更省事。
@@ -341,7 +341,7 @@ bash recaption/scripts/run_v100.sh s1-report      # -> outputs/audit_10k/s1_anal
 问题概率。真正的问题率只有 §5 的 `report.md` 说了算。
 
 > **本机 10k 的实测结论已归档到
-> [`audit-findings.md`](audit-findings.md)**
+> [`audit-findings.md`](archive/audit-findings.md)**
 > （`outputs/` 被 gitignore，报告本身不入库）。要点：`xling_cos` 在本批是
 > **弱工具**（ρ(sig_zh,xling)=0.04、动态范围窄），语言污染要看 S0 旗标而非
 > xling；且 S3 默认 `--xling-threshold=0.7` 正落在本批 p25 附近，**跑 s3 前
@@ -564,9 +564,9 @@ H100 也连不上**；只有 7 卡 V100 `root@10.55.87.68 -p 31179` 连得上
 
 所以在 101vector 上：**不要跑 `s2-judge`，只跑 `judge-agree`**（见 §4 命令块 4.3）。
 
-**裁判的全部步骤在 [`setup-judge-relay.md`](setup-judge-relay.md)**
+**裁判的全部步骤在 [`setup-judge-relay.md`](archive/setup-judge-relay.md)**
 （前提实测 → 轻量环境 → 送脚本和样本 → 视频解析预检 → 冒烟 → 跑 500 → 回传算分）。
-选型理由见 [`setup-judge-api.md`](setup-judge-api.md) §0 路线 A′。
+选型理由见 [`setup-judge-api.md`](archive/setup-judge-api.md) §0 路线 A′。
 
 两条实测得来的要点（都和当初的猜测不同，别按旧假设行事）：
 
@@ -604,7 +604,7 @@ H100 机用不上、又不想调商业 API 时走这条：**32B 是 8×V100-32G 
 最强裁判**（235B 在 Volta 上不可能——无 FP8 硬件支持，BF16 原版 ~470GB
 也放不下 256GB 显存）。32B 仍是主力 8B 的 4 倍档，一致率有意义。
 
-选型与其他备选的权衡见 [`setup-judge-api.md`](setup-judge-api.md) 的
+选型与其他备选的权衡见 [`setup-judge-api.md`](archive/setup-judge-api.md) 的
 「裁判选型」一节；
 **连 32B 都跑不动就走那里的路线 D**（换族 8B + 分歧定向人工抽检）。
 
@@ -827,7 +827,7 @@ rsync -avP --partial <user>@<H100_IP>:~/mobileclip/ckpts/Qwen3-VL-32B-Instruct/ 
 
 **方案 E：换更小的裁判**——上面都试过仍要 5 小时以上时，权衡一下：
 `InternVL3_5-8B` 只有 ~17GB（1/4 体量），走
-[`setup-judge-api.md`](setup-judge-api.md) 的 **「路线 D：完全没有大裁判时的
+[`setup-judge-api.md`](archive/setup-judge-api.md) 的 **「路线 D：完全没有大裁判时的
 替代校准协议」**（换族 8B + 分歧定向人工抽检）。判定强度弱于 32B，但**今晚就能跑完**，而不是明天还在下载。
 
 > ⚠️ **不要在多个工具之间反复横跳**：已完整下好的分片各家都会跳过，但
@@ -1014,7 +1014,7 @@ S3 阈值**。二值口径的理由见 `setup-judge-api.md`「路线 D」的 D3
 #### B0. 先确认该不该走这条
 
 - 路线 A′（中转机 `10.55.87.68` + 27B 端点，零下载）**还没排除**就别开始——
-  见 §1「下一步做什么」与 [`setup-judge-relay.md`](setup-judge-relay.md)。
+  见 §1「下一步做什么」与 [`setup-judge-relay.md`](archive/setup-judge-relay.md)。
 - 磁盘要再腾 **~76GB**。已下的 32B 若不再需要，可 `rm -rf ckpts/Qwen3-VL-32B-Instruct` 换空间。
 - **只做审查、不动环境**：本模型要求 `transformers>=4.52.1`，§0 装的 ≥4.57 已满足，
   **不需要 pip 安装任何东西**（`audit_env` 审核期间冻结，见步骤 0 的红线）。
@@ -1240,7 +1240,7 @@ bash recaption/scripts/run_v100.sh s3
 **这份 10k 报告的两个用途**：① 第一份可汇报的问题率数字（抽样是分层随机的，
 比例可外推到全量）；② 校准出的 `sig_zh` 阈值直接作为 H100 机全量 S3 的
 `--sig-zh-threshold` 先验。审查到此为止；后续优化见
-`recaption/docs/audit-plan.md` §5、§7.6+。
+`recaption/docs/archive/audit-plan.md` §5、§7.6+。
 
 ## 6. 人工查看工具（Gradio，本机已就位）〖可并行：不依赖任何流水线步骤，随时可用，不占 GPU〗
 

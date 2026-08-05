@@ -6,7 +6,7 @@
 > 机器：`101vector` 8×V100-32G ｜ 数据：`/home/vca1/datasets/internvid_zh_10k` ｜ 更新：2026-07-22
 >
 > 流水线状态与问题登记：[`data-issues.md`](data-issues.md) ·
-> 统计细节与推理：[`audit-findings.md`](audit-findings.md) ·
+> 统计细节与推理：[`audit-findings.md`](archive/audit-findings.md) ·
 > 复现命令：[`setup-v100.md`](setup-v100.md)
 
 ---

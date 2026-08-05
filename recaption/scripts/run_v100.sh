@@ -40,7 +40,7 @@
 #   3. 235B 裁判本地放不下(8x32GB=256GB < 权重, 且 Volta 无 FP8) -> s2-judge 走
 #      OpenAI 兼容端点。不想用云端商业 API 时改指向 H100 机自托管的同一份开源权重
 #      (JUDGE_API_BASE=http://<H100_IP>:8001/v1)，判定完全一致；选型见
-#      recaption/docs/setup-judge-api.md §0
+#      recaption/docs/archive/setup-judge-api.md §0
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # 仓库根目录
 
@@ -327,7 +327,7 @@ judge-agree)
   [ -f "$OUT/s2_verdicts_judge.jsonl" ] || \
     { echo "未找到 $OUT/s2_verdicts_judge.jsonl"
       echo "  —— 跑 bash $0 s2-judge；或裁判在别的机器上跑完后把该文件拷回来"
-      echo "     （见 recaption/docs/setup-judge-api.md §0 路线 A′「探针二不通时」）"; exit 1; }
+      echo "     （见 recaption/docs/archive/setup-judge-api.md §0 路线 A′「探针二不通时」）"; exit 1; }
   python recaption/scripts/judge_agreement.py \
     --main "$OUT/s2_verdicts.*.jsonl" --judge "$OUT/s2_verdicts_judge.jsonl" \
     --out-md "$OUT/judge_agreement.md"

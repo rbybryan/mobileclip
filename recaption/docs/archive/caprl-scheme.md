@@ -1,7 +1,7 @@
 # 训练数据质量升级方案：CapRL++ 引导的「强化视频-文本数据」配方 for MobileViCLIP
 
 > ⚠️ **重字幕（Pillar B / §4 / §7-P0）的执行层已被
-> [`master-plan.md`](master-plan.md) 取代（2026-07-24）**：两条训练线的
+> [`master-plan.md`](../master-plan.md) 取代（2026-07-24）**：两条训练线的
 > 字幕器分开钉（zh=Qwen3-VL 直出、EN=CapRL-Video-4B 归 paper-plan U7）、P0 改为
 > 300k 子集→G1 门→全量的阶梯。Pillar A（过滤）与 Pillar C/D（tags/硬负/教师嵌入/KD）的
 > 所有权在 `paper-plan.md` §7 / `plan-review-upgrades.md` U7/U9。本文的 §4.4（32-token

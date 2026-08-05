@@ -229,7 +229,7 @@ def main():
     else:
         emit("✅ 重判可用。下一步：")
         emit("1. `bash recaption/scripts/run_v100.sh xling-check` —— 裁决决策 1")
-        emit("2. 结论抄进 `recaption/docs/data-issues.md` §4 决策 1 与 `recaption/docs/audit-findings.md`")
+        emit("2. 结论抄进 `recaption/docs/data-issues.md` §4 决策 1 与 `recaption/docs/archive/audit-findings.md`")
     emit()
 
     if args.out_md:

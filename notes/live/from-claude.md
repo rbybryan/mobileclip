@@ -72,6 +72,13 @@ SAMPLE_OFFSET=300 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compar
 
 **这条交接通道（`notes/live/`）没搬**——它不只谈重述，还带训练/评测，规则照旧。
 
+**补记（同日，二次精简）**：`recaption/docs/` 又拆了一层——现行必读的六份留在
+`docs/`（就是上表那五份 + `audit-report.md`），已完成/已被 master-plan 取代/要等
+Stage 3 才启用的八份进了 `docs/archive/`（含 `setup-h100.md`、两份裁判端点配置、
+`audit-plan.md`、`audit-findings.md`、`fusion-scheme.md`、`caprl-scheme.md`、`kd-review.md`），
+链接照样有效、只是不再维护，理由逐条写在 `docs/archive/README.md`。
+另删掉一个零引用的死脚本 `make_pipeline_html.py`。**上表的路径和所有命令都不受影响。**
+
 **Then report back**：只要 `bash recaption/scripts/run_v100.sh` 能打印用法、pytest 全绿，
 就不用单独回报这条，直接按 #88 跑 pipeline-compare 并回报计时与坍缩诊断即可。
 
@@ -4130,7 +4137,7 @@ git push fork "$STASH":refs/heads/server/b100-local-opts
 ## 2026-07-23 (3) — 候选字幕融合 F0：`s2-merge` 融合 + 可视化人审（同 better_zh）
 
 **背景：** 你已人工复核 `better_zh`（P0 通过）：新候选更准更全、3 条各带不同细节，
-融合有望更好。完整融合方案见 [`recaption/docs/fusion-scheme.md`](../../recaption/docs/fusion-scheme.md)。
+融合有望更好。完整融合方案见 [`recaption/docs/archive/fusion-scheme.md`](../../recaption/docs/archive/fusion-scheme.md)。
 **好消息：F0（最简版）不用新写代码** —— 仓库里 `s2-merge`（`vlm_audit_hf.py --mode merge`
 + `MERGE_PROMPT`）已实现「单次 LLM 调用把 2–3 条候选融合成一条、**闭集防幻觉**（绝不新增
 候选里没有的细节）、保时序」。它**还没有** support 计票／单例验真／CSER 双向验收（那些是
@@ -5093,7 +5100,7 @@ bash recaption/scripts/run_v100.sh judge-agree
 **Then report back** in `from-server.md`：⑤ 的自查输出（n / 两个同值率 / action 分布）、
 错误率、以及 ⑥ `judge-agree` 打印的三个门和各维度 κ。拿到就能把 T4 和决策 1 一起结掉。
 
-完整手册：[`recaption/docs/setup-judge-relay.md`](../../recaption/docs/setup-judge-relay.md)
+完整手册：[`recaption/docs/archive/setup-judge-relay.md`](../../recaption/docs/archive/setup-judge-relay.md)
 （§6 跑 500、§7 回传算分、§9 常见问题含「重复写入」一节）。
 
 ---
@@ -5415,7 +5422,7 @@ python -m json.tool outputs/audit_v0_1/s0_summary.json | grep -A3 duplicate
 低,比「共享字幕多正例」更值得做的是**按源视频 id 分组**(同 `video_id` 共享
 idx,或采样器层面禁止同视频 clip 进同一 batch)。
 
-**这条不需要服务器做任何事** —— 推导已落到 `recaption/docs/audit-findings.md`
+**这条不需要服务器做任何事** —— 推导已落到 `recaption/docs/archive/audit-findings.md`
 结论 5、`experiments/README.md` §2b、`recaption/docs/data-issues.md`。
 **当前待办仍然是下面 (4) 里那三行命令。**
 

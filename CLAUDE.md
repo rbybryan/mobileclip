@@ -87,7 +87,7 @@ before any merge.
 | `TROUBLESHOOTING.md` | Known errors → cause → fix |
 | `notes/` | Replication log, ablations, architecture ideas, plans (some `_zh` variants) |
 | `docs/` | Upstream README, landscape survey, long-form guides |
-| `recaption/` | **Self-contained**: the InternVid-zh recaption + data-audit line — its own `docs/` (design, plans, reports, setup) and `scripts/` (all code, entry point `run_v100.sh`). Start at [`recaption/README.md`](recaption/README.md) |
+| `recaption/` | **Self-contained**: the InternVid-zh recaption + data-audit line — `docs/` (six live docs; superseded/not-yet-needed ones sit in `docs/archive/` and are not maintained) and `scripts/` (all code, entry point `run_v100.sh`). Start at [`recaption/README.md`](recaption/README.md) |
 
 When in doubt about *how* to run something, `COMMANDS.md` is the source of truth; when something
 breaks, check `TROUBLESHOOTING.md` first and append to it. Anything about recaption/data-audit

@@ -5,11 +5,11 @@
 >
 > 分工：
 > - **本文件** = 状态 + 问题登记 + 待决策（一眼看全局）
-> - [`audit-findings.md`](audit-findings.md) = 各阶段的统计细节与推理过程
+> - [`audit-findings.md`](archive/audit-findings.md) = 各阶段的统计细节与推理过程
 > - `outputs/audit_10k/report.md` = S3 自动生成的正式诊断报告（**不入库**，gitignore）
 >
 > 问题类别 A–H 沿用
-> [`audit-plan.md`](audit-plan.md) §1 的分类学。
+> [`audit-plan.md`](archive/audit-plan.md) §1 的分类学。
 
 ---
 
@@ -96,14 +96,14 @@ bash recaption/scripts/run_v100.sh status        # S1/S2 行数 + 存活进程 +
 | 5a | ~~`review_conflicts.tsv`~~ ✅ **全部完成** | 15/15 判 `vlm` → 问题 12 结案；`strip_shared_latin` 两阶段已修（+标点归一化 2026-07-23）；**`s0` 已重跑复核通过**：327→8→**7** / 280→13→**8**，污染类合计 **≤35** vs 实测 33，双向验收过（未塌到 0）|
 | **5c** | **`TARGET_PRECISION=0.3 bash recaption/scripts/run_v100.sh s3`** ⚠️ **务必带这个变量** | ② 验证门已出数（1.80×，门槛保留 2.0，见决策 3 补记）；① 分桶表还欠一版。**`s3` 默认 `TARGET_PRECISION=0.8`，而 19.6% 基准率下可达上限只有 59% —— 默认跑出来 RECAPTION 必然空桶、96.3% KEEP，那不是数据结论**（2026-07-22 已踩过一次）。终稿用的就是 0.3 |
 | 5b | `review_random.tsv` 那 300 条要配 Gradio（[`setup-v100.md`](setup-v100.md) §6） | 这批要看画面才判得了（s≈3 的片子到底什么样） |
-| 6 | 把 `s2_health.md` / `trans_health.md` / `xling_calibration.md` / `report.md` 的结论抄进本文件和 [`audit-findings.md`](audit-findings.md) | `outputs/` 是 gitignore 的，**不落库就随会话丢失**（CLAUDE.md §0） |
+| 6 | 把 `s2_health.md` / `trans_health.md` / `xling_calibration.md` / `report.md` 的结论抄进本文件和 [`audit-findings.md`](archive/audit-findings.md) | `outputs/` 是 gitignore 的，**不落库就随会话丢失**（CLAUDE.md §0） |
 
 > ⚠️ **本地 32B 下载（路线 C）是兜底，不是主线**——中转机（A′）没排除之前别耗在它上面：
 > 那是 64GB / 数小时，而 A′ 的预检只要几分钟。**且 C 买不到 A′ 没给的东西**——
 > 主力 8B、A′ 裁判 27B、C 裁判 32B **同厂同族**，共有盲区会让两边一起错。
 > 真要走 C 时值得改选 `InternVL3_5-38B-HF`（视觉塔跨族；但语言塔仍是 Qwen3-32B，
 > **`trans_score` 一维仍需人工兜底**）。选型对比、探针实测、ModelScope 下载命令
-> 全部见 [`setup-v100.md`](setup-v100.md) §4.3 与 [`setup-judge-api.md`](setup-judge-api.md) §0。
+> 全部见 [`setup-v100.md`](setup-v100.md) §4.3 与 [`setup-judge-api.md`](archive/setup-judge-api.md) §0。
 
 ---
 
@@ -312,7 +312,7 @@ rubric 要求的因子分解（源头错 vs 翻译错、画面对齐 vs 文本�
 字幕，8B 会退化成「先定总体印象、再让所有字段服从它」。**修法是拆调用而非改措辞**——
 已落地 `s2-trans`（文本-only 重判：不给帧 + 先列 `mismatches` 再打分）。
 命令与设计理由见 [`setup-v100.md`](setup-v100.md) §4.6，推理全文见
-[`audit-findings.md`](audit-findings.md) 结论 8'。
+[`audit-findings.md`](archive/audit-findings.md) 结论 8'。
 
 > ⚠️ **裁判档（T4）按现状裁不出这个问题**：裁判用的是**同一个合并 prompt**，
 > 27B 很可能复现同样的阶梯——`action` 一致率会很高，但那是**共同盲区**不是效度。
@@ -416,7 +416,7 @@ p75 **16 字**；`en_word_len_pctl` p50 **9 词**。这是**不依赖任何模�
 > ⚠️ **「重复 caption 率」这个门抽样判不了**：10k 是 10M 的 0.1% 抽样，一组 k=2 的
 > 重复要两条都被抽中（概率 1e-6），10k 上报的 0.0% 对全量毫无约束力。另注意口径：
 > 该字段数的是 **zh** 侧重复，而试点训练喂的是 **en** 侧。推导见
-> [`audit-findings.md`](audit-findings.md) 结论 5。
+> [`audit-findings.md`](archive/audit-findings.md) 结论 5。
 
 ---
 
@@ -518,7 +518,7 @@ p75 **16 字**；`en_word_len_pctl` p50 **9 词**。这是**不依赖任何模�
 **语言污染判据仍归 S0 旗标**（问题 1 结论未变），但它召回只有 7.0%，兜底靠 RECAPTION。
 
 > 完整校准表见 `outputs/audit_10k/xling_calibration.md`（不入库），
-> 推理见 [`audit-findings.md`](audit-findings.md) 结论 9。
+> 推理见 [`audit-findings.md`](archive/audit-findings.md) 结论 9。
 
 ### ✅ 决策 2b 已跑完（2026-07-22）：裁判 500 条落地，问题 8 被独立证实
 
@@ -584,7 +584,7 @@ p75 **16 字**；`en_word_len_pctl` p50 **9 词**。这是**不依赖任何模�
 
 ### 🔄 决策 2b 的执行背景：裁判为什么在 7 卡 V100 中转机上跑
 
-没有云端 API key，走 [`setup-judge-api.md`](setup-judge-api.md) §0 **路线 A′**：
+没有云端 API key，走 [`setup-judge-api.md`](archive/setup-judge-api.md) §0 **路线 A′**：
 复用 B100 集群上已起好的 `Qwen3.6-27B` vLLM 端点（已确认支持视觉输入）。
 
 **101vector 和 H100 都连不上那些端点**（`172.30.x.x` 不同网段，2026-07 实测），
@@ -594,7 +594,7 @@ p75 **16 字**；`en_word_len_pctl` p50 **9 词**。这是**不依赖任何模�
 
 已就绪：端点连通性（`172.30.85.198:8000` / `172.30.62.177:8000` 返回 200，4 卡那个不通）、
 环境（该机 pip 出不去，但 conda `base` 自带 `numpy/PIL/requests/cv2`，靠 `--frame-backend opencv`）。
-**全部已跑完**（结果见上一节）。逐条命令见 [`setup-judge-relay.md`](setup-judge-relay.md)。
+**全部已跑完**（结果见上一节）。逐条命令见 [`setup-judge-relay.md`](archive/setup-judge-relay.md)。
 
 > ⚠️ **两个必须记进 T4 结论的折扣**：
 > ① **解码器不同**——裁判用 opencv、主力用 decord，同一文件若报出的总帧数不同，
@@ -688,5 +688,5 @@ validate_proxy(flags_by_video, trans_scores, RETRANSLATE_FLAGS)
 
 每完成一个阶段：① 更新 §1 状态表；② 新问题登记进 §2（带量化证据和发现阶段）；
 ③ 已裁决的从 §3/§4 移走并写明结论；④ commit 推送，服务器 `git pull` 即可看到。
-统计细节和推理过程写进 [`audit-findings.md`](audit-findings.md)，
+统计细节和推理过程写进 [`audit-findings.md`](archive/audit-findings.md)，
 本文件只保留结论和状态。

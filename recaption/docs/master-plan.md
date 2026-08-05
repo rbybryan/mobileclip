@@ -7,10 +7,10 @@
 > 撤销。终审载荷见 §0.6，流程图见 §3。）
 >
 > **角色**：本文是重字幕工作的**唯一执行层**——
-> [`fusion-scheme.md`](fusion-scheme.md)（五样本重述+融合）与
-> [`caprl-scheme.md`](caprl-scheme.md)（CapRL 数据强化）两份设计
+> [`fusion-scheme.md`](archive/fusion-scheme.md)（五样本重述+融合）与
+> [`caprl-scheme.md`](archive/caprl-scheme.md)（CapRL 数据强化）两份设计
 > 各自的分阶段清单（其 §6.2 / §7）**均被本文取代**；两份原文保留为设计依据与方法论论证，
-> 不再照其执行。审计事实底座见 [`audit-findings.md`](audit-findings.md)。
+> 不再照其执行。审计事实底座见 [`audit-findings.md`](archive/audit-findings.md)。
 >
 > **一句话**：**S0 五样本重述照跑（已实现）；训练验证前置、验真与融合后置、人力标注归零**——
 > 先用零工具风险的句切富集过训练门 G1，G1 过后由全自动 Panel-V 验真面板产出 C_v 臂做 G2
@@ -138,7 +138,7 @@ LoRA 也不涨 → 才是数据/任务本身无头寸。不做这步就下结论
    任何一项跳过都不阻塞任何门）。裁判纪律沿审计教训：拆分单一判据调用、绝不合并 rubric、
    Qwen3.6-27B 只用于纯文本轴（它看不见画面，且与字幕器同族）。
 
-### 0.7 检索增补（2026-07-27，两路带网络检索专家评审；完整证据见 recaption/docs/kd-review.md）
+### 0.7 检索增补（2026-07-27，两路带网络检索专家评审；完整证据见 recaption/docs/archive/kd-review.md）
 
 约 55 篇 arXiv 逐一取原文核验。头条：**阶梯无更优替代**——A′ 32-token 恰是 CLIPS
 （2411.16828）实测最优 token 长度；融合降级获视频原生新证（2401.06129：全语料重述
@@ -1068,10 +1068,10 @@ bash recaption/scripts/run_v100.sh recap        # Stage 0 ①; 前置=s3+s4 已�
 
 ## 9. 锚点
 
-审计：[`audit-findings.md`](audit-findings.md) ·
+审计：[`audit-findings.md`](archive/audit-findings.md) ·
 [`../recaption/docs/data-issues.md`](data-issues.md)。
-设计依据（执行层已由本文取代）：[`fusion-scheme.md`](fusion-scheme.md) ·
-[`caprl-scheme.md`](caprl-scheme.md)。
+设计依据（执行层已由本文取代）：[`fusion-scheme.md`](archive/fusion-scheme.md) ·
+[`caprl-scheme.md`](archive/caprl-scheme.md)。
 论文线：[`paper-plan.md`](../../notes/paper-plan.md)（§7）· [`plan-review-upgrades.md`](../../notes/plan-review-upgrades.md)（U6/U7/U9）。
 代码：`recaption/scripts/vlm_audit_hf.py`（`--mode recap`）· `recaption/scripts/run_v100.sh`（`recap`）·
 `recaption/scripts/apply_buckets.py` · `dataset/pt_dataset.py:173-201`。
