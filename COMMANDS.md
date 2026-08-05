@@ -1696,18 +1696,46 @@ git commit -m "handoff: server update $(date +%F_%H%M)"
 git push -u origin server/from-server-$(date +%m%d)
 ```
 
-**第 4 步 —— 合进 `main`,二选一:**
+**第 4 步 —— 合进 `main`。**
+
+> **服务器上没有 `gh`**(2026-08-05 实测 `gh: command not found`),所以**默认走方式 A**。
+> 不用为这件事去装 gh —— 推分支是 git 自己的事,合并交给 Claude 或网页即可。
+
+**方式 A(默认,零依赖):推完分支后,在聊天里跟 Claude 说一句 ——**
+
+```
+from-server.md 推到了 server/from-server-MMDD,帮我合进 main
+```
+
+Claude 会开 PR 并 squash 合并(合并已预授权,见 CLAUDE.md §0)。**这是推荐路径**:
+分支已经在 GitHub 上,Claude 不需要拿到服务器上的文件就能合。
+
+**方式 B(不想等 Claude、手边有浏览器):用 GitHub 网页开 PR。**
+push 成功时 git 会直接打印一条 `pull/new/...` 链接,点它即可;或者手拼:
+
+```
+https://github.com/rbybryan/mobileclip/compare/main...server/from-server-MMDD?expand=1
+```
+
+页面上 **Create pull request** → **Squash and merge** 两下点完。
+
+**方式 C(纯命令行、无 gh):用 GitHub REST API + 一个 PAT。**
+只在你已经有 `repo` 权限的 token 时才值得用;token 别写进仓库里。
 
 ```bash
-# 方式 A:服务器上装了 gh,自己开 PR 并合并(最快)
-gh pr create --base main --fill
-gh pr merge --squash --delete-branch
-```
+export GH_TOKEN=ghp_xxx                       # 临时环境变量,别 commit
+BR=server/from-server-$(date +%m%d)
 
-```
-方式 B:服务器上没有 gh —— 推完分支后在聊天里跟 Claude 说:
-       "from-server.md 推到了 server/from-server-MMDD,帮我合进 main"
-       Claude 会开 PR 并合并(合并已预授权,见 CLAUDE.md §0)。
+# 开 PR,记下返回的 number
+curl -sS -X POST https://api.github.com/repos/rbybryan/mobileclip/pulls \
+  -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+  -d "{\"title\":\"handoff: server update\",\"head\":\"$BR\",\"base\":\"main\"}" \
+  | grep '"number"' | head -1
+
+# 用上一步的 number 合并(把 443 换掉)
+curl -sS -X PUT https://api.github.com/repos/rbybryan/mobileclip/pulls/443/merge \
+  -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+  -d '{"merge_method":"squash"}'
 ```
 
 **合并后回到服务器同步一下:**

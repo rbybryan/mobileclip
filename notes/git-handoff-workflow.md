@@ -61,9 +61,11 @@ git stash pop
 git add notes/live/from-server.md
 git commit -m "handoff: server update $(date +%F_%H%M)"
 git push -u origin server/from-server-$(date +%m%d)
-# 然后 gh pr create --base main --fill && gh pr merge --squash --delete-branch
-# 或者在聊天里让 Claude 开 PR 合并
 ```
+
+推完之后在聊天里跟 Claude 说「from-server.md 推到了 server/from-server-MMDD，帮我合进 main」，
+Claude 开 PR 并合并。**服务器上没有 `gh`**（2026-08-05 实测），所以不要照抄任何 `gh pr ...`
+的写法；不想等 Claude 的话就用 push 时打印的 `pull/new/...` 网页链接自己点合并。
 
 如果哪天想让 `handoff` 本身重新可用，先把它对齐到 `main`
 （`git checkout handoff && git merge origin/main`，解冲突时**保留 main 侧的文件**），
