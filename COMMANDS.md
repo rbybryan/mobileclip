@@ -1665,6 +1665,66 @@ git pull origin <branch>
 cat notes/live/from-claude.md      # newest block at the top
 ```
 
+### 6.1 把改好的 `from-server.md` 推上 `main`(服务器端,复制即用)
+
+场景:你在服务器上编辑了 `notes/live/from-server.md`,想让它进 `main`(这样任何新会话
+`git pull` 就能读到,不用记分支名)。
+
+**先记住两条硬规则:**
+
+1. **不要 `git push origin main`。** 本仓库一律走 PR 合并(CLAUDE.md §0)。
+2. **不要从 `handoff` 分支合进 `main`。** `handoff` 已经落后 `main` 一周多、树里少了
+   约 1.1 万行(66 个文件),用陈旧树合并会**再次删掉 main 上的文件** —— 这个事故本仓库
+   已经发生过一次(见 `8699a94` "恢复被 #363 陈旧树 squash 覆盖删除的 10 个文件")。
+   新分支一律从**最新的 `origin/main`** 切。
+
+```bash
+cd ~/mobileclip                  # 仓库根目录,按你的实际路径改
+git fetch origin main
+
+# 1) 把这次改动暂存起来,再从最新 main 切一条干净分支
+git stash push -m from-server-wip -- notes/live/from-server.md
+git checkout -B server/from-server-$(date +%m%d) origin/main
+git stash pop
+
+# 2) 只提交这一个文件,避免把服务器上的本地杂改带进去
+git add notes/live/from-server.md
+git status                       # 确认只有这一个文件被 staged
+git commit -m "handoff: server update $(date +%F_%H%M)"
+
+# 3) 推分支(注意是分支名,不是 main)
+git push -u origin server/from-server-$(date +%m%d)
+```
+
+**第 4 步 —— 合进 `main`,二选一:**
+
+```bash
+# 方式 A:服务器上装了 gh,自己开 PR 并合并(最快)
+gh pr create --base main --fill
+gh pr merge --squash --delete-branch
+```
+
+```
+方式 B:服务器上没有 gh —— 推完分支后在聊天里跟 Claude 说:
+       "from-server.md 推到了 server/from-server-MMDD,帮我合进 main"
+       Claude 会开 PR 并合并(合并已预授权,见 CLAUDE.md §0)。
+```
+
+**合并后回到服务器同步一下:**
+
+```bash
+git fetch origin main && git checkout main && git pull origin main
+```
+
+**如果改动已经 commit 在某条老分支上了**(不是未提交状态),把上面第 1 步换成 rebase:
+
+```bash
+git fetch origin main
+git rebase origin/main           # 有冲突就解完 git rebase --continue
+git push -u origin <你的分支名>
+# 再走第 4 步
+```
+
 ---
 
 ## Reference results (from upstream, MSR-VTT retrieval, tiny)

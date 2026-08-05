@@ -39,11 +39,35 @@ copy-pasteable ```bash fences.
 ## Which branch
 
 The loop runs on the standing **`handoff`** branch — long-lived, so neither side has to
-track a rotating feature-branch name. Both sides pull/push the **same** branch. To also
-reach the server via `main`, merge it by PR (ask the maintainer first — see
-[CLAUDE.md](../CLAUDE.md) §0).
+track a rotating feature-branch name. Both sides pull/push the **same** branch.
 
 > 中文：固定用 `handoff` 分支，双方都 pull/push 这一个分支，不用记会变的分支名。
+
+### ⚠️ 但**不要**直接把 `handoff` 合进 `main`
+
+`handoff` 是长期分支，容易落后 `main` 很多（截至 2026-08-05 已落后 7 天、树里少了
+约 1.1 万行 / 66 个文件）。**用陈旧的树去合并 `main`，会把 `main` 上后来加的文件删掉** ——
+本仓库已经因此翻过一次车：`8699a94` "恢复被 #363 陈旧树 squash 覆盖删除的 10 个文件"。
+
+要把 `from-server.md` 送进 `main`，走**从最新 `origin/main` 切出来的一次性分支**，
+不要走 `handoff`。完整可复制命令见
+[COMMANDS.md §6.1](../COMMANDS.md#61-把改好的-from-servermd-推上-main服务器端复制即用)：
+
+```bash
+git fetch origin main
+git stash push -m from-server-wip -- notes/live/from-server.md
+git checkout -B server/from-server-$(date +%m%d) origin/main
+git stash pop
+git add notes/live/from-server.md
+git commit -m "handoff: server update $(date +%F_%H%M)"
+git push -u origin server/from-server-$(date +%m%d)
+# 然后 gh pr create --base main --fill && gh pr merge --squash --delete-branch
+# 或者在聊天里让 Claude 开 PR 合并
+```
+
+如果哪天想让 `handoff` 本身重新可用，先把它对齐到 `main`
+（`git checkout handoff && git merge origin/main`，解冲突时**保留 main 侧的文件**），
+再继续用。
 
 ---
 
