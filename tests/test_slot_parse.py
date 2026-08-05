@@ -3,7 +3,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
-                                "tools", "data_audit"))
+                                "recaption", "scripts"))
 from vlm_audit import (SLOT_RECAP_PROMPT, parse_slot_lines,  # noqa: E402
                        slot_recap_cells)
 

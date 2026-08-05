@@ -1,6 +1,6 @@
 # b100 主机全量预训练配置与执行手册（InternVid-10M-FLT）
 
-与 V100 试点（[`../tools/data_audit/SETUP_V100.md`](../tools/data_audit/SETUP_V100.md) 用于审查、
+与 V100 试点（[`../recaption/docs/setup-v100.md`](../recaption/docs/setup-v100.md) 用于审查、
 [`README.md` §2b](README.md) 用于 10k 试点训练）**并行**的另一条线：在 b100 主机上跑
 **全量 10M** 预训练（`internvid_all` 语料，R0→R1 等步 A/B）。两条线互不共享状态、
 互不阻塞。**试点数字一律不外推**（见 `README.md` §2b）；全量这条才是真实实验，
@@ -13,7 +13,7 @@
 > **⚠️ 先认清这台机器（否则装错 torch、开错卡）：**
 > - 主机昵称叫 **`b100`**（挂载都是 `/workspace/mount/b100_zaip_data*`），但**GPU 是
 >   8×H100-80G（Hopper / sm_90）**，不是 Blackwell。这跟
->   [`../tools/data_audit/SETUP_H100.md`](../tools/data_audit/SETUP_H100.md) 是**同一台物理机**
+>   [`../recaption/docs/setup-h100.md`](../recaption/docs/setup-h100.md) 是**同一台物理机**
 >   （只是那份用于数据审查、这份用于训练）。
 > - **默认只用前 4 张卡**（`CUDA_VISIBLE_DEVICES=0,1,2,3`，`NUM_GPUS=4`）——后 4 张留给别的任务。
 >   要用满 8 张必须有维护者的**明确指示**。
@@ -30,7 +30,7 @@
 >   本文所有探盘命令都先 `VD=/workspace/mount/b100_zaip_data/video_datasets` 再限定
 >   `find "$VD" -maxdepth N`。**唯一例外**是预训练数据 `b100_zaip_data_luan/InternVid-10M-FLT`
 >   这个已知的确切路径（§4）——那是直接 `ls` 一个具体目录，不是全盘搜索。
-> - 入口/联网与 `SETUP_H100.md` §0 相同（`root@10.55.84.132 -p 31103`）。
+> - 入口/联网与 `recaption/docs/setup-h100.md` §0 相同（`root@10.55.84.132 -p 31103`）。
 >   全量视频在 `/workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT/`；
 >   工作区 `/workspace/mount/b100_zaip_data/rby/`。
 > - **⚠️ rby/ 下有两个并排的项目目录，别搞混**（2026-07-23 起）：

@@ -26,7 +26,7 @@
 
 与既有笔记的分工:
 - `notes/whitespace-directions.md` —— 数据管线、时序难负例、量化、帧选择(模型*外围*);
-- `notes/data-quality-caprl-scheme.md` —— 字幕/数据质量;
+- `recaption/docs/caprl-scheme.md` —— 字幕/数据质量;
 - **本报告 —— 模型本体**:架构、token 混合、池化、训练目标(P1–P10);
 - `notes/model-architecture-improvements-round3-zh.md` —— **第三轮新增架构方向 · 最终稿**
   (**AC1–AC9**,逐点源码核查版;该文正文沿用 `C1–C9`,与 paper-plan 的贡献层 C1–C4 撞车,ROADMAP 统一按 `AC*` 引用):改正了 3 处过时前提(T=8 已解硬编码、冻结 bug 已修、

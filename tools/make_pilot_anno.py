@@ -2,7 +2,7 @@
 """把 internvid_zh 10k 抽样 jsonl 转成训练用 anno 格式(10k 试点专用)。
 
 输入:数据审查用的 jsonl(每行一条,字段名自动猜测,与
-tools/data_audit/make_audit_sample.py 同一套 key 列表);
+recaption/scripts/make_audit_sample.py 同一套 key 列表);
 输出:repo 训练/评测代码期望的 anno json —— `[{"video": ..., "caption": ...}]`,
 拆成 train 与 held-out eval 两份(eval 用于试点期的自检索评测)。
 
@@ -24,7 +24,7 @@ import re
 import sys
 from collections import Counter
 
-# 与 tools/data_audit/make_audit_sample.py 保持一致的字段名猜测表
+# 与 recaption/scripts/make_audit_sample.py 保持一致的字段名猜测表
 VIDEO_KEYS = ["video", "video_path", "video_id", "clip", "clip_name", "filename"]
 ZH_KEYS = ["caption_zh", "zh_caption", "caption_cn", "cn_caption", "translated_caption",
            "translation", "zh", "chinese_caption", "raw_caption_zh_translated",
@@ -49,7 +49,7 @@ def normalize_caption(text):
 
 # 片段实际存放在 InternVId-*/… 的嵌套目录里,而 `video` 字段常常只是裸文件名,
 # 真正定位文件的是记录里的 `abs_path`。与
-# tools/data_audit/score_alignment.py: resolve_video_path() 保持同一套解析顺序。
+# recaption/scripts/score_alignment.py: resolve_video_path() 保持同一套解析顺序。
 CLIP_SUBPATH_RE = re.compile(r"InternVId[^/]*/.*")
 
 
@@ -182,10 +182,10 @@ def main():
           f"({dup_clips / len(records):.1%}) —— caption_idx 多正例在**这批抽样上**的影响面")
     # 这个数字**不能外推到全量**:10k 是 10M 的 0.1% 抽样,一对(k=2)重复字幕
     # 要两条都被抽中才看得见,概率 = 0.001² = 1e-6。全量哪怕 5% 的 clip 处在
-    # 重复对里,这里的期望命中也只有约 0.5 组。要判 DATA_ISSUES.md 的
+    # 重复对里,这里的期望命中也只有约 0.5 组。要判 recaption/docs/data-issues.md 的
     # 「重复 caption 率 >10%」决策门,只能用 profile_jsonl.py 跑全量 jsonl。
     print("  ↑ 抽样率 0.1%,该数字对全量无约束力;全量重复率见 "
-          "tools/data_audit/profile_jsonl.py 的 duplicate_zh_caption_rate")
+          "recaption/scripts/profile_jsonl.py 的 duplicate_zh_caption_rate")
 
     rng = random.Random(args.seed)
     rng.shuffle(records)

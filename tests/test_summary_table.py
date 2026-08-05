@@ -4,7 +4,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
-                                "tools", "data_audit"))
+                                "recaption", "scripts"))
 from make_summary_table import cell_caps, deco, safe_name  # noqa: E402
 
 
