@@ -1,11 +1,12 @@
-"""Unit tests for tools/fuse_verify.py pure helpers (no torch/GPU needed).
+"""Unit tests for recaption/scripts/fuse_verify.py pure helpers (no torch/GPU needed).
 
     python tests/test_fuse_verify_helpers.py   # or pytest
 """
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
+                                "recaption", "scripts"))
 from fuse_verify import fuzzy_contains, quoted_spans  # noqa: E402
 
 

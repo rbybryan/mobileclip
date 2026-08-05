@@ -35,6 +35,8 @@ plan the maintainer will act on**, do this before ending the turn:
    - Checkpoint / dataset / download details → **`CHECKPOINTS.md`**
    - Design decisions, experiment logs, multi-step plans → **`notes/<topic>.md`**
    - Long-form explainers / reports → **`docs/<topic>.md`**
+   - **Anything about recaption / data audit → `recaption/docs/<topic>.md`** (design, plans,
+     reports, setup all live there; the code is `recaption/scripts/`)
    Keep entries copy-pasteable: exact commands in fenced ```bash blocks, run from repo root
    unless noted, with any `CUDA_VISIBLE_DEVICES` / path edits called out.
 2. **Update, don't duplicate.** If a relevant section already exists, edit it in place and keep
@@ -85,9 +87,11 @@ before any merge.
 | `TROUBLESHOOTING.md` | Known errors → cause → fix |
 | `notes/` | Replication log, ablations, architecture ideas, plans (some `_zh` variants) |
 | `docs/` | Upstream README, landscape survey, long-form guides |
+| `recaption/` | **Self-contained**: the InternVid-zh recaption + data-audit line — its own `docs/` (design, plans, reports, setup) and `scripts/` (all code, entry point `run_v100.sh`). Start at [`recaption/README.md`](recaption/README.md) |
 
 When in doubt about *how* to run something, `COMMANDS.md` is the source of truth; when something
-breaks, check `TROUBLESHOOTING.md` first and append to it.
+breaks, check `TROUBLESHOOTING.md` first and append to it. Anything about recaption/data-audit
+goes under `recaption/` — do not add recaption docs back into `notes/` or `docs/`.
 
 ---
 
@@ -99,6 +103,7 @@ models/             model defs (MobileCLIP backbone, InternVideo2, BERT, BEATs)
 scripts/            training / evaluation entry points (.sh wrappers)
 tasks/ tasks_clip/  training + eval task loops (retrieval.py, pretrain.py)
 dataset/ preprocess/ tools/ utils/   data + helpers
+recaption/          InternVid-zh 重述+数据审计全线（docs/ 文档 · scripts/ 代码，入口 run_v100.sh）
 mobileviclip.yml    conda environment (internal env name: `internvideo`)
 requirements.lock.txt   validated `pip freeze` from the working env
 ```

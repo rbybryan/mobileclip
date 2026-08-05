@@ -1,7 +1,7 @@
 # 计划评审与升级提案(2026-07-23)
 
 **问题:** 全面评审当前模型改进计划——C1–C4 主线、卫生闸门、条件项(R4/P9)、
-数据方案(`data-quality-caprl-scheme.md`)、以及 #197 新增的神经启发实现计划
+数据方案(`recaption/docs/caprl-scheme.md`)、以及 #197 新增的神经启发实现计划
 (`neural-inspired-implementation.md`)——并回答「有没有更好且可行的改法」。
 **一句话结论:** 计划的**方向、门控序列与实验纪律都站得住,不需要推倒重来**;
 真正的缺口在 (a) **三处风险的时间排布**(P9 导出、BN×弹性 T、预算阶梯),
@@ -17,7 +17,7 @@
 
 | 对象 | 内容 |
 |---|---|
-| 计划文档 | `paper-plan(-zh).md`(含 §六 9 项红队修正)、`ROADMAP.md`、`README.md` 两级实验/§2b/§4、`SETUP_B100.md`、`data-quality-caprl-scheme.md`、`neural-inspired-implementation.md`(#197)、`whitespace-directions.md`、`model-architecture-improvements(-zh).md`、`pilot_10k_results.md`、`publishability-assessment.md` |
+| 计划文档 | `paper-plan(-zh).md`(含 §六 9 项红队修正)、`ROADMAP.md`、`README.md` 两级实验/§2b/§4、`SETUP_B100.md`、`recaption/docs/caprl-scheme.md`、`neural-inspired-implementation.md`(#197)、`whitespace-directions.md`、`model-architecture-improvements(-zh).md`、`pilot_10k_results.md`、`publishability-assessment.md` |
 | 代码抽查 | `models/mobileviclip_small.py`(norm_1d=MobileOneBlock_1d 内含 BN、FastViT `norm_layer=nn.BatchNorm2d`、`temporal_embedding (1,C,8)` 零初始化、reparameterize 折叠路径)、`scripts/pretraining/clip/mobileviclip_small/config.py`(`freeze_vision=False / freeze_text=True`)、`tasks_clip/pretrain.py`(无 EMA) |
 | 外部文献 | 2024–2026 弹性推理 / 帧数弹性 / 高效视频-文本 网扫(§3) |
 
@@ -99,7 +99,7 @@ H100-80G 显存充裕(V100 峰值 23.2 GiB @bs=64 ⇒ bs=128 估算 ~46-50 GiB,b
 | # | 位置 | 问题 | 处置 |
 |---|---|---|---|
 | 1 | `paper-plan-zh.md` §一/§四 | 算力写「8×V100」,实际主战场已是 4×H100(`SETUP_B100.md`) | §七补丁声明以 SETUP_B100 为准 |
-| 2 | `data-quality-caprl-scheme.md` §0/§6.3 | 称「视觉塔仅时序分支+projector 可训」;实际预训练配置 `freeze_vision=False` ⇒ **视觉塔全量可训**(该描述只适用于 `freeze_vision=True` 的微调模式)。影响:视频侧 KD 的梯度受体是**整塔**,`uta`/KD 的预期效力比 §6.3 写的更强(文本侧结论不变) | 原文加勘误注 |
+| 2 | `recaption/docs/caprl-scheme.md` §0/§6.3 | 称「视觉塔仅时序分支+projector 可训」;实际预训练配置 `freeze_vision=False` ⇒ **视觉塔全量可训**(该描述只适用于 `freeze_vision=True` 的微调模式)。影响:视频侧 KD 的梯度受体是**整塔**,`uta`/KD 的预期效力比 §6.3 写的更强(文本侧结论不变) | 原文加勘误注 |
 | 3 | `model-architecture-improvements*.md` P2 | T 集合写 {4,8,12,16},计划为 {2,4,8,16} | 以 paper-plan 为准,不改旧笔记 |
 | 4 | C1 教师语料 | `paper-plan` 写全量 10M,`data-quality` §6 只在 curated 2–3M 上烘焙 | 真决策,见 U7 |
 | 5 | 相似度矩阵 KD 双所有权 | `data-quality` §6.2 的 `vtc_kd`(DFNDR 式 KL)与 #197 B1 的 `kd_geo`(Tung-Mori Gram MSE)是**近亲**,分属两文档、两命名 | 合并进同一消融表,见 U9 |
@@ -199,7 +199,7 @@ per-dataset 微调)或 (b) 延迟/GFLOPs-only 行;混进零样本表是 desk-rej
 ### 3.6 CapRL 确认(C1 字幕通道可行性 GO)
 
 CapRL(ICLR'26,2509.22647)**仅图像**;其视频后继 **CapRL++**(2606.09393,
-2026-06,同组)已放出 **CapRL-Video-4B**——`data-quality-caprl-scheme.md` §4.2
+2026-06,同组)已放出 **CapRL-Video-4B**——`recaption/docs/caprl-scheme.md` §4.2
 路径 B0 引用的正是它,方案成立。备选:Tarsier2-Recap-7B(百万级重字幕的成熟马)、
 Qwen2.5-VL-7B。吞吐粗估(vLLM,3–4B,8 帧/片,~100–150 输出 token):
 5–10 clips/s/GPU ⇒ **10M 片 ≈ 3–6 天 @4×H100**(7B 翻倍);重写一次、离线存储,
@@ -354,7 +354,7 @@ Qwen2.5-VL-7B。吞吐粗估(vLLM,3–4B,8 帧/片,~100–150 输出 token):
    评审**否决**:Qwen 全模型无对比对齐空间(LLM2CLIP 2411.04997 反证)、覆盖仅
    RECAPTION 桶 25%(偏置 + 成对信号 ~6%)、生成式→对比式特征蒸馏零发表先例、且省下
    的 ~17 H100·h 与 IV2-1B 全语料 pass(~21 H100·h 计算,4×H100 实际 1–2 天含解码)
-   同量级。完整数字与架构事实见 `notes/caption-kd-review-2026-07.md`。
+   同量级。完整数字与架构事实见 `recaption/docs/kd-review.md`。
    **换代际同判**(2026-07-27 晚核验):InternVideo3(2606.12195,agentic MLLM)、
    InternVideo2.5(MLLM)、InternVideo-Next(2512.01342,无文本监督)均无对比空间,
    不可作 vtc_kd 教师;**更强教师的正道 = IV2-stage2-6B 或 1B+6B 集成**,
@@ -386,7 +386,7 @@ massive-activation 维)→ L2 → PCA-1024(2 KiB/片,@6M 12 GiB),损失用 Tung-
 (~1 GPU·h,2.5k 试点):CKA(Qwen,IV2)>0.8 → 冗余撤行;∈[0.4,0.7] 且
 CKA(Qwen,字幕文本)≥CKA(IV2,字幕文本) → 建行;层扫 {18,24,30,36}+塔出口。
 **硬约束**:抓取不得迫使重述任务离开 vLLM(退 HF generate = 5–20× 慢);否则改
-单独 prefill-only pass。设计全文见 `notes/caption-kd-review-2026-07.md` §一。
+单独 prefill-only pass。设计全文见 `recaption/docs/kd-review.md` §一。
 
 ### U10 · 统计口径三件套
 
@@ -416,7 +416,7 @@ CKA(Qwen,字幕文本)≥CKA(IV2,字幕文本) → 建行;层扫 {18,24,30,36}+�
 - [x] `notes/paper-plan-zh.md` —— 新增 §七(2026-07-23 评审补丁:U1/U3/U4/U5/U6/
       U10 的计划层变更 + §2.6 勘误声明 + 投稿前文献复扫范围扩到弹性推理轴);
       `paper-plan.md` 英文版加对应 §7 摘要
-- [x] `notes/data-quality-caprl-scheme.md` —— §0 加 `freeze_vision=False` 勘误注(§2.6-2)
+- [x] `recaption/docs/caprl-scheme.md` —— §0 加 `freeze_vision=False` 勘误注(§2.6-2)
 - [x] `experiments/SETUP_B100.md` §6 —— batch 512 建议升级(U5)+ 预算阶梯指针(U6)
 - [x] `notes/publishability-assessment.md` —— C2 行改「组合新」+ 必要条件加
       「对 FluxViT-S 有明确胜点」(§3.8-3)
@@ -437,9 +437,9 @@ U7 随 2.2 落地、U8/U9/U10 随对应配置与评测器改动落地。
 | **U4** T 采样课程 fallback | ⬜ **计划级(按设计如此)** | 只在 `paper-plan-zh.md` §七.4;`utils/elastic_t.py` 无 sandwich / 分层采样。**这是触发型 fallback,R3 未跑就不该落代码** —— 不算缺口 |
 | **U5** 全局 batch 512 | 🟡 **文档已改,未验** | `SETUP_B100.md` §6 建议 `batch_size 128`(4×128=512);**首光显存验证要等 R0 起跑** |
 | **U6** 预算阶梯 | ✅ **规则已写死** | `SETUP_B100.md` §6 指针 + 本文 §U6 表;按首日单 epoch 墙钟触发,R0 未跑 |
-| **U7** C1 三则 | ⬜ **随 2.2 未动** | ROADMAP 2.2 仍未勾;教师提取脚本未写。**已补**:U7-4 教师身份定案(IV2-stage2;Qwen 搭车否决,`caption-kd-review-2026-07.md`) |
+| **U7** C1 三则 | ⬜ **随 2.2 未动** | ROADMAP 2.2 仍未勾;教师提取脚本未写。**已补**:U7-4 教师身份定案(IV2-stage2;Qwen 搭车否决,`recaption/docs/kd-review.md`) |
 | **U8** 便宜标准项 | 🟡 **三分之二** | ✅ `CHECKPOINTS.md` 已补 `apple/MobileCLIP2-S2`;✅ 训练内 held-out 评测可用(R1 A/B 逐 epoch `ret_test/` 出数即证);❌ **EMA 至今不在 `tasks_clip/pretrain.py`**(全仓 grep 无 `model_ema`/`ExponentialMovingAverage`)—— **U8 里唯一真缺口,R1 起本应默认开** |
-| **U9** 相对 KD 单一所有权 | ⬜ **设计级** | `kd_geo` 仅存在于 `neural-inspired-implementation.md`,`vtc_kd` 仅存在于 `data-quality-caprl-scheme.md`,**两边都无代码、也没互加交叉引用行**。R2 未开工,按序不算迟到,但那行交叉引用**是零成本的,应当补** |
+| **U9** 相对 KD 单一所有权 | ⬜ **设计级** | `kd_geo` 仅存在于 `neural-inspired-implementation.md`,`vtc_kd` 仅存在于 `recaption/docs/caprl-scheme.md`,**两边都无代码、也没互加交叉引用行**。R2 未开工,按序不算迟到,但那行交叉引用**是零成本的,应当补** |
 | **U10** 统计口径三件套 | 🟡 **一实践、一缺、一冲突** | ❌ (1) **bootstrap CI 不在 `collect_results.py`**(grep 无);🟡 (2) 双种子**已实践**(R1 A/B 跑了 seed 42/43),但未写成"胜者必须双种子"的硬规则;⚠️ (3) **δ=0.3 与实测噪声带冲突** —— 见下 |
 
 **⚠️ 必须重定的一条:U10-3 的 δ=0.3 R@1 非劣边际已被后来的实测推翻。**

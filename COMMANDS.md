@@ -1098,7 +1098,7 @@ python -m torch.distributed.run --nproc_per_node=1 --master_port=$((10000+RANDOM
 **③ 证伪 / 证实「dataloader 无罪」—— 真训练(必须在 b100/H100 上跑)**
 
 > ❌ **不能拿 101vector(V100)代跑**,两条独立的硬理由:
-> 1. **那台机器没有训练数据。** `tools/data_audit/SETUP_V100.md` 开篇即写:本机只有
+> 1. **那台机器没有训练数据。** `recaption/docs/setup-v100.md` 开篇即写:本机只有
 >    `/home/vca1/datasets/internvid_zh_10k` 这 1 万条抽样,**11 个 InternVid 训练分片一个都没有**
 >    (7 个下游评测基准的视频也都没有,见 TROUBLESHOOTING「这台机器上根本没有下游评测数据」)。
 >    `config.py` 的 `train_file` 指向 `data/video_sample/InternVId-FLT_*`,在 V100 上直接建不出 dataset。
@@ -1639,8 +1639,13 @@ CUDA_VISIBLE_DEVICES=<空卡> nohup bash experiments/run_pretrain.sh \
 
 ## 4.5 InternVid-zh 重述流水线（A/B 两方案，V100 审计机）
 
-完整说明在 [`docs/recaption-ab-pipeline_zh.md`](docs/recaption-ab-pipeline_zh.md)（分步图 +
-prompt 全文 + 开关全表）与 [`tools/data_audit/README.md`](tools/data_audit/README.md)。
+> 📁 **整条线（文档 + 代码）都在 [`recaption/`](recaption/README.md)** ——
+> 2026-08-05 从 `docs/` `notes/` `tools/data_audit/` 合并过来，旧路径映射表在那个 README 末尾。
+> 服务器上要改的只有命令前缀：`tools/data_audit/run_v100.sh` → `recaption/scripts/run_v100.sh`，
+> 输出目录、环境变量、子命令名一个没变。
+
+完整说明在 [`recaption/docs/ab-pipeline_zh.md`](recaption/docs/ab-pipeline_zh.md)（分步图 +
+prompt 全文 + 开关全表）与 [`recaption/docs/audit-workflow.md`](recaption/docs/audit-workflow.md)。
 **2026-08-05 起默认只跑 A/B 方案真正用到的两步**：① 独立重述 ×N → ④b2 直融（长稿→短稿），
 两步都 8 卡分片；其余步骤保留但默认关。
 
@@ -1648,16 +1653,16 @@ prompt 全文 + 开关全表）与 [`tools/data_audit/README.md`](tools/data_aud
 source ~/audit_env/bin/activate            # 审计机专用 venv,不是 conda
 
 # A/B 双臂 + 并排评审包（默认精简；冷样本才测得到真耗时）
-SAMPLE_OFFSET=300 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+SAMPLE_OFFSET=300 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
 
 # 单臂（A=dense 默认，B 加 RECAP_STYLE=slot）
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-sample
 
 # 要把某一批落成训练数据前：把画面验真加回来（唯一外部幻觉门）
-DO_VERIFY=1 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+DO_VERIFY=1 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-sample
 
 # 老的全链（派生/打分/A′/投票/验真全开）
-PIPE_FULL=1 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+PIPE_FULL=1 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-sample
 ```
 
 开关（环境变量，写在命令前面）：

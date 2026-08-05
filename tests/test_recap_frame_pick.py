@@ -12,7 +12,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
-                                "tools", "data_audit"))
+                                "recaption", "scripts"))
 from frame_pick import (candidate_indices, frame_stats,  # noqa: E402
                         select_frames)
 

@@ -23,6 +23,60 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-08-05 (89) — 📁 重述这条线整个搬进 `recaption/`（只有命令前缀要改）
+
+**Diagnosis:** 重述相关内容原先散在三处——`docs/`(2 个 md)、`notes/`(6 个 md)、
+`tools/data_audit/`(28 个脚本 + 6 个 md)，找东西要跨目录跳。现已合并成一个自包含目录：
+
+```
+recaption/
+  README.md     ← 入口：三十秒版 + 该看哪个文件 + 脚本一览 + 旧路径映射表
+  docs/         ← 全部 14 个 md（设计/计划/报告/环境搭建/已知问题）
+  scripts/      ← 全部 28 个脚本，入口仍是 run_v100.sh
+```
+
+**你在服务器上唯一要改的是命令前缀**：
+
+```
+旧: bash tools/data_audit/run_v100.sh <子命令>
+新: bash recaption/scripts/run_v100.sh <子命令>
+```
+
+**输出目录（`outputs/audit_10k/…`）、环境变量、子命令名、续跑缓存全都没变**——搬完直接
+接着跑，已有的 `recap5.*.jsonl` / `pipe_*` 产物照常命中。
+
+**Do this next:**
+```bash
+cd ~/mobileclip && git pull origin main
+
+# 先确认脚本还在（应打印 run_v100.sh 的用法）
+bash recaption/scripts/run_v100.sh
+
+# 单测（本机跑过 28 个用例通过；缺 numpy 的 3 个文件在你那边才跑得动）
+source ~/audit_env/bin/activate
+python -m pytest tests/ -q
+
+# 然后照 #88 继续：冷样本跑 A/B 双臂
+SAMPLE_OFFSET=300 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
+```
+
+**常用文档的新位置**（旧链接会 404，全表在 `recaption/README.md` 末尾）：
+
+| 找什么 | 新路径 |
+|---|---|
+| A/B 分步图 + prompt 全文 + 开关表 | `recaption/docs/ab-pipeline_zh.md` |
+| 设计权威（定版计划/拍板记录） | `recaption/docs/master-plan.md` |
+| 审计流水线逐步操作 | `recaption/docs/audit-workflow.md` |
+| V100 环境搭建 | `recaption/docs/setup-v100.md` |
+| 数据已知问题清单 | `recaption/docs/data-issues.md` |
+
+**这条交接通道（`notes/live/`）没搬**——它不只谈重述，还带训练/评测，规则照旧。
+
+**Then report back**：只要 `bash recaption/scripts/run_v100.sh` 能打印用法、pytest 全绿，
+就不用单独回报这条，直接按 #88 跑 pipeline-compare 并回报计时与坍缩诊断即可。
+
+---
+
 ## 2026-08-05 (88) — ⚙️ A/B 两方案：流水线精简成「只跑那两步」+ ① 的选帧优化
 
 **Diagnosis:** 你贴的 A/B 方案里，实际用到的只有两步——① 同一片独立重述 ×N（A dense×5 /
@@ -30,7 +84,7 @@ B slot×3，temp 0.9 + 帧抖动）和 ②「直融」长稿→短稿。脚本 `
 派生、SigLIP 打分、A′ 句切、投票浓缩、GDINO+OCR 验真，A 臂实测 118 s/片里有 ~73 s
 花在这两步之外。现已按指令改成：**那两步默认跑并做优化，其余全部转成开关、默认关**。
 
-改了什么（`tools/data_audit/run_v100.sh` + `vlm_audit_hf.py` + 新文件 `frame_pick.py`）：
+改了什么（`recaption/scripts/run_v100.sh` + `vlm_audit_hf.py` + 新文件 `frame_pick.py`）：
 
 1. **① 选帧**（就是你标「可优化：如何挑选这 8 帧？」那处）：分段网格 + 每遍相位抖动
    **一个字没动**（N 遍独立性全靠它）；只在**段内**从 3 个候选里挑一帧——清晰度高
@@ -53,11 +107,11 @@ source ~/audit_env/bin/activate
 python -m pytest tests/test_recap_frame_pick.py -q
 
 # 2) 冷样本跑 A/B 双臂，看新默认的真实耗时（前 200 片有缓存会虚低）
-SAMPLE_OFFSET=300 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+SAMPLE_OFFSET=300 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
 
 # 3) 想和旧选帧对照（可选）：换个 OUT 目录跑一遍 uniform，两份 TSV 并排看
 OUT=outputs/audit_10k_uniform FRAME_SELECT=uniform \
-  SAMPLE_OFFSET=300 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+  SAMPLE_OFFSET=300 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
 ```
 
 注意：**改了选帧后旧的重述缓存不会自动重算**（续跑按 video 去重）。要在同一个 `$OUT`
@@ -67,7 +121,7 @@ outputs/audit_10k/pipe*_recaps.jsonl`——详见 TROUBLESHOOTING「改了选帧
 
 **Then report back** in from-server.md：
 - `outputs/audit_10k/pipe_timing.tsv` 和 `pipe_sl_timing.tsv` 两份计时（贴原文即可，
-  我把 `docs/recaption-ab-pipeline_zh.md` §6.2 的预测表换成实测）；
+  我把 `recaption/docs/ab-pipeline_zh.md` §6.2 的预测表换成实测）；
 - `pipe_diag.txt` / `pipe_sl_diag.txt` 的坍缩行——选帧变了之后**最需要盯的就是它**，
   片内中位 3-gram Jaccard 若从 0.25/0.32 明显上涨（>0.5，更别说 0.8 红旗），说明候选
   窗口 0.12 太宽、各遍挑到了同一批帧，我把 `FRAME_WINDOW` 调小；
@@ -76,7 +130,7 @@ outputs/audit_10k/pipe*_recaps.jsonl`——详见 TROUBLESHOOTING「改了选帧
 **开关速查**（都是环境变量，加在命令前面）：`DO_DERIVE` `DO_SIGLIP` `DO_APRIME`
 `DO_VOTE` `DO_VERIFY`（默认 0）· `DO_DIAG` `DO_TSV` `DO_BUNDLE`（默认 1）·
 `PIPE_FULL=1` 全开 · `FUSE_GPUS`（默认 8）· `FRAME_SELECT=content|uniform`。
-完整表：`docs/recaption-ab-pipeline_zh.md` §6。
+完整表：`recaption/docs/ab-pipeline_zh.md` §6。
 
 ---
 
@@ -807,7 +861,7 @@ python experiments/collect_results.py --compare experiments/evals/sub1m/sub1m_r1
 ## 2026-07-29 (72) — ⚠️ 并行合并事故通告: #363 陈旧树 squash 曾覆盖删除 #354–#361 多个文件(已部分恢复)
 
 **事故**：PR #363（arch round 4）的分支基于过期 main，squash 后把它碰过的共享文件全部
-退回旧版：删掉了 `docs/recaption-ab-pipeline_zh.md` 整个文件、run_v100.sh 12 行计时、
+退回旧版：删掉了 `recaption/docs/ab-pipeline_zh.md` 整个文件、run_v100.sh 12 行计时、
 计划 §5.1c 回填、TROUBLESHOOTING rm 配方、from-claude 块(69)(71)、#359 的判错原因列
 （make_pipeline_tsv/make_style_compare/make_summary_table/test）。**以上 10 个文件已由
 本 PR 从 fc2c86b(#361) 整文件恢复**，#363 自己的新增（architecture-round4.md 等）未动。
@@ -828,7 +882,7 @@ grep 自己的块，还要 `git ls-tree origin/main -- <自己的文件>` 验文
 
 ## 2026-07-29 (71) — [101vector] 细粒度耗时收到并已回填(doc §6.1 + 计划 §5.1c);下一步还是 GDINO + 50 片目检
 
-你贴的 N=10 双臂 12 行计时已进仓库：全表在 `docs/recaption-ab-pipeline_zh.md` §6.1，
+你贴的 N=10 双臂 12 行计时已进仓库：全表在 `recaption/docs/ab-pipeline_zh.md` §6.1，
 决策摘要进了计划 §5.1c 行名注。读数三句话：**A 大头=②派生 58 s/片 ≫ ④b2 直融 31.8**
 （§5.9 的裁减对象没变）；**B 全链 35.0 = A(118.1) 的 0.3×**；坍缩哨兵两臂绿、B 投票
 0 fallback（数票前提健康）。④b3 B>A、⑤c A>B 是 10 片噪声级，不用管。
@@ -841,7 +895,7 @@ grep 自己的块，还要 `git ls-tree origin/main -- <自己的文件>` 验文
 rm -f outputs/audit_10k/pipe*_verified.jsonl \
       outputs/audit_10k/pipe*_r.*.jsonl outputs/audit_10k/pipe*_final.jsonl
 # 2) 升到 50 片出目检包(§0.9 行动序②; 这 10 片缓存自动复用,只补 40 片):
-SAMPLE_OFFSET=300 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+SAMPLE_OFFSET=300 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
 tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
 ```
 
@@ -863,8 +917,8 @@ tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
 **「判错原因」列**(来自 buckets 的 reasons)——目检时直接对着错因看新字幕是否修好,
 不用再回 TSV 查。表格页角标升 **vT20260729a**。重新生成(全部缓存命中, 分钟级):
 ```bash
-N_SAMPLE=50 PIPE_LEAN=1 bash tools/data_audit/run_v100.sh pipeline-compare
-bash tools/data_audit/run_v100.sh summary-table
+N_SAMPLE=50 PIPE_LEAN=1 bash recaption/scripts/run_v100.sh pipeline-compare
+bash recaption/scripts/run_v100.sh summary-table
 tar czf outputs/audit_10k/table.tgz -C outputs/audit_10k table_compare
 ```
 
@@ -876,7 +930,7 @@ tar czf outputs/audit_10k/table.tgz -C outputs/audit_10k table_compare
 ## 2026-07-29 (69) — [101vector] A/B 管线图解文档上线 + 计时拆到每小步,请回一轮冷样本细粒度耗时
 
 **新东西（已合并 main）：**
-1. **`docs/recaption-ab-pipeline_zh.md`** —— A/B 两臂分步图解 + 模型清单 + 7 条 prompt
+1. **`recaption/docs/ab-pipeline_zh.md`** —— A/B 两臂分步图解 + 模型清单 + 7 条 prompt
    全文 + 计时读法，一页看懂现行管线（§0.9 定版的落地说明书）。
 2. **计时拆细**：`pipeline-sample` 的 `${P}_timing.tsv` 从 7 行拆到 12 行，一行=一个
    真实小步骤。原来 ④b 一行看不出「直融两调用 vs 投票打包」谁贵、⑤ 一行看不出三路
@@ -888,7 +942,7 @@ tar czf outputs/audit_10k/table.tgz -C outputs/audit_10k table_compare
 git pull origin main
 # 冷样本细粒度计时,双臂一条命令。offset=300 避开 §5.1c 那轮已缓存的 200-249 段;
 # 若中断,原命令重跑即按 video 续走。GDINO 未装也照跑(⑤ 行=OCR-only 口径,回填时会标注)
-SAMPLE_OFFSET=300 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+SAMPLE_OFFSET=300 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
 # 赶时间变体(维护者已确认可用): N_SAMPLE=10, ~40min。①行 s/片 会被模型装载虚高约 2×、
 # ②行约 +15%(每个单卡段重装一次 8B, 10 片摊不薄), 看各小步相对贵贱够用, 精确全量外推
 # 仍以 50 片为准; 之后升 50 只补跑 40 片(按 video 续跑), 目检包(§0.9 行动序②)要 50 片的量
@@ -908,7 +962,7 @@ SAMPLE_OFFSET=300 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
 按行号即可定位。配套:表格页视频格下方、csv/xlsx 首列都加了 `序号`(001 起,三处一致)。
 旧命名的既有 GIF 会**自动改名复用,不重新编码**——重跑还是秒级:
 ```bash
-bash tools/data_audit/run_v100.sh summary-table
+bash recaption/scripts/run_v100.sh summary-table
 tar czf outputs/audit_10k/table.tgz -C outputs/audit_10k table_compare
 ```
 (序号=review_compare.tsv 的行序,同一抽样文件下每次重跑稳定不变。)
@@ -966,7 +1020,7 @@ ls -l experiments/evals/sub1m/sub1m_r0_s42/ranks_*.npz    # ← 这次应该有�
 **服务器(按 (66) 对齐并跑完 compare 后):**
 ```bash
 pip install openpyxl        # 一次性, 可选(只为 xlsx)
-bash tools/data_audit/run_v100.sh summary-table   # GIF 有缓存, 重跑秒级
+bash recaption/scripts/run_v100.sh summary-table   # GIF 有缓存, 重跑秒级
 tar czf outputs/audit_10k/table.tgz -C outputs/audit_10k table_compare
 ```
 
@@ -1132,8 +1186,8 @@ git branch -D claude/export-smoke       # 删掉滞留分支(刚 reset 过,无�
 git log --oneline -1                    # ← 括号里应显示 (HEAD -> main, origin/main)
 # 继续:五槽+新融合 prompt 的 compare 重跑 → 表格页
 rm -f outputs/audit_10k/recap_slot.*.jsonl outputs/audit_10k/pipe_sl_*.jsonl       outputs/audit_10k/pipe_sl_timing.tsv outputs/audit_10k/pipe*fused_d*.jsonl
-PIPE_LEAN=1 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
-bash tools/data_audit/run_v100.sh summary-table
+PIPE_LEAN=1 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
+bash recaption/scripts/run_v100.sh summary-table
 tar czf outputs/audit_10k/table.tgz -C outputs/audit_10k table_compare
 ```
 以后每次对齐后**看一眼括号**:`(HEAD -> main, origin/main)` 才是正常态。TROUBLESHOOTING
@@ -1151,9 +1205,9 @@ cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
 git log --oneline -1     # ← 必须 #342 或更新;还是旧号就把输出贴回来
 # 若还没按 (60) 块重跑过 compare(五槽+新融合 prompt),先跑它(可加 PIPE_LEAN=1, 见 (62)):
 rm -f outputs/audit_10k/recap_slot.*.jsonl outputs/audit_10k/pipe_sl_*.jsonl       outputs/audit_10k/pipe_sl_timing.tsv outputs/audit_10k/pipe*fused_d*.jsonl
-PIPE_LEAN=1 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+PIPE_LEAN=1 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
 # 然后表格页:
-bash tools/data_audit/run_v100.sh summary-table
+bash recaption/scripts/run_v100.sh summary-table
 tar czf outputs/audit_10k/table.tgz -C outputs/audit_10k table_compare
 ```
 注意:若跳过中间的 compare 重跑直接出表,表格显示的会是**旧版内容**(四槽 B/旧融合),
@@ -1169,7 +1223,7 @@ exit 1(不再静默打帮助装作成功),并直接提示上面的对齐命令�
 
 **用法(pipeline-compare 跑完后, CPU ~1-2 分钟):**
 ```bash
-bash tools/data_audit/run_v100.sh summary-table
+bash recaption/scripts/run_v100.sh summary-table
 tar czf outputs/audit_10k/table.tgz -C outputs/audit_10k table_compare
 # 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/table.tgz . && tar xzf table.tgz
 #       打开 table_compare/table.html
@@ -1390,7 +1444,7 @@ bash experiments/run_verify_1m.sh 0,1,2,3 sub1m_r1both_s42 sub1m_nR1_s42 sub1m_r
 
 已实现 `PIPE_LEAN=1` 开关(默认关,两臂通用)。用法=在 (60) 块的重跑命令前加个变量:
 ```bash
-PIPE_LEAN=1 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+PIPE_LEAN=1 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
 ```
 (其余 rm/grep/tar 行照 (60) 块不变,徽标仍 v20260728f。)两项合计省 ~0.86 s/片,全桶约 0.6h。
 
@@ -1437,7 +1491,7 @@ cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
 git log --oneline -1        # ← 必须比 #324 新; 还是旧号就贴回来
 rm -f outputs/audit_10k/recap_slot.*.jsonl outputs/audit_10k/pipe_sl_*.jsonl \
       outputs/audit_10k/pipe_sl_timing.tsv outputs/audit_10k/pipe*fused_d*.jsonl
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
 grep -c v20260728f outputs/audit_10k/bundle_compare/index.html   # ← 必须 ≥1
 tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
 ```
@@ -1486,7 +1540,7 @@ tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
 cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
 git log --oneline -1        # ← 必须比 #320 新; 还是旧号就贴回来
 rm -f outputs/audit_10k/pipe*fused_d*.jsonl
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
 grep -c v20260728e outputs/audit_10k/bundle_compare/index.html   # ← 必须 ≥1
 tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
 ```
@@ -1528,7 +1582,7 @@ tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
 cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
 git log --oneline -1        # ← 必须比 #318 新(本块对应 PR 见提交信息);还是旧号就贴回来
 rm -f outputs/audit_10k/pipe*fused_d*.jsonl
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
 grep -c v20260728d outputs/audit_10k/bundle_compare/index.html   # ← 必须 ≥1
 tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
 ```
@@ -1588,7 +1642,7 @@ cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
 git log --oneline -1        # ← 必须看到 #314 或更新;还是旧号=对齐失败,贴回来
 rm -f outputs/audit_10k/pipe_fused_d*.jsonl outputs/audit_10k/pipe_sl_fused_d*.jsonl \
       outputs/audit_10k/pipe_st_fused_d*.jsonl
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
 grep -c v20260728c outputs/audit_10k/bundle_compare/index.html   # ← 必须 ≥1
 tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
 # 本地: scp 解包 → 打开 index.html → 左上角看到 v20260728c 徽标才算新页
@@ -1645,7 +1699,7 @@ cd ~/mobileclip && git fetch origin main && git reset --hard origin/main
 # prompt 又变了 → 直融缓存再次全部作废必清:
 rm -f outputs/audit_10k/pipe_fused_d*.jsonl outputs/audit_10k/pipe_sl_fused_d*.jsonl \
       outputs/audit_10k/pipe_st_fused_d*.jsonl
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
 tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
 # 本地: scp 解包后打开 index.html, 若样式仍旧务必强刷 Ctrl+F5 (浏览器会缓存同名页面)
 ```
@@ -1716,7 +1770,7 @@ git pull origin main
 # 直融 prompt 变了 → 全部直融缓存作废必清(投票版/重述/派生缓存不受影响):
 rm -f outputs/audit_10k/pipe_fused_d*.jsonl outputs/audit_10k/pipe_sl_fused_d*.jsonl \
       outputs/audit_10k/pipe_st_fused_d*.jsonl
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
 tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
 # 增量 = B 臂 slot 重述(首次, ~5-8min) + 两臂直融重产(~2min) + 验真修复(~2min)
 ```
@@ -1756,7 +1810,7 @@ B 单遍解码 token 降 ~40-50%、按槽数票更准。
 
 ```bash
 git pull origin main
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
 # B 臂全新产物 recap_slot.* / pipe_sl_*——无需 rm 任何旧文件;A 臂全缓存秒过
 # (要连计时一起测: SAMPLE_OFFSET=200 N_SAMPLE=50 ... pipeline-compare)
 tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
@@ -1816,7 +1870,7 @@ bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8
 ```bash
 git pull origin main
 # ① 取包目检(命令同 (41)); ② 冷样本计时:
-SAMPLE_OFFSET=200 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+SAMPLE_OFFSET=200 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
 ```
 
 **Then report back**(在 (41) 报告项上加三样): ⑤ 段的修复行(`n_repaired`/仍败数)、
@@ -1885,7 +1939,7 @@ tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
 
 # ② 你这次跑时计时代码还没进你的 checkout(刚合并)——拉一次再跑冷样本出全量耗时表:
 git pull origin main
-SAMPLE_OFFSET=200 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+SAMPLE_OFFSET=200 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
 ```
 
 **Then report back**: ①的四版目检结论(哪版最像你要的训练字幕) + ②结尾两张 ⏱ 表 +
@@ -1902,7 +1956,7 @@ A/B 两臂耗时。新增 `SAMPLE_OFFSET=k`(从队列第 k+1 片取样)。
 
 ```bash
 git pull origin main
-SAMPLE_OFFSET=200 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+SAMPLE_OFFSET=200 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
 # 结尾自动出 A/B 两臂的分段耗时 + 全桶(2532片)/每10万片外推
 ```
 
@@ -1928,10 +1982,10 @@ A直融|A投票|B直融|B投票 + 四选一「最佳浓缩」。
 ```bash
 git pull origin main
 rm -f outputs/audit_10k/pipe_fused*.jsonl outputs/audit_10k/pipe_st_fused*.jsonl  # 清旧命名的融合产物
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare   # A/B 双臂 × 直融/投票 四版一次出
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare   # A/B 双臂 × 直融/投票 四版一次出
 tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
 # 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/compare.tgz . && tar xzf compare.tgz
-# 只跑单臂: N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample (A) 或 RECAP_STYLE=struct 同命令 (B)
+# 只跑单臂: N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-sample (A) 或 RECAP_STYLE=struct 同命令 (B)
 ```
 
 **Then report back** in from-server.md: bundle_compare 四选一统计(50 片里 A直融/A投票/
@@ -2024,7 +2078,7 @@ kill 判据:池 vs 无池 < 0.5 R-Sum ⇒ 停。细节见 [`notes/r1-implementat
 #   (只清 A,不碰 _st);B 臂全新但只有 3 遍×50 片。总计 ~20-30 分钟:
 git pull origin main
 rm -f outputs/audit_10k/pipe_fused*.jsonl
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare
 tar czf outputs/audit_10k/compare.tgz -C outputs/audit_10k bundle_compare
 # 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/compare.tgz . && tar xzf compare.tgz
 #       打开 bundle_compare/index.html —— 每片并排: en源|原zh|A重述|A浓缩|B重述|B浓缩 + 单选
@@ -2045,7 +2099,7 @@ scp -r ~/.cache/huggingface/hub/models--hfl--minirbt-h288    rby@101vector:~/.ca
 
 # scp 完成后在服务器上——验真按 video 续跑,必须清掉"GDINO 缺席"时代的旧判定让它重验:
 rm -f outputs/audit_10k/pipe_verified.jsonl outputs/audit_10k/pipe_fused_verified.jsonl
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-sample
 tar czf outputs/audit_10k/pipeline.tgz -C outputs/audit_10k bundle_pipeline
 ```
 
@@ -2153,7 +2207,7 @@ A_llm 短句跨 5 条重述聚类计票（纯规则、不占卡），support≥3
 **Do this next**（重述/派生/打分全部按 video 续跑秒过，增量只有浓缩+验真+重出表）：
 ```bash
 cd ~/mobileclip && git pull origin main
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-sample
 tar czf outputs/audit_10k/pipeline.tgz -C outputs/audit_10k bundle_pipeline
 # 本地: scp rby@101vector:~/mobileclip/outputs/audit_10k/pipeline.tgz . && tar xzf pipeline.tgz
 ```
@@ -2331,7 +2385,7 @@ pkill -f "vlm_audit_hf.py.*--mode recap"
 sleep 3; nvidia-smi | head -20        # 各卡应回到 ~0-1GB 占用
 # ③ 拉修复并重跑（重述已缓存, 全程 ~半小时）:
 git pull origin main
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-sample
 tar czf outputs/audit_10k/pipeline.tgz -C outputs/audit_10k bundle_pipeline
 ```
 若 ① 显示的不是 recap 分片（cmd 不同或 user 不是你），**别杀**，把 ps 输出贴回来我再看。
@@ -2350,7 +2404,7 @@ tar czf outputs/audit_10k/pipeline.tgz -C outputs/audit_10k bundle_pipeline
 **Do this next（101vector）：**
 ```bash
 git pull origin main
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample   # 会打印 [gpu] 选了哪张卡
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-sample   # 会打印 [gpu] 选了哪张卡
 tar czf outputs/audit_10k/pipeline.tgz -C outputs/audit_10k bundle_pipeline
 ```
 （不想 pull 的立即绕法：`nvidia-smi` 挑张空卡，`PIPE_GPU=<卡号> N_SAMPLE=50 bash … pipeline-sample`。）
@@ -2372,7 +2426,7 @@ tar czf outputs/audit_10k/pipeline.tgz -C outputs/audit_10k bundle_pipeline
 **Do this next（101vector）：**
 ```bash
 git pull origin main
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample   # 续跑秒过, 只补打分/表/包
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-sample   # 续跑秒过, 只补打分/表/包
 tar czf outputs/audit_10k/pipeline.tgz -C outputs/audit_10k bundle_pipeline
 ```
 **本地机器**取回并打开：
@@ -2467,12 +2521,12 @@ python experiments/check_readiness.py --decode 2>&1 | grep -i msrvtt
 ```bash
 git pull origin main
 # ① 重跑（重述/派生/验真按 video 续跑秒过；只重算打分 + TSV，几分钟）
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-sample
 # ② 网络通时预下载两个非 LLM 小件（GDINO ~700MB + MiniRBT ~50MB）：
 HF_ENDPOINT=https://hf-mirror.com python -c "from huggingface_hub import snapshot_download as d; d('IDEA-Research/grounding-dino-base'); d('hfl/minirbt-h288')"
 # ③ 下载成功后补 GDINO 验真档（必须先删验真缓存让它重验）：
 rm -f outputs/audit_10k/pipe_verified.jsonl
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-sample
 ```
 ② 若 mirror 持续不通就跳过（TSV 除 gloss 验真列外全部可用），报回来我给替代下载路线。
 
@@ -2541,7 +2595,7 @@ self.layer_scale_1d = nn.Parameter(layer_scale_init_value * torch.ones((dim, 1))
 | 位置 | 原来 | 现在 |
 |---|---|---|
 | `SETUP_B100.md` §4 | `find "$FULL" /workspace/mount/b100_zaip_data* -maxdepth 4 …` | 只在 `$FULL` 和 `video_datasets/vd-foundation___InternVid-10M-FLT` 两个**确切目录**里找 |
-| `tools/data_audit/SETUP_V100.md` | `find /workspace/mount/b100_zaip_data -maxdepth 4 -iname "*InternVL*"` | 只在 `model_zoo/` 里找 |
+| `recaption/docs/setup-v100.md` | `find /workspace/mount/b100_zaip_data -maxdepth 4 -iname "*InternVL*"` | 只在 `model_zoo/` 里找 |
 
 **(22) 的 §4b 探盘命令本来就已经限定在 `$VD` 内**（`for d in "$VD"/*/` 和
 `find "$VD" -maxdepth 4`），无需改动，照原样跑即可 —— 现在只是多了一行显式提醒。
@@ -2922,7 +2976,7 @@ CUDA_VISIBLE_DEVICES=0,1 bash experiments/run_pretrain.sh \
 那行,但重定向仍创建了**空的** sample.jsonl),于是 `[input] sample.jsonl （0 片）`,
 8 个 shard 秒退,什么也没算。重跑三步:① 单独执行 head 那行,`<队列>` 换成 (14)
 里写的实际队列文件;② `wc -l sample.jsonl` 确认 =50;③ 再
-`RECAP_INPUT=sample.jsonl bash tools/data_audit/run_v100.sh recap`。续跑按 video
+`RECAP_INPUT=sample.jsonl bash recaption/scripts/run_v100.sh recap`。续跑按 video
 去重,不会重复计费已算过的片。
 
 **V100 队列剩余**:(16) 的 GATE-0 任务 A/B(优先,阻塞时序类改动)→ recap 抽样
@@ -3153,9 +3207,9 @@ source**，停下来重来（子进程靠继承环境变量，漏了就等于没
 **Do this next（101vector，接着你刚才的终端；①② 均为 CPU 秒级）：**
 ```bash
 git pull origin main    # 拿到新的 s4 子命令（#243）
-TARGET_PRECISION=0.3 bash tools/data_audit/run_v100.sh s3   # ① 重算分桶（0.3 版才有效）
-bash tools/data_audit/run_v100.sh s4                        # ② 落地队列, 预期打印 ~2,5xx 片
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample   # ③ 原命令重跑
+TARGET_PRECISION=0.3 bash recaption/scripts/run_v100.sh s3   # ① 重算分桶（0.3 版才有效）
+bash recaption/scripts/run_v100.sh s4                        # ② 落地队列, 预期打印 ~2,5xx 片
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-sample   # ③ 原命令重跑
 ```
 ③ 的回报格式照 (10)：`pipe_diag.txt` 全文 + TSV 任挑 3 行 + 起止时间。
 （此条也补进 (13) 的待办总汇语境：pipeline-sample 任务前多了 ①② 两个前置。）
@@ -3266,7 +3320,7 @@ unverified，**绝不用 Qwen 自验**（§3.5 纪律）。(10) 的命令不变�
 **Diagnosis:** 维护者要的是**整条 caption 优化方案**的小样本测评，不只是重述段。缺口已补齐
 （#233 已并入 main）：`--mode derive`（每条重述派生 2–3 条短视图 + en_gloss，文本-only 闭集，
 复用已缓存的 Qwen3-VL 当文本 LLM，零新权重）、`score_alignment --tag` 逐重述 SigLIP 打分
-（A− top-3 选择）、`tools/fuse_verify.py` v0（Panel-V 检测器档：GroundingDINO fp32 按
+（A− top-3 选择）、`recaption/scripts/fuse_verify.py` v0（Panel-V 检测器档：GroundingDINO fp32 按
 en_gloss 查 + RapidOCR 引号文字模糊匹配；装不上自动降级为 unverified 保守留、不阻塞）、
 `make_pipeline_tsv.py` 全景表。这等于把主计划 G2 三臂（A_llm / A− / C_v）在样本级预览了一遍。
 **取代 (8)「重述抽样检验」的命令**——pipeline-sample 是它的超集（recap-tsv 仍可作轻量档）。
@@ -3275,7 +3329,7 @@ en_gloss 查 + RapidOCR 引号文字模糊匹配；装不上自动降级为 unve
 ```bash
 source ~/audit_env/bin/activate
 pip install rapidocr-onnxruntime onnxruntime   # 可选 OCR 档；失败不阻塞
-N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-sample
 # 产物: outputs/audit_10k/recap_pipeline.tsv （utf-8-sig, Excel/WPS 直开）
 # 列: en源caption | zh翻译 | 5重述(⟨SigLIP分⟩) | A−保留 | A′句切 | ✓过验真 | ·未验 | ✗被滤[gdino/ocr] | 旗标
 ```
@@ -3420,9 +3474,9 @@ alpha 的负号在该量级是噪声，不构成方向性结论（10k 禁令）�
 ```bash
 source ~/audit_env/bin/activate
 head -n 50 outputs/audit_10k/v0_2/recaption_tasks.jsonl > outputs/audit_10k/v0_2/recap_sample.jsonl
-RECAP_INPUT=outputs/audit_10k/v0_2/recap_sample.jsonl bash tools/data_audit/run_v100.sh recap
-bash tools/data_audit/run_v100.sh status     # 等 recap 行到 50/50
-bash tools/data_audit/run_v100.sh recap-tsv  # 产 outputs/audit_10k/recap_inspect.tsv
+RECAP_INPUT=outputs/audit_10k/v0_2/recap_sample.jsonl bash recaption/scripts/run_v100.sh recap
+bash recaption/scripts/run_v100.sh status     # 等 recap 行到 50/50
+bash recaption/scripts/run_v100.sh recap-tsv  # 产 outputs/audit_10k/recap_inspect.tsv
 ```
 
 **Then report back** in from-server.md：① recap_diag 摘要（`recap_diag.txt` 全文贴回，
@@ -3765,7 +3819,7 @@ R1 三臂要与 R0 同 batch/卡数/bf16/deepspeed 开关，才是等步对照�
 ## 2026-07-24 (5) — 主计划升 v1.1：全自动验收、零重人力标注、附全流程图（#223 已并入）
 
 **Diagnosis:** 三路专家终审（自动评测设计 × 统计效度 × 可行性）后，
-[`notes/recaption-master-plan.md`](../recaption-master-plan.md) 升 **v1.1**。对服务器操作的
+[`recaption/docs/master-plan.md`](../../recaption/docs/master-plan.md) 升 **v1.1**。对服务器操作的
 影响：**Stage 0 的命令一字不变**（照 (4) 跑即可）；变化都在 G1 之后——原 ~600 判定的人力
 k\* 标定与 300 片人评盲评**全部撤销**，改为 Panel-V 自动验真面板（InternVL2.5-8B +
 GroundingDINO + OCR，全栈无 Qwen，§5.4）与视图级验真臂 C_v；G1 主臂改为零工具风险的句切
@@ -3781,11 +3835,11 @@ D11 探针不再等 b100。
 
 ---
 
-## 2026-07-24 (4) — 重字幕主计划定稿：执行以 notes/recaption-master-plan.md 为准
+## 2026-07-24 (4) — 重字幕主计划定稿：执行以 recaption/docs/master-plan.md 为准
 
 **Diagnosis:** 应维护者要求，对 `caption-fusion-scheme.md` 与 `data-quality-caprl-scheme.md`
 两份重字幕方案做了全面评估（含两路独立评审：VLM 方法论 + 统计设计），裁决合并为唯一执行层
-**[`notes/recaption-master-plan.md`](../recaption-master-plan.md)**（已并入 main，#221）。要点：
+**[`recaption/docs/master-plan.md`](../../recaption/docs/master-plan.md)**（已并入 main，#221）。要点：
 S0 五样本重述照跑不变；**训练门 G1 前置**（不需要任何人力标注），150–300 片人评标定收缩为
 ~600 单元判定（≈1 人·日）且**后置**到 G1 通过之后；融合（CFU）降为门控假设（外部评审先验
 偏低，但保留 §6.4 可证伪测试）；RETRANSLATE 并入 RECAPTION；两份旧方案的分阶段清单不再照做
@@ -3794,7 +3848,7 @@ S0 五样本重述照跑不变；**训练门 G1 前置**（不需要任何人力
 **Do this next（V100 审计机 101vector；= 主计划 Stage 0；与 b100 的 (3) 互不阻塞）:**
 ```bash
 # ① 五样本重述主批（前置: s3+s4 已产 $OUT/v0_2/recaption_tasks.jsonl; 2,532 片当天级）
-bash tools/data_audit/run_v100.sh recap
+bash recaption/scripts/run_v100.sh recap
 # ② 跑完记录: 总生成数 + 起止时间 + 卡数（吞吐是全量排期的唯一可信输入）
 # ③ 两个侧批诊断（各 300 片, 主批完再跑; 精确命令见主计划 §3 Stage 0）
 ```
@@ -4076,7 +4130,7 @@ git push fork "$STASH":refs/heads/server/b100-local-opts
 ## 2026-07-23 (3) — 候选字幕融合 F0：`s2-merge` 融合 + 可视化人审（同 better_zh）
 
 **背景：** 你已人工复核 `better_zh`（P0 通过）：新候选更准更全、3 条各带不同细节，
-融合有望更好。完整融合方案见 [`notes/caption-fusion-scheme.md`](../caption-fusion-scheme.md)。
+融合有望更好。完整融合方案见 [`recaption/docs/fusion-scheme.md`](../../recaption/docs/fusion-scheme.md)。
 **好消息：F0（最简版）不用新写代码** —— 仓库里 `s2-merge`（`vlm_audit_hf.py --mode merge`
 + `MERGE_PROMPT`）已实现「单次 LLM 调用把 2–3 条候选融合成一条、**闭集防幻觉**（绝不新增
 候选里没有的细节）、保时序」。它**还没有** support 计票／单例验真／CSER 双向验收（那些是
@@ -4089,8 +4143,8 @@ git push fork "$STASH":refs/heads/server/b100-local-opts
 ```bash
 git pull                                   # 取到 caption-fusion-scheme.md
 # 1) 跑融合（不解码视频、8 卡、可续跑；产出 outputs/audit_10k/s2_merged.*.jsonl）
-bash tools/data_audit/run_v100.sh s2-merge
-bash tools/data_audit/run_v100.sh status   # 看进度；跑完 8 分片行数之和 ≈ 有 ≥2 候选的片数
+bash recaption/scripts/run_v100.sh s2-merge
+bash recaption/scripts/run_v100.sh status   # 看进度；跑完 8 分片行数之和 ≈ 有 ≥2 候选的片数
 ```
 
 ```bash
@@ -4128,7 +4182,7 @@ PY
 
 ```bash
 # 3) 可视化人审：一条命令建表 + 打离线包（视频+候选+融合稿同屏，和 better_zh 完全同款）
-bash tools/data_audit/run_v100.sh merge-review        # 默认抽 300；MERGE_REVIEW_N=100 可调
+bash recaption/scripts/run_v100.sh merge-review        # 默认抽 300；MERGE_REVIEW_N=100 可调
 # 取回本地看画面：
 #   服务器  tar czf ~/bundle_merge.tgz -C outputs/audit_10k bundle_merge
 #   本地    scp vca1@10.235.31.101:~/bundle_merge.tgz . && tar xzf bundle_merge.tgz
@@ -4142,14 +4196,14 @@ bash tools/data_audit/run_v100.sh merge-review        # 默认抽 300；MERGE_RE
 
 ```bash
 # 4) 统计决策门（导出的 TSV 传回服务器后跑；复用现成 review-score，自动判两个门）
-bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/review_merge.tsv
+bash recaption/scripts/run_v100.sh review-score outputs/audit_10k/review_merge.tsv
 ```
 
 **决策门（`review-score` 会自动打印，对齐方案 §6.2 F0）：**
-- **幻觉率 <10%** 且 **更全率 >50%** → F0 通过。落地：`bash tools/data_audit/run_v100.sh s4-merged`
+- **幻觉率 <10%** 且 **更全率 >50%** → F0 通过。落地：`bash recaption/scripts/run_v100.sh s4-merged`
   把 `merged_zh` 写进训练 JSON，再按 §6.3 做 **融合 vs best-single vs uniform-K** 消融（这才是「融合有用」的硬判据）。
 - **幻觉率 ≥10%** → 现成 `MERGE_PROMPT` 的闭集约束不够，需上方案 F1 的 support 计票 + 单例验真
-  （`support≥2` 采信、单例回看 8 帧 yes/no）。这要新写 `tools/fuse_verify.py`，跟我说一声我来写。
+  （`support≥2` 采信、单例回看 8 帧 yes/no）。这要新写 `recaption/scripts/fuse_verify.py`，跟我说一声我来写。
 
 > 纯文本快速版（不想看画面时）：`merge-review` 建的 `review_merge.tsv` 也能直接在 Excel 里填
 > `幻觉[y/n]`/`更全[y/n]` 两列，再跑同一个 `review-score`。但**判「更全」看画面更靠谱**——能直接核对某个细节到底在不在视频里。
@@ -4275,7 +4329,7 @@ git push origin "$STASH":refs/heads/server/b100-local-opts
 cd ~/mobileclip && git pull
 
 # ① 重新生成表——现在会打印 [videos] X/15，先确认不是 0
-bash tools/data_audit/run_v100.sh review
+bash recaption/scripts/run_v100.sh review
 ```
 
 **看那行 `[videos] X/15`：**
@@ -4291,7 +4345,7 @@ bash tools/data_audit/run_v100.sh review
 
 ```bash
 # ② 命中正常后打包
-bash tools/data_audit/run_v100.sh review-bundle
+bash recaption/scripts/run_v100.sh review-bundle
 tar czf ~/review_bundles.tgz -C outputs/audit_10k $(cd outputs/audit_10k && ls -d bundle_*)
 ```
 
@@ -4329,7 +4383,7 @@ xdg-open bundle_conflicts/index.html
 git pull
 
 # ① 打包（纯 stdlib；默认跳过 random 那 300 条视频，太大）
-bash tools/data_audit/run_v100.sh review-bundle
+bash recaption/scripts/run_v100.sh review-bundle
 tar czf ~/review_bundles.tgz -C outputs/audit_10k $(cd outputs/audit_10k && ls -d bundle_*)
 ```
 
@@ -4346,8 +4400,8 @@ open bundle_better_zh/index.html     # 再过 50 条
 ```bash
 # ③ 把导出的 TSV 传回服务器统计（脚本自己判决策门，不用手算比例）
 scp review_conflicts.tsv vca1@10.235.31.101:~/mobileclip/outputs/audit_10k/
-bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/review_conflicts.tsv
-bash tools/data_audit/run_v100.sh review-score outputs/audit_10k/review_better_zh.tsv
+bash recaption/scripts/run_v100.sh review-score outputs/audit_10k/review_conflicts.tsv
+bash recaption/scripts/run_v100.sh review-score outputs/audit_10k/review_better_zh.tsv
 ```
 
 ### 三张表填什么、为什么
@@ -4707,7 +4761,7 @@ CUDA_VISIBLE_DEVICES=0 \
   `ERROR opening: /home/vca1/datasets/MSRVTT_Videos/video7020.mp4`。
   B 类特别容易误判成偶发解码错误,因为 `data_root` 只在真正读视频那一刻才被触碰。
 
-**根因**:`tools/data_audit/SETUP_V100.md` 开篇就写了 —— 这台机器
+**根因**:`recaption/docs/setup-v100.md` 开篇就写了 —— 这台机器
 **只有 `/home/vca1/datasets/internvid_zh_10k` 那 1 万条抽样,没有全量数据**。
 MSR-VTT / K400 / DiDeMo / ANet / SSv2 的视频一个都不在。
 
@@ -4967,7 +5021,7 @@ pkill -f vlm_audit.py
 
 # ② [101] 送新版脚本（上面两处修复都在里面，旧版跑还会再卡一次）
 cd ~/mobileclip && git pull origin main
-scp -P 31179 tools/data_audit/vlm_audit.py root@10.55.87.68:~/judge/
+scp -P 31179 recaption/scripts/vlm_audit.py root@10.55.87.68:~/judge/
 ```
 
 ```bash
@@ -5022,7 +5076,7 @@ PY
 
 # ⑥ [101] 取回并算一致率 + Cohen's κ
 scp -P 31179 root@10.55.87.68:~/judge/s2_verdicts_judge.jsonl outputs/audit_10k/
-bash tools/data_audit/run_v100.sh judge-agree
+bash recaption/scripts/run_v100.sh judge-agree
 ```
 
 **一个已经站住的中间结论**（n=13 时）：`en==trans` **30.8%** vs 主力 **92.5%**、
@@ -5039,7 +5093,7 @@ bash tools/data_audit/run_v100.sh judge-agree
 **Then report back** in `from-server.md`：⑤ 的自查输出（n / 两个同值率 / action 分布）、
 错误率、以及 ⑥ `judge-agree` 打印的三个门和各维度 κ。拿到就能把 T4 和决策 1 一起结掉。
 
-完整手册：[`tools/data_audit/SETUP_JUDGE_RELAY.md`](../../tools/data_audit/SETUP_JUDGE_RELAY.md)
+完整手册：[`recaption/docs/setup-judge-relay.md`](../../recaption/docs/setup-judge-relay.md)
 （§6 跑 500、§7 回传算分、§9 常见问题含「重复写入」一节）。
 
 ---
@@ -5156,7 +5210,7 @@ Including non-PyTorch memory, this process has 14.39 GiB memory in use.
 
 ```bash
 nvidia-smi
-bash tools/data_audit/run_v100.sh status
+bash recaption/scripts/run_v100.sh status
 ```
 
 **② 想现在就把训练循环验通**,用小 batch 挤进 S2 剩下的约 14.7 GiB:
@@ -5348,7 +5402,7 @@ bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 debug Tru
 
 ```bash
 # 只有拿到全量 10M jsonl 时才做(H100 那边),CPU ~20 分钟
-python tools/data_audit/profile_jsonl.py --input <全量 jsonl> --out outputs/audit_v0_1/s0_summary.json
+python recaption/scripts/profile_jsonl.py --input <全量 jsonl> --out outputs/audit_v0_1/s0_summary.json
 python -m json.tool outputs/audit_v0_1/s0_summary.json | grep -A3 duplicate
 ```
 
@@ -5361,8 +5415,8 @@ python -m json.tool outputs/audit_v0_1/s0_summary.json | grep -A3 duplicate
 低,比「共享字幕多正例」更值得做的是**按源视频 id 分组**(同 `video_id` 共享
 idx,或采样器层面禁止同视频 clip 进同一 batch)。
 
-**这条不需要服务器做任何事** —— 推导已落到 `notes/audit-10k-findings.md`
-结论 5、`experiments/README.md` §2b、`tools/data_audit/DATA_ISSUES.md`。
+**这条不需要服务器做任何事** —— 推导已落到 `recaption/docs/audit-findings.md`
+结论 5、`experiments/README.md` §2b、`recaption/docs/data-issues.md`。
 **当前待办仍然是下面 (4) 里那三行命令。**
 
 ---
@@ -5426,7 +5480,7 @@ t/b 大学习率这三项,**不能记到多正例头上**;多正例要等全量�
 **Diagnosis:** 不是你命令打错,是 `make_pilot_anno.py` 的 bug。片段**不是平铺在
 `videos/` 下**,而是在嵌套的 `InternVId-*/…` 目录里,jsonl 的 `video` 字段常常只是
 裸文件名,真正定位文件的是记录里的 `abs_path`。审查工具一直有这套三候选解析
-(`tools/data_audit/score_alignment.py: resolve_video_path()`),但
+(`recaption/scripts/score_alignment.py: resolve_video_path()`),但
 `make_pilot_anno.py` 只做了朴素的 `os.path.join(clips_root, video)` ——
 于是 1 万条全部判为「文件缺失」。而且它在打印计数**之前**就 `sys.exit`,
 所以那句话没法区分「字段名不对」还是「路径不对」。两个问题都已修并合进 `main`。
@@ -5474,7 +5528,7 @@ bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 debug Tru
 也不在审查抽样目录里,要用 `tools/make_pilot_anno.py` 从审查用的 10k jsonl 现做,
 也就是 `experiments/README.md` §2b 的**第 1 步**。直接跳到训练命令就会缺这个文件。
 
-**路径本身没问题** —— 已逐项对过 `tools/data_audit/`:
+**路径本身没问题** —— 已逐项对过 `recaption/scripts/`:
 
 | 项 | 值 | 出处 |
 |---|---|---|
@@ -5528,7 +5582,7 @@ CUDA 13 已经**彻底删掉 Volta(sm_70)**,所以 warning 里列出的架构是
 就炸了(`utils/distributed.py:119`),8 张卡全一样。
 
 所以 `deepspeed.enable False` 这条旁路救不了:崩溃发生在 `init_distributed_mode`,
-比选不选 deepspeed 更早,跟框架无关。这正是 `tools/data_audit/SETUP_V100.md` §0
+比选不选 deepspeed 更早,跟框架无关。这正是 `recaption/docs/setup-v100.md` §0
 早就写过的 V100 三大坑之一 —— 当时只对**审查环境**做了处理,**训练环境
 `mobileviclip` 漏了同样的处理**。
 

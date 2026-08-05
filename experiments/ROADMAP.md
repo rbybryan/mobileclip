@@ -57,8 +57,8 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 步骤 | 命令所在 md → 小节 |
 |---|---|
 | 第 0 步 就绪自检 | 本文件开头(`python experiments/check_readiness.py`);B0 前预检 = `README.md` §3.0 |
-| 1.1 下载(测试集/权重) | `tools/data_audit/SETUP_V100.md` §0(环境 + 权重后台下载)、§0.5;链接大全 `CHECKPOINTS.md`(Pretrained weights / Google Drive 两节);InternVid 分片抓取 `docs/internvid-download-zh.md` §3–§4;通用下载 `COMMANDS.md` §2 |
-| 1.2 数据审查流水线 | `tools/data_audit/SETUP_V100.md`:§1 冒烟 → §2 S0 → §3 S1(§3.5/3.6 体检)→ §4 S2(4.2 主力 / 4.3 裁判 / 4.5 体检)→ §5 S3 报告;§6.5 一条命令看全状态 |
+| 1.1 下载(测试集/权重) | `recaption/docs/setup-v100.md` §0(环境 + 权重后台下载)、§0.5;链接大全 `CHECKPOINTS.md`(Pretrained weights / Google Drive 两节);InternVid 分片抓取 `docs/internvid-download-zh.md` §3–§4;通用下载 `COMMANDS.md` §2 |
+| 1.2 数据审查流水线 | `recaption/docs/setup-v100.md`:§1 冒烟 → §2 S0 → §3 S1(§3.5/3.6 体检)→ §4 S2(4.2 主力 / 4.3 裁判 / 4.5 体检)→ §5 S3 报告;§6.5 一条命令看全状态 |
 | 1.3 10k 试点(✅ 已关闭) | `experiments/README.md` §2b 全套(anno 生成、`export MVC_DATA_DIR`、r0/r1、pytest);结论见 `pilot_10k_results.md`(#199) |
 | 1.4 B0 锁基线 | `experiments/README.md` §3.0 预检 → §3.2 路径对上 → §3.3 跑 B0 + `collect_results.py`;已锁数字在 §3.4 |
 | 1.5 导出冒烟(U1) | 任务与验收:`notes/plan-review-upgrades.md` U1;**脚本 `experiments/export_smoke.py`,命令 `COMMANDS.md` §3.6,测试 `tests/test_export_smoke.py`(22 项)**;结果 `experiments/export_smoke_results.md`。TFLite 补测用独立 venv(结果文档 §3) |
@@ -70,7 +70,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 2.2 R2 教师管线 | **提取脚本 `experiments/extract_teacher.py` 已落地(2026-07-29)**,命令 `COMMANDS.md` §3.10,单测 `tests/test_extract_teacher.py`(44 项);教师权重条目 `CHECKPOINTS.md`;设计决策清单:本文件 2.2 + `paper-plan-zh.md` §六.9 + 评审 U7 |
 | 2.4/2.5 A1/A2/B1(#197) | `notes/neural-inspired-implementation.md` Tier A(配置模板 + 单测)/ Tier B(B1 接线与三臂);配置文件待创建 |
 | **2.4 R1 负例库(建缓存 + 跑 A/B + 长档)** | 探针 `COMMANDS.md` §3.2;建池与 A/B 一条龙 `notes/r1-implementation-plan.md` §8;结果 §9.1/§9.2;长档两臂配置 `experiments/configs/nR1_textbank_pilot_long.py` + `pilot_10k_r1_long.py`,启动命令 `notes/live/from-claude.md` (54) |
-| 3.1 H100 全量数据审查 | `tools/data_audit/SETUP_H100.md` §0 环境 → §1 冒烟 → §2 S0 → §3 S1 → §4 S2 → §5 S3 |
+| 3.1 H100 全量数据审查 | `recaption/docs/setup-h100.md` §0 环境 → §1 冒烟 → §2 S0 → §3 S1 → §4 S2 → §5 S3 |
 | 3.2 R0→R1 全量起跑 | `experiments/SETUP_B100.md`(**文件顶部有进度标记清单,当前位置=§6 冒烟→R0**,§0–§5 已全绿):**§6 冒烟 / R0 / R1 启动命令**已随 `from-claude.md`「07-24 (5) §5 全绿」交接 → §7 两个坑 → §8 交回;预算阶梯 = 评审 U6 |
 | 汇总与判据 | `experiments/README.md` §5 汇总对比、§6 判据 |
 | 环境/评测/git 备查 | `COMMANDS.md` §1 环境、§3 零样本评测、§4 训练、§5 git、§6 handoff |
@@ -81,13 +81,13 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 
 - [ ] **1.1 后台挂下载**(不占 GPU,越早越好):MSR-VTT 1k 测试集、
       官方 `mobileviclip_small.pt`、底座 `mobileclip_s2.pt`。
-      弱网断点续传配方:`tools/data_audit/SETUP_V100.md` §0、
+      弱网断点续传配方:`recaption/docs/setup-v100.md` §0、
       `docs/internvid-download-zh.md`。已有的测试集放好后用
       `check_readiness.py` 确认识别。
 - [x] **1.2 数据审查流水线** —— ✅ 2026-07-22 完成 S0–S3(10k 自动化审查):
-      正式报告 `docs/internvid-zh-audit-report.md`,台账
-      `tools/data_audit/DATA_ISSUES.md`,统计细节 `notes/audit-10k-findings.md`。
-      后续 s4-merged 重字幕落地走 `notes/recaption-master-plan.md`
+      正式报告 `recaption/docs/audit-report.md`,台账
+      `recaption/docs/data-issues.md`,统计细节 `recaption/docs/audit-findings.md`。
+      后续 s4-merged 重字幕落地走 `recaption/docs/master-plan.md`
       (v1.1,#223;V100 Stage 0 命令见 from-claude「07-24 (4)」)。
       **🟡 重字幕线当前定版见该文件 §0.9(2026-07-28 全案复审,与旧段冲突以它为准)**:
       流水线定为 **①独立多遍(A dense×5 / B 固定槽位×3)→ ②判断式直融(§5.7 v3,弃硬投票)
@@ -338,7 +338,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 
 - [ ] **3.1** 10M InternVid 到位(✅ 07-24 确认:b100 本地 jsonl 即全量
       **10,647,458** 条,免下载,from-claude「07-24 (3)」)+ H100 机全量审查
-      (`SETUP_H100.md`,未跑;**不阻塞 R0**,可与训练并行排)。
+      (`recaption/docs/setup-h100.md`,未跑;**不阻塞 R0**,可与训练并行排)。
 - [ ] **3.2** 🟡 **进行中**:§4 anno/软链 + §5 预检已全绿(11 片 `[OK ]` + 权重
       在位,#225),冒烟→R0 命令已交接(from-claude「07-24 (5) §5 全绿」)。
       等首光回报 → R0 起跑 → **首日实测单 epoch wall-clock**,据此触发
@@ -521,7 +521,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | **1M 验证层:首条臂 A/B(`sub1m_r1a` vs `r0`,seed 42)** | 🔴 **r1a 显著输(DSL 口径)** | 配对 bootstrap(§3.9):**DSL `ret_test/` r_mean Δ −0.95 [−1.68,−0.20]、R_sum Δ −5.70 [−10.10,−1.20] 均显著为负**;raw `ret_test_emb/` 同向但卡边界(r_mean Δ −0.63 [−1.40,+0.13])。**两口径一致为负 ⇒ SigLIP sigmoid 在全局 batch 512(≪ ~32k 甜区)下不如 softmax**,符合理论。⚠️ 仅 seed 42;`sub1m_r1a_s43` 未训,**两 seed 同向才成正式否决**。见 [`verification-tier-1m-zh.md`](../notes/verification-tier-1m-zh.md) §7 |
 | 1M 验证层 其余 11 臂 | 🟡 **进行中(r0/r1a seed-42 已评,见上行)** | 填 10k 冒烟与 10M 论文数字之间的空档:**8 config = 4 臂(r0/r1a/r1b/nA1)× 2 seed**,`train_corpus=internvid_v1`(单个 1M 分片)、`batch_size=128`、epoch=3、**测试集仍是标准 MSR-VTT 1k**;runner `experiments/run_verify_1m.sh`。判法=同 seed 相减 + 两 seed 同向。**+4 config = R1 文本负例库自配对 A/B**(`sub1m_r1both`/`sub1m_nR1` × 2 seed,彼此相减,见下一行)。见 [`verification-tier-1m-zh.md`](../notes/verification-tier-1m-zh.md) |
 | R1 大数据 A/B(真正发威档) | 🟡 **配置已入库(1M 子集档)** | 不等全量,**放到 1M 验证层跑**:处理 `sub1m_nR1_s42/s43`(+bank) vs 对照 `sub1m_r1both_s42/s43`(SigLIP 制度无 bank),**彼此相减**;需先建 1M 缓存 `textbank_1m_*`(命令 `COMMANDS.md` §3.3.2)。为何 1M 才发威:全局 batch 512 ≪ SigLIP 饱和 ~32k + 不过拟合 ⇒ 领先=真硬负例(非 10k 挡早塌伪影)。全量 10M=论文数字。设计见 [`r1-implementation-plan.md`](../notes/r1-implementation-plan.md) §10 |
-| 重字幕线定版(§0.9 全案复审) | 🟡 | 2026-07-28:判断式直融 v3 定版 + 供给取代旧段;**3 红**(GDINO 未装=最大裸露面 / 512→640 已修 / 长稿未验真)、4 黄(迭代快于证据 ⇒ 冻结 prompt)、4 绿。**不占 EN 主时钟(D2)**。见 [`recaption-master-plan.md`](../notes/recaption-master-plan.md) §0.9 |
+| 重字幕线定版(§0.9 全案复审) | 🟡 | 2026-07-28:判断式直融 v3 定版 + 供给取代旧段;**3 红**(GDINO 未装=最大裸露面 / 512→640 已修 / 长稿未验真)、4 黄(迭代快于证据 ⇒ 冻结 prompt)、4 绿。**不占 EN 主时钟(D2)**。见 [`recaption/docs/master-plan.md`](../recaption/docs/master-plan.md) §0.9 |
 | b100 训练侧两个坑 | ✅ 已修/已档 | `patch_embed` 秒级 OOM(别等空卡,按剩余显存裁 batch)+ DDP×梯度检查点 `marked as ready twice` ⇒ 两处 `checkpoint()` 加 `use_reentrant=False`(#316,`TROUBLESHOOTING.md`) |
 | **架构第四轮(首次实测 profile)** | 🔴 **两条前提被推翻,需服务器端 5 分钟核验** | [`notes/architecture-round4.md`](../notes/architecture-round4.md)。四份独立评审 + **首次真实 profile**。①**GATE-0 的 ②③ 两条腿疑似混淆**:`freeze_vision` 只解冻时序分支(`_small.py:94-112`),而仓库自己的进度报告说上游recipe正是「冻结图像骨干+只训时序分支」(`clip-2025-progress-report.md:184`)⇒ 空间 λ 是在 MobileCLIP-S2 **图像预训练**里学的、时序 λ 只在短视频阶段学 ⇒ 6.1% 比值把「无用」和「少练了 100 倍」混为一谈。**腿①(行为学 shuffle)不受影响**。②**GPU 在空转,MFU ≈0.67%**(477 GFLOP/样本 × 55.8 样本/s ÷ 4×H100 ÷ 990 TFLOP/s)。~~另一路佐证:55.8÷24 workers = 430 ms/片,典型 decord 数 ⇒「6.6 天/轮」是 `num_workers` 的产物~~ ✅ **2026-07-30 四段实测定案:解码只要 ~20 ms(差 20×,那句「两条独立路径互相印证」是算术巧合);挂载盘 I/O ≈0%;1→24 workers 线性无饱和;loader 供得起 132.7 样本/s 而训练每卡只吃 13.9 ⇒ **富余 9.5×** ⇒ **dataloader 不是约束,「训练是解码瓶颈」不成立**。MFU 仍 0.67%,原因在 GPU 侧(kernel-launch/低占用率/通信);「6.6 天/轮」按真实预算对待。**③实测:**时序分支 = 0.20% MACs 但 27.8% 的 ONNX 图**(440/1581 节点)、18% CPU mixer 墙钟。④**O(T²) 项只有 2.10–2.25%**(「8%」是 stage-4 总量)⇒「时序注意力是 O(T²)」这条线**按算力永久关闭**。⑤**AC5+AC9 柱二被反转**:INT8 把 δ+λΔ 融合核里的时序项**整个抹掉**(λ 中位 8e-4 ≪ 3.9e-3 阈值),AC5 的容量是在 INT8 **兑出**而非兑入,且其验收判据「验推理逐位不变」是 fp32 测试、测不到这件事 |
 | 架构探索 backlog(AC1–AC9,第三轮最终稿) | ⬜ | 顾问式,**均未 A/B、不占主时钟**;落地顺序在「架构探索 backlog」段;AC1a=可导出 P9 由 §1.5 触发、AC-b 是 AC2 前置、AC6′ 净新增仅文本塔 LoRA;死路 4 条已判。源码核查稿 #310 |
@@ -609,14 +609,14 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
   token-wise 损失——不重复但优先级低(round-4 实测 stage-4 注意力仅占 ~7.35% MACs,
   P1/P7 两个更大的免费收益还没认领);InternVideo2 特征级/注意力图蒸馏——已大半存在于
   未接线的 `UTA_Loss`/`new_UTA_Loss` 且与 round-3 C1/C1a/C1b 重叠。唯一存活但已判定
-  「不排队」的第四方向:DFN 本体式过滤网络,见 `data-quality-caprl-scheme.md` §3 附注。
+  「不排队」的第四方向:DFN 本体式过滤网络,见 `recaption/docs/caprl-scheme.md` §3 附注。
   **副产品**:本项目自己的训练方式被误标"LiT 式"(实为冻结**文本**,与锁图像塔的经典
   LiT 方向相反)——6 处文档已订正(`model-architecture-improvements(-zh).md`、
   `paper-plan(-zh).md`、`neural-inspired-round2(_zh).md`)。
 - 2026-07-30:**闸③ 的测法在交付前被自己的规矩否掉了一次,已改成背靠背配对。**
   维护者问「能不能在 V100 上跑」⇒ **不能**,两条硬理由:① `101vector`(8×V100)
   **没有训练数据**(只有 `internvid_zh_10k` 那 1 万条抽样,11 个 InternVid 分片一个没有,
-  见 `SETUP_V100.md` 开篇 + TROUBLESHOOTING「这台机器上根本没有下游评测数据」);
+  见 `recaption/docs/setup-v100.md` 开篇 + TROUBLESHOOTING「这台机器上根本没有下游评测数据」);
   ② 要检验的 9.1821 s/it 与 MFU 0.67% **本身是 4×H100 的数**,V100 无 bf16、fp16 峰值差约 8×,
   测出来既证实不了也证伪不了。**顺带修掉一处文档硬伤**:COMMANDS §3.11 原写「全部在
   101vector/H100 上跑」—— 把 V100 机和 H100 机当成了同一台。
@@ -964,5 +964,5 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 - 2026-07-24:重字幕主计划升 **v1.1**(#223 + handoff live):Panel-V 全自动验收、撤人力标定;Stage 0 命令不变;V100 recap 命令交接(from-claude (4))
 - 2026-07-24:确认 b100 本地 jsonl = **全量 10.6M** InternVid-10M-FLT(非子集),免 gdown(from-claude (3));zh 源字幕路径钉死(#213)
 - 2026-07-23:**10k 试点三判据全过,1.3 关闭**(#199);计划评审 U1–U10 + C2 按 FluxViT 收窄(#200);命令位置索引(#204);A1 惊奇池化代码合入(#205);b100 §0–§1 就绪(#201)
-- 2026-07-22:**B0 基线锁定**(MSR-VTT t2v R@1=42.50 对上论文,4 基准);10k 数据审查 S0–S3 完成(`docs/internvid-zh-audit-report.md`)
+- 2026-07-22:**B0 基线锁定**(MSR-VTT t2v R@1=42.50 对上论文,4 基准);10k 数据审查 S0–S3 完成(`recaption/docs/audit-report.md`)
 - 2026-07-20 及以前:计划文档四份、实验框架/组件开关/卫生修复(#64)、10k 试点配置(#67)

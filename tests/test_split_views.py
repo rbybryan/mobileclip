@@ -1,4 +1,4 @@
-"""Unit tests for the A' sentence-split rule (tools/data_audit/split_views.py).
+"""Unit tests for the A' sentence-split rule (recaption/scripts/split_views.py).
 
 Pure-function tests using the char-budget fallback (no transformers needed):
     python tests/test_split_views.py   # or pytest tests/test_split_views.py
@@ -6,8 +6,9 @@ Pure-function tests using the char-budget fallback (no transformers needed):
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from tools.data_audit.split_views import split_dense  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
+                                "recaption", "scripts"))
+from split_views import split_dense  # noqa: E402
 
 FITS30 = lambda t: len(t) <= 30  # noqa: E731  char-budget stand-in for MiniRBT@32
 

@@ -86,7 +86,7 @@ Video-Text Models"*(名字待定)。
 
 | # | 贡献 | 来源 | 新颖性层级 |
 |---|------|------|-----------|
-| C1 | **视频数据强化(Video DR)**:InternVideo2 教师离线过一遍 InternVid-10M-FLT,存储视频+文本 embedding(真实字幕 + 重字幕合成字幕);学生用 VTC + embedding 蒸馏 + 相似度矩阵蒸馏训练 | P5 + `data-quality-caprl-scheme.md` | 视频侧首创;配方级 |
+| C1 | **视频数据强化(Video DR)**:InternVideo2 教师离线过一遍 InternVid-10M-FLT,存储视频+文本 embedding(真实字幕 + 重字幕合成字幕);学生用 VTC + embedding 蒸馏 + 相似度矩阵蒸馏训练 | P5 + `recaption/docs/caprl-scheme.md` | 视频侧首创;配方级 |
 | C2 | **时间维弹性蒸馏**:时序算子 T 无关化 + 随机 T 训练、对齐固定的 16 帧教师目标 → 单一模型、帧数即旋钮;Pareto 曲线在每个预算点均胜过固定 T 基线 ⚠️ *(**2026-07-29 G2 已定案,见 `plan-review-upgrades.md` §6.1.1:判据 = 多基准聚合 R-Sum + 两口径同向 + 配对 CI 不含 0;δ 由实测种子地板逐 T 重定,0.3 作废;±2.4 不适用于配对同 T 比较**)同一条主张此前并存三套成功标准——这里的「每个预算点都胜过」、§四 R3 闸门的「与自身 T=8 差距 ~1 点以内」、以及 U10 预注册的**非劣性** δ=0.3(逐 T 点)。**以 U10 的那套为准(它才是预注册的)**;且按 ROADMAP G2,δ=0.3 比实测噪声地板低约 8 倍,边际本身尚未落定(`plan-review-upgrades.md` §6.1 列了三条出路,一条都还没选)* | P2 **并入** P5 | 全新想法——正是它让这成为一篇论文而非一次移植。**已被 FluxViT 收窄——见 §七.1** |
 | C3 | **配方组件 + 消融**:sigmoid 多正例损失(可学习 t/b,移植 `get_mask`)、时间维注意力池化头(零初始化,严格不退化) | P4 + P3 | 已知技术,我们出消融表 |
 | C4 | **结果**:多帧数下的零样本检索(MSR-VTT/DiDeMo/ANet)+ 零样本分类与多选(K400/UCF101/HMDB51/~~SSv2-MC~~ —— **SSv2-MC 数据缺失,order-sensitive 评测套件已搁置,见 `notes/order-sensitive-eval.md`**)、**端侧延迟表**,对比 MobileViCLIP / InternVideo2-S/B / **FluxViT-S(GFLOPs 对齐行,§七.1)** / ~~TempMe~~(**TempMe 属微调协议:单列区块,不进零样本表**)。(07-20 修正:MSVD/LSMDC 从承诺列表移除——repo 无标注/配置支持,补齐后再加回) | 评测框架 | — |

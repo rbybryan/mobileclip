@@ -3,7 +3,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
-                                "tools", "data_audit"))
+                                "recaption", "scripts"))
 from fuse_condense import (cluster_views, jaccard, ngrams,  # noqa: E402
                            select_units)
 
