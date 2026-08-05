@@ -3196,3 +3196,32 @@ git checkout -B "$BR" origin/main
 ...
 git push -u origin "$BR"
 ```
+
+---
+
+## 改了选帧 / 融合 prompt / 步骤开关后重跑，结果一个字没变
+
+**症状**：`FRAME_SELECT=uniform`、改了 `FUSE_LONG_PROMPT`、或把 `DO_*` 开关翻了一遍，
+重跑 `pipeline-sample` 秒过，`recap_pipeline.tsv` 里的重述/长稿/短稿和上一轮完全一样。
+
+**原因**：所有 LLM 步骤都**按 video 续跑**——`vlm_audit_hf.py` 启动时先读自己那份输出
+文件里已有的 `video` 集合，命中就跳过，根本不会重新生成。这是为了让被 OOM 打断的
+8 卡任务能接着跑，代价就是**旧结果不会因为参数变了而自动作废**。
+
+**修复**：改哪一步就删哪一步的产物，再重跑（`$OUT` 默认 `outputs/audit_10k`）：
+
+```bash
+OUT=outputs/audit_10k
+# ① 重述（改了 FRAME_SELECT / RECAP_TEMP / 重述 prompt / N_RECAP）
+rm -f $OUT/recap5.*.jsonl                 # A 臂 dense
+rm -f $OUT/recap_slot.*.jsonl             # B 臂 slot
+rm -f $OUT/pipe_recaps.jsonl $OUT/pipe_sl_recaps.jsonl   # 抽出来的样本子集
+# ④b2 直融（改了 FUSE_LONG_PROMPT / FUSE_SHORT_PROMPT / FUSE_GPUS）
+rm -f $OUT/pipe*_fused_d.*.jsonl
+# ⑤ 验真修复环（改了 REFINE_PROMPT）
+rm -f $OUT/pipe*_fused_*_r.*.jsonl $OUT/pipe*_fused_*_final.jsonl
+```
+
+**顺带一条**：`FUSE_GPUS` 改了卡数（比如 1 → 8）而不删 `pipe*_fused_d.*.jsonl`，
+不会出错但会**白算一遍**——每个分片只认自己那份输出文件，旧的单卡文件里已有的片
+在新分片眼里是"没做过"。计时表那一行会因此偏高。

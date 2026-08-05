@@ -35,6 +35,8 @@ import torch
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from frame_pick import (candidate_indices, frame_stats,  # noqa: E402
+                        select_frames)
 from vlm_audit import (CONDENSE_KEYS, CONDENSE_PROMPT, DERIVE_KEYS,  # noqa: E402
                        DERIVE_PROMPT, FUSE_LONG_KEYS, FUSE_LONG_PROMPT,
                        FUSE_SHORT_KEYS, FUSE_SHORT_PROMPT,
@@ -46,7 +48,8 @@ from vlm_audit import (CONDENSE_KEYS, CONDENSE_PROMPT, DERIVE_KEYS,  # noqa: E40
                        salvage_struct_items)
 
 
-def sample_frames_pil(path, num_frames, max_side, phase=0.5):
+def sample_frames_pil(path, num_frames, max_side, phase=0.5, n_cand=1,
+                      window=0.12):
     import decord
     vr = decord.VideoReader(path, num_threads=2)
     n = len(vr)
@@ -54,17 +57,19 @@ def sample_frames_pil(path, num_frames, max_side, phase=0.5):
         raise RuntimeError("empty video")
     # TSN-style segment centers: InternVid clips are shot-cut, so the first/last
     # frames are often transitions/black frames — never sample the boundaries.
-    # `phase` is the within-segment offset (0.5 = centre). --mode recap sweeps it
-    # per sample (frame jitter) so each of the N independent captions sees a
-    # slightly different 8-frame view: a unit surviving across DIFFERENT visual
-    # evidence is more robustly grounded than one that merely survives decoding
-    # noise on a fixed frame set (notes/caption-fusion-scheme.md §1.1-3).
-    idx = np.clip(((np.arange(num_frames) + phase) / num_frames * n).astype(int),
-                  0, n - 1)
-    frames = vr.get_batch(idx).asnumpy()
+    groups = candidate_indices(n, num_frames, phase, n_cand, window)
+    wanted = sorted({i for g in groups for i in g})
+    # one decord batch for every candidate: random access is the expensive part,
+    # decoding 3x8 instead of 8 frames costs ~0.1s/pass against a ~2s generate
+    by_idx = dict(zip(wanted, vr.get_batch(wanted).asnumpy()))
+    if n_cand > 1:
+        stats = {i: frame_stats(by_idx[i]) for i in wanted}
+        chosen = select_frames(groups, stats)
+    else:
+        chosen = [g[0] for g in groups]
     out = []
-    for fr in frames:
-        img = Image.fromarray(fr)
+    for i in chosen:
+        img = Image.fromarray(by_idx[i])
         if max(img.size) > max_side:
             img.thumbnail((max_side, max_side))
         out.append(img)
@@ -142,6 +147,18 @@ def main():
                          "within-segment phase so variance also comes from seeing "
                          "different frames. --no-frame-jitter isolates decoding "
                          "variance for the temperature ablation (§6.4).")
+    ap.add_argument("--frame-candidates", type=int, default=3,
+                    help="[--mode recap*] candidates offered per TSN segment "
+                         "before picking the frame actually shown (default 3). "
+                         "The pick favours sharp, non-black, non-duplicate "
+                         "frames INSIDE the segment, so the jittered grid — and "
+                         "with it the independence of the N passes — is "
+                         "untouched. 1 = plain uniform+jitter (old behaviour).")
+    ap.add_argument("--frame-window", type=float, default=0.12,
+                    help="[--mode recap*] half-width of the candidate window, "
+                         "in segments (default 0.12). Keep it below half the "
+                         "jitter step (0.5/N) or passes start converging on the "
+                         "same frames — watch the COLLAPSE flag in recap_diag.")
     ap.add_argument("--mode", default="full",
                     choices=["full", "trans", "gran", "merge", "recap",
                              "recap-struct", "recap-slot", "derive",
@@ -236,8 +253,10 @@ def main():
                     for s in range(args.n_captions):
                         phase = (0.5 if args.no_frame_jitter
                                  else (s + 0.5) / args.n_captions)
-                        frames = sample_frames_pil(path, args.frames,
-                                                   args.max_side, phase=phase)
+                        frames = sample_frames_pil(
+                            path, args.frames, args.max_side, phase=phase,
+                            n_cand=args.frame_candidates,
+                            window=args.frame_window)
                         try:
                             text = generate(model, processor, frames, RECAP_PROMPT,
                                             args.max_new_tokens,
@@ -265,8 +284,10 @@ def main():
                     for s in range(args.n_captions):
                         phase = (0.5 if args.no_frame_jitter
                                  else (s + 0.5) / args.n_captions)
-                        frames = sample_frames_pil(path, args.frames,
-                                                   args.max_side, phase=phase)
+                        frames = sample_frames_pil(
+                            path, args.frames, args.max_side, phase=phase,
+                            n_cand=args.frame_candidates,
+                            window=args.frame_window)
                         obj, text = None, None
                         try:
                             text = generate(model, processor, frames,
@@ -344,8 +365,10 @@ def main():
                     for s in range(args.n_captions):
                         phase = (0.5 if args.no_frame_jitter
                                  else (s + 0.5) / args.n_captions)
-                        frames = sample_frames_pil(path, args.frames,
-                                                   args.max_side, phase=phase)
+                        frames = sample_frames_pil(
+                            path, args.frames, args.max_side, phase=phase,
+                            n_cand=args.frame_candidates,
+                            window=args.frame_window)
                         caps = []
                         try:
                             text = generate(model, processor, frames,

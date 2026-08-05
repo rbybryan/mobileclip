@@ -1,24 +1,35 @@
 # A/B 两条重述管线：分步图解、模型与 Prompt 全文（现行版）
 
-> 写给维护者的一页速览。与代码同步于 2026-07-29；设计权威是
+> 写给维护者的一页速览。与代码同步于 2026-08-05；设计权威是
 > [`notes/recaption-master-plan.md`](../notes/recaption-master-plan.md) §0.9 定版一页图，
 > 冲突以彼为准。运行入口统一是 `tools/data_audit/run_v100.sh`。
 
 ## 0. 一句话总览
 
 同一段视频**独立看 N 遍**、各写一版描述（A 臂整段稠密写 5 遍；B 臂按固定五栏各写 3 遍），
-再让**同一个 LLM 只读文字**把 N 版融合成「长稿（不限字数，保细节）+ 短稿（≤30 字训练字幕）」，
-短稿过 GDINO+OCR 画面验真、不过就最小修改后复验。**训练用的就是直融短稿那一条**；
-投票浓缩版只做对照诊断，不上评审页。
+再让**同一个 LLM 只读文字**把 N 版融合成「长稿（不限字数，保细节）+ 短稿（≤30 字训练字幕）」。
+**训练用的就是直融短稿那一条。**
+
+**2026-08-05 起默认只跑这两步**（维护者指令：仅优化 A/B 方案真正用到的步骤，其余做成
+可选项并默认关闭）。派生、SigLIP 打分、A′ 句切、投票浓缩对照版、GDINO+OCR 画面验真
+全部保留在脚本里，但各由一个 `DO_*` 开关控制，默认关；`PIPE_FULL=1` 一键恢复全链。
 
 ```
-① 独立重述×N ──A: dense×5──┐
-   (温度0.9+帧抖动)        ├─② 派生(仅A) ─③ SigLIP打分*─④ A′切句*+多样性诊断
-              └─B: slot×3──┘                                   │
-④b 融合双版: 直融(长稿→短稿, 终稿) ‖ 投票浓缩(规则计票→LLM打包, 对照)
-⑤ 短稿验真(GDINO+OCR) → 有✗ → refine最小修改 → 复验 → *_final
-⑥⑦ 全景TSV + 离线评审包(index.html)          (* = PIPE_LEAN=1 可跳过)
+默认开（两步 + 免费哨兵 + 产物）
+① 独立重述×N ──A: dense×5──┐   温度0.9 + 帧抖动 + 内容感知选帧(8卡分片)
+                            ├─→ ④ 多样性诊断(CPU, 坍缩哨兵, 不可省)
+              └─B: slot×3──┘
+④b2 直融: 调用1 长稿(不限字数) → 调用2 短稿(≤30字训练字幕)   (8卡分片)
+⑥⑦ 全景TSV + 离线评审包(index.html)
+
+默认关（各一个开关，按需打开）
+② 派生 DO_DERIVE ─ ③ SigLIP打分 DO_SIGLIP ─ ④ A′切句 DO_APRIME
+④b1+④b3 投票浓缩对照版 DO_VOTE
+⑤ 短稿验真(GDINO+OCR) → 有✗ → refine最小修改 → 复验 → *_final   DO_VERIFY
 ```
+
+⑤ 关掉意味着短稿是**未经画面查证**的 LLM 直融稿——做 A/B 方案对比够用，真要把某一批
+落成训练数据前，请 `DO_VERIFY=1` 再跑一遍（它是全链唯一的外部幻觉门，计划 §3.5）。
 
 ## 1. A/B 两臂对照表
 
@@ -40,20 +51,49 @@
 
 ## 2. 分步说明（两臂共用骨架）
 
-| 步 | 做什么 | 模型 / 实现 | 输入 → 输出 |
-|---|---|---|---|
-| ⓪ | 从 RECAPTION 桶队列取 N_SAMPLE 片 | `sed` | `recaption_tasks.jsonl` → `pipeline_sample.jsonl` |
-| ① | 独立重述 ×N（8 卡分片、按 video 续跑） | Qwen3-VL-8B，temp 0.9 / top_p 0.9，看 8 帧，每遍帧位抖动 | 视频 → `recap5.*.jsonl`（B：`recap_slot.*.jsonl`） |
-| ② | 仅 A 臂：每段稠密描述 → 2-3 条检索短句 + 英文 gloss（闭集：不重看视频，防派生步注入新细节） | Qwen3-VL-8B，temp 0 贪心，纯文本 | `pipe_recaps.jsonl` → `pipe_views.*.jsonl` |
-| ③ | 逐重述 SigLIP 打分（诊断徽章用；`PIPE_LEAN=1` 跳过） | SigLIP2 so400m-patch16-384 | 重述文本+4 帧 → `*_scores.*.jsonl` |
-| ④ | A′ 句切（可跳）+ 多样性诊断（**不可跳**：片内中位 3-gram Jaccard>0.8 即坍缩红旗） | CPU 规则 | → `*_diag.jsonl/txt` |
-| ④b | **融合双版并出**（见 §3） | Qwen3-VL-8B 纯文本 + CPU 规则计票 | → `*_fused_d.*` 直融 ‖ `*_units` + `*_fused_v.*` 投票 |
-| ⑤ | 短稿画面验真；有 ✗ 则 refine 最小修改后复验；终稿一律落 `*_final.jsonl` | GroundingDINO-base fp32 + RapidOCR；修复用 Qwen3-VL-8B | → `*_fused_d_final.jsonl` 等 |
-| ⑥⑦ | 全景 TSV + 离线评审包（index.html + videos/，可填单选导出） | CPU | → `recap_pipeline*.tsv`、`bundle_*/` |
+「默认」列 = `pipeline-sample` / `pipeline-compare` 不加任何环境变量时的行为。
 
-## 3. ④b 融合双版（核心步骤）
+| 步 | 默认 | 做什么 | 模型 / 实现 | 输入 → 输出 |
+|---|---|---|---|---|
+| ⓪ | 开 | 从 RECAPTION 桶队列取 N_SAMPLE 片 | `sed` | `recaption_tasks.jsonl` → `pipeline_sample.jsonl` |
+| ① | **开** | 独立重述 ×N（8 卡分片、按 video 续跑） | Qwen3-VL-8B，temp 0.9 / top_p 0.9，看 8 帧，每遍帧位抖动 + 段内内容感知选帧（§2.1） | 视频 → `recap5.*.jsonl`（B：`recap_slot.*.jsonl`） |
+| ② | 关 `DO_DERIVE=1` | 仅 A 臂：每段稠密描述 → 2-3 条检索短句 + 英文 gloss（闭集：不重看视频） | Qwen3-VL-8B，temp 0 贪心，纯文本 | `pipe_recaps.jsonl` → `pipe_views.*.jsonl` |
+| ③ | 关 `DO_SIGLIP=1` | 逐重述 SigLIP 打分（诊断徽章用） | SigLIP2 so400m-patch16-384 | 重述文本+4 帧 → `*_scores.*.jsonl` |
+| ④ | A′ 关 `DO_APRIME=1`；诊断**开** | A′ 句切 + 多样性诊断（片内中位 3-gram Jaccard>0.8 即坍缩红旗） | CPU 规则 | → `*_aprime.jsonl`、`*_diag.jsonl/txt` |
+| ④b2 | **开** | 直融 = 长稿→短稿（见 §3），8 卡分片 | Qwen3-VL-8B 纯文本，贪心 | `pipe_recaps.jsonl` → `*_fused_d.*.jsonl` |
+| ④b1+3 | 关 `DO_VOTE=1` | 投票浓缩对照版（规则计票 → LLM 打包） | CPU 规则 + Qwen3-VL-8B 纯文本 | → `*_units.jsonl` + `*_fused_v.*.jsonl` |
+| ⑤ | 关 `DO_VERIFY=1` | 短稿画面验真；有 ✗ 则 refine 最小修改后复验；终稿落 `*_final.jsonl` | GroundingDINO-base fp32 + RapidOCR；修复用 Qwen3-VL-8B | → `*_fused_d_final.jsonl` 等 |
+| ⑥⑦ | 开 `DO_TSV=0`/`DO_BUNDLE=0` 可关 | 全景 TSV + 离线评审包（index.html + videos/，可填单选导出） | CPU | → `recap_pipeline*.tsv`、`bundle_*/` |
 
-**版本一「直融」= 终稿**（计划 §5.7 v5，两次纯文本调用、贪心解码）：
+关掉的步骤在全景 TSV 里出空列，评审页照常出；验真关掉时短稿以 `unverified` 状态进表。
+`DO_VOTE=1` 且是 A(dense) 臂时脚本会自动把 `DO_DERIVE` 一并打开——投票需要派生出的 views。
+
+### 2.1 ① 的选帧：8 帧怎么挑（2026-08-05 新增）
+
+维护者的原问题是「为了保证 N 遍互相独立，抽的 8 帧位置错开——可优化：如何挑选这 8 帧？」。
+现在分两层，代码在 [`tools/data_audit/frame_pick.py`](../tools/data_audit/frame_pick.py)：
+
+1. **哪些帧可选**（`candidate_indices`）：仍是 TSN 均匀分段 + 每遍相位抖动，**一个字没改**。
+   这层是 N 遍独立性的来源，动了跨遍一致性就不再是证据。
+2. **段内挑哪一帧**（`select_frames`）：每段先给 `FRAME_CAND=3` 个候选（抖动中心 ±0.12 段宽），
+   打分挑一帧，评分 = 清晰度（32×32 灰度平均梯度，模糊/叠化得分低）+ 0.5×与上一保留帧的
+   画面差异（静止镜头去重），对比度 < 8 的纯黑/纯色转场帧直接一票否决。
+
+为什么值得做：8 帧就是模型看到的**全部证据**，纯均匀抽样会把名额花在运动模糊、转场黑帧、
+和与前一帧几乎一样的静止画面上——每浪费一格，可用证据少一格，模型就更容易去补脑。
+代价是每遍多解码 16 帧（~0.1s，对比一次生成 ~2s），GPU 侧零开销。
+
+开关：`FRAME_SELECT=content`（默认）/ `uniform`（旧行为，`FRAME_CAND=1` 时逐帧等价，
+单测钉死）；`FRAME_CAND` / `FRAME_WINDOW` 可调。窗口别超过抖动步长的一半（0.5/N），
+否则各遍会挑到同一批帧——看 `*_diag.txt` 的 COLLAPSE 旗。
+
+## 3. ④b 融合（核心步骤）
+
+**版本一「直融」= 终稿、默认唯一开着的融合**（计划 §5.7 v5，两次纯文本调用、贪心解码）。
+2026-08-05 起它和 ① 一样按 `FUSE_GPUS`（默认 = `NGPU` = 8）**多卡数据并行分片**：纯文本
+步骤，显存/吞吐特性与重述一致，直接线性加速（A 臂实测 31.8 s/片 → 理论 ~4 s/片）。
+卡被别人占时 `FUSE_GPUS=1` 退回单卡前台。改卡数后建议先 `rm ${P}_fused_d.*.jsonl`，
+否则旧分片文件里的片会被新分片重算一遍（续跑是按分片自己的输出去重的）。
 
 1. **调用 1（长稿）**：读 N 段独立重述，像字幕编辑一样做判断式取舍——多段一致→保留；
    矛盾→取多数或模糊化；单源细节按类型分治（动作/位置这类难编造的可留，数字/画面文字/
@@ -62,7 +102,7 @@
 2. **调用 2（短稿）**：只读长稿（闭集，判断已经做完），提炼**一条 ≤30 字的自然句**
    ——这就是训练字幕（CLIP 文本编码器 32-token 窗：[CLS]+~30 汉字+[SEP]）。
 
-**版本二「投票浓缩」= 对照诊断**（计划 §5.5）：`fuse_condense.py` 用 CPU 规则跨遍聚类
+**版本二「投票浓缩」= 对照诊断，默认关**（计划 §5.5，`DO_VOTE=1` 打开）：`fuse_condense.py` 用 CPU 规则跨遍聚类
 计票（3-gram Jaccard≥0.35 或共享 gloss 名词），支持数 ≥2 的单元过票，LLM 只负责把过票
 单元打包成 2-5 条 ≤28 字短句。它的价值是给直融当参照：直融短稿里出现了投票落选的细节、
 或漏了高票单元（MISS 哨兵），都是要人工看一眼的信号。
@@ -71,9 +111,9 @@
 
 | 模型 | 用途 | 细节 |
 |---|---|---|
-| **Qwen/Qwen3-VL-8B-Instruct** | 全链唯一 LLM：①重述 ②派生 ④b两种融合 ⑤refine | HF transformers 本地推理，fp16 + sdpa（V100 无 FA2），装载 ~17-19 GB/卡；重述 temp 0.9 采样，其余 temp 0 贪心；看 `S2_FRAMES=8` 帧；16G 卡换 4B |
-| google/siglip2-so400m-patch16-384 | ③ 逐重述图文对齐分（诊断） | 4 帧均值；`PIPE_LEAN=1` 可跳 |
-| IDEA-Research/grounding-dino-base | ⑤ 验真：gloss 名词开放词汇检测 | **强制 fp32**（fp16 在 V100 上 NaN）；服务器连不上 HF 时按 TROUBLESHOOTING 本地下载后 scp 进 `~/.cache/huggingface/hub/` |
+| **Qwen/Qwen3-VL-8B-Instruct** | 全链唯一 LLM：①重述 ④b2直融（默认）+ ②派生 ④b3投票打包 ⑤refine（默认关） | HF transformers 本地推理，fp16 + sdpa（V100 无 FA2），装载 ~17-19 GB/卡；重述 temp 0.9 采样，其余 temp 0 贪心；看 `S2_FRAMES=8` 帧；16G 卡换 4B |
+| google/siglip2-so400m-patch16-384 | ③ 逐重述图文对齐分（诊断） | 4 帧均值；默认关（`DO_SIGLIP=1` 开） |
+| IDEA-Research/grounding-dino-base | ⑤ 验真：gloss 名词开放词汇检测（默认关，`DO_VERIFY=1` 开） | **强制 fp32**（fp16 在 V100 上 NaN）；服务器连不上 HF 时按 TROUBLESHOOTING 本地下载后 scp 进 `~/.cache/huggingface/hub/` |
 | RapidOCR（PP-OCRv4-zh，onnxruntime） | ⑤ 验真：引号“”内画面文字查证 | CPU 即可 |
 | （句切退化用 tokenizer 缺席时 30 字符预算） | ④ A′ 切句 | 不阻塞 |
 
@@ -227,15 +267,42 @@ Qwen 自验替代**，计划 §3.5 纪律）。
 ## 6. 怎么跑 + 分段计时怎么读
 
 ```bash
-# 单臂（默认 A；B 臂加 RECAP_STYLE=slot）
+# 单臂（默认 A；B 臂加 RECAP_STYLE=slot）—— 默认= ①重述 + ④b2直融，两步都 8 卡分片
 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
 
-# A/B 双臂 + 并排评审包 bundle_compare/
+# A/B 双臂 + 并排评审包 bundle_compare/（开关原样传给两臂）
 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
 
 # 测真实全量成本：取冷样本（前 50 片有缓存会虚低）
 SAMPLE_OFFSET=200 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+
+# 要落训练数据前，把画面验真加回来（唯一外部幻觉门）
+DO_VERIFY=1 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+
+# 老的全链（含派生/打分/A′/投票/验真）一键恢复
+PIPE_FULL=1 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+
+# 选帧消融：内容感知(默认) vs 旧的纯均匀+抖动
+FRAME_SELECT=uniform N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
 ```
+
+**开关全表**（都是环境变量，默认值即下表的「默认」列）：
+
+| 变量 | 默认 | 作用 |
+|---|---|---|
+| `DO_DERIVE` | 0 | ② A 臂派生（58 s/片；`DO_VOTE=1` 时 dense 臂自动带上） |
+| `DO_SIGLIP` | 0 | ③ SigLIP 逐重述打分 |
+| `DO_APRIME` | 0 | ④ A′ 句切 |
+| `DO_VOTE` | 0 | ④b1 计票 + ④b3 投票打包（对照诊断版） |
+| `DO_VERIFY` | 0 | ⑤ GDINO+OCR 验真 + ✗ refine 复验 |
+| `DO_DIAG` | 1 | ④ 多样性/坍缩诊断（CPU 免费，独立采样的唯一哨兵，别关） |
+| `DO_TSV` / `DO_BUNDLE` | 1 | ⑥ 全景 TSV / ⑦ 离线评审包 |
+| `PIPE_FULL` | 0 | 1 = 上面全开（老行为）；`PIPE_LEAN=1` 仍可在全开基础上压掉 ③④A′ |
+| `FUSE_GPUS` | `NGPU`(8) | ④b2 直融分片卡数；1 = 单卡前台 |
+| `FRAME_SELECT` | `content` | `uniform` = 旧的纯均匀+抖动；`FRAME_CAND`(3)/`FRAME_WINDOW`(0.12) 微调 |
+
+**改了开关/选帧后要重算的话，先删对应产物**——所有 LLM 步骤都按 video 续跑，旧结果不会
+自动重来：重述 `rm $OUT/recap5.*.jsonl`（B 臂 `recap_slot.*`）、直融 `rm $OUT/pipe*_fused_d.*.jsonl`。
 
 每次运行自动把**每个小步骤的墙钟秒数**写进 `${P}_timing.tsv`（A=`pipe_timing.tsv`，
 B=`pipe_sl_timing.tsv`），结尾打印每行 s/片 + 按队列总量线性外推的全量小时数。
@@ -243,12 +310,12 @@ B=`pipe_sl_timing.tsv`），结尾打印每行 s/片 + 按队列总量线性外�
 
 ```
 ①重述×N遍  ②派生  ③SigLIP打分  ④A′切句+多样性诊断
-④b1投票计票(CPU规则)  ④b2直融=长稿+短稿(LLM×2调用)  ④b3投票打包(LLM×1调用)
+④b1投票计票(CPU规则)  ④b2直融=长稿+短稿(LLM×2调用,N卡)  ④b3投票打包(LLM×1调用)
 ⑤a视图验真  ⑤b直融稿验真+✗修复复验  ⑤c投票稿验真+✗修复复验
 ⑥全景TSV  ⑦评审包
 ```
 
-显示 ~0s 的行 = 命中续跑缓存，该行外推无效。
+显示 ~0s 的行 = 命中续跑缓存**或该步骤被开关关掉**（行名带「默认关」），两种情况外推都无效。
 
 ### 6.1 细粒度实测（2026-07-29，冷样本 10 片 @offset 300–309，8×V100）
 
@@ -282,5 +349,20 @@ B=`pipe_sl_timing.tsv`），结尾打印每行 s/片 + 按队列总量线性外�
    虚高）；单卡段再 8 卡分片并摊薄装载后，全桶 2,532 片 **A ~6–8h、B ~4–6h**
    （GDINO 装上后 ⑤ 行会涨）。
 
-省成本开关：`PIPE_LEAN=1` 跳 ③SigLIP+④A′（诊断照跑）；更激进的直融-only 精简与
-拍板状态见计划 §5.9。
+### 6.2 2026-08-05 精简后的预期（**待服务器实测**）
+
+上表是全链口径。现在默认只剩两行 LLM 步骤，且**两行都 8 卡分片**：
+
+| 小步骤（s/片） | 旧（全链，单卡段） | 新（默认，8 卡） | 依据 |
+|---|---|---|---|
+| ①重述×N | A 12.10 / B 6.00 | ≈ 同（本来就 8 卡）+ 选帧多解码 ~0.1s/遍 | 实测 |
+| ④b2 直融 | A 31.80 / B 13.20（单卡） | **A ~4 / B ~2**（8 卡线性外推） | 推算，待实测 |
+| ②③④A′④b1④b3⑤ | A ~73 / B ~15 | **0**（默认关） | — |
+| **合计** | A 118.10 / B 35.00 | **A ~17 / B ~9** | 推算 |
+
+也就是全桶 2,532 片从 A ~8h 降到 **~1.2h**（B ~0.6h）。装载开销（~1-2min/卡，两个
+LLM 步骤各一次）在 50 片小样本上摊不薄，小样本实测会明显高于这个数——**要看真实值请用
+冷样本**（`SAMPLE_OFFSET=200`）**并且样本量拉到 ≥200 片**。
+
+跑完把 `pipe_timing.tsv` / `pipe_sl_timing.tsv` 贴回 `notes/live/from-server.md`，
+本表换成实测。
