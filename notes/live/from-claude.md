@@ -23,6 +23,63 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-08-05 (88) — ⚙️ A/B 两方案：流水线精简成「只跑那两步」+ ① 的选帧优化
+
+**Diagnosis:** 你贴的 A/B 方案里，实际用到的只有两步——① 同一片独立重述 ×N（A dense×5 /
+B slot×3，temp 0.9 + 帧抖动）和 ②「直融」长稿→短稿。脚本 `pipeline-sample` 里却还挂着
+派生、SigLIP 打分、A′ 句切、投票浓缩、GDINO+OCR 验真，A 臂实测 118 s/片里有 ~73 s
+花在这两步之外。现已按指令改成：**那两步默认跑并做优化，其余全部转成开关、默认关**。
+
+改了什么（`tools/data_audit/run_v100.sh` + `vlm_audit_hf.py` + 新文件 `frame_pick.py`）：
+
+1. **① 选帧**（就是你标「可优化：如何挑选这 8 帧？」那处）：分段网格 + 每遍相位抖动
+   **一个字没动**（N 遍独立性全靠它）；只在**段内**从 3 个候选里挑一帧——清晰度高
+   （模糊/叠化得分低）、对比度够（纯黑转场一票否决）、且与上一保留帧画面不重复
+   （静止镜头去重）。CPU ~0.1s/遍，GPU 零开销。`FRAME_SELECT=uniform` 回退旧行为。
+2. **④b2 直融改 8 卡分片**（原来单卡前台，A 臂 31.8 s/片，全链第二大头）。纯文本步骤，
+   和重述一样的分片机制，理论 ~4 s/片。`FUSE_GPUS=1` 可退回单卡。
+3. **其余步骤默认关**：`DO_DERIVE` / `DO_SIGLIP` / `DO_APRIME` / `DO_VOTE` / `DO_VERIFY`
+   （`PIPE_FULL=1` 一键恢复老行为）。关掉的步骤在 TSV 里出空列，页面照常出。
+
+⚠️ **⑤ 验真也默认关了**——短稿因此是**未经画面查证**的直融稿。做 A/B 方案对比没问题，
+但**哪一批要落成训练数据，先 `DO_VERIFY=1` 重跑一遍**（它是全链唯一的外部幻觉门）。
+
+**Do this next:**
+```bash
+cd ~/mobileclip && git pull origin main
+
+# 1) 纯 CPU 单测先过（新选帧逻辑，不碰视频/不需要 GPU）
+source ~/audit_env/bin/activate
+python -m pytest tests/test_recap_frame_pick.py -q
+
+# 2) 冷样本跑 A/B 双臂，看新默认的真实耗时（前 200 片有缓存会虚低）
+SAMPLE_OFFSET=300 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+
+# 3) 想和旧选帧对照（可选）：换个 OUT 目录跑一遍 uniform，两份 TSV 并排看
+OUT=outputs/audit_10k_uniform FRAME_SELECT=uniform \
+  SAMPLE_OFFSET=300 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+```
+
+注意：**改了选帧后旧的重述缓存不会自动重算**（续跑按 video 去重）。要在同一个 `$OUT`
+里重跑就先 `rm outputs/audit_10k/recap5.*.jsonl outputs/audit_10k/recap_slot.*.jsonl
+outputs/audit_10k/pipe*_recaps.jsonl`——详见 TROUBLESHOOTING「改了选帧 / 融合 prompt /
+步骤开关后重跑，结果一个字没变」。
+
+**Then report back** in from-server.md：
+- `outputs/audit_10k/pipe_timing.tsv` 和 `pipe_sl_timing.tsv` 两份计时（贴原文即可，
+  我把 `docs/recaption-ab-pipeline_zh.md` §6.2 的预测表换成实测）；
+- `pipe_diag.txt` / `pipe_sl_diag.txt` 的坍缩行——选帧变了之后**最需要盯的就是它**，
+  片内中位 3-gram Jaccard 若从 0.25/0.32 明显上涨（>0.5，更别说 0.8 红旗），说明候选
+  窗口 0.12 太宽、各遍挑到了同一批帧，我把 `FRAME_WINDOW` 调小；
+- 目检 `bundle_compare/index.html` 一二十片：新选帧下重述里"看不清/模糊"类的措辞是否变少。
+
+**开关速查**（都是环境变量，加在命令前面）：`DO_DERIVE` `DO_SIGLIP` `DO_APRIME`
+`DO_VOTE` `DO_VERIFY`（默认 0）· `DO_DIAG` `DO_TSV` `DO_BUNDLE`（默认 1）·
+`PIPE_FULL=1` 全开 · `FUSE_GPUS`（默认 8）· `FRAME_SELECT=content|uniform`。
+完整表：`docs/recaption-ab-pipeline_zh.md` §6。
+
+---
+
 ## 2026-08-05 (87) — 📋 补 r1a 的逐指标 R@1/5/10(收尾复盘报告 `notes/1m-round-retrospective.md` 附录 C)
 
 > **文档补全小事,非战略优先级。** 仅在完善 1M 复盘报告的逐指标附录 C 时才需要跑。

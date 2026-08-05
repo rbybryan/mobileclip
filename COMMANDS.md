@@ -1637,6 +1637,45 @@ CUDA_VISIBLE_DEVICES=<空卡> nohup bash experiments/run_pretrain.sh \
 
 ---
 
+## 4.5 InternVid-zh 重述流水线（A/B 两方案，V100 审计机）
+
+完整说明在 [`docs/recaption-ab-pipeline_zh.md`](docs/recaption-ab-pipeline_zh.md)（分步图 +
+prompt 全文 + 开关全表）与 [`tools/data_audit/README.md`](tools/data_audit/README.md)。
+**2026-08-05 起默认只跑 A/B 方案真正用到的两步**：① 独立重述 ×N → ④b2 直融（长稿→短稿），
+两步都 8 卡分片；其余步骤保留但默认关。
+
+```bash
+source ~/audit_env/bin/activate            # 审计机专用 venv,不是 conda
+
+# A/B 双臂 + 并排评审包（默认精简；冷样本才测得到真耗时）
+SAMPLE_OFFSET=300 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-compare
+
+# 单臂（A=dense 默认，B 加 RECAP_STYLE=slot）
+N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+
+# 要把某一批落成训练数据前：把画面验真加回来（唯一外部幻觉门）
+DO_VERIFY=1 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+
+# 老的全链（派生/打分/A′/投票/验真全开）
+PIPE_FULL=1 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
+```
+
+开关（环境变量，写在命令前面）：
+
+| 变量 | 默认 | 作用 |
+|---|---|---|
+| `DO_DERIVE` / `DO_SIGLIP` / `DO_APRIME` / `DO_VOTE` / `DO_VERIFY` | 0 | ②派生 / ③SigLIP打分 / ④A′句切 / ④b投票浓缩 / ⑤GDINO+OCR 验真 |
+| `DO_DIAG` / `DO_TSV` / `DO_BUNDLE` | 1 | 坍缩诊断（别关）/ 全景 TSV / 离线评审包 |
+| `PIPE_FULL` | 0 | 1 = 上面全开 |
+| `FUSE_GPUS` | 8 | ④b2 直融分片卡数（1 = 单卡前台） |
+| `FRAME_SELECT` | `content` | ① 段内内容感知选帧；`uniform` = 旧的纯均匀+抖动 |
+
+> 改了选帧 / 融合 prompt 之后**必须先删对应产物再重跑**（所有 LLM 步骤按 video 续跑，
+> 旧结果不会自动作废）—— 见 TROUBLESHOOTING「改了选帧 / 融合 prompt / 步骤开关后重跑，
+> 结果一个字没变」。
+
+---
+
 ## 5. Git workflow (this repo)
 
 ```bash

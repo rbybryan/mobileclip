@@ -109,21 +109,29 @@ bash tools/data_audit/run_v100.sh recap-tsv
 - 工具：`split_views.py`（A′ 规则，MiniRBT tokenizer 计 32 token，离线自动落 30 字符预算）·
   `recap_diag.py`（坍缩红旗 + `--compare` 侧批对照）· `make_recap_tsv.py`（汇总表）。
 
-### 完整优化流水线小样本端到端（`pipeline-sample`，主计划全链条）
+### 优化流水线小样本端到端（`pipeline-sample`）
 
-上面只覆盖 S0→A′。要把**整条 caption 优化方案**（重述 → A_llm 派生 → SigLIP 打分/A− 选择 →
-**C_fuse 投票浓缩**（主计划 §5.5）→ Panel-V v0 验真过滤 → C_v）在小样本上端到端跑通并出
-全景 TSV：
+**2026-08-05 起默认精简为 A/B 方案真正用到的两步**（维护者指令）：① 独立重述 ×N →
+④b2 直融（长稿→短稿），**两步都 8 卡分片**；外加 CPU 免费的多样性诊断和 ⑥⑦ 产物。
+派生 / SigLIP 打分 / A′ 句切 / 投票浓缩 / GDINO+OCR 验真全部保留但**默认关**，
+各由一个 `DO_*` 开关控制（`PIPE_FULL=1` 一键恢复全链）。开关全表 + 实测预期见
+[`docs/recaption-ab-pipeline_zh.md`](../../docs/recaption-ab-pipeline_zh.md) §6。
 
 ```bash
 source ~/audit_env/bin/activate
-pip install rapidocr-onnxruntime onnxruntime   # 可选：OCR 验真档；装不上会自动降级
 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
-# 产物: outputs/audit_10k/recap_pipeline.tsv
+# 产物: outputs/audit_10k/recap_pipeline.tsv + bundle_pipeline/
+
+# 要把这批落成训练数据前，把画面验真加回来（唯一外部幻觉门）
+pip install rapidocr-onnxruntime onnxruntime   # OCR 验真档；装不上会自动降级
+DO_VERIFY=1 N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
 ```
 
-- 单卡前台顺序执行（重述段自动复用 8 卡 recap 并等待），50 片全程 **~1 小时**；
-  首次会经 hf-mirror 下载 GroundingDINO-base（~700MB, fp32）。
+- 默认口径下 50 片只剩两个 LLM 步骤，都是 8 卡并行；`DO_VERIFY=1` 首次会经 hf-mirror
+  下载 GroundingDINO-base（~700MB, fp32）。`PIPE_FULL=1` 的全链仍是单卡串行 ~1 小时。
+- **① 的选帧（2026-08-05）**：分段网格 + 相位抖动不变（N 遍独立性的来源），只在段内
+  从 3 个候选里挑清晰 / 非纯黑 / 不与上一帧重复的一帧（`frame_pick.py`；
+  `FRAME_SELECT=uniform` 回退旧行为，单测 `tests/test_recap_frame_pick.py` 钉死等价）。
 - **ASID 三修复（§5.8，维护者批准 2026-07-27）**：① 两版融合稿的 ✗ 句不再直接删——
   `--mode refine` 发一次"只修问题处"的最小修改调用并复验，终稿 `*_fused_*_final.jsonl`
   （修复 prompt 变更后重跑先 `rm pipe*_fused_*_r.*.jsonl`）；② struct 重述 JSON 失败
@@ -132,8 +140,8 @@ N_SAMPLE=50 bash tools/data_audit/run_v100.sh pipeline-sample
 - **⏱ 分段计时与全量外推**：每段墙钟自动落 `pipe[_st]_timing.tsv`，结尾打印
   「秒/片 → 全桶小时 → 每 10 万片小时」外推表。**测真实成本必须用冷样本**
   （缓存续跑的段显示 ~0s，外推无效）：`SAMPLE_OFFSET=200 N_SAMPLE=50 ... pipeline-sample`
-  从队列第 201 片起取一批没跑过的。注意外推按"下游单卡串行"算——全量生产时
-  ②派生/④b融合可像 ① 一样 `--num-shards 8` 分片，对应行 ÷8。
+  从队列第 201 片起取一批没跑过的。**行名带「默认关」的段显示 0s 是被开关关掉，不是快**。
+  ④b2 直融已按 `FUSE_GPUS`（默认 8）分片，外推不必再 ÷8；`DO_*` 打开的单卡段仍要。
 - 每片一行：`en_source | zh_translated | recap_1..5(⟨SigLIP 分⟩) | A−保留(top-3 重述号) |
   A′句切视图 | ✓过验真视图[gloss] | ·未验(保守留) | ✗被滤视图[gdino/ocr] |
   投票单元(票数) | 淘汰单元 | ✓/·/✗浓缩 | 坍缩旗标`——

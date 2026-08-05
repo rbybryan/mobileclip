@@ -25,7 +25,7 @@
 #   bash tools/data_audit/run_v100.sh s4-merged    # ⑧e 落地：融合稿当主字幕写进 v0.2 训练 JSON
 #   bash tools/data_audit/run_v100.sh recap        # ⑧f RECAPTION 桶前端：每片五样本独立重述（融合方案 S0）
 #   bash tools/data_audit/run_v100.sh recap-tsv    # ⑧g 重述检验 TSV：源caption/翻译/5重述/A′视图 并排目检（CPU 秒级）
-#   bash tools/data_audit/run_v100.sh pipeline-sample # ⑧h 完整优化流水线小样本端到端：重述→派生→打分→验真→全景 TSV（单卡 ~1h）
+#   bash tools/data_audit/run_v100.sh pipeline-sample # ⑧h 优化流水线小样本端到端：默认只跑 ①重述×N + ④b2直融(长稿→短稿)，两步都 8 卡分片；其余步骤 DO_*=1 才开（PIPE_FULL=1 全开）
 #   bash tools/data_audit/run_v100.sh summary-table # ⑧i 表格版总结：GIF|en源|原zh|A/B 重述+长稿+短稿 九列静态页（compare 之后跑）
 #   JUDGE_N=500 bash tools/data_audit/run_v100.sh s2-judge  # ⑥ 云端裁判（可选，需 API key）
 #   bash tools/data_audit/run_v100.sh judge-agree # ⑥b 一致率+Cohen's κ（可对外来裁判文件独立重算）
@@ -541,6 +541,13 @@ recap)
     RC_MODE=recap; RC_PREFIX=recap5; N_RECAP=${N_RECAP:-5}
   fi
   RECAP_TEMP=${RECAP_TEMP:-0.9}
+  # 选帧（2026-08-05，答维护者「这 8 帧怎么挑」）：
+  #   content(默认) = 每段先给 FRAME_CAND 个候选，段内挑清晰/非黑/不与上一帧重复的一帧；
+  #   uniform      = 旧的纯均匀+抖动（= FRAME_CAND=1，逐帧等价，用于 A/B 回归）。
+  # 分段网格与相位抖动两种模式完全一样——独立性不受影响，只在段内换帧。
+  FRAME_SELECT=${FRAME_SELECT:-content}
+  FRAME_CAND=${FRAME_CAND:-3}
+  [ "$FRAME_SELECT" = uniform ] && FRAME_CAND=1
   # 防重复启动：已有分片在跑时不再叠加 8 份 17GB 装载（滞留分片先 ps 核对再 pkill）
   rc_alive=$(pgrep -fc "vlm_audit_hf.py.*--mode recap" || true)
   if [ "${rc_alive:-0}" -gt 0 ]; then
@@ -551,12 +558,14 @@ recap)
   fi
   echo "[model] S2_MODEL=$S2_MODEL"
   echo "[recap] style=$RECAP_STYLE, 每片 $N_RECAP 遍独立采样$( [ "$RECAP_STYLE" = struct ] && echo '(每遍 5-8 条带属性短句)'; [ "$RECAP_STYLE" = slot ] && echo '(固定槽位: 人物≤2/物体≤2/动作≤2/场景/文字, 空槽写无)' ), temp=$RECAP_TEMP, top_p=0.9, 帧抖动开, 看 $S2_FRAMES 帧"
+  echo "[frames] 选帧=$FRAME_SELECT（每段候选 $FRAME_CAND，段内挑清晰/非黑/不重复；uniform 回到纯均匀）"
   echo "[input] $RECAP_INPUT （$(wc -l < "$RECAP_INPUT") 片）"
   for i in $(seq 0 $((NGPU-1))); do
     CUDA_VISIBLE_DEVICES=$i nohup python tools/data_audit/vlm_audit_hf.py \
       --input "$RECAP_INPUT" --video-root "$CLIPS" --model "$S2_MODEL" \
       --mode "$RC_MODE" --n-captions "$N_RECAP" --temperature "$RECAP_TEMP" \
       --frames "$S2_FRAMES" --num-shards "$NGPU" --shard-id "$i" \
+      --frame-candidates "$FRAME_CAND" --frame-window "${FRAME_WINDOW:-0.12}" \
       --max-new-tokens "${RECAP_MAX_TOKENS:-512}" \
       --output "$OUT/$RC_PREFIX.{shard}.jsonl" \
       > "$OUT/recap_shard$i.log" 2>&1 &
@@ -587,15 +596,39 @@ recap-tsv)
   echo "目检要点: ①五条重述是否真有差异(COLLAPSE 列) ②重述是否明显好于 zh_translated"
   echo "         ③views_A_prime 是否成句、无半截话（这就是 G1 要喂给训练的形态）"
   ;;
-# --------------------- ⑧h 完整优化流水线小样本端到端（主计划全链条样本验证）
-# 重述(S0) → A′句切 + 诊断 → A_llm 派生(D5) → SigLIP 打分(A− 选择) →
-# Panel-V v0 验真(GDINO+OCR, C_v) → 全景 TSV。除重述外全部单卡前台顺序执行。
-# 旋钮: N_SAMPLE=50  PIPE_GPU=0  PIPE_VERIFIERS=gdino,ocr  GDINO_MODEL=...
+# --------------------- ⑧h 优化流水线小样本端到端（A/B 两方案的运行入口）
+# 默认只跑 A/B 方案真正用到的两步（2026-08-05 维护者指令）：
+#   ① 独立重述 ×N（8 卡分片，内容感知选帧）→ ④b2 直融（长稿→短稿，8 卡分片）
+#   + ④ 多样性诊断（CPU 免费，独立采样的唯一哨兵）+ ⑥⑦ TSV/评审包（CPU 秒级）
+# 其余步骤全部**默认关闭**，各自一个开关，需要时单独打开：
+#   DO_DERIVE=1  ② A 臂派生（58 s/片，只喂投票/视图验真，直融不读）
+#   DO_SIGLIP=1  ③ SigLIP 逐重述打分（⟨⟩ 徽章/A−）
+#   DO_APRIME=1  ④ A′ 句切（G1 已退役）
+#   DO_VOTE=1    ④b1+④b3 投票浓缩对照版（dense 臂会自动带上 ②，否则没有 views）
+#   DO_VERIFY=1  ⑤ GDINO+OCR 画面验真 + ✗ 最小修改复验（唯一外部幻觉门）
+#   DO_TSV=0 / DO_BUNDLE=0 / DO_DIAG=0 关掉产物与诊断
+#   PIPE_FULL=1  一键全开 = 2026-08-05 之前的老行为
+# 其他旋钮: N_SAMPLE=50  SAMPLE_OFFSET=0  PIPE_GPU=<单卡步骤用的卡>
+#           FUSE_GPUS=8（直融分片卡数，1=退回单卡前台）  FRAME_SELECT=content|uniform
+#           PIPE_VERIFIERS=gdino,ocr  GDINO_MODEL=...
 pipeline-sample)
   need_clips; need_py
   N_SAMPLE=${N_SAMPLE:-50}
-  # 单卡步骤(派生/打分/验真)的卡: 未指定时自动选剩余显存最大的卡——盒子常有并行任务占卡,
-  # 钉死 GPU0 会像 2026-07-24 那样在装载 8B fp16(~19GB)时 OOM
+  # ---- 步骤开关：默认只留 from-server.md 里的两步，其余可选且默认关 ----
+  PF=${PIPE_FULL:-0}
+  # PIPE_LEAN=1（旧开关）语义保留：即使 PIPE_FULL=1 也压掉 ③ 与 ④A′
+  LEAN=${PIPE_LEAN:-0}
+  PF_LEAN=$( [ "$LEAN" = 1 ] && echo 0 || echo "$PF" )
+  DO_DERIVE=${DO_DERIVE:-$PF}
+  DO_SIGLIP=${DO_SIGLIP:-$PF_LEAN}
+  DO_APRIME=${DO_APRIME:-$PF_LEAN}
+  DO_VOTE=${DO_VOTE:-$PF}
+  DO_VERIFY=${DO_VERIFY:-$PF}
+  DO_DIAG=${DO_DIAG:-1}      # 坍缩哨兵：CPU 免费，且是「N 遍独立」前提的唯一检查
+  DO_TSV=${DO_TSV:-1}
+  DO_BUNDLE=${DO_BUNDLE:-1}
+  # 单卡步骤(派生/打分/验真/单卡直融)的卡: 未指定时自动选剩余显存最大的卡——盒子常有
+  # 并行任务占卡, 钉死 GPU0 会像 2026-07-24 那样在装载 8B fp16(~19GB)时 OOM
   if [ -z "${PIPE_GPU:-}" ]; then
     PIPE_GPU=$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits 2>/dev/null \
       | sort -t, -k2 -nr | head -1 | cut -d, -f1 | tr -d ' ')
@@ -640,12 +673,25 @@ pipeline-sample)
   t_stage() { local now; now=$(date +%s)
     printf '%s\t%d\n' "$1" "$((now - PIPE_TLAST))" >> "${P}_timing.tsv"
     echo "   ⏱ $1: $((now - PIPE_TLAST))s"; PIPE_TLAST=$now; }
+  # 投票对照版要 views：dense 臂的 views 只能由 ② 派生产出，否则 ④b1 拿不到输入
+  if [ "$DO_VOTE" = 1 ] && [ "$RECAP_STYLE" = dense ] && [ "$DO_DERIVE" != 1 ]; then
+    echo "[auto] DO_VOTE=1 且 dense 臂 → 自动打开 DO_DERIVE（投票需要派生出的 views）"
+    DO_DERIVE=1
+  fi
   echo "== ⓪ 样本 = 队列第 $(( ${SAMPLE_OFFSET:-0} + 1 ))-$(( ${SAMPLE_OFFSET:-0} + N_SAMPLE )) 片 -> $SAMPLE （重述 style=$RECAP_STYLE）=="
-  echo "[model] 全链唯一 LLM = $S2_MODEL（① 重述 temp0.9 独立采样$( [ "$RECAP_STYLE" != dense ] && echo '，短句+gloss 内联，② 派生步跳过' || echo ' / ② 派生 temp0 贪心' )；"
-  echo "        ③ SigLIP2 打分与 ⑤ GDINO/OCR 验真均为非 LLM 小模型，SigLIP 已在 s1 轮缓存）"
+  echo "[model] 全链唯一 LLM = $S2_MODEL（① 重述 temp0.9 独立采样 / ④b2 直融 temp0 贪心）"
+  ON=""; for s in "①重述:1" "②派生:$DO_DERIVE" "③SigLIP:$DO_SIGLIP" "④A′:$DO_APRIME" \
+                 "④诊断:$DO_DIAG" "④b2直融:1" "④b投票:$DO_VOTE" "⑤验真:$DO_VERIFY" \
+                 "⑥TSV:$DO_TSV" "⑦评审包:$DO_BUNDLE"; do
+    [ "${s##*:}" = 1 ] && ON="$ON ${s%%:*}✓" || ON="$ON ${s%%:*}✗"
+  done
+  echo "[steps]$ON   （✗=默认关，见本段注释里的 DO_* 开关；PIPE_FULL=1 全开）"
+  [ "$DO_VERIFY" = 1 ] || echo "[note] ⑤ 验真已关：短稿是「未经画面查证」的 LLM 直融稿（唯一外部幻觉门在此）——只做 A/B 对比够用，要把某一批落成训练数据前请 DO_VERIFY=1 再跑一遍"
 
   echo "== ① S0 重述 ×$RC_N 遍（复用 recap 子命令: 8 卡后台 + 按 video 续跑去重）=="
-  RECAP_STYLE="$RECAP_STYLE" N_RECAP="$RC_N" RECAP_INPUT="$SAMPLE" bash "$0" recap
+  RECAP_STYLE="$RECAP_STYLE" N_RECAP="$RC_N" RECAP_INPUT="$SAMPLE" \
+    ${FRAME_SELECT:+FRAME_SELECT=$FRAME_SELECT} ${FRAME_CAND:+FRAME_CAND=$FRAME_CAND} \
+    bash "$0" recap
   echo "   等待覆盖 $N_SAMPLE 片（每 30s 查一次；已跑过的片秒过）..."
   for _ in $(seq 1 240); do
     COV=$(python - "$SAMPLE" "$OUT" "$RC_PREFIX" <<'PY'
@@ -697,9 +743,13 @@ with open(f"{sys.argv[4]}_recaps.jsonl", "w", encoding="utf-8") as fo:
 print(f"pipe_recaps: {len(seen)} clips")
 PY
 
+  # ② 派生：直融不读它（只喂投票单元与视图验真），故默认关。A 臂 58 s/片，是全链最大死重。
   if [ "$RECAP_STYLE" != dense ]; then
     echo "== ② A_llm 派生：跳过（$RECAP_STYLE 重述已内联短句+gloss，D8 随重述产出）=="
     VIEWS_GLOB="${P}_recaps.jsonl"
+  elif [ "$DO_DERIVE" != 1 ]; then
+    echo "== ② A_llm 派生：跳过（默认关；直融只读 N 遍重述原文。要投票对照/视图验真: DO_DERIVE=1）=="
+    VIEWS_GLOB=""
   else
     echo "== ② A_llm 派生（D5: 每条重述 2-3 条短视图 + en_gloss；文本-only, GPU$PIPE_GPU 前台）=="
     CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
@@ -709,13 +759,13 @@ PY
     VIEWS_GLOB="${P}_views.*.jsonl"
   fi
 
-  t_stage "②派生(单卡; struct 臂≈0)"
-  # PIPE_LEAN=1（§5.9 部分拍板, 2026-07-28）: 跳 SigLIP 打分与 A′ 句切——直融
-  # 终稿不消费两者（分数只喂已退役的 A−、评审页 ⟨⟩ 徽章、投票代表句排序；A′ 只剩
-  # 全景对照列），下游对缺失文件全部出空列不崩。多样性诊断绝不随开关跳：它是
-  # 「独立采样」这一判断式融合核心前提的唯一哨兵（COLLAPSE/IDENT 旗），CPU 秒级。
-  if [ "${PIPE_LEAN:-0}" = 1 ]; then
-    echo "== ③ SigLIP 打分：跳过（PIPE_LEAN=1；⟨⟩徽章/A−/投票代表句排序缺省，直融不受影响）=="
+  t_stage "②派生(单卡; 默认关)"
+  # ③ SigLIP 打分 / ④ A′ 句切：直融终稿不消费两者（分数只喂已退役的 A−、评审页 ⟨⟩
+  # 徽章、投票代表句排序；A′ 只剩全景对照列），下游对缺失文件全部出空列不崩，故默认关。
+  # 多样性诊断另算（DO_DIAG，默认开）：它是「N 遍独立采样」这一融合前提的唯一哨兵
+  # （COLLAPSE/IDENT 旗），CPU 秒级，关掉就等于闭着眼睛信任投票/直融的取舍。
+  if [ "$DO_SIGLIP" != 1 ]; then
+    echo "== ③ SigLIP 打分：跳过（默认关；⟨⟩徽章/A−/投票代表句排序缺省，直融不受影响。开: DO_SIGLIP=1）=="
   else
     echo "== ③ SigLIP 逐重述打分（A− 选择依据；tag=recap_i 回联）=="
     python - "$P" <<'PY'
@@ -735,57 +785,109 @@ PY
       --xlingual-model ''
   fi
 
-  t_stage "③SigLIP打分(单卡)"
-  if [ "${PIPE_LEAN:-0}" = 1 ]; then
-    echo "== ④ A′ 句切：跳过（PIPE_LEAN=1；G1=A′ 已退役）——多样性诊断照跑（独立采样哨兵）=="
+  t_stage "③SigLIP打分(单卡; 默认关)"
+  if [ "$DO_APRIME" != 1 ]; then
+    echo "== ④ A′ 句切：跳过（默认关；G1=A′ 已退役。开: DO_APRIME=1）=="
   else
-    echo "== ④ A′ 句切 + 多样性诊断 =="
+    echo "== ④ A′ 句切 =="
     python tools/data_audit/split_views.py --recaps "${P}_recaps.jsonl" \
       --output "${P}_aprime.jsonl"
   fi
-  python tools/data_audit/recap_diag.py --recaps "${P}_recaps.jsonl" \
-    --out-perclip "${P}_diag.jsonl" | tee "${P}_diag.txt"
+  if [ "$DO_DIAG" = 1 ]; then
+    echo "== ④ 多样性/坍缩诊断（独立采样哨兵；片内中位 3-gram Jaccard>0.8 = 红旗）=="
+    python tools/data_audit/recap_diag.py --recaps "${P}_recaps.jsonl" \
+      --out-perclip "${P}_diag.jsonl" | tee "${P}_diag.txt"
+  else
+    echo "== ④ 多样性诊断：跳过（DO_DIAG=0；坍缩无人看守，不建议）=="
+  fi
 
   t_stage "④A′切句+多样性诊断(CPU)"
-  echo "== ④b 融合双版并出（直融 §5.7 + 投票浓缩 §5.5, 每次都产两版, 评审包并排对比）=="
   # set -e 在顶部生效：本段任何失败都不许拖死整条流水线（TSV 对缺失的
   # 融合文件会自动出空列），故各命令都带 || 兜底。
-  # 注意：改 FUSE_MIN_SUPPORT/融合 prompt 后重跑前要 rm ${P}_fused*.jsonl ——
-  # 两版融合都按 video 续跑，旧实现/旧门槛的结果不会自动重算。
-  python tools/data_audit/fuse_condense.py --views "$VIEWS_GLOB" \
-    --scores "${P}_scores.*.jsonl" --output "${P}_units.jsonl" \
-    --min-support "${FUSE_MIN_SUPPORT:-2}" \
-    || echo "[warn] 投票段失败——投票浓缩与诊断列将为空，其余照常"
-  t_stage "④b1投票计票(CPU规则)"
-  # 版本一「直融」(§5.7 v5, ASID-Verify 式): 长短稿分开两次调用 ——
-  # 调用1 判断式融合出长稿(不限字数, 保留全部过审细节)+带理由 dropped;
-  # 调用2 只读长稿提炼短稿(一条≤30字训练字幕, 32-token 墙内)
-  CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
-    --input "${P}_recaps.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
-    --mode fuse-direct --max-new-tokens 768 --num-shards 1 --shard-id 0 \
-    --output "${P}_fused_d.{shard}.jsonl" \
-    || echo "[warn] 直融段失败（常见: 卡被占 OOM）——重跑本命令会按 video 续跑补齐"
-  t_stage "④b2直融=长稿+短稿(LLM×2调用)"
-  # 版本二「投票浓缩」(§5.5): 规则跨遍计票 -> LLM 只打包过票单元
-  CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
-    --input "${P}_units.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
-    --mode condense --max-new-tokens 320 --num-shards 1 --shard-id 0 \
-    --output "${P}_fused_v.{shard}.jsonl" \
-    || echo "[warn] 投票浓缩段失败（常见: 卡被占 OOM）——重跑本命令会按 video 续跑补齐"
+  # 注意：改 FUSE_MIN_SUPPORT/融合 prompt/选帧后重跑前要 rm ${P}_fused*.jsonl ——
+  # 融合按 video 续跑，旧实现/旧门槛的结果不会自动重算。
+  if [ "$DO_VOTE" = 1 ] && [ -n "$VIEWS_GLOB" ]; then
+    echo "== ④b1 投票计票（§5.5 CPU 规则跨遍聚类；对照诊断用）=="
+    python tools/data_audit/fuse_condense.py --views "$VIEWS_GLOB" \
+      --scores "${P}_scores.*.jsonl" --output "${P}_units.jsonl" \
+      --min-support "${FUSE_MIN_SUPPORT:-2}" \
+      || echo "[warn] 投票段失败——投票浓缩与诊断列将为空，其余照常"
+  else
+    echo "== ④b1 投票计票：跳过（默认关；开: DO_VOTE=1）=="
+  fi
+  t_stage "④b1投票计票(CPU规则; 默认关)"
+  # ④b2「直融」(§5.7 v5, ASID-Verify 式) = 终稿，两次纯文本调用：
+  #   调用1 判断式融合出长稿(不限字数, 保留全部过审细节)+带理由 dropped;
+  #   调用2 只读长稿提炼短稿(一条≤30字训练字幕, 32-token 墙内)
+  # 2026-08-05 优化：原来是单卡前台（A 臂 31.8 s/片，全链第二大头），改成与 ① 同样的
+  # NGPU 卡数据并行分片——纯文本步骤，显存/吞吐特性和重述一致，直接线性加速。
+  # FUSE_GPUS=1 退回单卡前台（卡被别人占时用）。改卡数后建议先 rm ${P}_fused_d.*.jsonl，
+  # 否则旧分片文件里的片会被新分片重算一遍（续跑按分片自己的输出去重）。
+  FUSE_GPUS=${FUSE_GPUS:-$NGPU}
+  echo "== ④b2 直融=长稿→短稿（$( [ "$FUSE_GPUS" -gt 1 ] && echo "$FUSE_GPUS 卡分片" || echo "单卡 GPU$PIPE_GPU" )，按 video 续跑）=="
+  if [ "$FUSE_GPUS" -gt 1 ]; then
+    fpids=""
+    for i in $(seq 0 $((FUSE_GPUS-1))); do
+      CUDA_VISIBLE_DEVICES=$i nohup python tools/data_audit/vlm_audit_hf.py \
+        --input "${P}_recaps.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
+        --mode fuse-direct --max-new-tokens "${FUSE_MAX_TOKENS:-768}" \
+        --num-shards "$FUSE_GPUS" --shard-id "$i" \
+        --output "${P}_fused_d.{shard}.jsonl" \
+        > "$OUT/fuse_shard$i.log" 2>&1 &
+      fpids="$fpids $!"
+    done
+    ffail=0
+    for pid in $fpids; do wait "$pid" || ffail=1; done
+    [ "$ffail" = 0 ] || echo "[warn] 有直融分片非零退出（看 $OUT/fuse_shard*.log；常见: 卡被占 OOM）——重跑本命令按 video 续跑补齐"
+  else
+    CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
+      --input "${P}_recaps.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
+      --mode fuse-direct --max-new-tokens "${FUSE_MAX_TOKENS:-768}" \
+      --num-shards 1 --shard-id 0 \
+      --output "${P}_fused_d.{shard}.jsonl" \
+      || echo "[warn] 直融段失败（常见: 卡被占 OOM）——重跑本命令会按 video 续跑补齐"
+  fi
+  DCOV=$({ cat "${P}"_fused_d.*.jsonl 2>/dev/null || true; } \
+    | python -c 'import json,sys; print(len({json.loads(l)["video"] for l in sys.stdin if l.strip()}))' 2>/dev/null || echo 0)
+  echo "   直融覆盖: $DCOV/$N_SAMPLE 片"
+  t_stage "④b2直融=长稿+短稿(LLM×2调用,${FUSE_GPUS}卡)"
+  # 版本二「投票浓缩」(§5.5): 规则跨遍计票 -> LLM 只打包过票单元（对照诊断，默认关）
+  if [ "$DO_VOTE" = 1 ] && [ -s "${P}_units.jsonl" ]; then
+    echo "== ④b3 投票打包（LLM×1 调用）=="
+    CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/data_audit/vlm_audit_hf.py \
+      --input "${P}_units.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
+      --mode condense --max-new-tokens 320 --num-shards 1 --shard-id 0 \
+      --output "${P}_fused_v.{shard}.jsonl" \
+      || echo "[warn] 投票浓缩段失败（常见: 卡被占 OOM）——重跑本命令会按 video 续跑补齐"
+  else
+    echo "== ④b3 投票打包：跳过（默认关；开: DO_VOTE=1）=="
+  fi
 
-  t_stage "④b3投票打包(LLM×1调用)"
+  t_stage "④b3投票打包(LLM×1调用; 默认关)"
+  if [ "$DO_VERIFY" != 1 ]; then
+    echo "== ⑤ 画面验真（GDINO+OCR）+ ✗修复复验：整档跳过（默认关；开: DO_VERIFY=1）=="
+    echo "   → 短稿按 unverified 直接进 TSV/评审包（列名不变，状态标记为未验证）"
+    t_stage "⑤a视图验真(默认关)"
+    t_stage "⑤b直融稿验真(默认关)"
+    t_stage "⑤c投票稿验真(默认关)"
+  else
   echo "== ⑤ Panel-V v0 验真（GDINO fp32 + RapidOCR；均非 LLM；不可用会降级为 unverified 不阻塞）=="
+  if [ -n "$VIEWS_GLOB" ]; then
   CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/fuse_verify.py \
     --views "$VIEWS_GLOB" --video-root "$CLIPS" \
     --output "${P}_verified.jsonl" \
     --verifiers "${PIPE_VERIFIERS:-gdino,ocr}" \
     ${GDINO_MODEL:+--gdino-model "$GDINO_MODEL"} \
     || echo "[warn] 验真档整体失败——全部视图按 unverified 保守保留，TSV 照常生成（勿用 Qwen 自验替代：计划 §3.5 纪律）"
+  else
+    echo "   ⑤a 视图验真：无 views（② 派生关着）——跳过，只验融合稿"
+  fi
   t_stage "⑤a视图验真(GDINO+OCR)"
   # 两版融合稿：验真 → (§5.8-1 ASID 式修复环) 有 ✗ 才起一次最小修改修复 + 复验；
   # 终稿一律落 *_final.jsonl（无 ✗ 时=首轮验真件的拷贝）。修复 prompt 改动后重跑
   # 需 rm ${P}_fused_*_r.*.jsonl（修复按 video 续跑）。
   for FV in fused_d fused_v; do
+    ls "${P}_${FV}."*.jsonl >/dev/null 2>&1 || { echo "   ⑤ ${FV}: 无输入（该版本没跑）——跳过"; continue; }
     CUDA_VISIBLE_DEVICES=$PIPE_GPU python tools/fuse_verify.py \
       --views "${P}_${FV}.*.jsonl" --video-root "$CLIPS" \
       --output "${P}_${FV}_verified.jsonl" \
@@ -810,22 +912,37 @@ PY
     case "$FV" in fused_d) t_stage "⑤b直融稿验真+✗修复复验";;
                   *)       t_stage "⑤c投票稿验真+✗修复复验";; esac
   done
+  fi   # DO_VERIFY
 
+  # ⑥⑦ 是 CPU 秒级的**产物**步骤（全景 TSV + 可视评审包），不是流水线成本项；
+  # 关掉只会让你拿不到能看的东西，但开关照样留着（DO_TSV=0 / DO_BUNDLE=0）。
+  # 验真关着时 *_final.jsonl 不存在 → 只传 --*-raw，TSV 侧自动按 unverified 出列。
+  if [ "$DO_TSV" = 1 ]; then
   echo "== ⑥ 全景 TSV + 评审表 =="
-  python tools/data_audit/make_pipeline_tsv.py --tasks "$SAMPLE" \
-    --recaps "${P}_recaps.jsonl" --scores "${P}_scores.*.jsonl" \
-    --aprime "${P}_aprime.jsonl" --verified "${P}_verified.jsonl" \
-    --derived "$VIEWS_GLOB" --diag "${P}_diag.jsonl" \
-    --units "${P}_units.jsonl" --fused "${P}_fused_v_final.jsonl" \
-    --fused-raw "${P}_fused_v.*.jsonl" \
-    --dfused "${P}_fused_d_final.jsonl" --dfused-raw "${P}_fused_d.*.jsonl" \
-    --output "$TSVF" \
-    --sheet-output "$SHEET" --video-root "$CLIPS"
+  # 数组传参：glob 字符串必须原样交给 python（引号丢了会被 shell 先展开成多个文件名）
+  TSV_ARGS=(--tasks "$SAMPLE" --recaps "${P}_recaps.jsonl"
+            --scores "${P}_scores.*.jsonl" --aprime "${P}_aprime.jsonl"
+            --verified "${P}_verified.jsonl" --diag "${P}_diag.jsonl"
+            --units "${P}_units.jsonl"
+            --fused-raw "${P}_fused_v.*.jsonl"
+            --dfused-raw "${P}_fused_d.*.jsonl")
+  [ -n "$VIEWS_GLOB" ] && TSV_ARGS+=(--derived "$VIEWS_GLOB")
+  [ -f "${P}_fused_v_final.jsonl" ] && TSV_ARGS+=(--fused "${P}_fused_v_final.jsonl")
+  [ -f "${P}_fused_d_final.jsonl" ] && TSV_ARGS+=(--dfused "${P}_fused_d_final.jsonl")
+  python tools/data_audit/make_pipeline_tsv.py "${TSV_ARGS[@]}" \
+    --output "$TSVF" --sheet-output "$SHEET" --video-root "$CLIPS"
+  else
+    echo "== ⑥ 全景 TSV：跳过（DO_TSV=0）=="
+  fi
   t_stage "⑥全景TSV(CPU)"
-  echo "== ⑦ 离线评审包（better_zh 同款 index.html + videos/，含打分单选与导出） =="
-  python tools/data_audit/make_review_bundle.py \
-    --sheet "$SHEET" --out-dir "$BUNDLE" \
-    || echo "[warn] 评审包生成失败（TSV 仍可用）"
+  if [ "$DO_BUNDLE" = 1 ] && [ -f "$SHEET" ]; then
+    echo "== ⑦ 离线评审包（better_zh 同款 index.html + videos/，含打分单选与导出） =="
+    python tools/data_audit/make_review_bundle.py \
+      --sheet "$SHEET" --out-dir "$BUNDLE" \
+      || echo "[warn] 评审包生成失败（TSV 仍可用）"
+  else
+    echo "== ⑦ 评审包：跳过（DO_BUNDLE=0 或无评审表）=="
+  fi
   t_stage "⑦评审包(CPU)"
   QTOT=$(wc -l < "$QUEUE")
   echo ""
@@ -841,13 +958,15 @@ PY
   echo "✅ 产物[$RECAP_STYLE]: $BUNDLE/（index.html+videos/） · $TSVF"
   echo "   每片一卡(维护者指令精简): 视频 | en源 | zh旧译(黄) | 重述(每遍一个编号,B臂带属性徽标) |"
   echo "             直融长稿(不限字数,保留细节) | 直融(一条≤30字训练字幕) + 判读单选, 可导出 TSV"
-  echo "             (投票版不再上页面, 数据仍在全景 TSV 作对照诊断)"
-  echo "   全景各阶段列(A′/✓·✗视图/投票·淘汰单元)仍在 $TSVF"
+  echo "   默认只跑 ①重述 + ④b2直融；关掉的步骤在 TSV 里出空列(A′/✓·✗视图/投票·淘汰单元)。"
+  echo "   要哪一步就开哪一步: DO_DERIVE / DO_SIGLIP / DO_APRIME / DO_VOTE / DO_VERIFY =1 (PIPE_FULL=1 全开)"
   echo "   诊断摘要: ${P}_diag.txt"
   echo "   A/B 双臂对比(方案A稠密 vs 方案B结构化 并排一页): bash $0 pipeline-compare"
   ;;
-# ---------- ⑧i A/B 平行对比: 方案A(dense×5, 主线) vs 方案B(OwlCap struct×3, 备选)
-# 同 50 片双跑(各自缓存续跑, 产物 _st 后缀隔离), 再合成并排评审包 bundle_compare/
+# ---------- ⑧i A/B 平行对比: 方案A(dense×5) vs 方案B(slot 固定槽位×3)
+# 同 50 片双跑(各自缓存续跑, 产物 _sl 后缀隔离), 再合成并排评审包 bundle_compare/
+# 两臂都走 pipeline-sample 的精简默认（①重述 + ④b2直融）；DO_*/PIPE_FULL/FRAME_SELECT
+# 等开关是环境变量, 会原样传给两臂, 例如: DO_VERIFY=1 N_SAMPLE=50 bash $0 pipeline-compare
 pipeline-compare)
   need_clips; need_py
   N_SAMPLE=${N_SAMPLE:-50}
@@ -859,11 +978,15 @@ pipeline-compare)
   python tools/data_audit/make_style_compare.py \
     --tasks "$OUT/v0_2/pipeline_sample.jsonl" --video-root "$CLIPS" \
     --recaps-a "$OUT/pipe_recaps.jsonl" \
-    --dfused-a "$OUT/pipe_fused_d_final.jsonl" --dfused-a-raw "$OUT/pipe_fused_d.*.jsonl" \
-    --fused-a "$OUT/pipe_fused_v_final.jsonl" --fused-a-raw "$OUT/pipe_fused_v.*.jsonl" \
+    $( [ -f "$OUT/pipe_fused_d_final.jsonl" ] && echo --dfused-a "$OUT/pipe_fused_d_final.jsonl" ) \
+    --dfused-a-raw "$OUT/pipe_fused_d.*.jsonl" \
+    $( [ -f "$OUT/pipe_fused_v_final.jsonl" ] && echo --fused-a "$OUT/pipe_fused_v_final.jsonl" ) \
+    --fused-a-raw "$OUT/pipe_fused_v.*.jsonl" \
     --recaps-b "$OUT/pipe_sl_recaps.jsonl" \
-    --dfused-b "$OUT/pipe_sl_fused_d_final.jsonl" --dfused-b-raw "$OUT/pipe_sl_fused_d.*.jsonl" \
-    --fused-b "$OUT/pipe_sl_fused_v_final.jsonl" --fused-b-raw "$OUT/pipe_sl_fused_v.*.jsonl" \
+    $( [ -f "$OUT/pipe_sl_fused_d_final.jsonl" ] && echo --dfused-b "$OUT/pipe_sl_fused_d_final.jsonl" ) \
+    --dfused-b-raw "$OUT/pipe_sl_fused_d.*.jsonl" \
+    $( [ -f "$OUT/pipe_sl_fused_v_final.jsonl" ] && echo --fused-b "$OUT/pipe_sl_fused_v_final.jsonl" ) \
+    --fused-b-raw "$OUT/pipe_sl_fused_v.*.jsonl" \
     --output "$OUT/review_compare.tsv"
   python tools/data_audit/make_review_bundle.py \
     --sheet "$OUT/review_compare.tsv" --out-dir "$OUT/bundle_compare" \
