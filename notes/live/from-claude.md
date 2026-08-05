@@ -23,6 +23,62 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-08-05 (78) — 📋 附录 C 收尾:补 r1a 的逐指标 R@1/5/10(它和 r0 一样缺 ranks,需一次重评)
+
+> 这是**文档补全**小事,不是战略优先级 —— 主时钟仍是下面 (77) 的 **C1 教师蒸馏**。仅当你在完善复盘报告
+> `notes/1m-round-retrospective.md` 附录 C 时才需要跑这条。
+
+**Diagnosis:** `sub1m_r1a_s42` 与 `r0` 一样,是在**逐查询 rank 落盘(2026-07-29)之前**评的 ⇒ `runs/` 里没有
+`ranks_*.npz`,`collect_results.py --compare` 直接 `FileNotFoundError:experiments/runs/sub1m_r1a_s42/ranks_ret_test_emb.npz`。
+一次前向重评(~1 分钟)同时产出 `eval_res.json`(六指标)与 `ranks_*.npz`;之后配对比较**两个臂都指
+`experiments/evals/sub1m/`**(r0 的 ranks 上次已落在那里)—— 关键就是别再把 `--compare` 指向 `runs/`。
+
+**Do this next(一整块,~1 分钟):**
+```bash
+cd "$(git rev-parse --show-toplevel)"
+source experiments/env_b100.sh
+export CUDA_VISIBLE_DEVICES=3
+
+# 1) 重评 r1a → 把 eval_res.json(六指标)+ ranks_*.npz 写进 evals/
+bash experiments/run_eval.sh small msrvtt \
+     experiments/runs/sub1m_r1a_s42/ckpt_02.pth \
+     experiments/evals/sub1m/sub1m_r1a_s42 num_frames_test 8
+
+# 2) 自检:必须打印 OK,否则权重没加载、数字无效(假 r_mean≈54.82)
+grep -q "Load pretrained model from" experiments/evals/sub1m/sub1m_r1a_s42/train.log \
+  && echo "OK weights loaded" || echo "FAIL — weights NOT loaded"
+
+# 3) 确认 ranks 已落地(--compare 就读这里)
+ls -la experiments/evals/sub1m/sub1m_r1a_s42/ranks_*.npz
+
+# 4) 六指标(填附录 C 的 r1a 行)
+python - <<'PY'
+import json, glob
+for f in sorted(glob.glob("experiments/evals/sub1m/sub1m_r1a_s42/**/eval_res*.json", recursive=True)):
+    d=json.load(open(f))
+    for proto,m in d.items():
+        if isinstance(m,dict) and "txt_r1" in m:
+            print(proto,{k:m[k] for k in ["txt_r1","txt_r5","txt_r10","img_r1","img_r5","img_r10","r_mean"]})
+PY
+
+# 5) r1a − r0 配对 CI(两个都指 evals/;raw 然后 DSL)
+for P in ret_test_emb/ ret_test/; do
+  echo "=== prefix $P ==="
+  python experiments/collect_results.py --compare \
+      experiments/evals/sub1m/sub1m_r1a_s42 \
+      experiments/evals/sub1m/sub1m_r0_s42 --prefix "$P"
+done
+```
+
+**Then report back(贴回 `from-server.md` 或直接发我):** 步骤 **3–5** 的输出 —— r1a 六指标 + r1a−r0 两口径配对 CI。
+我据此把 r1a 并进复盘报告附录 C 的 raw/DSL 两表 + 加一张 r1a−r0 配对 CI(和 C.3 的 P1trained−r0 对称),
+并重出 docx 定稿。预期对账:§7 已转录 r1a 的 raw `txt_r1 40.6 / img_r1 39.1`、DSL `txt_r1 41.3 / img_r1 39.4`,
+DSL 的 r_mean/R_sum 那对 CI 应落负区间且不含 0(§7:r_mean −0.95、R_sum −5.70)。
+
+**若只想要六指标那一行**(不要配对 CI):跑 1、2、4 即可,step 5 可跳。
+
+---
+
 ## 2026-08-03 (77) — 🏁 1M 全轮收官后的下一步:**停止小改,主时钟转 C1 教师蒸馏**;顺带补齐唯一存活结论(P1trained)的第二 seed
 
 **Diagnosis(结论先行):1M 验证层这一整轮结束了,且结论是干净的「否」。**
