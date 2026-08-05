@@ -171,11 +171,10 @@ class MobileViCLIP_Small(nn.Module):
         # R1 SigLIP-regime text negative pool (default OFF; notes/r1-implementation-plan.md §2/§7.6).
         self._init_text_bank()
 
-<<<<<<< HEAD
         # C1 KD:教师视频嵌入蒸馏(默认 OFF;ROADMAP 2.2c / notes/c1-kd-training-manual-zh.md)。
         # 关着时本段不建任何参数、不碰 RNG ⇒ r0 路径连初始化随机流都逐位不变。
         self._init_vtc_kd()
-=======
+
     def apply_arch_flags(self):
         """round-5 的四个结构 flag(幂等,可重复调用)。
 
@@ -253,7 +252,6 @@ class MobileViCLIP_Small(nn.Module):
         if ve_cfg.get("per_frame_attention", False) or _env_pfa:
             set_per_frame_attention(True)
             logger.info("[per-frame-attn] stage-4 注意力已切为帧内(块对角);跨帧耦合 = 0")
->>>>>>> origin/main
 
     def no_weight_decay(self):
         ret = {"temp", "logit_scale", "logit_bias"}
