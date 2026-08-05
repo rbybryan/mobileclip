@@ -23,6 +23,61 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-08-05 (87) — 📋 补 r1a 的逐指标 R@1/5/10(收尾复盘报告 `notes/1m-round-retrospective.md` 附录 C)
+
+> **文档补全小事,非战略优先级。** 仅在完善 1M 复盘报告的逐指标附录 C 时才需要跑。
+> (这是 v8vqv3 会话早先 #78 的内容,合并时与并行会话的 #77/#78 撞号被顶掉;此处重排为 #87。
+> 完整的 r0/r1a 恢复配方也已在报告附录 C.4 里,二者一致。)
+
+**Diagnosis:** `sub1m_r1a_s42` 与 `r0` 一样,是在**逐查询 rank 落盘(2026-07-29)之前**评的 ⇒ `runs/` 里没有
+`ranks_*.npz`,`collect_results.py --compare` 直接 `FileNotFoundError: .../sub1m_r1a_s42/ranks_ret_test_emb.npz`。
+一次前向重评(~1 分钟)同时产出 `eval_res.json`(六指标)与 `ranks_*.npz`;之后配对比较**两个臂都指
+`experiments/evals/sub1m/`**(r0 的 ranks 上次重评已落在那里)—— 别再把 `--compare` 指向 `runs/`。
+
+**Do this next(一整块):**
+```bash
+cd "$(git rev-parse --show-toplevel)"
+source experiments/env_b100.sh
+export CUDA_VISIBLE_DEVICES=3
+
+# 1) 重评 r1a → eval_res.json(六指标)+ ranks_*.npz 写进 evals/
+bash experiments/run_eval.sh small msrvtt \
+     experiments/runs/sub1m_r1a_s42/ckpt_02.pth \
+     experiments/evals/sub1m/sub1m_r1a_s42 num_frames_test 8
+
+# 2) 自检:必须打印 OK,否则权重没加载、数字无效(假 r_mean≈54.82)
+grep -q "Load pretrained model from" experiments/evals/sub1m/sub1m_r1a_s42/train.log \
+  && echo "OK weights loaded" || echo "FAIL — weights NOT loaded"
+
+# 3) 确认 ranks 已落地(--compare 就读这里)
+ls -la experiments/evals/sub1m/sub1m_r1a_s42/ranks_*.npz
+
+# 4) 六指标(填附录 C 的 r1a 行)
+python - <<'PY'
+import json, glob
+for f in sorted(glob.glob("experiments/evals/sub1m/sub1m_r1a_s42/**/eval_res*.json", recursive=True)):
+    d=json.load(open(f))
+    for proto,m in d.items():
+        if isinstance(m,dict) and "txt_r1" in m:
+            print(proto,{k:m[k] for k in ["txt_r1","txt_r5","txt_r10","img_r1","img_r5","img_r10","r_mean"]})
+PY
+
+# 5) r1a − r0 配对 CI(两个都指 evals/;raw 然后 DSL)
+for P in ret_test_emb/ ret_test/; do
+  echo "=== prefix $P ==="
+  python experiments/collect_results.py --compare \
+      experiments/evals/sub1m/sub1m_r1a_s42 \
+      experiments/evals/sub1m/sub1m_r0_s42 --prefix "$P"
+done
+```
+
+**Then report back(贴回 `from-server.md`):** 步骤 **3–5** 的输出 —— r1a 六指标 + r1a−r0 两口径配对 CI。
+据此把 r1a 并进复盘报告附录 C 的 raw/DSL 两表 + 加一张 r1a−r0 配对 CI(与 C.3 的 P1trained−r0 对称)。
+预期对账:§7 已转录 r1a 的 raw `txt_r1 40.6 / img_r1 39.1`、DSL `txt_r1 41.3 / img_r1 39.4`;DSL 的 r_mean/R_sum
+那对 CI 应落负区间且不含 0(§7:r_mean −0.95、R_sum −5.70)。**只想要六指标那一行**:跑 1、2、4 即可。
+
+---
+
 ## 2026-08-04 (86) — ✍️ C1 KD 训练侧代码已全部落地(含 U9 `loss_weight` 假开关修复);执行手册 = notes/c1-kd-training-manual-zh.md
 
 维护者拍板「写 C1 代码 + 1M 训练手册」—— 本块交付。**§11.2 阶梯 ③ 关闭**,
