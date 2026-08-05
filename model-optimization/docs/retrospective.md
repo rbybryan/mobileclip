@@ -1,8 +1,8 @@
 # 1M 验证层复盘报告:五个精度改进为何全部落空
 
 **日期:** 2026-08-03 · **档位:** 1M 子集验证层(`sub1m_*`,8 个 config)· **算力:** H100
-**权威判决表:** [`verification-tier-1m-zh.md`](verification-tier-1m-zh.md) §10 · **机制证据:** [`../experiments/gate0_results.md`](../experiments/gate0_results.md)
-**可执行的下一步:** [`live/from-claude.md`](live/from-claude.md) (77)
+**权威判决表:** [`verification-tier-1m-zh.md`](../../notes/verification-tier-1m-zh.md) §10 · **机制证据:** [`../experiments/gate0_results.md`](../../experiments/gate0_results.md)
+**可执行的下一步:** [`live/from-claude.md`](../../notes/live/from-claude.md) (77)
 
 ---
 
@@ -119,7 +119,7 @@ dual-softmax,排序更锐)分别报告;只有两口径同向的差异才被采�
 它对所有帧一视同仁,且只是一阶统计量(rank-1)。三条臂各以不同方式试图改进它,且都采用零初始化,
 保证训练第 0 步与均值逐位等价(不退化起点)。
 
-**为何三条同时失败,先看机制证据。** GATE-0 时序容量审计([`gate0_results.md`](../experiments/gate0_results.md) §8)
+**为何三条同时失败,先看机制证据。** GATE-0 时序容量审计([`gate0_results.md`](../../experiments/gate0_results.md) §8)
 用三条独立证据证明该模型**不编码时间方向**:① 行为上,打乱 8 帧顺序检索得分几乎不变(+0.1/+0.2),
 而换成单帧重复则暴跌 13 分 —— 帧的「多样性」值约 13 分,帧的「顺序」值约 0;② 核形状上,时序卷积核的
 反对称占比 0.5011,与随机未训练核(0.4999)逐分位点吻合,即未学到方向选择性;③ 闸门上,时序分支的
@@ -211,11 +211,11 @@ batch 仅 512(128×4),而 sigmoid 类损失的理论饱和点在 3 万量级,相
 ### 6.0 这个「删」的想法从哪来:三个测试逐级指向它
 
 删时序分支不是拍脑袋的假设,而是三次测量顺次逼出来的结论(提案编号 round4-P1,
-[`architecture-round4.md`](../notes/architecture-round4.md) §P1「largest *measured* win」):
+[`architecture-round4.md`](../../notes/architecture-round4.md) §P1「largest *measured* win」):
 
 1. **诊断:GATE-0 时间维容量审计(temporal-capacity audit)—— 实测「这条支路几乎没在干活」。**
    三条独立证据从**行为(behavioral)、参数(kernel)、训练动力学(gate)** 三个层面互相印证
-   (原始数据见 [`gate0_results.md`](../experiments/gate0_results.md) §8):
+   (原始数据见 [`gate0_results.md`](../../experiments/gate0_results.md) §8):
 
    - **① 行为侧 · frame-shuffle probe:** 把 8 帧完全打乱输入,检索得分几乎不动
      —— t2v R@1 **+0.1 / +0.2**(DSL / raw),raw `r_mean` 甚至与基线逐位相同的 **61.55**。作为 positive
@@ -232,7 +232,7 @@ batch 仅 512(128×4),而 sigmoid 类损失的理论饱和点在 3 万量级,相
      **闸门比 = 0.0613 ≈ 1/16**。**从同一起点出发,模型用梯度亲手把这条支路压低了约 16 倍 —— 相当于直接
      告诉我们它不需要这个零件。** 这不是初始化差异(同初值),而是纯粹的训练结果。
 2. **动机:CPU 逐路径 profiling(A9)—— 「而且它还特别贵」。** 实测该分支吃掉 **46.1% 的 CPU 墙钟,
-   却只占 0.20% 的 MACs**([`architecture-round4.md`](../notes/architecture-round4.md) §8)。既然几乎不贡献精度,
+   却只占 0.20% 的 MACs**([`architecture-round4.md`](../../notes/architecture-round4.md) §8)。既然几乎不贡献精度,
    却占了近一半的 CPU 时间,删它就从「无害」升级为「划算」。
 3. **验证:评测期消融 `eval_gate3`(P1-eval)—— 「删了检索真的看不出差别」。** 在**已训好**的官方权重上
    直接关掉该分支,Δ 仅 −0.33 且**置信区间含 0**(V100 sweep)。
@@ -253,7 +253,7 @@ batch 仅 512(128×4),而 sigmoid 类损失的理论饱和点在 3 万量级,相
 - **三条必须说清的边界:** ① **非劣 ≠ 等价** —— 准确表述是「在能分辨 2.5 R_sum 的精度下未测出损失」,其正当
   用途是**保险丝**(未熔断 ⇒「训练时也可删」这条路在上 10M 前未被拦下);② 上述**效率数字需配套的结构性
   删算子代码才能真正兑现** —— 当前实现只是让分支「乘以 0」使其数学恒等,算子仍在空转(缺口见
-  [`v100-10k-advance-tests.md`](v100-10k-advance-tests.md) §7);③ 非劣结论**目前仅有一个 seed**,须补第二个坐实。
+  [`v100-10k-advance-tests.md`](../../notes/v100-10k-advance-tests.md) §7);③ 非劣结论**目前仅有一个 seed**,须补第二个坐实。
 
 ---
 
@@ -278,7 +278,7 @@ batch 仅 512(128×4),而 sigmoid 类损失的理论饱和点在 3 万量级,相
 2. **主时钟转向教师蒸馏(C1)。** 这是目前唯一既未被检验、又有明确上行空间,且改动的是「数据与监督信号」
    而非「模型结构」的方向。首个吞吐已跑通(§10.5,教师提取管线健康、零解码失败),但 1.8 clip/s 是与 P9 训练
    **共卡**时测得的污染值;P9 已结束,应在**独占算力**下重测,再据此决定语料规模(精选 2–3M vs 全量 10M)。
-3. **三项收尾(可执行命令见 [`live/from-claude.md`](live/from-claude.md) (77)):** ① 独占算力重测教师提取吞吐,
+3. **三项收尾(可执行命令见 [`live/from-claude.md`](../../notes/live/from-claude.md) (77)):** ① 独占算力重测教师提取吞吐,
    定语料规模;② 补 P1trained 第二个 seed(配置已建 `sub1m_P1trained_s43`),坐实唯一存活的结论;
    ③ 读取 P9 的 `W₂` 范数,闭合其失败归因。
 4. **不再在 1M 档尝试小改动。** 排队新任务前先运行 `experiments/status_1m.py`,确认无在跑臂、无异常臂。
@@ -302,13 +302,13 @@ batch 仅 512(128×4),而 sigmoid 类损失的理论饱和点在 3 万量级,相
 
 | 内容 | 出处 |
 |---|---|
-| 全部判决 + 绝对分 + 噪声地板 δ | [`verification-tier-1m-zh.md`](verification-tier-1m-zh.md) §10 |
+| 全部判决 + 绝对分 + 噪声地板 δ | [`verification-tier-1m-zh.md`](../../notes/verification-tier-1m-zh.md) §10 |
 | sigmoid 损失的 A/B 详情 | 同上 §7 |
 | 排队决策与各臂设计动机 | 同上 §8 / §9 |
-| 时序池化为何对帧序不敏感(GATE-0 三证据) | [`../experiments/gate0_results.md`](../experiments/gate0_results.md) §5 / §8 |
-| P1 效率数字 / 结构性删算子缺口 | [`v100-10k-advance-tests.md`](v100-10k-advance-tests.md) §7 |
-| V100 侧的同向证据(P5 / P1 / P7 / AC9) | [`../experiments/v100_sweep_results.md`](../experiments/v100_sweep_results.md) |
-| 可执行的下一步命令 | [`live/from-claude.md`](live/from-claude.md) (77) |
+| 时序池化为何对帧序不敏感(GATE-0 三证据) | [`../experiments/gate0_results.md`](../../experiments/gate0_results.md) §5 / §8 |
+| P1 效率数字 / 结构性删算子缺口 | [`v100-10k-advance-tests.md`](../../notes/v100-10k-advance-tests.md) §7 |
+| V100 侧的同向证据(P5 / P1 / P7 / AC9) | [`../experiments/v100_sweep_results.md`](../../experiments/v100_sweep_results.md) |
+| 可执行的下一步命令 | [`live/from-claude.md`](../../notes/live/from-claude.md) (77) |
 
 ---
 

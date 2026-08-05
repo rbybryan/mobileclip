@@ -37,6 +37,8 @@ plan the maintainer will act on**, do this before ending the turn:
    - Long-form explainers / reports → **`docs/<topic>.md`**
    - **Anything about recaption / data audit → `recaption/docs/<topic>.md`** (design, plans,
      reports, setup all live there; the code is `recaption/scripts/`)
+   - **Anything about the 1M-round model-optimization schemes → `model-optimization/docs/<topic>.md`**
+     (per-scheme changes, run recipe, result reports; entry `model-optimization/scripts/run_model_opt.sh`)
    Keep entries copy-pasteable: exact commands in fenced ```bash blocks, run from repo root
    unless noted, with any `CUDA_VISIBLE_DEVICES` / path edits called out.
 2. **Update, don't duplicate.** If a relevant section already exists, edit it in place and keep
@@ -88,10 +90,12 @@ before any merge.
 | `notes/` | Replication log, ablations, architecture ideas, plans (some `_zh` variants) |
 | `docs/` | Upstream README, landscape survey, long-form guides |
 | `recaption/` | **Self-contained**: the InternVid-zh recaption + data-audit line — `docs/` (six live docs; superseded/not-yet-needed ones sit in `docs/archive/` and are not maintained) and `scripts/` (all code, entry point `run_v100.sh`). Start at [`recaption/README.md`](recaption/README.md) |
+| `model-optimization/` | **Self-contained**: the 1M-round model-optimization schemes (6 方案) — its own `docs/` (per-scheme changes, run recipe, result reports) and `scripts/` (entry `run_model_opt.sh`). The model code / configs / shared runners stay in `models/` `experiments/` (cross-cutting); this folder gathers the docs + entry. Start at [`model-optimization/README.md`](model-optimization/README.md) |
 
 When in doubt about *how* to run something, `COMMANDS.md` is the source of truth; when something
 breaks, check `TROUBLESHOOTING.md` first and append to it. Anything about recaption/data-audit
-goes under `recaption/` — do not add recaption docs back into `notes/` or `docs/`.
+goes under `recaption/`; anything about the model-optimization schemes goes under
+`model-optimization/` — do not scatter these back into `notes/` or `docs/`.
 
 ---
 
@@ -104,6 +108,7 @@ scripts/            training / evaluation entry points (.sh wrappers)
 tasks/ tasks_clip/  training + eval task loops (retrieval.py, pretrain.py)
 dataset/ preprocess/ tools/ utils/   data + helpers
 recaption/          InternVid-zh 重述+数据审计全线（docs/ 文档 · scripts/ 代码，入口 run_v100.sh）
+model-optimization/ 1M 层 6 个模型改造方案（docs/ 说明+报告 · scripts/ 入口 run_model_opt.sh）
 mobileviclip.yml    conda environment (internal env name: `internvideo`)
 requirements.lock.txt   validated `pip freeze` from the working env
 ```
