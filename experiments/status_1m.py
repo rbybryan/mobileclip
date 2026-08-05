@@ -4,16 +4,23 @@
 回答三个在排队前必须知道、但从 `nvidia-smi` 和 `ls` 都看不出来的问题:
 
   1. **现在还有臂在跑吗?** `run_verify_1m.sh` 是**串行**的,再起一个会和在跑的抢同一组卡。
+     (`extract_teacher.py` 也一并查:它可与训练共卡,但会互相污染吞吐/墙钟。)
   2. **已"跑完"的臂,墙钟对不对?** 参考值 ~15 h/臂(`sub1m_r0_s42` 实测 15:11:58)。
      远短于它的臂 = **没跑满 epoch 就退出了**,它的结论是**无效**的,不是"结果为负"。
-     ⚠️ 这不是假想:`sub1m_r1b_s42` 曾只跑 2:12:39 就出现在"完成"清单里。
+     ⚠️ 但日志墙钟会**说谎**:runner 每次调用都覆盖写 `<臂>.log`(2026-08-03 前),被信号
+     打断再 auto_resume 的臂,日志里只剩最后一段(`sub1m_r1b_s42` 实例:全程 >15 h,
+     日志只剩续跑腿的 2:12:39)。所以这里同时看 **ckpt mtime 跨度** —— 两个时钟**都**短
+     才判 🔴 可疑;日志短而 ckpt 跨度够长 ⇒ 只是续跑截断件,臂本身是完整的。
   3. **哪些臂真的有结果?** 有 ckpt ≠ 有结论;要有 `eval_res*.json` 才算测过。
+     训练内评测落在 `runs/<臂>/`,**§3.8 离线补评落在 `evals/sub1m/<臂>/`** —— 两处都认
+     (r0_s42 / r1a_s42 的环内评测被跳过、数字全靠离线补评,只看 runs/ 会误报 ⚠️ 中断)。
 
 只依赖标准库,不 import torch,不碰 GPU —— 在跑的任务旁边随时可以跑。
 
 用法:
     python experiments/status_1m.py                 # 全部 sub1m_* 臂
     python experiments/status_1m.py --runs-dir experiments/runs
+    python experiments/status_1m.py --evals-dir experiments/evals/sub1m
     python experiments/status_1m.py --expect-hours 15.2   # 改墙钟参考值
 
 判读见 notes/verification-tier-1m-zh.md §8(既有配方臂)与 §9(新架构臂)。
@@ -107,6 +114,28 @@ def ckpt_state(out_dir):
             len([n for n in names if n.endswith(".pth")]))
 
 
+def ckpt_span(out_dir):
+    """最早与最晚 `ckpt_XX.pth` 的 mtime 差(秒)—— 训练真实时长的下界。
+
+    日志被 runner 截断(每次调用覆盖写)时,这是唯一还活着的时钟:ckpt 是训练进程
+    按 epoch 顺序落盘的,跨度短不了。代价是它把「崩溃到续跑之间的死时间」也算进去,
+    所以只用来**排除假阳性**(日志短但 ckpt 跨度长 ⇒ 完整),不用来精确计时。
+    (mtime 可能被 rsync/cp 刷新 —— 和日志 mtime 同一句警告。)
+    """
+    if not os.path.isdir(out_dir):
+        return None
+    ts = []
+    for n in os.listdir(out_dir):
+        if CKPT_EPOCH_RE.match(n):
+            try:
+                ts.append(os.path.getmtime(os.path.join(out_dir, n)))
+            except OSError:
+                pass
+    if len(ts) < 2:
+        return None
+    return max(ts) - min(ts)
+
+
 def eval_rmean(out_dir):
     """任一协议下的 r_mean;找不到返回 None。优先 raw 口径(_emb)。"""
     best = None
@@ -139,7 +168,8 @@ def eval_rmean(out_dir):
 def live_procs():
     """在跑的 runner / 训练进程。串行 runner 的前提是同一时刻只有一组。"""
     out = []
-    for pat in ("run_verify_1m.sh", "run_pretrain.sh", "tasks_clip/pretrain.py"):
+    for pat in ("run_verify_1m.sh", "run_pretrain.sh", "tasks_clip/pretrain.py",
+                "extract_teacher.py"):
         try:
             r = subprocess.run(["pgrep", "-af", pat], capture_output=True, text=True,
                                timeout=10)
@@ -163,6 +193,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runs-dir", default="experiments/runs")
+    ap.add_argument("--evals-dir", default="experiments/evals/sub1m",
+                    help="§3.8 离线补评的落点;runs/ 里没有 eval 时来这里找")
     ap.add_argument("--config-dir", default="experiments/configs")
     ap.add_argument("--pattern", default="sub1m_*",
                     help="臂名通配,默认全部 1M 臂")
@@ -185,6 +217,12 @@ def main():
         has_log = os.path.isfile(log)
         mx_ep, has_latest, has_best, n_ckpt = ckpt_state(out_dir)
         ev = eval_rmean(out_dir) if os.path.isdir(out_dir) else None
+        offline = False
+        if ev is None:
+            off_dir = os.path.join(args.evals_dir, name)
+            if os.path.isdir(off_dir):
+                ev = eval_rmean(off_dir)
+                offline = ev is not None
 
         wall = None
         ep = None
@@ -200,6 +238,8 @@ def main():
                 stale = max(stale, now - t1.timestamp())
 
         # ---- 状态判定 ----
+        span = ckpt_span(out_dir)
+        threshold = args.expect_hours * 3600 * 0.5
         if not has_log and n_ckpt == 0:
             state, note = "未排队", "还没跑过"
             queueable.append(name)
@@ -207,13 +247,20 @@ def main():
             state, note = "🟢 运行中", f"日志 {int(stale)}s 前还在写"
             running.append(name)
         elif ev:
-            short = wall is not None and wall < args.expect_hours * 3600 * 0.5
-            if short:
+            log_short = wall is not None and wall < threshold
+            span_short = span is None or span < threshold
+            done_note = f"{ev[0]} r_mean={ev[1]:.2f}" + ("(离线补评)" if offline else "")
+            if log_short and span_short:
                 state = "🔴 可疑"
-                note = f"有结果但墙钟仅 {hhmm(wall)} ≪ 参考 {args.expect_hours}h ⇒ 结论无效"
+                note = (f"有结果但日志墙钟 {hhmm(wall)} 且 ckpt 跨度 {hhmm(span)}"
+                        f" ≪ 参考 {args.expect_hours}h ⇒ 结论无效")
                 suspicious.append((name, n_ckpt > 0))
+            elif log_short:
+                state = "✅ 已完成"
+                note = (done_note + f";日志 {hhmm(wall)} 是续跑截断件,"
+                        f"ckpt 跨度 {hhmm(span)} 证明跑满")
             else:
-                state, note = "✅ 已完成", f"{ev[0]} r_mean={ev[1]:.2f}"
+                state, note = "✅ 已完成", done_note
         elif n_ckpt:
             state = "⚠️ 中断"
             note = f"有 ckpt 无 eval 结果(墙钟 {hhmm(wall)});auto_resume 可续"
@@ -238,14 +285,21 @@ def main():
     print("-" * 100)
 
     procs = live_procs()
+    train_procs = [p for p in procs if "extract_teacher.py" not in p]
+    ext_procs = [p for p in procs if "extract_teacher.py" in p]
     print()
-    if procs:
+    if train_procs:
         print("🟢 检测到在跑的进程 —— **不要**再起一个 run_verify_1m.sh(串行 runner,会抢同一组卡):")
-        for p in procs[:8]:
+        for p in train_procs[:8]:
             print(f"   {p}")
         print("   要追加臂:等它跑完,或用另一组 CUDA_VISIBLE_DEVICES 起第二条 runner。")
     else:
         print("⚪ 没检测到在跑的训练进程 ⇒ 可以排新任务。")
+    if ext_procs:
+        print("⚠️ extract_teacher 在跑 —— 可与训练共卡(80G 余量够),但**互相污染吞吐/墙钟**")
+        print("   (§10.5 的教训:共卡量出的 clip/s 偏悲观;臂的墙钟也会被拖长):")
+        for p in ext_procs[:4]:
+            print(f"   {p}")
 
     if suspicious:
         print()

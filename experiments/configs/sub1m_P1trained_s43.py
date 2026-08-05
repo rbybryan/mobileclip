@@ -1,11 +1,11 @@
-"""1M 验证层 —— **P1-trained**:删掉整条时序分支后重训(seed 43,42 的孪生)。见 §10.6。
+"""1M 验证层 —— **P1-trained** 的 seed-43 孪生:删掉整条时序分支后重训。见 §11.1。
 
-`sub1m_P1trained_s42` 的 seed-43 复现。§10 全轮收官后,P1trained 是**唯一非劣通过**的臂,
-但结论目前只有一个 seed —— 而它是**真要出货的模型**,house rule 要两个 seed 方向一致才算数
-(§10.2 实测种子地板 δ=2.5 R_sum)。本臂补齐第二 seed,把「训练时也能删」坐实。
+相对 sub1m_P1trained_s42 的唯一变化:seed=43(以及 output_dir)。
+为什么要它:§10 收官后 P1trained 是全轮唯一的正面结论(非劣通过),但那是单 seed;
+r1b 的教训(§10.3(b))是单 seed 的 +2.8 可以整个是种子地板。头条结论必须双 seed。
 
-相对 sub1m_r0 的唯一变化仍是:disable_temporal_branch=True(减法,零新增参数)。
-判读方向和别的臂相反:本臂**不需要赢** r0,只需**不显著输**(NS ≠ 等价,只是没测出损失)。
+读法(§11.1):跨 seed 对 r0_s42 配对 bootstrap(与 §10.3(b) 同惯例),两口径,
+判据 = CI 下界仍在实测种子地板 δ=2.5(保守 5.5)之内。r0_s43 只在结果落在模糊带时才补。
 """
 from scripts.pretraining.clip.mobileviclip_small.config import *  # noqa: F401,F403
 

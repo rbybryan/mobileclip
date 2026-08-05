@@ -467,3 +467,209 @@ DiDeMo/ANet 的 anno 拿不到,**但 k400/ucf101/hmdb51 的 anno 一直是齐的
 
 ⚠️ **不要把这条当成拦住 H100 的理由** —— 精度臂本身是独立且有效的,
 只是**报结果时必须把两件事分开写**,别让「精度没掉」被读成「效率已兑现」。
+
+---
+
+## §8. 2026-08-03 窗口执行单(已执行,回执与下一窗口见 **§9**)
+
+**背景**:1M 层收官(`verification-tier-1m-zh.md` §10):5 个精度改进全否,
+**P1trained 非劣通过成为头条**;AC9 关闭、P7 只剩「224² 近免费」一档。
+本窗口职责不变:给 H100 的下一步(§11 的队列)供判据,并把头条结论的测量面补厚。
+**全部零训练。** H100 侧的排队见 `verification-tier-1m-zh.md` **§11**。
+
+### 第 0 步 · git pull + 阶段 0(数据根冲突已自动修,#418)
+
+```bash
+cd ~/mobileclip && git pull
+unset MVC_DATA_DIR      # 别再 export;阶段 0 会自建软链并逐根 PASS/FAIL
+bash experiments/run_v100_all.sh 0
+```
+
+### 第 1 步 · 阶段 10 重跑(C-2 聚合扫描 + C-4 方差-vs-覆盖判别)—— 上轮挂在数据根,已修
+
+```bash
+bash experiments/run_v100_all.sh 10
+```
+
+**为什么它仍是本机最高优先**:P9 死后,「时序信息怎么用」只剩评测侧一条活路 ——
+C-4 判「T 的价值是**方差缩减**还是**覆盖**」,两个答案给出**相反**的处方
+(方差 ⇒ 均值池化已最优,精度线到此为止;覆盖 ⇒ late-interaction / top-k 聚合
+(P6,零训练)是下一条精度线)。**这是当前唯一可能再开一条精度线的实验,而它不要训练。**
+
+### 第 2 步 · 阶段 7 重跑(A7 成本轴 + B1 词表覆盖率)—— #410 已修
+
+```bash
+bash experiments/run_v100_all.sh 7
+```
+
+A7 把 §5(`v100_sweep_results.md`)的分辨率表从曲线变**前沿**(等像素比较要成本轴);
+B1 决定 P13(b) 裁词表的生死(结论记 **10k-zh 口径**)。
+
+### 第 3 步 · 🔺 给已训 1M ckpt 补多基准面 —— 头条结论(P1trained 非劣)的第二道保险
+
+三个锚点(k400/ucf101/hmdb51,官方权重)已就位(`v100_sweep_results.md` §6);
+现在把**已训臂**也过一遍,非劣判读的测量面 ×4。
+**最少集合**:`sub1m_r0_s42` 与 `sub1m_P1trained_s42`(判非劣);
+`r1b_s42/s43` 有余量再补(= 种子地板的多基准版,免费的方法学数据)。
+
+> 🔴 **2026-08-03 更正:维护者确认 b100 与 101vector 当前都「看不到」这三个基准。**
+> 但 `v100_sweep_results.md` §5/§6 的数字就是在它们上面测的(07-31,#414)—— 数不会凭空来。
+> 最可能:视频一直在 V100 的旧 `MVC_DATA_DIR` 根(`/home/vca1/datasets`)下,
+> #418 的修复 `unset` 之后只软链了 10k ⇒ **三个基准被同一个根机制断开了**。先探,别下结论:
+>
+> ```bash
+> # V100 上,1 分钟:
+> find /home/vca1/datasets -maxdepth 2 -type d \
+>      \( -iname "*kinetics*" -o -iname "*ucf*" -o -iname "*hmdb*" \) 2>/dev/null
+> ```
+> **找到 ⇒ 三条幂等软链(与 10k 同款修法;前缀按 find 实际输出改),readiness 应转 `[OK ]`:**
+> ```bash
+> ln -sfn /home/vca1/datasets/kinetics_400_val_10s_320p data/kinetics_400_val_10s_320p
+> ln -sfn /home/vca1/datasets/ucf101                    data/ucf101
+> ln -sfn /home/vca1/datasets/hmdb51                    data/hmdb51
+> python experiments/check_readiness.py
+> ```
+> **两台都真没有 ⇒ 两个后果分开处理**:
+> ① 🔴 §5/§6(P7 分辨率否决 + 多基准锚点)的**出处必须审计** —— 把 find 的空输出发回来,审计步骤我来定;
+> ② 本步的替代:UCF101(~6.9 GB)+ HMDB51(~2 GB)可下载补齐(k400 val 太大先跳过),
+>    或者放弃多基准保险,P1trained 只靠 MSR-VTT 配对 CI + s43 —— 下不下载维护者定。
+
+```bash
+# ① ckpt 从 b100 拉到本机(单臂只需 ckpt_02.pth 目录里的 mp_rank_00_model_states.pt):
+rsync -av <b100>:~/mobileclip/experiments/runs/sub1m_r0_s42/ckpt_02.pth \
+      experiments/runs/sub1m_r0_s42/
+rsync -av <b100>:~/mobileclip/experiments/runs/sub1m_P1trained_s42/ckpt_02.pth \
+      experiments/runs/sub1m_P1trained_s42/
+
+# ② 每臂 × 每基准一次(~分钟级/次):
+for arm in sub1m_r0_s42 sub1m_P1trained_s42; do
+  for b in k400 ucf101 hmdb51; do
+    bash experiments/run_eval.sh small "$b" \
+         "experiments/runs/$arm/ckpt_02.pth" "experiments/evals/$arm/$b"
+  done
+done
+
+# ③ 配对判读。⚠️ 动作基准的结果键前缀不是 ret_test*(参考:k400 是 act_val/ 一族)——
+#    先看一眼实际键名,再把它传给 --prefix(两口径都比):
+python -c "import json;print(list(json.load(open('experiments/evals/sub1m_r0_s42/k400/eval_res.json'))))"
+python experiments/collect_results.py \
+    --compare experiments/evals/sub1m_P1trained_s42/k400 experiments/evals/sub1m_r0_s42/k400 \
+    --prefix <上面看到的前缀>     # ucf101 / hmdb51 同理
+```
+
+**判读**:P1trained 在三个基准上的配对 CI 若都不显著负(带着 §10.2 的种子地板 δ=2.5 读)
+⇒ 非劣结论多了三个独立测量面;**任何一个基准显著负 ⇒ 保险丝熔断**,上 10M 之前必须先解释。
+
+### 第 4 步 · 两口径补齐(若上轮没跑)—— gate3/gate4 的 raw 配对 CI(4 条命令,~4 分钟)
+
+块 75 开头那四条 `collect_results.py --compare`(gate3/gate4 × 两口径);
+`v100_sweep_results.md` §1/§2 标的「待补」以此销账。
+
+### 第 5 步 · 需要 Claude 先写代码的两件(回「写吧」并指明哪件)
+
+1. **BN 重校准 CLI** —— §5 的正式数、「224² 近免费」的论文主张都卡在它
+   (纪律见 §3;工具底座 `experiments/per_t_bn.py` 已有,缺的是串成一条命令)。
+2. **P1 结构性旁路 + 导出 diff**(§7 的两步)—— P1trained 已是头条,但其效率数
+   (440 节点 / −18% CPU)仍是「声称」:旁路 + `export_smoke` diff
+   (基线 1581 节点 vs 声称 1141)+ A9 复测,把声称变实测。**这是论文效率章的硬前提。**
+
+---
+
+## §9. 🔺 2026-08-04 窗口回执 + 下一窗口执行单
+
+**§8 的完成度**:第 0/1/2/4 步已跑完(阶段 0+10、阶段 7、gate3/gate4 两口径),
+结果与判读全部记在 [`experiments/v100_sweep_results.md`](../experiments/v100_sweep_results.md)
+**§8**(第二轮)与改判后的 §1/§2。第 3 步(多基准补已训臂)**解锁但未跑**
+(三个基准软链已就位 —— 本轮阶段 0 `数据:k400/ucf101/hmdb51` 全 PASS,只差 rsync ckpt);
+第 5 步的两件代码(BN 重校准 CLI、P1 结构性旁路)仍等「写吧」。
+
+**一句话版结果**:gate4/P5 两口径认证通过(**可写进论文**);gate3「测不出差别」**改判收回**
+(raw 显著 −0.43,P1 的立论回到 P1trained);C-4 判「**方差缩减**」⇒ P6/FILIP 训练族维持死亡;
+**但 LSE(τ=0.05)+1.15/+1.56 高于 mean** —— 评测侧唯一还开着的精度线索,等 CI 认证;
+A7 成本轴 + B1 词表(10k-zh 口径 100%@8k)落地;A9/A10/A13 第二轮复现。
+另:阶段 0 的 `MSRVTT 视频根` FAIL 是假警报(`find` 不解引用末级软链,已修 `find -L`,
+见 `TROUBLESHOOTING.md` 末节)—— **数据根别动,它一直是好的**。
+
+### 下一窗口(全部零训练,按序)
+
+**第 0 步 · git pull**(probe v2 + find -L 修复都在里面)
+
+```bash
+cd ~/mobileclip && git pull
+unset MVC_DATA_DIR
+```
+
+**第 1 步 · 🔺 阶段 10 重跑(probe v2)—— 给 LSE 反常上判据(~40 min)**
+
+```bash
+bash experiments/run_v100_all.sh 10
+```
+
+v2 会对每个聚合器 vs mean 打**逐查询配对 CI**(10000 次,seed=0)、补 **DSL 口径**、
+扫 **τ ∈ {0.02,0.05,0.1,0.2,0.5,1.0}**,并把逐查询 rank 落盘
+`experiments/frame_agg/T*_*/ranks_ret_test{,_emb}.npz`(此后任意两臂可用
+`collect_results.py --compare` 重比)。**判读纪律**:
+
+- 头条只认 **τ=0.05**(v1 写死的默认 = 预登记;τ 扫描只当敏感度曲线,
+  **不许**事后挑最好的 τ —— 那是在测试集上选超参)。
+- `[CI]` 行里 LSE@0.05 **两口径同向且 CI 不含 0** ⇒ 评测侧聚合增益认证,
+  连同「LSE@T=8 > mean@T=16(聚合器买得动帧预算)」一起进论文;
+  任一口径含 0 ⇒ 只记趋势,降级为附录。
+- ⚠️ 报收益必须连部署成本一起报:相似度级聚合 ⇒ 索引存 T 份逐帧嵌入(×T)。
+
+**第 2 步 · 多基准补已训臂 —— §8 第 3 步原文照跑(软链障碍已清)**
+
+命令块与判读见 **§8 第 3 步**(rsync 两个 ckpt → 每臂 × 3 基准 → `--prefix` 按实际键名配对)。
+它仍是 P1trained 非劣头条上 10M 之前的**第二道保险**,本窗口内价值最高的未跑项。
+
+**第 3 步(可选,零成本)· LSE × gate4 可加性一眼看**
+
+若第 1 步认证通过,两条评测侧增益(P5 +0.7、LSE +1.5)自然要问**可不可叠加**。
+probe 目前不吃 config 覆盖,叠加实验要等一个小改(给 probe 加 `--set key value` 透传)——
+要做回「写吧」,**不阻塞前两步**。
+
+### 本窗口不做的
+
+| 不做 | 理由 |
+|---|---|
+| 按 τ 扫描的最优 τ 换头条 | 测试集选超参;换 τ 要先在别的基准/验证集复核 |
+| 阶段 3/5 重跑 | 数没变;正式数仍卡 BN 重校准 CLI(回「写吧」) |
+| 10k 冒烟排查(§7-1) | 不 gate 本窗口任何一步;单独排 |
+
+### §9 回执更新(2026-08-04 · 第三轮全量队列,commit 87307a9)
+
+**第 1 步 ✅ 认证通过**:LSE(τ=0.05)− mean 在**两口径 × 两 T 四格全显著**
+(T=16 raw **+1.57 [+1.05, +2.08]**,R_sum +9.40 [+6.30, +12.50];其余三格同向全显著)。
+τ ∈ 0.02–0.2 是增益平台,τ≥0.5 塌回 mean;预登记的 0.05 恰在平台顶点 ⇒ 无事后选 τ 问题。
+细节、机制表(硬选帧被认证有害)、部署语义:`experiments/v100_sweep_results.md` **§9**。
+
+**新增第 1b 步(零 GPU,~2 分钟)· 跨 T 配对 CI —— 把「换聚合器 ≈ 白赚 2× 帧预算」变判据**:
+
+```bash
+python experiments/collect_results.py --compare experiments/frame_agg/T8_lse_tau0.05 experiments/frame_agg/T16_mean
+python experiments/collect_results.py --compare experiments/frame_agg/T8_lse_tau0.05 experiments/frame_agg/T16_mean --prefix ret_test/
+```
+
+读法:CI 下界 ≥ 0 ⇒「省一半帧还更好」认证;含 0 但点估计为正 ⇒ 写成「省一半帧不掉点」。
+(rank 都在盘上,配对合法:同一测试集、同一查询顺序。)
+
+**第 2 步(多基准补已训臂)仍未跑** —— 还是只差从 b100 rsync 两个 ckpt(§8 第 3 步原文)。
+它仍是 P1trained 上 10M 前的第二道保险,当前 V100 侧价值最高的未跑项。
+
+**等「写吧」的代码**(优先级顺序):① probe `--set key value` 透传 —— 解锁 LSE×gate4
+可加性与跨基准(k400/ucf101/hmdb51)LSE 复核;② BN 重校准 CLI(§7-5);③ P1 结构性旁路(§7-7)。
+
+⚠️ 汇总尾注那句「H100 可排 … sub1m_P9_s42」是过期文案(P9 已于 1M 关线),
+本轮已从脚本删除;H100 排队一律以 `status_1m.py` + `verification-tier-1m-zh.md` §11 为准。
+
+### §9 追记(2026-08-04 晚)·「写吧」三件已交付 —— 全部零训练,命令见块 85 / COMMANDS §3.6/§3.15/§3.17
+
+| # | 交付 | 内容 | 本地验证 |
+|---|---|---|---|
+| ① | probe `--set` 直通 + **载后 flag 重放** | `--set model.vision_encoder.disable_temporal_embedding true` 即 LSE×gate4 可加性;顺手修掉一个静默失效:结构 flag 是「置零参数」,任何外部 load(pretrained_path / --ckpt)都会冲掉它 ⇒ 三处载点(probe / bn_recalibrate / shared_utils)现在都在载后重放 `apply_arch_flags()`(gate 评测当年被迫用消融 ckpt 绕路,根因就是它) | 桩件端到端 |
+| ② | **BN 重校准 CLI**(`experiments/bn_recalibrate.py`) | 产出打过 BN 补丁的完整 ckpt,现有评测链路零改动直接吃;强制 `gradient_checkpointing=False` + 校准后断言 `num_batches_tracked == batch 数`(A12 判据),不对拒绝落盘;校准语料默认 10k pilot val(训练域零泄漏);侧车 json 记口径与漂移 | 桩件端到端(含 A12 断言、绕圈取批、bank 落盘) |
+| ③ | **P1 结构性旁路 + 导出 diff 判据** | `RepMixer.skip_temporal` + wrapper flag `skip_temporal_branch`(强制与 `disable_temporal_branch` 同开,防止效率开关偷偷变成精度消融);`export_smoke.py --skip-temporal` + ONNX 节点/layout-op 计数 | `tests/test_skip_temporal.py` 4 条全过(训练态/重参数化态**逐位一致** + 非零门必须不等的护栏);mini 导出 diff 实证 186 节点/44 layout → 165/26 |
+
+**仍然明确不做(记下理由,别反复起念)**:跨基准(k400/ucf101/hmdb51)的 LSE 复核 ——
+probe 按对角线正例打分,动作基准要 `txt2img/img2txt` 多正例映射 + `num_prompts` 展开,
+是一次真正的改造;等 LSE×gate4 与多基准已训臂两件先落,再决定值不值。

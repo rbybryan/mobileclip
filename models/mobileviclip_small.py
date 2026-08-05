@@ -4,6 +4,7 @@ import json
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 import numpy as np
 from PIL import Image
 import torchvision.transforms as transforms
@@ -53,6 +54,21 @@ def set_num_frames(t: int) -> None:
 def get_num_frames() -> int:
     """时序算子读取当前帧数 T(默认 8 = 旧硬编码行为)。"""
     return _NUM_FRAMES
+
+
+# round-5 全减法闸门(§11.7-2)/ 混合预算评测(§11.8-N1)的「逐帧独立域」开关。
+# True ⇒ stage-4 MHSA 只在帧内注意(等价于对联合注意力矩阵取帧内块对角),
+# 跨帧耦合精确为零。与 _NUM_FRAMES 同款的模块级单值约束。
+_PER_FRAME_ATTENTION = False
+
+
+def set_per_frame_attention(enabled: bool) -> None:
+    global _PER_FRAME_ATTENTION
+    _PER_FRAME_ATTENTION = bool(enabled)
+
+
+def get_per_frame_attention() -> bool:
+    return _PER_FRAME_ATTENTION
 
 
 def resize_temporal_embedding(emb: torch.Tensor, t: int) -> torch.Tensor:
@@ -135,27 +151,12 @@ class MobileViCLIP_Small(nn.Module):
             config.model.get("extra_ckpt_path", None)
         )
 
-        # round-5 **P1**:整条时序分支从 stage 1–3 删除(config:
-        # model.vision_encoder.disable_temporal_branch = True)。
-        # 机制:`RepMixer.forward:743-746` 是 x = x + λ_1d·(mixer_1d − norm_1d),
-        # 所以 λ_1d ≡ 0 且**不训练** ⇒ 该支路恒等 ⇒ 等价于它不存在。
-        # 🔴 **必须放在 load_checkpoint 之后** —— 放 __init__ 前面会被随后的权重加载覆盖,
-        #    那是一个静默失效(臂看起来跑了,其实时序分支还活着)。
-        # 依据:上面 freeze 分支的注释说得很清楚 ——「temporal parts are absent from the
-        # image-pretrained checkpoint ... else they are frozen at zero forever」。
-        # 那句话原本是在**警告**这个后果;P1 要的**正是**这个后果。
-        if self.config.model.vision_encoder.get("disable_temporal_branch", False):
-            n = 0
-            for name, p in self.vision_encoder.named_parameters():
-                if "layer_scale_1d" in name:
-                    p.data.zero_()
-                    p.requires_grad = False
-                    n += 1
-            # 断言:本模型 stage 1–3 恰有 40 个 RepMixerBlock(layers=[4,12,24,4],
-            # stage 4 是 attention 块)。数不对就是选错了张量 —— 这正是 §0.1 里
-            # gate5 把 80 个 layer_scale 混池、凭空造出 2.42% 的同一个坑。
-            assert n == 40, f"disable_temporal_branch 期望命中 40 个 layer_scale_1d,实际 {n}"
-            logger.info(f"[P1] 时序分支已删除:{n} 个 layer_scale_1d 置零并冻结")
+        # round-5 的结构 flag(P1 / P5 / P1-旁路 / 帧内注意力)。
+        # 🔴 **必须放在 load_checkpoint 之后** —— 放前面会被随后的权重加载覆盖,
+        #    那是一个静默失效(臂看起来跑了,其实时序分支还活着)。同理:任何**外部**
+        #    再次 load_state_dict(评测的 pretrained_path、probe/bn_recalibrate 的
+        #    --ckpt)之后都必须**重新调用 apply_arch_flags()**,见方法 docstring。
+        self.apply_arch_flags()
 
         # criterions
         self.clip_loss = VTC_VTM_Loss(False)
@@ -169,6 +170,88 @@ class MobileViCLIP_Small(nn.Module):
 
         # R1 SigLIP-regime text negative pool (default OFF; notes/r1-implementation-plan.md §2/§7.6).
         self._init_text_bank()
+
+        # C1 KD:教师视频嵌入蒸馏(默认 OFF;ROADMAP 2.2c / notes/c1-kd-training-manual-zh.md)。
+        # 关着时本段不建任何参数、不碰 RNG ⇒ r0 路径连初始化随机流都逐位不变。
+        self._init_vtc_kd()
+
+    def apply_arch_flags(self):
+        """round-5 的四个结构 flag(幂等,可重复调用)。
+
+        🔴 调用时机是这组 flag 的全部难点:置零是**对参数值**的操作,任何 load 都会把它
+        冲掉。__init__ 里在 load_checkpoint 之后调一次;若之后还有**外部** load(评测的
+        pretrained_path、`frame_agg_probe` / `bn_recalibrate` 的 --ckpt),载完必须再调
+        一次,否则 flag 静默失效 —— gate 评测当年被迫改用「消融 ckpt 文件」绕路,
+        根因就是这个(--set 直通 flag 的前提也是它)。对 P1trained 一族的 ckpt
+        (λ_1d 本来就存零)重复调用是纯 no-op。
+        """
+        ve_cfg = self.config.model.vision_encoder
+        # 环境变量兜底(#437 引入,评测场景 eval config 里可能没有这些键;
+        # config 键 / --set 仍是首选,训练一律走 config)。
+        _env_p1 = os.environ.get("MVC_DISABLE_TEMPORAL_BRANCH", "") == "1"
+        _env_p5 = os.environ.get("MVC_DISABLE_TEMPORAL_EMBEDDING", "") == "1"
+        _env_pfa = os.environ.get("MVC_PER_FRAME_ATTENTION", "") == "1"
+
+        # **P1**:整条时序分支从 stage 1–3 删除(disable_temporal_branch = True)。
+        # 机制:`RepMixer.forward` 是 x = x + λ_1d·(mixer_1d − norm_1d),
+        # 所以 λ_1d ≡ 0 且**不训练** ⇒ 该支路恒等 ⇒ 等价于它不存在。
+        if ve_cfg.get("disable_temporal_branch", False) or _env_p1:
+            n = 0
+            for name, p in self.vision_encoder.named_parameters():
+                if "layer_scale_1d" in name:
+                    p.data.zero_()
+                    p.requires_grad = False
+                    n += 1
+            # 断言:本模型 stage 1–3 恰有 40 个 RepMixerBlock(layers=[4,12,24,4],
+            # stage 4 是 attention 块)。数不对就是选错了张量 —— 这正是 §0.1 里
+            # gate5 把 80 个 layer_scale 混池、凭空造出 2.42% 的同一个坑。
+            assert n == 40, f"disable_temporal_branch 期望命中 40 个 layer_scale_1d,实际 {n}"
+            logger.info(f"[P1] 时序分支已删除:{n} 个 layer_scale_1d 置零并冻结")
+
+        # **P5 / lean**:删掉 temporal_embedding(disable_temporal_embedding = True)。
+        # 机制:它是塔里唯一的 T 形状参数,前向是 x = x + resize(temporal_embedding, t),
+        # 零初始化;置零且不训练 ⇒ 加法恒等 ⇒ 等价于它不存在。
+        # 评测版判定(eval_gate4)两口径显著为正(v100_sweep_results §1)。
+        # (mobileviclip_tiny 未同步加此 flag —— sub1m 层只用 Small。)
+        if ve_cfg.get("disable_temporal_embedding", False) or _env_p5:
+            n = 0
+            for name, p in self.vision_encoder.named_parameters():
+                if name.endswith("temporal_embedding"):
+                    p.data.zero_()
+                    p.requires_grad = False
+                    n += 1
+            assert n == 1, f"disable_temporal_embedding 期望恰好 1 个 temporal_embedding,实际 {n}"
+            logger.info("[P5] temporal_embedding 已置零并冻结(塔中不再有任何 T 形状参数)")
+
+        # §7 **P1 结构性旁路**(skip_temporal_branch = True)。
+        # 与 disable_temporal_branch(置零门,算子仍留在图里、照算再乘 0)不同:本 flag 让
+        # RepMixer.forward 直接跳过整条时序支路(训练态与重参数化态都跳)——
+        # P1 的效率主张(440 ONNX 节点 / −18% CPU)由它兑现,精度不该有任何变化。
+        # 🔴 必须与 disable_temporal_branch 同开:旁路只负责跳过算子,置零/冻结由后者完成
+        #    (同一次 apply 里它先跑),否则旁路会静默改变数值(效率开关变精度消融)。
+        # 等价性单测:tests/test_skip_temporal.py(训练态与重参数化态均逐位一致)。
+        if ve_cfg.get("skip_temporal_branch", False):
+            assert ve_cfg.get("disable_temporal_branch", False), (
+                "skip_temporal_branch 必须与 disable_temporal_branch 同开:旁路只负责"
+                "跳过算子,置零/冻结 λ_1d 由后者完成,否则数值会被静默改变")
+            bad = [name for name, p in self.vision_encoder.named_parameters()
+                   if "layer_scale_1d" in name and float(p.detach().abs().max()) != 0.0]
+            assert not bad, f"λ_1d 应已被 disable_temporal_branch 置零,非零示例:{bad[:3]}"
+            n = 0
+            for m in self.vision_encoder.modules():
+                if isinstance(m, RepMixer):
+                    m.skip_temporal = True
+                    n += 1
+            assert n == 40, f"skip_temporal_branch 期望命中 40 个 RepMixer,实际 {n}"
+            logger.info(f"[P1-旁路] 时序支路已结构性跳过:{n} 个 RepMixer")
+
+        # 全减法闸门(§11.7-2)/ 混合预算评测(§11.8-N1):stage-4 MHSA 改为帧内注意力
+        # (块对角)。P1 + P5 + 本项全开 ⇒ 整塔逐帧严格独立,clip 嵌入 = 帧嵌入的线性平均
+        # ⇒ mixed_budget_eval 的分组线性组合是**精确**的。缺省 False,off-path 不变。
+        # (设的是模块级全局,不是参数 ⇒ 不怕 load 冲掉;放这里图口径统一。)
+        if ve_cfg.get("per_frame_attention", False) or _env_pfa:
+            set_per_frame_attention(True)
+            logger.info("[per-frame-attn] stage-4 注意力已切为帧内(块对角);跨帧耦合 = 0")
 
     def no_weight_decay(self):
         ret = {"temp", "logit_scale", "logit_bias"}
@@ -246,13 +329,84 @@ class MobileViCLIP_Small(nn.Module):
             "dedup_cos": self.text_bank_dedup_cos,
         }
 
-    def forward(self, image, text, idx):
+    def _init_vtc_kd(self):
+        """C1 KD 初始化(config: `criterion.vtc_kd`,默认 OFF ⇒ 整段休眠)。
+
+        形态(ROADMAP 2.2c「D→512 投影 + vtc_kd」的视频专用版 —— 抽取管线目前只出
+        **视频**教师嵌入,§6.2 的 video-text 相似度矩阵 KD 要等文本阶段,这里不冒充它):
+
+        - ``loss_kd_feat`` —— 嵌入蒸馏:`1 − cos(student_512, W·teacher_D)`,
+          W 是可学习 Linear(D→512, bias=False)。只在 `loss_weight.kd_feat ≠ 0` 时计算。
+        - ``loss_kd_rel`` —— batch 内 video-video 关系蒸馏(Tung-Mori/kd_geo 族,U9 说的
+          「近亲」):teacher/student 各自的行 softmax(去对角,温度 τ)做 KL×τ²。
+          无参数、维度无关。只在 `loss_weight.kd_rel ≠ 0` 时计算。
+
+        算哪几项由 `criterion.loss_weight` 决定 —— 与 U9 修复(utils/loss_weighting)
+        互为钳制:模型只算权重非零的,求和器发现「算了没权重 / 有权重没算」都直接炸。
+        """
+        crit = getattr(self.config, "criterion", None)
+        kd = crit.get("vtc_kd", None) if crit is not None else None
+        self.kd_enabled = bool(kd and kd.get("enable", False))
+        if not self.kd_enabled:
+            return
+        lw = crit.get("loss_weight", {})
+        self.kd_compute_feat = lw.get("kd_feat", 0) != 0
+        self.kd_compute_rel = lw.get("kd_rel", 0) != 0
+        if not (self.kd_compute_feat or self.kd_compute_rel):
+            raise ValueError("[KD] vtc_kd.enable=True 但 loss_weight.kd_feat/kd_rel 全为 0 —— "
+                             "要么给权重,要么别 enable(空转会白付教师查表成本)")
+        # 教师维度必须显式写在 config 里(IV2-1B 是 768),并与抽取 manifest 的
+        # embed_dim 一致 —— 手册 §0 的 verify 会对这个数;跑错了首个 forward 也会炸。
+        self.kd_teacher_dim = int(kd["teacher_dim"])
+        self.kd_tau = float(kd.get("tau", 0.07))
+        if self.kd_compute_feat:
+            student_dim = int(self.config.model.vision_encoder.clip_embed_dim)
+            self.kd_proj = nn.Linear(self.kd_teacher_dim, student_dim, bias=False)
+        logger.info(f"[KD] vtc_kd ON: teacher_dim={self.kd_teacher_dim} "
+                    f"feat={self.kd_compute_feat} rel={self.kd_compute_rel} tau={self.kd_tau}")
+
+    def _kd_losses(self, vision_embeds, teacher_emb, teacher_ok):
+        if teacher_emb is None or teacher_ok is None:
+            raise ValueError("[KD] vtc_kd.enable=True 但 forward 没收到 teacher_emb/teacher_ok "
+                             "—— 训练入口没接教师库(只有 tasks_clip/pretrain.py 接了)")
+        if teacher_emb.shape[-1] != self.kd_teacher_dim:
+            raise ValueError(f"[KD] 教师嵌入维度 {teacher_emb.shape[-1]} ≠ config 的 "
+                             f"teacher_dim={self.kd_teacher_dim} —— 抽取目录/维度写错")
+        out = {}
+        v = F.normalize(vision_embeds.float(), dim=-1)                    # [B, 512]
+        okf = teacher_ok.to(v.dtype)
+        n_ok = okf.sum().clamp(min=1.0)
+        if self.kd_compute_feat:
+            tgt = F.normalize(self.kd_proj(teacher_emb).float(), dim=-1)  # [B, 512]
+            # miss 行(零向量)被 okf 乘掉,不进分子;分母只数 ok 行
+            out["loss_kd_feat"] = ((1.0 - (v * tgt).sum(-1)) * okf).sum() / n_ok
+        if self.kd_compute_rel:
+            m = teacher_ok.bool()
+            if int(m.sum()) >= 2:
+                t = F.normalize(teacher_emb[m].float(), dim=-1)
+                s_t = t @ t.T / self.kd_tau
+                s_s = (v[m] @ v[m].T) / self.kd_tau
+                eye = torch.eye(s_t.shape[0], dtype=torch.bool, device=s_t.device)
+                s_t = s_t.masked_fill(eye, float("-inf"))                 # 去掉平凡自相似
+                s_s = s_s.masked_fill(eye, float("-inf"))
+                out["loss_kd_rel"] = F.kl_div(
+                    F.log_softmax(s_s, dim=-1), F.softmax(s_t, dim=-1),
+                    reduction="batchmean") * (self.kd_tau ** 2)
+            else:
+                # ok 行不足以构成关系;保持键存在(求和器按 loss_weight 对账)且梯度图连通
+                out["loss_kd_rel"] = (v.sum() * 0.0)
+        return out
+
+    def forward(self, image, text, idx, teacher_emb=None, teacher_ok=None):
         """forward and calculate loss.
 
         Args:
             image (torch.Tensor): The input images. Shape: [B,T,C,H,W].
             text (dict): TODO
             idx (torch.Tensor): TODO
+            teacher_emb (torch.Tensor, optional): C1 KD 教师视频嵌入 [B, D_t],
+                只在 `criterion.vtc_kd.enable` 时由 pretrain.py 传入。
+            teacher_ok (torch.Tensor, optional): [B] bool,该行教师嵌入是否可用。
 
         Returns: TODO
 
@@ -277,9 +431,13 @@ class MobileViCLIP_Small(nn.Module):
                 vision_embeds, text_embeds, idx, self.temp, all_gather=True
             )
 
-        return dict(
+        ret = dict(
             loss_vtc=loss_vtc,
         )
+        # C1 KD:只在训练态计入(评测走 encode_* 路径,不经过这里的损失)
+        if getattr(self, "kd_enabled", False) and self.training:
+            ret.update(self._kd_losses(vision_embeds, teacher_emb, teacher_ok))
+        return ret
 
     def encode_vision(self, image, test=False):
         """encode image / videos as features.
@@ -548,6 +706,28 @@ class MHSA(nn.Module):
 
         # return x
 
+        if get_per_frame_attention():
+            # 帧内注意力(§11.7-2 闸门 / §11.8-N1 逐帧独立域):把 (T·B, C, H, W)
+            # 直接当独立帧的 batch,N = H·W —— 数学上等价于对联合注意力矩阵
+            # 取帧内块对角,跨帧耦合精确为零。配合 disable_temporal_branch
+            # (+ 已置零的 temporal_embedding)⇒ 整塔逐帧严格独立。
+            Bf, C, H, W = x.shape
+            N = H * W
+            y = torch.flatten(x, start_dim=2).transpose(-2, -1)  # (T·B, N, C)
+            qkv = (
+                self.qkv(y)
+                .reshape(Bf, N, 3, self.num_heads, self.head_dim)
+                .permute(2, 0, 3, 1, 4)
+            )
+            q, k, v = qkv.unbind(0)
+            attn = (q * self.scale) @ k.transpose(-2, -1)
+            attn = attn.softmax(dim=-1)
+            attn = self.attn_drop(attn)
+            y = (attn @ v).transpose(1, 2).reshape(Bf, N, C)
+            y = self.proj(y)
+            y = self.proj_drop(y)
+            return y.transpose(-2, -1).reshape(Bf, C, H, W)
+
         t_frames = get_num_frames()  # C2:动态 T(旧代码硬编码 8)
         x = x.reshape(t_frames,int(x.shape[0]/t_frames),x.shape[1],x.shape[2],x.shape[3])
         shape = x.shape
@@ -747,8 +927,15 @@ class RepMixer(nn.Module):
         #     else:
         #         x = x + self.mixer(x) - self.norm(x)
         #     return x
+        # round-5 §7 **结构性旁路**(self.skip_temporal,默认 False ⇒ off-path 逐位不变):
+        # λ_1d ≡ 0 时时序残差恒为 0(训练态),折叠核恰为 δ、偏置为 0(重参数化态,
+        # reparam_conv_1d 是精确恒等)⇒ 跳过整条支路数值不变,但把 reshape/permute
+        # layout 链从图里删掉 —— P1 的效率主张(440 ONNX 节点 / 80 转置)由此兑现。
+        # 由 MobileViCLIP_Small 的 skip_temporal_branch flag 或 export_smoke 设置。
         t_frames = get_num_frames()  # C2:动态 T(旧代码硬编码 8)
         if hasattr(self, "reparam_conv"): #x:TB,C,H,W
+            if getattr(self, "skip_temporal", False):
+                return self.reparam_conv(x)
             # x = self.reparam_conv(x)
             x = x.reshape(t_frames,int(x.shape[0]/t_frames),x.shape[1],x.shape[2],x.shape[3])
             t,b,c,h,w = x.shape
@@ -761,18 +948,22 @@ class RepMixer(nn.Module):
             return x
         else:
             if self.use_layer_scale:
+                if getattr(self, "skip_temporal", False):
+                    return x + self.layer_scale * (self.mixer(x) - self.norm(x))
                 # print("1 x.shape:",x.shape) #torch.Size([512, 64, 64, 64])
                 # print("2 x.shape:",x.shape) #torch.Size([512, 64, 64, 64])
                 x = x.reshape(t_frames,int(x.shape[0]/t_frames),x.shape[1],x.shape[2],x.shape[3]) #t,b,c,h,w
                 t,b,c,h,w = x.shape
                 x = x.permute(1,3,4,2,0) #b,h,w,c,t
                 x = x.reshape(b*h*w,c,t) #b*h*w,c,t
-                x = x + self.layer_scale_1d * (self.mixer_1d(x) - self.norm_1d(x)) 
+                x = x + self.layer_scale_1d * (self.mixer_1d(x) - self.norm_1d(x))
                 #bxhxw,c,t->txb,c,h,w
                 x = x.reshape(b,h,w,c,t).permute(4,0,3,1,2).reshape(t*b,c,h,w)
                 x = x + self.layer_scale * (self.mixer(x) - self.norm(x))
                 # assert 1==2
             else:
+                if getattr(self, "skip_temporal", False):
+                    return x + self.mixer(x) - self.norm(x)
                 x = x + self.mixer_1d(x) - self.norm_1d(x)
                 x = x + self.mixer(x) - self.norm(x)
             return x

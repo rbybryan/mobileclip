@@ -550,6 +550,17 @@ python experiments/export_smoke.py           # 全尺寸,T∈{2,4,8,16}
 python experiments/export_smoke.py --inference-mode   # 重参数化后的部署形态
 ```
 
+**P1 效率主张的判据(2026-08-04 落地,round-5 §7 第 1 步)**:ONNX pass 行现在带
+**节点数 / layout-op 数**;`--skip-temporal` 让每个 RepMixer 结构性跳过整条时序支路
+(旁路等价性单测 `tests/test_skip_temporal.py`,训练态与重参数化态均逐位一致)。
+基线与旁路各跑一次、相减,即 P1 声称的 **1581 → 1141 节点**是否成立:
+
+```bash
+python experiments/export_smoke.py --inference-mode --outdir experiments/exports_base
+python experiments/export_smoke.py --inference-mode --skip-temporal --outdir experiments/exports_skip
+# mini 口径本地已实证方向:186 节点/44 layout → 165/26(每个 RepMixer 少 1 conv1d + 6 layout)
+```
+
 导出的是**视觉塔**(`FastViT`,架构参数与 `build_vision_encoder` 逐项一致 ⇒ 含全部
 时序算子);输入签名 `[B,T,C,H,W]` 与 `encode_vision` 对齐(脚本内做同一行 permute)。
 文本塔不导 —— 端侧文本 embedding 通常离线算好。
@@ -609,12 +620,21 @@ python experiments/status_1m.py
 
 | 问题 | 为什么不能靠肉眼 |
 |---|---|
-| **还有臂在跑吗?** | `run_verify_1m.sh` 是**串行**的。再起一条会和在跑的抢同一组卡。脚本用 `pgrep` 直接查。 |
-| **"跑完"的臂墙钟对吗?** | 参考 ~15 h/臂(`sub1m_r0_s42` 实测 15:11:58)。**短于一半 ⇒ 没跑满 epoch,结论无效**,不是"结果为负"。`sub1m_r1b_s42` 曾只跑 2:12:39 就进了"完成"清单。 |
+| **还有臂在跑吗?** | `run_verify_1m.sh` 是**串行**的。再起一条会和在跑的抢同一组卡。脚本用 `pgrep` 直接查(`extract_teacher.py` 也查:可共卡,但互相污染吞吐/墙钟)。 |
+| **"跑完"的臂墙钟对吗?** | 参考 ~15 h/臂(`sub1m_r0_s42` 实测 15:11:58)。**短于一半 ⇒ 没跑满 epoch,结论无效**,不是"结果为负"。 |
 | **哪些真有结果?** | **有 ckpt ≠ 有结论**。要有 `eval_res*.json` 才算测过;只有 ckpt 的是中断,`auto_resume` 可续。 |
 
 输出的五种状态:`未排队` / `🟢 运行中` / `✅ 已完成` / `🔴 可疑`(有结果但墙钟过短)/
 `⚠️ 中断`(有 ckpt 无 eval)。带 🔴 或 ⚠️ 的臂会附上**续跑命令**。
+
+⚠️ **两个墙钟假象,脚本都已自动排除(2026-08-03 修)**,人肉判读时同样别踩:
+
+- **日志墙钟会低估**:runner 旧版每次调用**覆盖写** `<臂>.log`,被打断再 `auto_resume`
+  的臂只剩续跑腿(`sub1m_r1b_s42`:全程 >15 h,日志只剩 2:12:39)。脚本现在同时看
+  **ckpt mtime 跨度**,两个时钟**都**短才判 🔴;runner 也已改成追加(`>>`)+ 分隔行。
+- **eval 有两个落点**:训练内评测在 `runs/<臂>/`,**§3.8 离线补评在
+  `evals/sub1m/<臂>/`**(`--evals-dir` 可改)。只看 runs/ 会把 r0_s42 / r1a_s42
+  这类"环内评测被跳过、靠离线补评收官"的臂误报成 ⚠️ 中断。
 
 ⚠️ **「运行中」要两个时钟同时新**:文件 mtime 会被 `git pull` / `cp` / `rsync` 无意刷新,
 单看它会把三天前就死掉的日志报成在跑,于是**挡住本来可以排的队**;所以脚本同时读
@@ -722,6 +742,18 @@ python experiments/collect_results.py --compare \
 2026-07-29 才开始存的**。在那之前评过的臂(如首版 `sub1m_r0_s42`)没有,
 **重跑一次评测即可**(纯前向,MSR-VTT 1k 约 1 分钟,命令见 §3.8)。
 
+⚠️ **ranks 在哪个目录,取决于那条臂是怎么评的**(2026-08-03 实踩:`--compare` 传了
+`runs/` 路径,r1a 报 FileNotFoundError,其实文件一直在 `evals/` 下):
+
+| 评测方式 | ranks 落点 |
+|---|---|
+| 训练内环内评测(post-fix 的臂) | `experiments/runs/<臂>/ranks_*.npz` |
+| §3.8 离线补评(r0_s42 / r1a_s42 这类) | `experiments/evals/sub1m/<臂>/ranks_*.npz` |
+
+`--compare` 的两个参数就是**装着 npz 的目录**,两边各自指对即可,允许一边 runs/
+一边 evals/(同一 ckpt、同一套评测脚本,逐查询配对不受影响)。先
+`ls experiments/{runs,evals/sub1m}/<臂>/ranks_*.npz` 看一眼再传。
+
 #### 自比对自检(拿到第一份 `ranks_*.npz` 后必做一次)
 
 把**同一个目录**同时当臂和基线传进去。配对正确时两侧逐 bootstrap 抽到的是同一组
@@ -759,16 +791,82 @@ CUDA_VISIBLE_DEVICES=0 python experiments/extract_teacher.py run \
 ```
 日志每块打 `clip/s`;拿它乘语料规模就是两档的 GPU 时数,决策留到数据出来那天。
 
-**全语料按 shard 并行**(每卡一个 shard,彼此不通信,挂了各自续跑;块已存在即跳过):
+⚠️ **日志在哪:脚本只往 stdout 打**(`logging.basicConfig`),文件位置=你重定向到哪。
+本节的 A/B 与 1M 分片命令分别写 `experiments/teacher/ab_flash.log` 与
+`experiments/teacher/extract_1m_<k>.log`;100k 切片那条**没带重定向**,前台跑就只在
+终端里(找不到就 `grep -rl "clip/s" ~/nohup.out experiments/teacher 2>/dev/null`)。
+**吞吐不必依赖日志** —— 每块落盘时间差就是墙钟,直接从块文件 mtime 读(零 GPU):
+
+```bash
+python - <<'PY'
+import glob, os, datetime
+fs = sorted(glob.glob('experiments/teacher/iv2s2_100k/**/block_*.npz', recursive=True))
+prev = None
+for f in fs:
+    t = os.path.getmtime(f)
+    note = '' if prev is None else f'{t-prev:7.1f}s  {2048/(t-prev):5.2f} clip/s'
+    print(os.path.basename(f), datetime.datetime.fromtimestamp(t).strftime('%m-%d %H:%M'), note)
+    prev = t
+PY
+```
+
+(块定长 2048;首块无前差不计。用它读「独占卡之后」的干净吞吐:P9 训练 2026-08-03
+06:12 结束,取 mtime 在这之后的块。)
+
+**上全量之前:flash-attn 吞吐 A/B**(`verification-tier-1m-zh.md` §11.5-1;~1 小时,一张闲卡)——
+100k 切片用的是**朴素注意力**;`--use-flash-attn` 缺 fused ops 时自动降级(#415),sm90 上
+大概率显著更快。同参数各跑 2 块(`--limit 4096`),谁快用谁;**全语料只用一种设置**
+(manifest 记协议,别混):
+
+```bash
+export CUDA_VISIBLE_DEVICES=0        # 换成 nvidia-smi 里空闲的那张
+nohup bash -c '
+  for v in naive flash; do
+    extra=""; [ $v = flash ] && extra="--use-flash-attn"
+    python experiments/extract_teacher.py run \
+      --anno data/anno_pretrain/internvid_v1.jsonl \
+      --out  experiments/teacher/_ab_$v \
+      --teacher-ckpt checkpoints/InternVideo2-stage2_1b-224p-f4.pt \
+      --limit 4096 --batch-size 8 --num-workers 8 --amp bf16 \
+      --per-frame --subset-ts 2,4,8 $extra
+  done' > experiments/teacher/ab_flash.log 2>&1 &
+echo "A/B PID = $!"
+# 跑完读数(前 2 块 = naive,后 2 块 = flash;各取第 2 块的 clip/s):
+grep "clip/s" experiments/teacher/ab_flash.log
+```
+
+**数值等价自检**(cos ≈ 1.000 才放行 flash;抽帧是确定性 middle,两臂行对齐):
+```bash
+python - <<'PY'
+import glob, numpy as np
+pa = sorted(glob.glob('experiments/teacher/_ab_naive/**/block_000000.npz', recursive=True))[0]
+pb = sorted(glob.glob('experiments/teacher/_ab_flash/**/block_000000.npz', recursive=True))[0]
+a, b = np.load(pa), np.load(pb)
+va, vb = a['video_emb'].astype('f4'), b['video_emb'].astype('f4')
+ok = a['ok'] & b['ok']
+cos = (va[ok]*vb[ok]).sum(1)/(np.linalg.norm(va[ok],axis=1)*np.linalg.norm(vb[ok],axis=1)+1e-8)
+print('n =', int(ok.sum()), ' cos min/mean =', float(cos.min()), float(cos.mean()))
+PY
+# 胜者定了再启动下面的 shard 命令(flash 胜 ⇒ 每个 shard 加 --use-flash-attn);
+# 之后 rm -rf experiments/teacher/_ab_naive experiments/teacher/_ab_flash
+```
+
+**1M 分片(`internvid_v1` = sub1m 训练语料)按 shard 并行**(每卡一个 shard,彼此不通信,
+挂了各自续跑;块已存在即跳过。`--per-frame` 存储 ≈24 KB/片 ⇒ 1M 片 ~25 GB,先 `df -h .`):
 ```bash
 for k in 0 1 2 3; do
   CUDA_VISIBLE_DEVICES=$k nohup python experiments/extract_teacher.py run \
     --anno data/anno_pretrain/internvid_v1.jsonl \
-    --out  experiments/teacher/iv2s2_full \
+    --out  experiments/teacher/iv2s2_1m \
     --teacher-ckpt checkpoints/InternVideo2-stage2_1b-224p-f4.pt \
-    --shard-id $k --num-shards 4 --batch-size 8 --num-workers 8 \
-    > experiments/teacher/extract_$k.log 2>&1 &
+    --shard-id $k --num-shards 4 --batch-size 8 --num-workers 8 --amp bf16 \
+    --per-frame --subset-ts 2,4,8 \
+    > experiments/teacher/extract_1m_$k.log 2>&1 &
+  echo "shard $k PID = $!"
 done
+# A/B 若 flash 胜:上面每个 shard 追加 --use-flash-attn
+# 悲观 ETA(1.8 clip/s):4 卡 ~39 h;按 A/B 实测缩放
+# 跑完必须 merge + verify(见下),verify 不干净别接训练
 ```
 
 **逐帧 + 低 T 子集嵌入(U7-2 的「保险」)** —— 加 `--per-frame`。只多几次极廉价的池化,
@@ -780,8 +878,8 @@ python experiments/extract_teacher.py run ... --per-frame --subset-ts 2,4,8
 
 **合并 + 体检**(体检不过就别往下接):
 ```bash
-python experiments/extract_teacher.py merge  --out experiments/teacher/iv2s2_full
-python experiments/extract_teacher.py verify --out experiments/teacher/iv2s2_full
+python experiments/extract_teacher.py merge  --out experiments/teacher/iv2s2_1m
+python experiments/extract_teacher.py verify --out experiments/teacher/iv2s2_1m
 ```
 `verify` 关注三格:`rows_unique`(行号唯一)、`fail_rate`(解码失败率)、
 **`zero_emb_but_ok`**(标了成功却是零向量 ⇒ **教师前向出问题**,不是解码问题,必须查)。
@@ -1236,6 +1334,172 @@ r_mean** ⇒ 这份权重里深度不冗余,**关掉这条线**,预算全给 rou
 
 **顺带产出**:这条曲线本身就是论文的 Fig-1 级分析(「一个蒸馏出来的移动端视频 CLIP
 把算力放在哪、每一块买到了什么」),**零训练轮次**。
+
+### 3.15 C-2/C-4 聚合判别 v2 —— τ 扫描 + 配对 CI + 两口径(零训练,单卡 ~40 min)
+
+一次前向拿逐帧嵌入,{mean, max, top-2/4, 单帧, LSE(τ 扫描)} 各打一次分,
+每个聚合器 vs mean 出**逐查询配对 CI**(10000 次,seed=0)+ **两口径**(raw + DSL),
+逐查询 rank 落盘可事后任意重比。首轮结果与判读见 `experiments/v100_sweep_results.md` §8.1;
+✅ **认证已达成(2026-08-04 第三轮:LSE@0.05 两口径 × 两 T 四格 CI 全显著)**,见同文件 §9。
+
+```bash
+# 评测,双根规则:先 unset(README §3.0)
+unset MVC_DATA_DIR
+
+# 整段跑(推荐;含 [verdict]/[CI] 摘要行):
+bash experiments/run_v100_all.sh 10
+
+# 或直接调 probe(改 T / τ 网格时):
+python experiments/frame_agg_probe.py \
+    --config scripts/evaluation/clip/zero_shot/mobileviclip_small/config_msrvtt.py \
+    --ckpt ./checkpoints/mobileviclip_small.pt --ts 8,16 \
+    --taus 0.02,0.05,0.1,0.2,0.5,1.0
+```
+
+产出:表 + CI → `experiments/frame_agg_results.md`;
+逐查询 rank → `experiments/frame_agg/T{8,16}_<方法>/ranks_ret_test{,_emb}.npz`。
+事后任意两臂重比(与 §3.9 同一套机器):
+
+```bash
+python experiments/collect_results.py --compare \
+    experiments/frame_agg/T16_lse_tau0.05 experiments/frame_agg/T16_mean
+python experiments/collect_results.py --compare \
+    experiments/frame_agg/T16_lse_tau0.05 experiments/frame_agg/T16_mean --prefix ret_test/
+```
+
+**跨 T 也合法**(同一测试集、同一查询顺序)—— 帧预算问题「LSE@T=8 是否 ≥ mean@T=16」:
+
+```bash
+python experiments/collect_results.py --compare \
+    experiments/frame_agg/T8_lse_tau0.05 experiments/frame_agg/T16_mean
+python experiments/collect_results.py --compare \
+    experiments/frame_agg/T8_lse_tau0.05 experiments/frame_agg/T16_mean --prefix ret_test/
+```
+
+**LSE × gate4 可加性(2026-08-04 落地)**:`--set` 把结构 flag 直通给 probe
+(载 ckpt 后 flag 会自动重放 —— `apply_arch_flags`,否则置零被权重加载冲掉、静默失效):
+
+```bash
+python experiments/frame_agg_probe.py \
+    --config scripts/evaluation/clip/zero_shot/mobileviclip_small/config_msrvtt.py \
+    --ckpt ./checkpoints/mobileviclip_small.pt --ts 8,16 \
+    --set model.vision_encoder.disable_temporal_embedding true \
+    --dump-dir experiments/frame_agg_gate4 --out experiments/frame_agg_gate4.md
+
+# 三问三比(跨臂配对合法,同一测试集同顺序):
+# LSE 在 gate4 上还灵吗 → probe 自己的 [CI] 行;可加性与 sanity 用 compare:
+python experiments/collect_results.py --compare \
+    experiments/frame_agg_gate4/T16_lse_tau0.05 experiments/frame_agg/T16_mean   # 两增益合计
+python experiments/collect_results.py --compare \
+    experiments/frame_agg_gate4/T16_mean experiments/frame_agg/T16_mean          # sanity ≈ +0.7
+# 各再跑一遍 --prefix ret_test/(两口径纪律照旧)
+```
+
+**三条纪律**:① 头条只认 **τ=0.05**(v1 写死的默认 = 预登记;τ 扫描只当敏感度曲线,
+不许事后挑最好的 τ);② 判据 = `[CI]` 行两口径同向且 CI 不含 0,别看裸差;
+③ 报收益必须连部署成本一起报 —— 相似度级聚合 ⇒ 索引存 **T 份**逐帧嵌入(×T 存储/点积)。
+⚠️ probe 自建前向,绝对值与 `retrieval.py` 管线差 ~0.8 ⇒ **脚本内差值可判,跨管线绝对值不可比**。
+
+### 3.12 C1 KD 训练侧(ROADMAP 2.2c,2026-08-04 落地)—— 闸门与冒烟
+
+完整执行单(闸门顺序、判读、预登记)= **`notes/c1-kd-training-manual-zh.md`**。速查:
+
+```bash
+# 零 GPU 三连(§0):单测 → anno 逐行对齐(🔴 硬闸门)→ 库体检
+python -m pytest tests/test_teacher_bank.py -q && python utils/teacher_bank.py self-test
+python utils/teacher_bank.py align \
+    --anno-a anno_downstream/InternVid/InternVid-10M-flt_1.json \
+    --anno-b <抽取时传给 --anno 的那份>
+python utils/teacher_bank.py verify --out experiments/teacher/iv2s2_1m \
+    --anno anno_downstream/InternVid/InternVid-10M-flt_1.json
+
+# 冒烟(§1,单卡 10 分钟)与排队(§2,15 h)见手册;臂 config = sub1m_C1kd_s42.py
+```
+
+⚠️ 三件不该踩的:① **U9 修复后**,模型新增损失若在 `criterion.loss_weight` 里没有
+对应键会**启动即炸**(这是特性:堵隐式 1.0);② KD 只认「idx = anno 行号」——
+`caption_idx`、多语料拼接、去掉 `jump_filter` 都会被 `build_teacher_bank` 拒绝;
+③ 教师 `teacher_dim` 以抽取 manifest 的 `embed_dim` 为准,IV2-1B 预期 768。
+
+### 3.16 全减法闸门 + 混合预算 (T×R) 评测(零训练;§11.7-2 / §11.8-N1 / C2-2D 闸门 1)
+
+**逐帧独立域三开关**(评测用环境变量,训练一律走 config 键;实现在
+`models/mobileviclip_small.py`,缺省全关、off-path 不变):
+
+| 环境变量 | 等价 config 键 | 作用 |
+|---|---|---|
+| `MVC_DISABLE_TEMPORAL_BRANCH=1` | `disable_temporal_branch` | P1:40 个 `layer_scale_1d` 置零冻结 |
+| `MVC_DISABLE_TEMPORAL_EMBEDDING=1` | `disable_temporal_embedding` | P5:唯一 T 形状参数置零冻结 |
+| `MVC_PER_FRAME_ATTENTION=1` | `per_frame_attention` | **新**:stage-4 MHSA 帧内块对角,跨帧耦合=0 |
+
+**闸门 A · 全减法(§11.7-2)** —— 三开关 vs 基线,判据沿用 P1 的预登记
+(两口径同号且 Δ > 1.0 ⇒ 杀;CI 含 0 或小负 ⇒ 训练臂放行):
+
+```bash
+cd ~/mobileclip && git pull
+D=experiments/evals/pfattn_gate
+MVC_DISABLE_TEMPORAL_BRANCH=1 MVC_DISABLE_TEMPORAL_EMBEDDING=1 MVC_PER_FRAME_ATTENTION=1 \
+  bash experiments/run_eval.sh small msrvtt checkpoints/mobileviclip_small.pt "$D"
+python experiments/collect_results.py --compare "$D" eval_base
+python experiments/collect_results.py --compare "$D" eval_base --prefix ret_test/
+# 顺带把从没在真 ckpt 上跑过的静态审计补掉(零 GPU):
+python experiments/temporal_capacity_audit.py checkpoints/mobileviclip_small.pt
+```
+
+**闸门 B · 混合预算(C2-2D 升级条件 1)** —— 单点评测落嵌入(`MVC_DUMP_EMB_DIR`),
+组合与打表离线做:
+
+```bash
+# 1) 打印 ~14 条单点命令(每条 ~1 分钟,自动带三开关与落盘变量):
+python experiments/mixed_budget_eval.py --print-unit-commands \
+    --ckpt checkpoints/mobileviclip_small.pt --root experiments/evals/mb
+# 2) 照打印逐条跑完后,出结果表(含 cost 列,按预算排序):
+python experiments/mixed_budget_eval.py --root experiments/evals/mb \
+    --out experiments/mixed_budget_results.md
+# 3) 关键对(同预算档)配对显著性,例:
+python experiments/collect_results.py --compare \
+    experiments/evals/mb/alloc_1r256_4r128 experiments/evals/mb/alloc_8r128
+```
+
+**判读**:某个混合分配在 ≤ 自己 cost 的所有均匀分配上 Pareto 胜出且配对 CI 不含 0
+⇒ **闸门 1 PASS,C2-2D 升级成立**(`publishability-assessment.md` §1.1);
+全档均匀不输 ⇒ 记 null,C2 保持 1D,零损失。
+**为什么组合是精确的**:三开关下整塔逐帧独立、clip 嵌入 = 帧嵌入线性平均、
+落盘的是未归一化嵌入 ⇒ 分组加权平均逐位等于真跑混合分配。
+
+### 3.17 BN 重校准 CLI —— 阶段 3/5 分辨率数从趋势筛升级为正式数(2026-08-04 落地)
+
+纪律出处:换分辨率/删块会移动**每一个 BN** 的输入分布(`dropblock_results.md` §4);
+且检查点会让 BN 双更新(A12)⇒ 本 CLI 强制 `gradient_checkpointing=False` 并在校准后
+断言 `num_batches_tracked == batch 数`,不对拒绝落盘。底座 `experiments/per_t_bn.py`。
+
+```bash
+unset MVC_DATA_DIR
+# 每档:校准(默认 100 batch,10k pilot val,训练域零测试泄漏)→ 产出打过 BN 补丁的 ckpt
+# → 用现有评测链路直接评(pretrained_path 换成补丁 ckpt,零改动)。256 也要校准 —— 同处理才公平。
+for R in 160 181 224 256; do
+  python experiments/bn_recalibrate.py \
+      --config scripts/evaluation/clip/zero_shot/mobileviclip_small/config_msrvtt.py \
+      --ckpt ./checkpoints/mobileviclip_small.pt \
+      --res $R --t 8 --out experiments/bn_ckpts/recal_res${R}_T8.pt
+  python -m torch.distributed.run --nproc_per_node=1 \
+      --master_port=$((10000 + RANDOM % 20000)) \
+      tasks_clip/retrieval.py scripts/evaluation/clip/zero_shot/mobileviclip_small/config_msrvtt.py \
+      pretrained_path experiments/bn_ckpts/recal_res${R}_T8.pt \
+      output_dir eval_res${R}_T8_bncal \
+      inputs.image_res $R model.vision_encoder.img_size $R
+done
+
+# 判读(配对 CI,两口径):
+python experiments/collect_results.py --compare eval_res224_T8_bncal eval_res224_T8       # 重校准回收了多少
+python experiments/collect_results.py --compare eval_res224_T8_bncal eval_res256_T8_bncal # 正式前沿(224 vs 256,同处理)
+```
+
+- 侧车 `<out>.json` 记录校准口径(语料/batch 数/漂移 mean_z)—— 报数时一起交。
+- `--calib-corpus` 默认 `internvid_zh_10k_pilot_val`(**训练域**)。换成
+  `msrvtt_1k_test` = 在测试分布上校准,只准当诊断用,论文口径必须声明。
+- `--set` 支持结构 flag(如 lean 一族:`--set model.vision_encoder.disable_temporal_branch true`),
+  载 ckpt 后自动重放。
 
 ## 4. Training (pretraining)
 
