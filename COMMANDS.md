@@ -1678,13 +1678,27 @@ cat notes/live/from-claude.md      # newest block at the top
    已经发生过一次(见 `8699a94` "恢复被 #363 陈旧树 squash 覆盖删除的 10 个文件")。
    新分支一律从**最新的 `origin/main`** 切。
 
+**第 0 步:改文件请用编辑器,不要把 markdown 粘进 shell。**
+
 ```bash
-cd ~/mobileclip                  # 仓库根目录,按你的实际路径改
+vim notes/live/from-server.md    # 或 nano;非要命令行追加就用带引号的 heredoc <<'EOF'
+```
+
+> 直接把 markdown 粘到提示符上,`> 引用行` 会被 bash 当成**重定向**,在仓库根目录建出一堆
+> 中文词命名的 0 字节文件,而内容**根本没进文件**。踩到了看
+> [TROUBLESHOOTING.md](TROUBLESHOOTING.md#git-status-冒出一堆中文词当文件名07-23与所以--markdown-被粘进了-bash)。
+
+```bash
+cd /workspace/mount/b100_zaip_data/rby/mobileclip   # 仓库根目录,按你的实际路径改
 git fetch origin main
 
-# 1) 把这次改动暂存起来,再从最新 main 切一条干净分支
+# 分支名带时分,同一天重跑也不会撞名(只带月日会撞,见 §6.1 末尾)
+BR=server/from-server-$(date +%m%d-%H%M)
+
+# 1) 确认改动确实在文件里,再从最新 main 切一条干净分支
+git status --short notes/live/from-server.md    # 应该看到 " M notes/live/from-server.md"
 git stash push -m from-server-wip -- notes/live/from-server.md
-git checkout -B server/from-server-$(date +%m%d) origin/main
+git checkout -B "$BR" origin/main
 git stash pop
 
 # 2) 只提交这一个文件,避免把服务器上的本地杂改带进去
@@ -1693,8 +1707,13 @@ git status                       # 确认只有这一个文件被 staged
 git commit -m "handoff: server update $(date +%F_%H%M)"
 
 # 3) 推分支(注意是分支名,不是 main)
-git push -u origin server/from-server-$(date +%m%d)
+git push -u origin "$BR"
+echo "分支名:$BR"                # 记下来,合并时要报给 Claude
 ```
+
+> 第 1 步若报 **`No local changes to save`**,说明这次改动**已经 commit 过了** ——
+> 不要继续往下走(`checkout -B` 会把它从分支上抹掉,随后 push 被判 non-fast-forward)。
+> 处理办法见 [TROUBLESHOOTING.md](TROUBLESHOOTING.md#按-61-推-from-servermd-push-被拒--rejected--non-fast-forward)。
 
 **第 4 步 —— 合进 `main`。**
 

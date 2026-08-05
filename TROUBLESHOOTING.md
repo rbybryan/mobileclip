@@ -3046,3 +3046,153 @@ git pull    # 2026-08-03 起三处都已修
   允许一边 runs/ 一边 evals/)。
 
 **判读纪律不变**:真·🔴(日志和 ckpt 跨度都短)仍然=结论无效,先续跑再排新臂。
+
+---
+
+## `git status` 冒出一堆中文词当文件名(`**07-23`、`⇒`、`与`、`所以`…)—— markdown 被粘进了 bash
+
+### Symptom
+
+在服务器上写完 `notes/live/from-server.md` 后跑 git,`git status` 列出几十个从没建过的
+untracked "文件",名字全是文档里的词:
+
+```
+Untracked files:
+        **07-23
+        **H100（Hopper）有
+        8×H100-80G（Hopper
+        ⇒
+        与
+        所以
+        export
+        unset
+        ...
+```
+
+同时 `git stash push -- notes/live/from-server.md` 报 **`No local changes to save`**——
+你以为改好的内容根本没进文件。
+
+### Cause
+
+**整段 markdown 被粘进了 shell 提示符,bash 把它当命令执行了。**
+罪魁是 markdown 的**引用行**:
+
+```markdown
+> **07-23 起 H100 换成 ...**
+```
+
+`>` 在 bash 里是**重定向**。`> 文件名` 这种没有命令的写法,bash 会**新建(或清空)那个文件**
+然后什么都不写 —— 于是引用行的第一个词变成了一个 0 字节文件,行里其余的词被当成命令名/参数,
+报一堆 `command not found` 淹在输出里。名单里出现 `export`、`unset` 这种词也是同一个原因。
+
+两个后果,第二个更要命:
+
+1. 内容**没有**写进 `from-server.md`(所以 `stash` 说没改动);
+2. `>` 会**截断同名的已有文件**。本次是安全的 —— `git status` 里没有任何
+   `Changes not staged`,说明没有被跟踪的文件被清空;但如果哪天某个引用行的第一个词
+   刚好撞上一个真实文件名,那个文件就被清成 0 字节了。**发现这个现象后先确认这一点再清理。**
+
+### Fix
+
+**第 1 步:先看,别急着删。** 垃圾全是**仓库根目录下的 0 字节文件**:
+
+```bash
+cd /workspace/mount/b100_zaip_data/rby/mobileclip
+find . -maxdepth 1 -type f -empty -print        # 只列,不删
+```
+
+确认列出来的都是词块垃圾(以及确认没有你真正需要的空文件)之后再删:
+
+```bash
+find . -maxdepth 1 -type f -empty -delete
+```
+
+> **⚠️ 千万不要用 `git clean -fd` 来收拾这个场面。**
+> 同一份 `git status` 里还躺着 `experiments/cache/`、`experiments/teacher/`、
+> `probe_train_nw6/`、`probe_train_nw16/`、`probe_decode_bound/`、`ssv2_base/`、`nohup.out`
+> —— 这些是**真实的实验产物**,只是没被 `.gitignore` 覆盖而已。`git clean -fd` 会连它们一起删掉。
+> 上面的 `find -maxdepth 1 -type f` 只碰根目录下的**文件**,不会进这些目录。
+
+**第 2 步:以后别再往 bash 里粘 markdown。** 写 `from-server.md` 用编辑器:
+
+```bash
+vim notes/live/from-server.md      # 或 nano
+```
+
+非要在命令行里追加,就用**带引号的 heredoc**(`'EOF'` 的引号是关键,它关掉所有展开和重定向):
+
+```bash
+cat >> notes/live/from-server.md <<'EOF'
+## 2026-08-05 01:35 — 你的标题
+
+> 引用行、**加粗**、$变量、`反引号` 在这里都是安全的字面量
+
+EOF
+```
+
+---
+
+## 按 §6.1 推 `from-server.md`,push 被拒:`! [rejected] ... (non-fast-forward)`
+
+### Symptom
+
+照 `COMMANDS.md` §6.1 走了一遍,最后 push 报:
+
+```
+ ! [rejected]        server/from-server-0805 -> server/from-server-0805 (non-fast-forward)
+hint: Updates were rejected because the tip of your current branch is behind
+hint: its remote counterpart.
+```
+
+前面还伴随 `No local changes to save`、`Your branch and 'origin/server/from-server-0805'
+have diverged, and have 2 and 1 different commits each`。
+
+### Cause
+
+**这条分支之前已经推成功过了,内容早就在 GitHub 上。**
+
+`server/from-server-$(date +%m%d)` 的名字里只有**月日**,所以同一天重跑 §6.1 会撞上同一个分支名。
+第二次跑时:
+
+- 改动上一轮已经 commit 过了 ⇒ `git stash push` 说 `No local changes to save`(正常,不是丢了);
+- `git checkout -B <同名分支> origin/main` 里的 **`-B` 是强制重置** ⇒ 本地分支被拽回 `origin/main`,
+  上一轮那个 commit 从本地分支上掉了下去;
+- 于是本地比远端**少**了那个 commit ⇒ push 判定 non-fast-forward,拒绝。
+
+**这个拒绝是在保护你**:它挡住的正是"用旧树覆盖掉已推内容"。什么都没丢。
+
+### Fix
+
+先确认远端那个 commit 就是你要的内容:
+
+```bash
+git fetch origin server/from-server-0805
+git log --oneline origin/main..origin/server/from-server-0805
+git show origin/server/from-server-0805:notes/live/from-server.md | head -40
+```
+
+**内容对 ⇒ 什么都不用做**,直接让 Claude 合并(或走网页),然后清掉本地那条错位的分支:
+
+```bash
+git checkout main && git pull origin main
+git branch -D server/from-server-0805        # 本地这条已经没用了
+```
+
+**内容不对 / 还要再补东西 ⇒ 别 force push**,把远端的接回来再改:
+
+```bash
+git checkout -B server/from-server-0805 origin/server/from-server-0805   # 注意是接远端,不是 origin/main
+# 编辑 notes/live/from-server.md,然后
+git add notes/live/from-server.md
+git commit -m "handoff: server update $(date +%F_%H%M)"
+git push origin server/from-server-0805      # 这次是快进,不会被拒
+```
+
+**下次避免撞名**:分支名带上**时分**,一天多次也不会重:
+
+```bash
+BR=server/from-server-$(date +%m%d-%H%M)
+git checkout -B "$BR" origin/main
+...
+git push -u origin "$BR"
+```
