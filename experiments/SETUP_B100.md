@@ -13,7 +13,7 @@
 > **⚠️ 先认清这台机器（否则装错 torch、开错卡）：**
 > - 主机昵称叫 **`b100`**（挂载都是 `/workspace/mount/b100_zaip_data*`），但**GPU 是
 >   8×H100-80G（Hopper / sm_90）**，不是 Blackwell。这跟
->   [`../recaption/docs/setup-h100.md`](../recaption/docs/setup-h100.md) 是**同一台物理机**
+>   [`../recaption/docs/archive/setup-h100.md`](../recaption/docs/archive/setup-h100.md) 是**同一台物理机**
 >   （只是那份用于数据审查、这份用于训练）。
 > - **默认只用前 4 张卡**（`CUDA_VISIBLE_DEVICES=0,1,2,3`，`NUM_GPUS=4`）——后 4 张留给别的任务。
 >   要用满 8 张必须有维护者的**明确指示**。
@@ -30,7 +30,7 @@
 >   本文所有探盘命令都先 `VD=/workspace/mount/b100_zaip_data/video_datasets` 再限定
 >   `find "$VD" -maxdepth N`。**唯一例外**是预训练数据 `b100_zaip_data_luan/InternVid-10M-FLT`
 >   这个已知的确切路径（§4）——那是直接 `ls` 一个具体目录，不是全盘搜索。
-> - 入口/联网与 `recaption/docs/setup-h100.md` §0 相同（`root@10.55.84.132 -p 31103`）。
+> - 入口/联网与 `recaption/docs/archive/setup-h100.md` §0 相同（`root@10.55.84.132 -p 31103`）。
 >   全量视频在 `/workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT/`；
 >   工作区 `/workspace/mount/b100_zaip_data/rby/`。
 > - **⚠️ rby/ 下有两个并排的项目目录，别搞混**（2026-07-23 起）：

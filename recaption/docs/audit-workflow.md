@@ -1,4 +1,4 @@
-# InternVid-zh 数据审核工具集（配套 `recaption/docs/audit-plan.md`）
+# InternVid-zh 数据审核工具集（配套 `recaption/docs/archive/audit-plan.md`）
 
 对 `aligned_internvid_zh_translated_retry_merged.jsonl`（10M 条，字段自动探测，
 兼容 `video/caption/caption_zh` 等常见命名）做四阶段质量审核：
@@ -13,7 +13,7 @@
 
 > **跑到哪了 / 发现了什么问题** → **[`data-issues.md`](data-issues.md)**（活账本：
 > 流水线状态 + 问题登记 + 待决策）。统计细节见
-> [`audit-findings.md`](audit-findings.md)。
+> [`audit-findings.md`](archive/audit-findings.md)。
 
 > **想「用」这 1 万条训练、而不是「审」它？走另一条路。** 本工具集只做质量审核
 > （字幕↔视频对齐打分/分桶）。要拿 101vector 上的
@@ -33,8 +33,8 @@
 
 | 机器 | 手册 | 数据范围 | S2 路径 | 耗时 |
 |---|---|---|---|---|
-| 8×H100-80G | **[`setup-h100.md`](setup-h100.md)** | **全量 10M** | vLLM 服务（8B dp=8 + 235B-FP8 裁判本地 tp8） | ~1.5 天 |
-| 7×V100（`10.55.87.68`，中转机） | **[`setup-judge-relay.md`](setup-judge-relay.md)** | 只跑 **4.3 裁判档** | 内网 `Qwen3.6-27B` 端点（101vector/H100 都连不上，只有它连得到） | ~1 小时 |
+| 8×H100-80G | **[`setup-h100.md`](archive/setup-h100.md)** | **全量 10M** | vLLM 服务（8B dp=8 + 235B-FP8 裁判本地 tp8） | ~1.5 天 |
+| 7×V100（`10.55.87.68`，中转机） | **[`setup-judge-relay.md`](archive/setup-judge-relay.md)** | 只跑 **4.3 裁判档** | 内网 `Qwen3.6-27B` 端点（101vector/H100 都连不上，只有它连得到） | ~1 小时 |
 | 8×V100-32G（101vector） | **[`setup-v100.md`](setup-v100.md)** | **仅 1 万条预抽样**（`/home/vca1/datasets/internvid_zh_10k`，本机没有全量数据） | transformers 后端 `run_v100.sh`（无 bf16/vLLM；torch 须用 cu118 构建；裁判走云端 API；S2 推荐 10k 全覆盖） | ~3–4 小时 |
 
 推荐节奏：先在 V100 机把 10k 全流程跑完（半天内出 10k 报告 + 调好 rubric
@@ -295,6 +295,6 @@ python recaption/scripts/apply_buckets.py --input $DATA \
   + 重翻/重写任务队列 + 剔除清单
 
 完整分步操作手册（含环境准备、冒烟验证、每步验收点/决策门、v0.2→v0.3 节奏）
-见 `recaption/docs/audit-plan.md` §5–§7。
+见 `recaption/docs/archive/audit-plan.md` §5–§7。
 A/B 重述管线（dense×5 vs slot×3）的分步图解、模型清单、prompt 全文与分段计时读法
 见 [`ab-pipeline_zh.md`](ab-pipeline_zh.md)。

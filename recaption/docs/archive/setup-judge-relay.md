@@ -15,7 +15,7 @@
 > 所以**不需要 torch，也不需要那 7 张卡**。
 >
 > 裁判在整条流水线里的位置与意义见
-> [`setup-v100.md`](setup-v100.md) §4.2–4.3（一句话：**4.2 给数据打分，4.3 给 4.2 打分**）；
+> [`setup-v100.md`](../setup-v100.md) §4.2–4.3（一句话：**4.2 给数据打分，4.3 给 4.2 打分**）；
 > 裁判选型（为什么是 27B、有什么代价）见 [`setup-judge-api.md`](setup-judge-api.md) §0。
 
 **约定**：下面每条命令都标了在**哪台机器**上执行——
@@ -316,7 +316,7 @@ head -1 s2_verdicts_judge.jsonl | python -m json.tool
 > trans_score=5 / action=recaption` —— 三个分数**彼此解耦**（英文写错了、
 > 但中文忠实地翻译了那段错英文，所以该重写而非重翻）。而主力 8B 在 10k 上
 > `en==trans` 逐条同值率 **92.5%**、`zh==trans` **98.9%**（见
-> [`data-issues.md`](data-issues.md) 问题 8）。
+> [`data-issues.md`](../data-issues.md) 问题 8）。
 > **这是 n=1 的观察，不是结论**——但它指向「halo 是 8B 的毛病、不是 rubric 的
 > 毛病」，跑完 500 条后要在 T4 里正式验证。
 
@@ -414,7 +414,7 @@ bash recaption/scripts/run_v100.sh judge-agree
   特别大，说明 rubric 里这两类的边界没写清，**改 rubric 比换模型有用**。
 
 **验收点**：三个门的结论记进
-[`data-issues.md`](data-issues.md) §3 的 T4，**并注明裁判是 `Qwen3.6-27B`**。
+[`data-issues.md`](../data-issues.md) §3 的 T4，**并注明裁判是 `Qwen3.6-27B`**。
 
 > ⚠️ **证据强度要打折**：27B 裁 8B 只有约 3 倍参数差距，且**同厂同族**——
 > 方案 §2 原本要的是 235B **加换一家**（InternVL）互为第二意见，正是为了避开

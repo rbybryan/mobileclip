@@ -5,7 +5,7 @@
 
   1. **哪些帧可以选**（`candidate_indices`）：仍是 TSN 均匀分段 + 每遍相位抖动。
      这一层绝不能动——N 遍之间的独立性全靠它，抖动没了跨遍投票就失去意义
-     （recaption/docs/fusion-scheme.md §1.1-3）。
+     （recaption/docs/archive/fusion-scheme.md §1.1-3）。
   2. **段内选哪一帧**（`frame_stats` + `select_frames`）：在每段的候选里挑
      **清晰、非纯色、且与上一帧不重复**的那一帧。8 帧就是模型看到的全部证据，
      纯均匀抽样会把名额浪费在运动模糊、转场黑帧和静止重复画面上——每浪费一格，

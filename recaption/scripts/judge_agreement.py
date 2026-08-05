@@ -5,7 +5,7 @@ Two reasons this is a separate script rather than the snippet inside
 `run_v100.sh s2-judge`:
 
 1. **Cohen's kappa was specified but never implemented.** The plan gates on it
-   twice -- `recaption/docs/audit-plan.md` §4 ("8B 判定与 235B 裁判
+   twice -- `recaption/docs/archive/audit-plan.md` §4 ("8B 判定与 235B 裁判
    ... 求一致率(Cohen's κ)，κ<0.6 的维度回炉改 rubric") and §7.4 -- but the
    only thing computed anywhere was 5-class exact-match agreement. Raw
    agreement is inflated by class imbalance: if 80% of records are `keep`,
@@ -21,7 +21,7 @@ Reports, for `action`:
   * 5-class exact agreement + kappa (the harsh view)
   * binary agreement + kappa, collapsing to {keep, fix_text} vs
     {retranslate, recaption, drop} -- this is the distinction S3 bucketing
-    actually rests on, and the one recaption/docs/setup-judge-api.md route D3 recommends
+    actually rests on, and the one recaption/docs/archive/setup-judge-api.md route D3 recommends
     gating on
   * a confusion matrix, so a systematic skew (e.g. the main model calling
     `recaption` where the judge says `retranslate`) is visible rather than
@@ -152,7 +152,7 @@ def main():
     ab, kb = rate(bpairs), kappa(bpairs)
     emit("## 2. 二值折叠：`{keep, fix_text}` vs `{retranslate, recaption, drop}`")
     emit("这是 **S3 分桶真正依赖的判别**（要不要动这条数据），也是 "
-         "`recaption/docs/setup-judge-api.md` §0 路线 D3 建议改挂的口径——"
+         "`recaption/docs/archive/setup-judge-api.md` §0 路线 D3 建议改挂的口径——"
          "`recaption` vs `retranslate` 的边界连人都会犹豫，不该拿来当门。")
     emit(f"- 原始一致率 **{ab:.1%}**（门槛 {args.binary_gate:.0%}）"
          f"　{'✅ 通过' if ab >= args.binary_gate else '❌ 未达标'}")
@@ -247,7 +247,7 @@ def main():
          f"原始 {ab:.1%} / κ {kb:.3f}")
     emit("\n把结论记进 `recaption/docs/data-issues.md` §3 的 T4，"
          "**并注明裁判是哪个模型**——同族/小模型裁判的通过要打折"
-         "（见 `recaption/docs/setup-judge-api.md` §0 路线 A′ 末尾的同族偏差警告）。")
+         "（见 `recaption/docs/archive/setup-judge-api.md` §0 路线 A′ 末尾的同族偏差警告）。")
 
     _write(args, out)
 

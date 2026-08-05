@@ -1,15 +1,15 @@
 # 10k 抽样审查实测结论（InternVid-zh v0.1）
 
 > 机器：`101vector` 8×V100，数据 `/home/vca1/datasets/internvid_zh_10k`（1 万条预抽样）。
-> 流程与决策门见 [`setup-v100.md`](setup-v100.md)，
+> 流程与决策门见 [`setup-v100.md`](../setup-v100.md)，
 > 方案见 [`audit-plan.md`](audit-plan.md)。
 >
 > **为什么有这个文件**：`outputs/` 被 gitignore，`s1_analysis.md` / `report.md`
 > 都是不入库的产物。结论必须落到这里才不会随会话丢失（CLAUDE.md §0）。
 >
 > 本文件是**统计细节与推理过程**；流水线状态、问题登记表和待决策看
-> **[`data-issues.md`](data-issues.md)**；
-> 可汇报的成稿报告看 **[`audit-report.md`](audit-report.md)**。
+> **[`data-issues.md`](../data-issues.md)**；
+> 可汇报的成稿报告看 **[`audit-report.md`](../audit-report.md)**。
 
 ## S1 嵌入打分（2026-07，已完成）
 
@@ -238,7 +238,7 @@ Qwen3-VL-8B / 8 帧 / 8 卡 HF 后端。`run_v100.sh s2-check` 体检：
 再按固定阶梯映射到 `action`。rubric 要求的因子分解（源头错 vs 翻译错、
 画面对齐 vs 文本忠实）**从未发生**。所以 `retranslate` 41.2% 是"质量≈3"的桶大小，
 不是翻译问题率——**决策 1、T1、T3 全部无从裁起**（详见
-[`data-issues.md`](data-issues.md) 问题 8 详解）。
+[`data-issues.md`](../data-issues.md) 问题 8 详解）。
 
 **方法论教训（对 v0.3 全量跑最重要的一条）**：一次 prompt 索要 5 个分数 + 多组标签 +
 时序判断 + 2–3 条改写字幕，8B 会退化成"先定总体印象、再让所有字段服从它"。

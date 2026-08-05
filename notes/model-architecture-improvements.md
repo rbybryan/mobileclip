@@ -6,7 +6,7 @@ efficient and/or more accurate?* It complements the existing notes:
 
 - `notes/whitespace-directions.md` — data pipeline, temporal hard negatives,
   quantization, frame selection (mostly *around* the model);
-- `recaption/docs/caprl-scheme.md` — caption/data quality (data side);
+- `recaption/docs/archive/caprl-scheme.md` — caption/data quality (data side);
 - `notes/neural-inspired-directions.md` — the **neuroscience-inspired** cut of these
   same bottlenecks (predictive-coding gating, geometry-preserving distillation, etc.),
   slotted into the C1/C2/C3 spine.
@@ -277,7 +277,7 @@ Concretely, a **video DR pass over InternVid-10M-FLT**:
 
 1. Offline, once: run InternVideo2-L (or 1B if affordable) over the training
    clips; store video embeddings + text embeddings for both real and
-   (CapRL-recaptioned, see `recaption/docs/caprl-scheme.md`) synthetic
+   (CapRL-recaptioned, see `recaption/docs/archive/caprl-scheme.md`) synthetic
    captions. Storage at 512-d fp16 ≈ 1 KB/clip → ~10–20 GB for 10M clips —
    entirely feasible.
 2. Train with `L = L_VTC + λ₁·(1 − cos(z_student, z_teacher)) +

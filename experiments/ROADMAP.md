@@ -70,7 +70,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 | 2.2 R2 教师管线 | **提取脚本 `experiments/extract_teacher.py` 已落地(2026-07-29)**,命令 `COMMANDS.md` §3.10,单测 `tests/test_extract_teacher.py`(44 项);教师权重条目 `CHECKPOINTS.md`;设计决策清单:本文件 2.2 + `paper-plan-zh.md` §六.9 + 评审 U7 |
 | 2.4/2.5 A1/A2/B1(#197) | `notes/neural-inspired-implementation.md` Tier A(配置模板 + 单测)/ Tier B(B1 接线与三臂);配置文件待创建 |
 | **2.4 R1 负例库(建缓存 + 跑 A/B + 长档)** | 探针 `COMMANDS.md` §3.2;建池与 A/B 一条龙 `notes/r1-implementation-plan.md` §8;结果 §9.1/§9.2;长档两臂配置 `experiments/configs/nR1_textbank_pilot_long.py` + `pilot_10k_r1_long.py`,启动命令 `notes/live/from-claude.md` (54) |
-| 3.1 H100 全量数据审查 | `recaption/docs/setup-h100.md` §0 环境 → §1 冒烟 → §2 S0 → §3 S1 → §4 S2 → §5 S3 |
+| 3.1 H100 全量数据审查 | `recaption/docs/archive/setup-h100.md` §0 环境 → §1 冒烟 → §2 S0 → §3 S1 → §4 S2 → §5 S3 |
 | 3.2 R0→R1 全量起跑 | `experiments/SETUP_B100.md`(**文件顶部有进度标记清单,当前位置=§6 冒烟→R0**,§0–§5 已全绿):**§6 冒烟 / R0 / R1 启动命令**已随 `from-claude.md`「07-24 (5) §5 全绿」交接 → §7 两个坑 → §8 交回;预算阶梯 = 评审 U6 |
 | 汇总与判据 | `experiments/README.md` §5 汇总对比、§6 判据 |
 | 环境/评测/git 备查 | `COMMANDS.md` §1 环境、§3 零样本评测、§4 训练、§5 git、§6 handoff |
@@ -86,7 +86,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
       `check_readiness.py` 确认识别。
 - [x] **1.2 数据审查流水线** —— ✅ 2026-07-22 完成 S0–S3(10k 自动化审查):
       正式报告 `recaption/docs/audit-report.md`,台账
-      `recaption/docs/data-issues.md`,统计细节 `recaption/docs/audit-findings.md`。
+      `recaption/docs/data-issues.md`,统计细节 `recaption/docs/archive/audit-findings.md`。
       后续 s4-merged 重字幕落地走 `recaption/docs/master-plan.md`
       (v1.1,#223;V100 Stage 0 命令见 from-claude「07-24 (4)」)。
       **🟡 重字幕线当前定版见该文件 §0.9(2026-07-28 全案复审,与旧段冲突以它为准)**:
@@ -338,7 +338,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
 
 - [ ] **3.1** 10M InternVid 到位(✅ 07-24 确认:b100 本地 jsonl 即全量
       **10,647,458** 条,免下载,from-claude「07-24 (3)」)+ H100 机全量审查
-      (`recaption/docs/setup-h100.md`,未跑;**不阻塞 R0**,可与训练并行排)。
+      (`recaption/docs/archive/setup-h100.md`,未跑;**不阻塞 R0**,可与训练并行排)。
 - [ ] **3.2** 🟡 **进行中**:§4 anno/软链 + §5 预检已全绿(11 片 `[OK ]` + 权重
       在位,#225),冒烟→R0 命令已交接(from-claude「07-24 (5) §5 全绿」)。
       等首光回报 → R0 起跑 → **首日实测单 epoch wall-clock**,据此触发
@@ -609,7 +609,7 @@ checkpoint 在任意帧预算 T∈{2…16} 下逼近大模型,推理零额外开
   token-wise 损失——不重复但优先级低(round-4 实测 stage-4 注意力仅占 ~7.35% MACs,
   P1/P7 两个更大的免费收益还没认领);InternVideo2 特征级/注意力图蒸馏——已大半存在于
   未接线的 `UTA_Loss`/`new_UTA_Loss` 且与 round-3 C1/C1a/C1b 重叠。唯一存活但已判定
-  「不排队」的第四方向:DFN 本体式过滤网络,见 `recaption/docs/caprl-scheme.md` §3 附注。
+  「不排队」的第四方向:DFN 本体式过滤网络,见 `recaption/docs/archive/caprl-scheme.md` §3 附注。
   **副产品**:本项目自己的训练方式被误标"LiT 式"(实为冻结**文本**,与锁图像塔的经典
   LiT 方向相反)——6 处文档已订正(`model-architecture-improvements(-zh).md`、
   `paper-plan(-zh).md`、`neural-inspired-round2(_zh).md`)。

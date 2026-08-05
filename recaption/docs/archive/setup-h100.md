@@ -11,7 +11,7 @@ export https_proxy=http://127.0.0.1:3390
 export HTTP_PROXY=http://127.0.0.1:3390
 export HTTPS_PROXY=http://127.0.0.1:3390
 ```
-> 姊妹篇：V100 机器用 [`setup-v100.md`](setup-v100.md)（差异：torch 须
+> 姊妹篇：V100 机器用 [`setup-v100.md`](../setup-v100.md)（差异：torch 须
 > cu118 构建、fp16、transformers 后端、裁判走云端）。
 >
 > 目标机器：8×H100 80GB，Driver 580.105.08（CUDA 13.0，向下兼容全部 cu12x
@@ -223,7 +223,7 @@ python recaption/scripts/check_s2.py --verdicts "$OUT/s2_verdicts.jsonl" \
 > 丢掉它们会**系统性低估**问题率。全量跑的失败率必然高于 V100 那 1 万条预抽样
 > （见 `data-issues.md` §2 问题 6：本机 0/10000 不可外推），
 > 所以这一步在全量上比在 10k 上更重要。五项检查与判定门见
-> [`setup-v100.md`](setup-v100.md) §4.5。
+> [`setup-v100.md`](../setup-v100.md) §4.5。
 人工查看用 V100 机（10.235.31.101）上的 Gradio 浏览工具（1 万条预抽样
 已就位），定位与操作流程见 `setup-v100.md` §6——看数据做定性校验，
 不是把样本标完。
@@ -238,7 +238,7 @@ python recaption/scripts/aggregate_report.py \
 ```
 产出 `report.md`（各类问题率外推表 + sig_zh 分位校准表）和
 `buckets.jsonl`（全量每条的问题归类）。**审查到此为止**；
-后续数据优化（v0.2）见 `recaption/docs/audit-plan.md` §5、§7.6+。
+后续数据优化（v0.2）见 `recaption/docs/archive/audit-plan.md` §5、§7.6+。
 
 ## 时间线汇总（8×H100）
 
