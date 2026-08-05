@@ -254,10 +254,10 @@ export_path = result_dir / "review_results.jsonl"
 不需要服务器 GUI，而且页面**自带抽检表的填写字段**（Gradio 那个是浏览数据集用的，没有）：
 
 ```bash
-bash tools/data_audit/run_v100.sh review-bundle
+bash recaption/scripts/run_v100.sh review-bundle
 ```
 
-详见 [`tools/data_audit/SETUP_V100.md`](tools/data_audit/SETUP_V100.md) §7.0b。
+详见 [`recaption/docs/setup-v100.md`](recaption/docs/setup-v100.md) §7.0b。
 
 **② 把结果目录指到自己家目录**（若脚本支持该参数）：
 
@@ -583,7 +583,7 @@ Then verify `data/hmdb51/videos_test/` holds ~6766 `.avi` and that
 ## `modelscope download` keeps failing: `IncompleteRead(... bytes read, ... more expected)` / `Max retries exceeded`
 
 Seen while pre-downloading Qwen3-VL weights for the data audit
-(`tools/data_audit/SETUP_V100.md` §0 / `SETUP_H100.md` §0):
+(`recaption/docs/setup-v100.md` §0 / `recaption/docs/setup-h100.md` §0):
 
 ```
 WARNING | modelscope_hub.download | Download failed for model-00002-of-00004.safetensors:
@@ -612,7 +612,7 @@ done
 ```
 
 Wrap it in `nohup ... &` to keep it running unattended (full recipe in
-`SETUP_V100.md` §0).
+`recaption/docs/setup-v100.md` §0).
 
 **If throughput stays pathological** (tens of kB/s for hours), the route to
 ModelScope's CDN is the bottleneck — try the hf-mirror channel instead, which
@@ -696,7 +696,7 @@ nohup bash -c 'until modelscope download --model Qwen/Qwen3-VL-32B-Instruct \
 `transformers` depends on it, and during an audit `audit_env` is a frozen
 environment — changing library versions mid-run can change model outputs and
 break comparability between shards already computed and shards computed later
-(`tools/data_audit/SETUP_V100.md` §4.3-本地 步骤 0). ModelScope sidesteps the
+(`recaption/docs/setup-v100.md` §4.3-本地 步骤 0). ModelScope sidesteps the
 whole issue at zero cost.
 
 If ModelScope is also slow, `hfd.sh --tool aria2c` is still worth a try: it hits
@@ -713,7 +713,7 @@ cure is fewer concurrent workers plus a retry loop. This one never errors: the
 transfer just crawls. Turning concurrency **down** here makes it worse.
 
 Seen while pre-downloading Qwen3-VL-32B (~64 GB) for the local judge
-(`tools/data_audit/SETUP_V100.md` §4.3-本地).
+(`recaption/docs/setup-v100.md` §4.3-本地).
 
 **Measure before choosing** — at 64 GB the difference between channels is hours:
 
@@ -738,7 +738,7 @@ wait. The ladder, cheapest first:
    intranet ≈ 110 MB/s puts 64 GB at ~10 minutes, beating any public channel:
    `rsync -avP --partial user@host:.../Qwen3-VL-32B-Instruct/ ckpts/Qwen3-VL-32B-Instruct/`
    (search the other machine first with the recipe in
-   `tools/data_audit/SETUP_JUDGE_API.md` §1.2).
+   `recaption/docs/setup-judge-api.md` §1.2).
 5. **Downsize the model.** If every channel still says 5+ hours, a 17 GB
    alternative that runs tonight beats a 64 GB one that lands tomorrow.
 
@@ -947,7 +947,7 @@ first one attempted.
 
 This is **not** a DeepSpeed problem, and `deepspeed.enable False` cannot help:
 the crash is upstream of any framework choice, in `init_distributed_mode`.
-This is exactly the hazard `tools/data_audit/SETUP_V100.md` §0 warns about for
+This is exactly the hazard `recaption/docs/setup-v100.md` §0 warns about for
 the audit env — the *training* env just never got the same treatment.
 
 ### Fix
@@ -986,7 +986,7 @@ bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 debug Tru
 > `pip install torchvision`) in this env again** — the default PyPI wheels are
 > CUDA 12.8/13 builds and will silently un-Volta the machine. Any torch upgrade
 > on 101vector must go through the cu118 index. The same rule, and why, is in
-> `tools/data_audit/SETUP_V100.md` §0.
+> `recaption/docs/setup-v100.md` §0.
 
 The other Volta consequence is already handled in the configs: no bf16 tensor
 cores, so `use_bf16=False` / `bf16=False` / fp16 AMP
@@ -1015,11 +1015,11 @@ from the 10k audit jsonl by `tools/make_pilot_anno.py`, which is
 `experiments/README.md` §2b **step 1**. Jumping straight to the training command
 skips it.
 
-The paths involved all agree already (verified against `tools/data_audit/`):
+The paths involved all agree already (verified against `recaption/scripts/`):
 
 | Thing | Value on 101vector | Where it comes from |
 |---|---|---|
-| audit jsonl | `/home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl` | `tools/data_audit/run_v100.sh` `$DATA`, `SETUP_V100.md` §0 |
+| audit jsonl | `/home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl` | `recaption/scripts/run_v100.sh` `$DATA`, `recaption/docs/setup-v100.md` §0 |
 | clips root | `/home/vca1/datasets/internvid_zh_10k/videos` | `run_v100.sh` `$CLIPS` |
 | `data_root` | `$MVC_DATA_DIR/internvid_zh_10k/videos` | `configs/data.py` `internvid_zh_10k_pilot` |
 | `anno_path` | `$MVC_ANNO_DIR/internvid_zh_10k_pilot.json` | same entry; `MVC_ANNO_DIR` defaults to `anno_downstream` |
@@ -1083,7 +1083,7 @@ exact paths it tried.
 **The usual cause is clip layout.** The clips are **not** flat under `videos/`;
 they sit in a nested `InternVId-*/…` tree, and the jsonl's `video` field is
 often just the bare clip name. The audit tooling has always handled this in
-`resolve_video_path()` (`tools/data_audit/score_alignment.py`), which tries, in
+`resolve_video_path()` (`recaption/scripts/score_alignment.py`), which tries, in
 order: `clips_root/<video>` → `clips_root/<the InternVId-* suffix of the
 record's abs_path>` → the raw `abs_path`. `make_pilot_anno.py` originally did a
 naive `os.path.join(clips_root, video)` and so dropped all 10k records; it now
@@ -1425,11 +1425,11 @@ pilot needs ~14.5 GiB at `batch_size=64`, i.e. it fits with ~17 GiB to spare.
 consecutive PIDs, one per GPU. That is the shape of an 8-card data-parallel job,
 and on this machine it is the **S2 VLM audit**: `run_v100.sh s2` launches one
 `vlm_audit_hf.py` per card (`CUDA_VISIBLE_DEVICES=$i`), and Qwen3-VL-8B in fp16
-is ~16 GB of weights. `DATA_ISSUES.md` lists S2 as running. Check with:
+is ~16 GB of weights. `recaption/docs/data-issues.md` lists S2 as running. Check with:
 
 ```bash
 nvidia-smi                                   # who holds the memory
-bash tools/data_audit/run_v100.sh status     # S2 progress + live processes
+bash recaption/scripts/run_v100.sh status     # S2 progress + live processes
 ```
 
 GPU 0 and GPU 6 additionally showed ~11 stale ~404 MiB processes. Those are
@@ -1637,7 +1637,7 @@ RuntimeError: Error reading /home/vca1/datasets/MSRVTT_Videos/video7020.mp4...
 
 ### Cause
 
-**这台机器上根本没有下游评测数据。** `tools/data_audit/SETUP_V100.md` 第一段就写着:
+**这台机器上根本没有下游评测数据。** `recaption/docs/setup-v100.md` 第一段就写着:
 
 > 本机只有预抽取的 1 万条样本(`/home/vca1/datasets/internvid_zh_10k`),
 > 没有全量 10M 数据
@@ -2755,7 +2755,7 @@ If you still hit "marked ready twice" after pulling, the server is on pre-fix co
 ### Symptom
 
 ```
-$ bash tools/data_audit/run_v100.sh summary-table
+$ bash recaption/scripts/run_v100.sh summary-table
 InternVid-zh v0.1 数据审查一键脚本 ……（整屏用法列表，没有报错）
 $ tar czf outputs/audit_10k/table.tgz -C outputs/audit_10k table_compare
 tar: table_compare: Cannot stat: No such file or directory
@@ -2775,7 +2775,7 @@ checkout 落后**（`git pull` 曾 divergent 失败或忘了拉，同前一条�
 ```bash
 cd "$(git rev-parse --show-toplevel)" && git fetch origin main && git reset --hard origin/main
 git log --oneline -1     # 核对提交号 >= 该子命令入库的 PR
-bash tools/data_audit/run_v100.sh <子命令>   # 重跑
+bash recaption/scripts/run_v100.sh <子命令>   # 重跑
 ```
 
 新版脚本（#342 起）遇到未知子命令会显式 `❌ 未知子命令: xxx` 并 `exit 1`，

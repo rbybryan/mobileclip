@@ -48,7 +48,7 @@ checkpoints
   InternVideo2 家族**最后一代保有真对比空间**的模型,`vtc_kd`(相似度矩阵 KD)才算得出来;
   IV3 / IV2.5 / InternVideo-Next 均无对比空间,**不可**作 vtc_kd 教师。参考数字:
   1B 版 ZS MSR-VTT T2V R@1 ≈ **51.9**(6B 版 ≈ 55.9),核验见
-  [`notes/caption-kd-review-2026-07.md`](notes/caption-kd-review-2026-07.md)。
+  [`recaption/docs/kd-review.md`](recaption/docs/kd-review.md)。
   - 该权重原生 **4 帧**;我们按 T=16 抽取,时间位置编码由脚本用
     `interpolate_pos_embed(..., orig_t_size=4)` 插值(与 `mobileviclip_small.py` 载
     stage2 视觉塔的那条分支同一套处理)。改用别的 ckpt 时记得同步 `--vision-ckpt-t-size`。

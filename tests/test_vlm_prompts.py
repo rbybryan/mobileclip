@@ -5,7 +5,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
-                                "tools", "data_audit"))
+                                "recaption", "scripts"))
 from vlm_audit import (CONDENSE_PROMPT, DERIVE_PROMPT,  # noqa: E402
                       FUSE_LONG_KEYS, FUSE_LONG_PROMPT, FUSE_SHORT_KEYS,
                       FUSE_SHORT_PROMPT, RECAP_PROMPT,

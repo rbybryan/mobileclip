@@ -253,13 +253,13 @@ held-out 自检索 R@1 相对方向仅作参考。评测走 `ret_test`(1k 自检
 > 这个抽样只对**全局重复上千次**的模板句有检出力(k=1000 时 P(≥2)≈26%),
 > 对 k=2…100 的中低频重复完全瞎。
 > **要判定多正例值不值得做,只能看全量:`profile_jsonl.py` 的
-> `duplicate_zh_caption_rate`**(决策门见 `tools/data_audit/DATA_ISSUES.md`:
+> `duplicate_zh_caption_rate`**(决策门见 `recaption/docs/data-issues.md`:
 > 重复率 >10% → 假负例治理升为必做项)。
 
 ## 3. B0 — 锁定基线数字(官方权重,双口径)
 
 > 🚩 **2026-07-22 实测:这一步在 101vector 上跑不了 —— 5 个评测全崩,一个数字都没出。**
-> 不是配置问题,是**本机没有下游评测数据**。`tools/data_audit/SETUP_V100.md` 开篇
+> 不是配置问题,是**本机没有下游评测数据**。`recaption/docs/setup-v100.md` 开篇
 > 就写明该机只有 `/home/vca1/datasets/internvid_zh_10k` 这 1 万条预抽样,
 > **没有全量数据**。崩溃日志与两类失败的区分见
 > [`TROUBLESHOOTING.md`](../TROUBLESHOOTING.md) 的

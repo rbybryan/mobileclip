@@ -18,7 +18,7 @@
 本文按**每一项真正需要什么**分档,而不是按"重要性"排 —— 因为这台机器缺的不是算力,
 是**数据**。先读 §0,它决定你能进哪一档。
 
-> 配套文档:环境与数据审查手册 [`tools/data_audit/SETUP_V100.md`](../tools/data_audit/SETUP_V100.md);
+> 配套文档:环境与数据审查手册 [`recaption/docs/setup-v100.md`](../recaption/docs/setup-v100.md);
 > 命令细节 [`COMMANDS.md`](../COMMANDS.md) §3;第五轮提案 [`architecture-round4.md`](architecture-round4.md) **§8–§11**。
 
 ---
@@ -27,10 +27,10 @@
 
 | 项 | 实况 | 出处 |
 |---|---|---|
-| 硬件 | 8×V100-SXM2-32GB(Volta,**sm_70**) | `SETUP_V100.md` 开篇 |
+| 硬件 | 8×V100-SXM2-32GB(Volta,**sm_70**) | `recaption/docs/setup-v100.md` 开篇 |
 | torch | **2.5.1+cu118**(必须带 sm_70;cu126/cu128 已删 Volta 内核) | 同上 |
 | **无 bf16** | fp16 only ⇒ 一切与 bf16/H100 峰值有关的数在这里**测不出来** | 同上 |
-| 训练数据 | **只有** `internvid_zh_10k`(1 万条,含字幕)。11 个 InternVid 分片**一个都没有** | `SETUP_V100.md` 开篇 |
+| 训练数据 | **只有** `internvid_zh_10k`(1 万条,含字幕)。11 个 InternVid 分片**一个都没有** | `recaption/docs/setup-v100.md` 开篇 |
 | **评测视频** | 🔴 **7 个基准的视频一个都不在**。`msrvtt / k400 / ucf101 / hmdb51` 的 **anno 齐了、只差视频**;DiDeMo / ANet / SSv2 **连 anno 都没有** | `TROUBLESHOOTING.md:1570-1582` |
 
 > 🔴 **最容易踩的坑**:`data_root` **只在真正读视频那一刻**才被触碰 —— 在那之前 anno、

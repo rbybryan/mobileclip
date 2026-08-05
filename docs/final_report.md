@@ -1,6 +1,6 @@
 # InternVid-zh v0.1：源 caption 与译文 caption 的问题分列总结
 
-> 从 [`internvid-zh-audit-report.md`](internvid-zh-audit-report.md) 提炼，按**问题归属**重组。
+> 从 [`recaption/docs/audit-report.md`](../recaption/docs/audit-report.md) 提炼，按**问题归属**重组。
 > 数据：10,000 条 clip 全覆盖 ｜ 更新：2026-07-23
 >
 > 证据强度：✅✅ 三方印证 ｜ ✅ 有独立外部证据 ｜ ⚠️ 单一来源 ｜ ❌ 已撤回 ｜ 🚫 不可外推
@@ -213,8 +213,8 @@ S1 嵌入超额落差 +0.0106（只在极低尾）｜ S2′ 文本-only 重判 *
 互补而非重复。抽检通过后可合并成一条信息更密的字幕，直接对治「笼统」（中位仅 3 个信息点）：
 
 ```bash
-bash tools/data_audit/run_v100.sh s2-merge     # 纯文本、不解码视频；只重组已验证候选、不新增（防幻觉）
-python tools/data_audit/apply_buckets.py ... --merged 'outputs/audit_10k/s2_merged.*.jsonl'
+bash recaption/scripts/run_v100.sh s2-merge     # 纯文本、不解码视频；只重组已验证候选、不新增（防幻觉）
+python recaption/scripts/apply_buckets.py ... --merged 'outputs/audit_10k/s2_merged.*.jsonl'
 ```
 
 > **刻意保留「多正样本」红利**：`--merged` 不是把多条塌成一条 —— 合并出的密字幕当**主
@@ -274,12 +274,12 @@ python tools/data_audit/apply_buckets.py ... --merged 'outputs/audit_10k/s2_merg
 
 ## 附：例子怎么来的
 
-各节 📎 例子由 `tools/data_audit/extract_examples.py` 从审查产物提取，**逐字、无截断、无随机**
+各节 📎 例子由 `recaption/scripts/extract_examples.py` 从审查产物提取，**逐字、无截断、无随机**
 （按给定规则取前 N 条）。完整附录（每节更多例、可重跑刷新）见
 [`final_report_examples.md`](final_report_examples.md)：
 
 ```bash
-python tools/data_audit/extract_examples.py       # 全量、完整 caption
+python recaption/scripts/extract_examples.py       # 全量、完整 caption
 ```
 
 > `clip` 列 = `youtube_id_起始_结束.mp4`，在 Gradio 里搜此名即可对着画面看。
