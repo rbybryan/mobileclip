@@ -59,13 +59,8 @@ PHASE=eval,compare bash model-optimization/scripts/run_model_opt.sh 3
 ## 2. 脚本与 config 一览
 
 **一体化入口**是 [`scripts/run_model_opt.sh`](scripts/run_model_opt.sh)——一条脚本三段
-(不带参数即打印用法),覆盖精简报告的全部 6 个方案:
-
-| 段(`PHASE=`) | 干什么 | 落点 |
-|---|---|---|
-| `train` | 逐臂训练(`auto_resume`,日志追加不覆盖) | `experiments/runs/<臂>/ckpt_02.pth` |
-| `eval` | 补评 MSR-VTT 1k、落 `ranks_*.npz`(纯前向 ~1 min/臂) | `experiments/evals/sub1m/<臂>/` |
-| `compare` | 每条非基线臂减**同 seed 的 `r0`**,raw + DSL 配对 bootstrap | stdout |
+`train → eval → compare`(不带参数即打印用法),覆盖全部 6 个方案;各段做什么、落点、分段与
+手动跑法见 [`docs/run.md`](docs/run.md)。
 
 **config 仍在 `experiments/configs/`**(与其余 `sub1m_*` 实验同族,不拆出来)。每个方案 =
 相对基线的一处覆盖:
@@ -88,9 +83,7 @@ PHASE=eval,compare bash model-optimization/scripts/run_model_opt.sh 3
 
 | 东西 | 位置(留在原处的原因) |
 |---|---|
-| **池化头代码** | `models/mobileviclip_small.py`:均值基线 `:1625`、注意力 `TemporalAttentionPool:1682`、二阶统计 `TemporalStatsPool:1716`;惊奇 `neural_inspired/temporal_surprise_pool.py`(嵌在 79KB 核心文件 / 独立包里,不外挪) |
-| **损失代码** | `models/criterions.py`:softmax `vtc_loss:172`、sigmoid `get_sim_sigmoid:141` / `vtc_loss_sigmoid:225` |
-| **删分支开关** | `apply_arch_flags` `models/mobileviclip_small.py:198`;`RepMixer.forward:959` |
+| **模型改动代码** | 三种池化头 + softmax/sigmoid 损失 + 删分支开关都在 `models/mobileviclip_small.py` / `models/criterions.py` / `neural_inspired/`——嵌在核心文件里,不外挪。**类名与 file:line 见 [`docs/model-changes.md`](docs/model-changes.md) 各节**(单一出处,免两处维护) |
 | **config** | `experiments/configs/sub1m_*.py`(与 nR1/r1both/C1kd/lean 等**非本报告**的 sub1m 臂同族,拆开反而割裂) |
 | **共享跑批/评测器** | `experiments/`:`run_pretrain.sh` / `run_eval.sh` / `collect_results.py` / `paired_bootstrap.py`(gate / v100 / frame_agg / KD 各线都在用,搬走会全断) |
 | **判据设计 + 状态工具** | `notes/verification-tier-1m-zh.md`(13 个 config 与 ROADMAP 都引它)、`experiments/status_1m.py` / `run_verify_1m.sh`(通用 1M 层设施,非本报告 6 臂专属) |
@@ -108,9 +101,8 @@ PHASE=eval,compare bash model-optimization/scripts/run_model_opt.sh 3
 |---|---|
 | `notes/1m-round-retrospective.md` | `model-optimization/docs/retrospective.md` |
 | `notes/1m-round-retrospective-brief.md` | `model-optimization/docs/retrospective-brief.md` |
-| (新增)逐条机制说明 | `model-optimization/docs/model-changes.md` |
-| (新增)运行配方 | `model-optimization/docs/run.md` |
-| (新增)一体化入口 | `model-optimization/scripts/run_model_opt.sh` |
+
+(其余三份 `docs/model-changes.md`、`docs/run.md`、`scripts/run_model_opt.sh` 是本轮新增,见 §1 与顶部目录树。)
 
 **没搬的**(横切设施,路径不变):`experiments/configs/sub1m_*.py`、`models/`、
 `neural_inspired/`、`experiments/{run_pretrain,run_eval}.sh`、`collect_results.py`、
