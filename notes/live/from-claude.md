@@ -141,7 +141,7 @@ outputs/audit_10k/pipe*_recaps.jsonl`——详见 TROUBLESHOOTING「改了选帧
 
 ---
 
-## 2026-08-05 (87) — 📋 补 r1a 的逐指标 R@1/5/10(收尾复盘报告 `notes/1m-round-retrospective.md` 附录 C)
+## 2026-08-05 (87) — 📋 补 r1a 的逐指标 R@1/5/10(收尾复盘报告 `model-optimization/docs/retrospective.md` 附录 C)
 
 > **文档补全小事,非战略优先级。** 仅在完善 1M 复盘报告的逐指标附录 C 时才需要跑。
 > (这是 v8vqv3 会话早先 #78 的内容,合并时与并行会话的 #77/#78 撞号被顶掉;此处重排为 #87。
