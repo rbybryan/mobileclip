@@ -168,15 +168,3 @@ optimizer["different_lr"] = dict(enable=True, module_names=["logit_scale", "logi
 
 **怎么读**:raw 卡边界、DSL 显著负——**任一主口径显著负即否决**。不是 sigmoid 本身不行,而是
 在「冻结文本塔 + batch 128 + 这套数据」的组合里它没占到便宜,且与下游 DSL 评测口径相性差。
-
----
-
-## 7. 一页速查(方案 → 一处改动 → 判定)
-
-| 方案 | 一处 config 改动 | 判定 | 一句话为什么 |
-|---|---|---|---|
-| 删时序分支 | `disable_temporal_branch=True` | ✅ 非劣 | 时序分支本就没学有用信息(GATE-0),删了换 −27.8% 算子 |
-| 注意力池化 | `temporal_pooling="attn"` | ❌ 不复现 | 一阶凸组合,自由度太小,seed 42 的 +2.8 归零 |
-| 二阶统计池化 | `temporal_pooling="stats"` | ❌ 显著负 | 二阶项学动了但学坏,当了噪声通道 |
-| 惊奇池化 | `temporal_pooling="surprise"` | ❌ 干净的零 | 门 `alpha` 没学动,退化成均值(非方向错) |
-| sigmoid 损失 | `use_sigmoid_loss=True` | ❌ DSL 显著负 | 列间尺度散,与 DSL 口径相性差 |
