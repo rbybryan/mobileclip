@@ -7,30 +7,15 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
                                 "recaption", "scripts"))
 from vlm_audit import (CONDENSE_PROMPT, DERIVE_PROMPT,  # noqa: E402
-                      FUSE_LONG_KEYS, FUSE_LONG_PROMPT, FUSE_SHORT_KEYS,
-                      FUSE_SHORT_PROMPT, RECAP_PROMPT,
-                      REFINE_KEYS, REFINE_PROMPT, STRUCT_KEYS,
-                      STRUCT_RECAP_PROMPT, salvage_struct_items)
+                       FUSE_LONG_KEYS, FUSE_LONG_PROMPT, FUSE_SHORT_KEYS,
+                       FUSE_SHORT_PROMPT, RECAP_PROMPT, REFINE_KEYS,
+                       REFINE_PROMPT, SLOT_RECAP_PROMPT)
 
 
 def test_refine_prompt_formats_cleanly():
     assert REFINE_KEYS == {"views"}
     filled = REFINE_PROMPT.format(items="1. 男子切菜（未通过: 画面检验）")
     assert '"views"' in filled and "{items}" not in filled
-
-
-def test_salvage_struct_items_rescues_valid_objects():
-    broken = ('{"captions": [{"attr": "subject", "text": "男子在切菜", '
-              '"gloss": ["man"]}, {"attr": "scene", "text": "厨房里", '
-              '"gloss": ["kitchen"]}, {"attr": "text", "text": ')  # truncated
-    items = salvage_struct_items(broken)
-    assert [i["text"] for i in items] == ["男子在切菜", "厨房里"]
-
-
-def test_salvage_struct_items_empty_on_garbage():
-    assert salvage_struct_items("") == []
-    assert salvage_struct_items("完全不是JSON的输出") == []
-    assert salvage_struct_items('{"text": "   "}') == []
 
 
 def test_fuse_long_prompt_formats_cleanly():
@@ -54,16 +39,12 @@ def test_fuse_short_prompt_formats_cleanly():
     assert "{long}" not in filled    # placeholder consumed
 
 
-def test_struct_prompt_is_raw_with_single_braces():
-    # used WITHOUT .format -> JSON example must keep single braces
-    assert "{{" not in STRUCT_RECAP_PROMPT
-    assert '"captions"' in STRUCT_RECAP_PROMPT
-    assert STRUCT_KEYS == {"captions"}
-
-
-def test_struct_prompt_covers_attr_vocab():
-    for attr in ("subject", "action", "scene", "text"):
-        assert attr in STRUCT_RECAP_PROMPT
+def test_slot_prompt_is_raw_with_single_braces():
+    """B 臂 slot 提示不经 .format，示例里的方括号/引号必须原样保留。"""
+    assert "{" not in SLOT_RECAP_PROMPT          # 无占位符 -> 直接送模型
+    for slot in ("人物", "物体", "动作", "场景", "文字"):
+        assert f"{slot}：" in SLOT_RECAP_PROMPT
+    assert "[man,apron]" in SLOT_RECAP_PROMPT    # 行尾 gloss 的示例
 
 
 def test_format_prompts_have_doubled_braces():

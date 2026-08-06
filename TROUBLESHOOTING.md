@@ -254,10 +254,12 @@ export_path = result_dir / "review_results.jsonl"
 不需要服务器 GUI，而且页面**自带抽检表的填写字段**（Gradio 那个是浏览数据集用的，没有）：
 
 ```bash
-bash recaption/scripts/run_v100.sh review-bundle
+N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-compare   # -> bundle_compare/index.html
 ```
 
-详见 [`recaption/docs/setup-v100.md`](recaption/docs/setup-v100.md) §7.0b。
+（`review-bundle` 子命令已于 2026-08-05 随人工抽检那条线下线；离线评审包现在由
+`pipeline-sample` / `pipeline-compare` 直接产出，见
+[`recaption/docs/ab-pipeline_zh.md`](recaption/docs/ab-pipeline_zh.md) §6。）
 
 **② 把结果目录指到自己家目录**（若脚本支持该参数）：
 

@@ -785,7 +785,8 @@ k\*=3 对 N=5 是强门，拿信息量换可靠性——50 片试运行实测回
 - **为什么不能只跑一遍**：§5.5 投票的前提是样本**独立**。一遍解码出的 5-8 条共享同一
   上下文，一个幻觉会连贯地污染整组（自回归条件依赖），support 计数变假信号。
 - **定位（2026-07-27 深夜二次指令）：方案B 平行备选，不覆盖方案A**。默认
-  `RECAP_STYLE=dense`（方案A 稠密×5 主线不动）；`RECAP_STYLE=struct` 启用 B 臂：
+  `RECAP_STYLE=dense`（方案A 稠密×5 主线不动）；`RECAP_STYLE=struct` 曾用于启用 B 臂
+  （**2026-08-05 下线**，B 臂早已切换为 §5.6b 的 slot）：
   每遍一次解码产 **5-8 条带属性短句**（attr∈subject/action/scene/text，≤28 字 +
   内联 en_gloss），**独立跑 N=3 遍**（temp 0.9 + 帧抖动）；跨遍投票照走 §5.5。
   两臂产物完全隔离（B 臂全部带 `_st` 后缀 + `recap_struct.*`），互不覆盖。
@@ -817,7 +818,8 @@ OwlCap 则是自由集合（motion+detail 平衡）。**判断：固定槽位对
 行式解析（零 JSON；「无」/超额行/杂话行全部规则化处理）+ `--mode recap-slot`
 （解析空→0.3 温重试→dense 兜底，`n_dense_fallback` 落盘）+ fuse_condense **同槽约束**
 （主体绝不与场景并组）。**pipeline-compare 的 B 臂已切换为 slot**（产物 `_sl` 后缀，
-`recap_slot.*`）；旧 struct 臂保留 `RECAP_STYLE=struct` 手动可用、产物互不覆盖。
+`recap_slot.*`）；旧 struct 臂已于 **2026-08-05 随代码精简整体下线**（零使用，
+prompt / mode / 三处分支 / 单测一并删除，见 §5.10）。
 
 **属性数对照（答维护者问「4 个属性够吗？reference 里有多少」，2026-07-28）**。
 ASID 用 **8 个核心属性**（项目页确认，每属性带细分子属性、每视频 8 条单属性字幕）：
@@ -1021,6 +1023,30 @@ A≈5.8h / B≈6h（vs 全流程 ~12h）。**附带拍板点**：① A 的 N 5�
 在 N=3 即多数票，与 B 一致；§0.5-5 撑腰）→ A 再降至 ~4h；② 形态建议 `PIPE_LEAN=1`
 开关、默认开——完整 2×2（含投票版）只留给 G2 的一次 300k 验证性对照。A 臂精简后无
 views → MISS 哨兵仅 B 臂可用（登记）。
+
+### 5.10 死代码清理（2026-08-05，维护者指令「保留必要文件」）
+
+依据本文 §6 的 ❌ 清单与 [`data-issues.md`](data-issues.md) §4 的已裁决决策，把**已经
+不可能再跑**的分支从代码里删掉（不是注释掉、不是加开关——它们的判决已经生效）：
+
+| 下线项 | 依据 |
+|---|---|
+| `xling-check` + `calibrate_xling.py` | 决策 1：`xling_cos` 退出分桶规则（s3 现默认 `XLING_THRESHOLD=0`）|
+| `s2-merge` / `merge-review` / `s4-merged` + `--mode merge` | §6 ❌ better_zh 续产（D12）；`s4` 是无融合稿依赖版 |
+| `review` / `review-score` / `review-bundle` + `make_review_sheet.py` | §6 ❌ 任何有约束力的人力标注（D14）；目检改走 `pipeline-compare` 的评审包 |
+| `s2-judge` / `judge-agree` + `judge_agreement.py` | 决策 2b 已落地（500 条裁判证实问题 8），裁判端点文档已归档 |
+| `s2-gran` / `gran-check` + `check_gran.py` + `--mode gran` | 问题 13 已查明（主力在过度判 coarse），粒度重判使命完成 |
+| 旧 struct 重述臂（`--mode recap-struct` + `STRUCT_*` + `salvage_struct_items`）| §5.6b 起 B 臂即 slot，struct 零使用 |
+
+**保留**：`s2-trans` / `trans-check` / `--mode trans`——`s3` 与 `extract_examples.py`
+都消费 `s2_trans.*.jsonl`（问题 8 的正确翻译差率 3.6% 靠它，合并 rubric 那一列会报成
+19.6%）。这条容易被误判成"RETRANSLATE 已废"而一起删掉，实际不能删。
+
+净效果：`run_v100.sh` 1316 → 959 行、脚本 27 → 23 个、`vlm_audit.py` 747 → 629、
+`vlm_audit_hf.py` 713 → 601；`setup-v100.md` 1527 → 639（裁判端点部署实录与 P0–P2
+效度测评两节随之删除，前者的完整记录在 `archive/setup-judge-*.md`）。
+同时新增 `tests/test_prompt_docs_in_sync.py`：把 `ab-pipeline_zh.md` §5 的 prompt
+全文与 `vlm_audit.py` 逐字钉死——服务器没有 Claude，文档漂移在结果里看不出来。
 
 ## 6. 明确不做（守边界）
 

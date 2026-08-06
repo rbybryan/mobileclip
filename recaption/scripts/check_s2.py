@@ -7,7 +7,6 @@ line, as `{"verdict": {"error": ...}}`.  Both downstream consumers then drop
 those lines silently --
 
     aggregate_report.py:72   if "error" in v and "action" not in v: continue
-    calibrate_xling.py:136   same test, counted as n_noverdict
 
 -- so a shard that failed on 40% of its clips looks complete in `status` and
 merely produces a quieter report.  Every percentage in report.md is computed
@@ -47,7 +46,7 @@ import json
 import sys
 from collections import Counter, defaultdict
 
-# Verdict fields S3 / calibrate_xling actually read. Anything missing here is a
+# Verdict fields S3 actually reads. Anything missing here is a
 # silent null downstream, not an error.
 REQUIRED_FIELDS = ["action", "en_score", "zh_score", "trans_score",
                    "granularity", "video_readable"]
@@ -462,9 +461,9 @@ def main():
             emit(f"- {p}")
     else:
         emit("✅ 判定可用。下一步（`recaption/docs/data-issues.md` §1「下一步做什么」）：")
-        emit("1. `bash recaption/scripts/run_v100.sh xling-check` —— 裁决决策 1，阻塞 S3")
-        emit("2. 裁判档 500 条（`recaption/docs/archive/setup-judge-relay.md`）+ Gradio 人工抽检 300，两者可并行")
-        emit("3. 两个决策都裁完 → `bash recaption/scripts/run_v100.sh s3`")
+        emit("1. `bash recaption/scripts/run_v100.sh s2-trans` —— 文本-only 翻译重判（问题 8）")
+        emit("2. `bash recaption/scripts/run_v100.sh trans-check` —— 重判体检")
+        emit("3. `bash recaption/scripts/run_v100.sh s3` —— 校准 + 分桶 + 诊断报告")
     emit()
 
     if args.out_md:

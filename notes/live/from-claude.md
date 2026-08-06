@@ -23,6 +23,54 @@ Reusable commands/fixes/plans also get logged into `COMMANDS.md` / `TROUBLESHOOT
 
 ---
 
+## 2026-08-05 (90) — 🧹 删掉已裁决的死代码：10 个子命令 + 4 个脚本 + 旧 struct 臂
+
+**Diagnosis:** 按 §6「明确不做」和 data-issues §4 的已裁决决策逐条核对，`run_v100.sh`
+里有一批分支**已经不可能再跑**（不是暂时不用，是判决已经生效）。它们还留在脚本里的唯一
+效果是让人以为还能跑。全部删掉，并给 prompt 文档加了一个防漂移单测。
+
+**下线清单**（依据 → 见 `master-plan.md` §5.10 的表）：
+
+| 下线 | 依据 |
+|---|---|
+| `xling-check` + `calibrate_xling.py` | 决策 1：xling_cos 退出分桶 |
+| `s2-merge` / `merge-review` / `s4-merged` | §6 ❌ better_zh 续产（D12）|
+| `review` / `review-score` / `review-bundle` + `make_review_sheet.py` | §6 ❌ 有约束力人力标注（D14）|
+| `s2-judge` / `judge-agree` + `judge_agreement.py` | 决策 2b 已落地 |
+| `s2-gran` / `gran-check` + `check_gran.py` | 问题 13 已查明 |
+| 旧 struct 重述臂（`--mode recap-struct` 等）| B 臂早已是 slot，struct 零使用 |
+
+⚠️ **`s2-trans` / `trans-check` 保留**——差点跟着「RETRANSLATE 已废」一起删掉，但
+`s3`（`aggregate_report.py`）和 `extract_examples.py` 都消费 `s2_trans.*.jsonl`：
+问题 8 的**正确**翻译差率 3.6% 靠它，合并 rubric 那一列会报成 19.6%。
+
+**你现在还能跑的子命令**（`bash recaption/scripts/run_v100.sh` 不带参数也会列出）：
+
+```
+smoke  s0  s0-show  s1  s1-report  s2-sample  s2  s2-check  s2-trans  trans-check
+s3  s4  recap  recap-tsv  pipeline-sample  pipeline-compare  summary-table  status  snapshot
+```
+
+**Do this next:**
+```bash
+cd ~/mobileclip && git pull origin main
+source ~/audit_env/bin/activate
+python -m pytest tests/ -q          # 应全绿（新增 test_prompt_docs_in_sync）
+bash recaption/scripts/run_v100.sh  # 确认用法里没有已删的子命令
+```
+
+**新增的防呆**：`tests/test_prompt_docs_in_sync.py` 把 `ab-pipeline_zh.md` §5 的 prompt
+全文与 `vlm_audit.py` **逐字钉死**。以后谁改了代码里的 prompt 却忘了同步文档，单测直接红——
+你在服务器上读到的 prompt 一定是模型真正收到的那份。
+
+**文档也跟着瘦了**：`setup-v100.md` 1527 → 639 行（删掉裁判端点的三份部署实录和 P0–P2
+效度测评两节——前者完整记录仍在 `docs/archive/setup-judge-*.md`）。
+
+**Then report back**：只要 pytest 全绿、`run_v100.sh` 用法正常，就不用单独回报这条，
+按 #88 继续跑 `pipeline-compare` 并回报计时与坍缩诊断即可。
+
+---
+
 ## 2026-08-05 (89) — 📁 重述这条线整个搬进 `recaption/`（只有命令前缀要改）
 
 **Diagnosis:** 重述相关内容原先散在三处——`docs/`(2 个 md)、`notes/`(6 个 md)、

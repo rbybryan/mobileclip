@@ -40,12 +40,10 @@ from frame_pick import (candidate_indices, frame_stats,  # noqa: E402
 from vlm_audit import (CONDENSE_KEYS, CONDENSE_PROMPT, DERIVE_KEYS,  # noqa: E402
                        DERIVE_PROMPT, FUSE_LONG_KEYS, FUSE_LONG_PROMPT,
                        FUSE_SHORT_KEYS, FUSE_SHORT_PROMPT,
-                       GRAN_KEYS, GRAN_PROMPT, MERGE_KEYS, MERGE_PROMPT,
                        PROMPT, RECAP_PROMPT, REFINE_KEYS, REFINE_PROMPT,
-                       SLOT_RECAP_PROMPT, STRUCT_KEYS, STRUCT_RECAP_PROMPT,
-                       TRANS_KEYS, TRANS_PROMPT, VERDICT_KEYS, extract_json,
-                       parse_slot_lines, resolve_video_path,
-                       salvage_struct_items)
+                       SLOT_RECAP_PROMPT, TRANS_KEYS, TRANS_PROMPT,
+                       VERDICT_KEYS, extract_json, parse_slot_lines,
+                       resolve_video_path)
 
 
 def sample_frames_pil(path, num_frames, max_side, phase=0.5, n_cand=1,
@@ -160,19 +158,16 @@ def main():
                          "jitter step (0.5/N) or passes start converging on the "
                          "same frames — watch the COLLAPSE flag in recap_diag.")
     ap.add_argument("--mode", default="full",
-                    choices=["full", "trans", "gran", "merge", "recap",
-                             "recap-struct", "recap-slot", "derive",
-                             "condense", "fuse-direct", "refine"],
+                    choices=["full", "trans", "recap", "recap-slot",
+                             "derive", "condense", "fuse-direct", "refine"],
                     help="'full' = combined video rubric (default). 'recap' = write "
                          "N independent Chinese captions FROM the frames (RECAPTION "
                          "bucket front-end for the fusion scheme; RECAP_PROMPT, "
                          "temperature + frame jitter, no en/zh shown). "
-                         "'recap-struct' = OwlCap-style caption-set (§5.6): each "
-                         "of N independent passes emits 5-8 attribute-tagged "
-                         "short captions + gloss in ONE decode; verdict.views "
-                         "feeds fuse_condense directly (derive subsumed), "
-                         "verdict.recaps keeps joined per-pass strings for "
-                         "scoring/diag. 'derive' = "
+                         "'recap-slot' = fixed-slot lines (§5.6b): each of N "
+                         "independent passes emits 人物/物体/动作/场景/文字 rows "
+                         "with inline [gloss], regex-parsed, no JSON. "
+                         "'derive' = "
                          "text-only per-recap view derivation (A_llm, master plan "
                          "D5): input = recap5 jsonl, one call per recap, outputs "
                          "verdict.views = [{text, gloss, src_recap}]. 'condense' = "
@@ -183,10 +178,8 @@ def main():
                          "text-only translation re-judgement: no video is read "
                          "and no frames are shown, so trans_score cannot anchor "
                          "on the video-alignment judgement (see vlm_audit.py "
-                         "TRANS_PROMPT and recaption/docs/data-issues.md problem 8). 'gran' = "
-                         "text-only granularity re-judgement that asks for an "
-                         "information-point COUNT instead of a 3-way band, so "
-                         "the label space cannot collapse (problem 14)")
+                         "TRANS_PROMPT and recaption/docs/data-issues.md "
+                         "problem 8)")
     args = ap.parse_args()
 
     if args.dtype == "auto":
@@ -272,90 +265,6 @@ def main():
                         if cap:
                             recaps.append(cap)
                     out["verdict"] = {"recaps": recaps, "n_samples": len(recaps)}
-                elif args.mode == "recap-struct":
-                    # OwlCap-style caption-SET (§5.6): each pass emits 5-8
-                    # attribute-tagged short captions in ONE decode. Passes stay
-                    # INDEPENDENT (temperature + frame jitter) so the §5.5
-                    # cross-pass vote keeps meaning -- a single shared-context
-                    # generation would let one hallucination contaminate every
-                    # caption coherently and support counts would be fiction.
-                    path = resolve_video_path(args.video_root, rec, rec["video"])
-                    sets_ = []
-                    for s in range(args.n_captions):
-                        phase = (0.5 if args.no_frame_jitter
-                                 else (s + 0.5) / args.n_captions)
-                        frames = sample_frames_pil(
-                            path, args.frames, args.max_side, phase=phase,
-                            n_cand=args.frame_candidates,
-                            window=args.frame_window)
-                        obj, text = None, None
-                        try:
-                            text = generate(model, processor, frames,
-                                            STRUCT_RECAP_PROMPT,
-                                            args.max_new_tokens,
-                                            temperature=args.temperature,
-                                            top_p=args.top_p)
-                            obj = extract_json(text, STRUCT_KEYS)
-                        except (ValueError, torch.cuda.OutOfMemoryError) as ex:
-                            if isinstance(ex, torch.cuda.OutOfMemoryError):
-                                torch.cuda.empty_cache()
-                            try:  # one retry; mild sampling keeps independence
-                                text = generate(model, processor, frames,
-                                                STRUCT_RECAP_PROMPT,
-                                                args.max_new_tokens,
-                                                temperature=0.3,
-                                                top_p=args.top_p)
-                                obj = extract_json(text, STRUCT_KEYS)
-                            except Exception:  # noqa: BLE001
-                                obj = None
-                        raw_items = (obj or {}).get("captions") or []
-                        if not raw_items and text:
-                            # §5.8-2a: per-item rescue from malformed JSON
-                            raw_items = salvage_struct_items(text)
-                        caps = []
-                        for v in raw_items:
-                            if isinstance(v, dict) \
-                                    and isinstance(v.get("text"), str) \
-                                    and v["text"].strip():
-                                gloss = [g.strip().lower()
-                                         for g in (v.get("gloss") or [])
-                                         if isinstance(g, str) and g.strip()]
-                                attr = (v.get("attr") or "") \
-                                    if isinstance(v.get("attr"), str) else ""
-                                caps.append({"text": v["text"].strip(),
-                                             "gloss": gloss,
-                                             "attr": attr.strip()})
-                        pass_text = "；".join(v["text"] for v in caps)
-                        if not caps:
-                            # §5.8-2b final fallback: run the DENSE prompt for
-                            # this pass -- the paragraph still feeds recaps
-                            # (fusion/scoring/diag/A') even though it yields no
-                            # attribute views; a clip must never end up empty.
-                            try:
-                                pass_text = clean_caption(generate(
-                                    model, processor, frames, RECAP_PROMPT,
-                                    args.max_new_tokens,
-                                    temperature=args.temperature,
-                                    top_p=args.top_p))
-                            except Exception:  # noqa: BLE001
-                                pass_text = ""
-                        if pass_text:
-                            sets_.append({"text": pass_text, "caps": caps})
-                    views, seen = [], set()
-                    for i, st_ in enumerate(sets_):
-                        for v in st_["caps"]:
-                            if v["text"] not in seen:
-                                seen.add(v["text"])
-                                views.append({**v, "src_recap": i})
-                    out["verdict"] = {
-                        # joined per-pass strings keep every dense-mode consumer
-                        # working (SigLIP per-pass scoring, diversity diag, TSV
-                        # recap columns, A' split)
-                        "recaps": [st_["text"] for st_ in sets_],
-                        "views": views, "n_samples": len(sets_),
-                        "n_views": len(views),
-                        "n_dense_fallback": sum(1 for st_ in sets_
-                                                if not st_["caps"])}
                 elif args.mode == "recap-slot":
                     # §5.6b fixed-slot passes (ASID-style): line format, regex
                     # parse -- no JSON, near-zero parse failure, shorter decode.
@@ -641,26 +550,6 @@ def main():
                     out["verdict"] = {"views": keep, "n_repaired": n_rep,
                                       "n_dropped_refine": n_drop,
                                       "n_fail_in": len(fails)}
-                elif args.mode == "merge":
-                    # 合并 better_zh 的多条候选（在 s2_verdicts 里）为一条。纯文本。
-                    cands = [c for c in ((rec.get("verdict") or {}).get("better_zh")
-                                         or rec.get("better_zh") or [])
-                             if isinstance(c, str) and c.strip()]
-                    if len(cands) < 2:
-                        # 0-1 条无从合并：原样带出（1 条就是它自己），不调模型
-                        out["verdict"] = {"merged_zh": cands[0] if cands else None,
-                                          "n_cands": len(cands)}
-                        fout.write(json.dumps(out, ensure_ascii=False) + "\n")
-                        fout.flush(); n_done += 1
-                        continue
-                    frames = []
-                    keys = MERGE_KEYS
-                    prompt = MERGE_PROMPT.format(
-                        cands="\n".join(f"{i+1}. {c}" for i, c in enumerate(cands)))
-                elif args.mode == "gran":
-                    frames = []
-                    keys = GRAN_KEYS
-                    prompt = GRAN_PROMPT.format(zh=(rec.get("zh") or "(空)"))
                 elif args.mode == "trans":
                     # No video is opened at all: translation fidelity is a
                     # text-vs-text property, and withholding the frames is the
@@ -676,9 +565,8 @@ def main():
                     prompt = PROMPT.format(n_frames=args.frames,
                                            en=(rec.get("en") or "(无)"),
                                            zh=(rec.get("zh") or "(空)"))
-                if args.mode not in ("recap", "recap-struct", "recap-slot",
-                                     "derive", "condense", "fuse-direct",
-                                     "refine"):  # these built their verdict above
+                if args.mode not in ("recap", "recap-slot", "derive",
+                                     "condense", "fuse-direct", "refine"):  # these built their verdict above
                     try:
                         text = generate(model, processor, frames, prompt,
                                         args.max_new_tokens)

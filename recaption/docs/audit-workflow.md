@@ -8,7 +8,7 @@
 | S0 规则画像 | `profile_jsonl.py` | 全量 10M | CPU，~20 分钟 |
 | S1 嵌入打分 | `score_alignment.py` | 全量 10M | SigLIP2，~100–200 GPU·h |
 | S2 VLM 审核 | `make_audit_sample.py` + `vlm_audit.py`（vLLM 服务，Ampere+）或 `vlm_audit_hf.py`（transformers 后端，V100 可用） | 分层抽样 ~4–5 万 | Qwen3-VL-8B，~15–30 GPU·h |
-| S3 校准分桶 | `aggregate_report.py`（前置：`calibrate_xling.py` 裁决 xling 阈值） | 全量外推 | CPU |
+| S3 校准分桶 | `aggregate_report.py`（有 `s2_trans.*.jsonl` 时自动用它算翻译差率） | 全量外推 | CPU |
 | S4 落地 v0.2 | `apply_buckets.py` | 全量 | CPU |
 
 > **跑到哪了 / 发现了什么问题** → **[`data-issues.md`](data-issues.md)**（活账本：
@@ -75,10 +75,9 @@ bash recaption/scripts/run_v100.sh status     # 等 S1 到 10000/10000
 bash recaption/scripts/run_v100.sh s1-report  # S1 联合分析 s1_analysis.md（秒级，进 S2 前必做）
 bash recaption/scripts/run_v100.sh s2-sample  # 默认参数在 10k 上即全覆盖
 bash recaption/scripts/run_v100.sh s2         # 8 卡 VLM 审核全部 10k（HF 后端，~2–3 小时）
-export JUDGE_API_KEY=sk-...                  # 可选：235B 裁判（不想用商业 API →
-                                             # 自托管同一份开源权重，见 setup-judge-api.md §0）
-JUDGE_N=500 bash recaption/scripts/run_v100.sh s2-judge
-bash recaption/scripts/run_v100.sh xling-check # 裁决 xling 阈值（s3 前必做，见 data-issues.md §4）
+bash recaption/scripts/run_v100.sh s2-check   # S2 判定体检（秒级，进 s3 前必做）
+bash recaption/scripts/run_v100.sh s2-trans   # 文本-only 翻译重判（8 卡；s3 会自动采用）
+bash recaption/scripts/run_v100.sh trans-check # 重判体检
 bash recaption/scripts/run_v100.sh s3         # 诊断报告 report.md + buckets.jsonl
 ```
 
@@ -150,15 +149,9 @@ DO_VERIFY=1 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-sample
   `--mode recap-slot` 每遍输出四栏行式（主体≤2/动作≤2/场景/文字，行尾 `[gloss]`，
   **空栏写「无」不许编**），正则解析零 JSON、解码 token 比 struct 降 ~40-50%，投票带
   同槽约束；解析空→0.3 温重试→dense 兜底（`n_dense_fallback`）。产物 `recap_slot.*` /
-  `pipe_sl_*`，与 dense/struct 完全隔离。
-- **结构化重述 = 旧 B 臂备选（§5.6；手动 `RECAP_STYLE=struct` 可用）**：
-  `RECAP_STYLE=struct` 启用——`--mode recap-struct` 每遍一次解码产 5-8 条带属性
-  （subject/action/scene/text）≤28 字短句 + 内联 en_gloss，**独立跑 N=3 遍**
-  （temp0.9+帧抖动）保住跨遍投票；② 派生步自动跳过。**两臂产物完全隔离**：B 臂重述写
-  `recap_struct.*.jsonl`、下游全部带 `_st` 后缀（`pipe_st_*`、`recap_pipeline_st.tsv`、
-  `bundle_pipeline_st/`），与 A 臂互不覆盖，无需任何 rm 即可并存。
+  `pipe_sl_*`，与 A 臂 dense 产物完全隔离。
 - **A/B 对比（`bash recaption/scripts/run_v100.sh pipeline-compare`）**：同一批
-  N_SAMPLE 片先后跑 A(dense)、B(struct)（各自按 video 续跑，已缓存部分秒过），再由
+  N_SAMPLE 片先后跑 A(dense)、B(slot)（各自按 video 续跑，已缓存部分秒过），再由
   `make_style_compare.py` 合成 `review_compare.tsv` + `bundle_compare/`——每片并排
   en源/原zh/A重述/**A直融/A投票**/B重述/**B直融/B投票** + 四选一「最佳浓缩」。
 - **直接 LLM 融合「直融」（§5.7，与投票浓缩双版并出）**：`--mode fuse-direct` 每片一次
