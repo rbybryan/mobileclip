@@ -225,11 +225,11 @@ def main():
     elif total_expected and processed < total_expected:
         emit(f"✅ 目前为止一切正常（{pct(processed, total_expected)}）。跑完后：")
         emit("1. 重跑本脚本确认最终数字")
-        emit("2. `bash recaption/scripts/run_v100.sh xling-check`")
+        emit("2. `bash recaption/scripts/run_v100.sh s3`")
     else:
         emit("✅ 重判可用。下一步：")
-        emit("1. `bash recaption/scripts/run_v100.sh xling-check` —— 裁决决策 1")
-        emit("2. 结论抄进 `recaption/docs/data-issues.md` §4 决策 1 与 `recaption/docs/archive/audit-findings.md`")
+        emit("1. `bash recaption/scripts/run_v100.sh s3` —— s2_trans 会被自动采用算翻译差率")
+        emit("2. 结论抄进 `recaption/docs/data-issues.md` §4 与 `recaption/docs/archive/audit-findings.md`")
     emit()
 
     if args.out_md:

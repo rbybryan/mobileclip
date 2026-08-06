@@ -92,7 +92,7 @@ bash recaption/scripts/run_v100.sh status        # S1/S2 行数 + 存活进程 +
 | 3 | ~~S3 校准 + 分桶~~ ✅ **已完成**（`TARGET_PRECISION=0.3`） | KEEP 71.9% / **RECAPTION 24.6%** / RETRANSLATE 3.3% / DROP 0.15%，与结论 10 的预测一致 |
 | 3b | ~~重跑 S3 修真标签~~ ✅ **已完成（终稿）** | RETRANSLATE 回到 **312 条全部真标签**；另 **351 条**冲突已单列 → 问题 12 |
 | 4 | 读 `report.md` 时**记住问题 8** | `action` 分布那一栏是「整体质量分的阶梯」，**不是四类问题的真实占比**；翻译差率一律以 3.6%（`s2_trans`）为准 |
-| 5 | **`bash recaption/scripts/run_v100.sh review`** —— 一条命令产三张 TSV 抽检表，填完 `review-score <表>` 出比率（[`setup-v100.md`](setup-v100.md) §7.1） | 三张表对应三个「只有 8B 自己说了算」的缺口：`review_better_zh.tsv`（问题 16，**落地 v0.2 前必须做**）／`review_conflicts.tsv`（**问题 12**，就是那 351 条）／`review_random.tsv`（验证单一质量分 s 准不准） |
+| 5 | **人工抽检三张表**（`review` / `review-score`，**已于 2026-08-05 下线**，主计划 §6 ❌ D14） | 三张表对应三个「只有 8B 自己说了算」的缺口：`review_better_zh.tsv`（问题 16，**落地 v0.2 前必须做**）／`review_conflicts.tsv`（**问题 12**，就是那 351 条）／`review_random.tsv`（验证单一质量分 s 准不准） |
 | 5a | ~~`review_conflicts.tsv`~~ ✅ **全部完成** | 15/15 判 `vlm` → 问题 12 结案；`strip_shared_latin` 两阶段已修（+标点归一化 2026-07-23）；**`s0` 已重跑复核通过**：327→8→**7** / 280→13→**8**，污染类合计 **≤35** vs 实测 33，双向验收过（未塌到 0）|
 | **5c** | **`TARGET_PRECISION=0.3 bash recaption/scripts/run_v100.sh s3`** ⚠️ **务必带这个变量** | ② 验证门已出数（1.80×，门槛保留 2.0，见决策 3 补记）；① 分桶表还欠一版。**`s3` 默认 `TARGET_PRECISION=0.8`，而 19.6% 基准率下可达上限只有 59% —— 默认跑出来 RECAPTION 必然空桶、96.3% KEEP，那不是数据结论**（2026-07-22 已踩过一次）。终稿用的就是 0.3 |
 | 5b | `review_random.tsv` 那 300 条要配 Gradio（[`setup-v100.md`](setup-v100.md) §6） | 这批要看画面才判得了（s≈3 的片子到底什么样） |

@@ -50,12 +50,16 @@ DO_VERIFY=1 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-sample
 | `frame_pick.py` | ① 重述的内容感知选帧（分段网格+抖动不变，段内挑清晰/非黑/不重复的一帧） |
 | `fuse_condense.py` · `fuse_verify.py` | ④b1 跨遍规则计票 · ⑤ 画面验真（GroundingDINO+RapidOCR，缺件降级为 unverified） |
 | `split_views.py` · `recap_diag.py` · `score_alignment.py` | A′ 句切 · 坍缩诊断（独立采样的哨兵）· SigLIP 对齐打分 |
-| `make_*.py` · `extract_examples.py` | 产物：全景 TSV、评审表、离线评审包、A/B 并排对比、表格总结页、报告例子 |
-| `apply_buckets.py` · `analyze_s1.py` · `check_*.py` · `aggregate_report.py` · `profile_jsonl.py` 等 | 审计各阶段的分桶、体检与报告 |
+| `make_*.py` · `extract_examples.py` | 产物：全景 TSV、离线评审包、A/B 并排对比、表格总结页、报告例子 |
+| `apply_buckets.py` · `analyze_s1.py` · `check_s2.py` · `check_trans.py` · `aggregate_report.py` · `profile_jsonl.py` | 审计各阶段的分桶、体检与报告 |
 
 单测在仓库根的 `tests/`（不随脚本搬走，`pytest tests/` 从根目录一把跑）：
-`test_recap_frame_pick` · `test_vlm_prompts` · `test_slot_parse` · `test_fuse_condense` ·
-`test_split_views` · `test_fuse_verify_helpers` · `test_summary_table`。
+`test_recap_frame_pick` · `test_vlm_prompts` · `test_prompt_docs_in_sync` ·
+`test_slot_parse` · `test_fuse_condense` · `test_split_views` ·
+`test_fuse_verify_helpers` · `test_summary_table`。
+
+> `test_prompt_docs_in_sync` 把 `docs/ab-pipeline_zh.md` §5 的 prompt 全文与
+> `scripts/vlm_audit.py` 逐字钉死——改了代码里的 prompt 就必须同步文档，否则单测红。
 
 ## 与仓库其他部分的关系
 

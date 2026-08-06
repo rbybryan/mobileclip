@@ -85,8 +85,8 @@ PAGE = """<!doctype html>
   <button class="p" onclick="dump()">导出 TSV</button>
 </header>
 <div class="hint">__HINT__<br>
-进度自动存在浏览器本地，关掉再开不会丢。填完点<b>导出 TSV</b>，把下载到的文件传回服务器跑
-<code>run_v100.sh review-score</code>。</div>
+进度自动存在浏览器本地，关掉再开不会丢。填完点<b>导出 TSV</b>，把下载到的文件传回服务器
+存档即可。</div>
 <div id="app"></div>
 <script>
 const ROWS=__ROWS__, COLS=__COLS__, QS=__QS__, KEY="rev_"+__KEY__;
@@ -183,7 +183,7 @@ HINTS = {
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--sheet", required=True, help="review_*.tsv（make_review_sheet.py 产出）")
+    ap.add_argument("--sheet", required=True, help="review_*.tsv（make_pipeline_tsv.py --sheet-output 产出）")
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--link", action="store_true",
                     help="用硬链接代替复制（同盘时省空间；打包 tar 时会自动展开）")
@@ -252,8 +252,7 @@ def main():
             "     需重打包，不是本地的问题。\n"
             "   - 个别放不了、显示「浏览器放不了」：多半是 H.265/HEVC 编码，\n"
             "     Chrome 放不了，换 Firefox 或用系统播放器打开对应 video_path。\n\n"
-            "4. 填完点页面右上「导出 TSV」，把下载到的 TSV 传回服务器：\n"
-            "   bash recaption/scripts/run_v100.sh review-score outputs/audit_10k/<那张表>.tsv\n")
+            "4. 填完点页面右上「导出 TSV」，把下载到的 TSV 传回服务器存档\n")
 
     size = sum(os.path.getsize(os.path.join(vdir, x)) for x in os.listdir(vdir))
     print(f"[bundle] {args.out_dir}")

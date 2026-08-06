@@ -42,8 +42,8 @@
 | 产物前缀 | `pipe_*` | `pipe_sl_*` |
 | 出处 | 计划 §5.5–§5.7 | 计划 §5.6b（ASID 式属性槽位，arXiv 2602.13013） |
 
-还有第三种风格 `struct`（OwlCap 式 JSON caption-set，旧 B 臂）保留可手动跑
-（`RECAP_STYLE=struct`，产物 `pipe_st_*`），`pipeline-compare` 现默认对比 dense vs slot。
+曾经还有第三种风格 `struct`（OwlCap 式 JSON caption-set，旧 B 臂），已于 2026-08-05
+随代码精简下线——`pipeline-compare` 早已默认对比 dense vs slot，struct 零使用。
 
 **为什么要独立 N 遍**：每遍都可能幻觉，但独立采样下"多遍都说了"的细节大概率是真的。
 融合步的一切取舍判断都建立在这个前提上，所以 N 遍之间只靠温度 0.9 + 抽帧抖动制造差异，

@@ -213,6 +213,8 @@ S1 嵌入超额落差 +0.0106（只在极低尾）｜ S2′ 文本-only 重判 *
 互补而非重复。抽检通过后可合并成一条信息更密的字幕，直接对治「笼统」（中位仅 3 个信息点）：
 
 ```bash
+# ⚠️ s2-merge 子命令已于 2026-08-05 下线（主计划 §6 ❌ better_zh 续产 D12）；
+#    下面是当时的命令，要复现从 git 历史取删除前的 run_v100.sh
 bash recaption/scripts/run_v100.sh s2-merge     # 纯文本、不解码视频；只重组已验证候选、不新增（防幻觉）
 python recaption/scripts/apply_buckets.py ... --merged 'outputs/audit_10k/s2_merged.*.jsonl'
 ```

@@ -14,33 +14,19 @@
 #   bash recaption/scripts/run_v100.sh s2-check   # ⑤b S2 判定体检 -> s2_health.md（秒级，S2 跑完必做）
 #   bash recaption/scripts/run_v100.sh s2-trans   # ⑤c 文本-only 翻译重判（修 halo；不解码视频，比 s2 快）
 #   bash recaption/scripts/run_v100.sh trans-check # ⑤d 重判体检（可中途跑：早判修复有没有生效）
-#   bash recaption/scripts/run_v100.sh review       # ⑧ 生成三张人工抽检表（TSV，填完用 review-score 统计）
-#   bash recaption/scripts/run_v100.sh review-bundle # ⑧b 打离线评审包（视频+HTML，本地浏览器里评，不用装 gradio）
-#   bash recaption/scripts/run_v100.sh review-score outputs/audit_10k/review_better_zh.tsv
-#   bash recaption/scripts/run_v100.sh s2-gran      # ⑨ 粒度计数式重判（验证 dense=0 是不是标签塌缩）
-#   bash recaption/scripts/run_v100.sh gran-check   # ⑨b 粒度结果分析 + n_info=0 归因 -> gran_health.md
 #   bash recaption/scripts/run_v100.sh s4           # ⑧e′ 落地(无融合稿依赖版): 分桶→v0.2 数据+任务队列(主计划 v1.1 路线)
-#   bash recaption/scripts/run_v100.sh s2-merge     # ⑧c 合并 better_zh 三候选为一条密字幕（纯文本）
-#   bash recaption/scripts/run_v100.sh merge-review # ⑧d 融合可视化人审（视频+候选+融合稿离线包，同 better_zh）
-#   bash recaption/scripts/run_v100.sh s4-merged    # ⑧e 落地：融合稿当主字幕写进 v0.2 训练 JSON
 #   bash recaption/scripts/run_v100.sh recap        # ⑧f RECAPTION 桶前端：每片五样本独立重述（融合方案 S0）
 #   bash recaption/scripts/run_v100.sh recap-tsv    # ⑧g 重述检验 TSV：源caption/翻译/5重述/A′视图 并排目检（CPU 秒级）
 #   bash recaption/scripts/run_v100.sh pipeline-sample # ⑧h 优化流水线小样本端到端：默认只跑 ①重述×N + ④b2直融(长稿→短稿)，两步都 8 卡分片；其余步骤 DO_*=1 才开（PIPE_FULL=1 全开）
+#   bash recaption/scripts/run_v100.sh pipeline-compare # ⑧h′ A/B 双臂同批对照 + 并排评审包 bundle_compare/
 #   bash recaption/scripts/run_v100.sh summary-table # ⑧i 表格版总结：GIF|en源|原zh|A/B 重述+长稿+短稿 九列静态页（compare 之后跑）
-#   JUDGE_N=500 bash recaption/scripts/run_v100.sh s2-judge  # ⑥ 云端裁判（可选，需 API key）
-#   bash recaption/scripts/run_v100.sh judge-agree # ⑥b 一致率+Cohen's κ（可对外来裁判文件独立重算）
-#   bash recaption/scripts/run_v100.sh xling-check # ⑥c 裁决 xling 阈值（s3 前必做）
 #   bash recaption/scripts/run_v100.sh s3         # ⑦ 校准+分桶+诊断报告 report.md
 #   bash recaption/scripts/run_v100.sh snapshot   # ⑩ 一条命令打印全部状态（贴给 Claude 用）
 # 跑其他数据（如全量挂载后）：export DATA/CLIPS/OUT 覆盖默认值即可。
 #
-# V100 三个硬件差异已在脚本/工具内处理：
+# V100 两个硬件差异已在脚本/工具内处理：
 #   1. Volta 无 bf16      -> score_alignment.py / vlm_audit_hf.py 自动落到 fp16
 #   2. vLLM V1 不支持 Volta -> S2 用 transformers 后端 (vlm_audit_hf.py) 8 卡数据并行
-#   3. 235B 裁判本地放不下(8x32GB=256GB < 权重, 且 Volta 无 FP8) -> s2-judge 走
-#      OpenAI 兼容端点。不想用云端商业 API 时改指向 H100 机自托管的同一份开源权重
-#      (JUDGE_API_BASE=http://<H100_IP>:8001/v1)，判定完全一致；选型见
-#      recaption/docs/archive/setup-judge-api.md §0
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # 仓库根目录
 
@@ -66,11 +52,6 @@ if [ -z "${S2_MODEL:-}" ]; then
 fi
 # 抽样规模（V100 吞吐低于 A100，默认略收缩；嫌慢再调小 PER_BUCKET）
 PER_BUCKET=${PER_BUCKET:-3000}; FLAGGED=${FLAGGED:-10000}; LOW_XLING=${LOW_XLING:-5000}
-# 云端裁判（示例为 DashScope 兼容模式；OpenRouter 等任何 OpenAI 兼容端点均可）
-JUDGE_API_BASE=${JUDGE_API_BASE:-https://dashscope.aliyuncs.com/compatible-mode/v1}
-JUDGE_API_KEY=${JUDGE_API_KEY:-}
-JUDGE_MODEL=${JUDGE_MODEL:-qwen3-vl-235b-a22b-instruct}
-JUDGE_N=${JUDGE_N:-2000}
 
 mkdir -p "$OUT"
 # 快速失败守卫：变量拼错（如 $SAMPLE 未 export 导致 DATA=/xxx.jsonl）时
@@ -98,7 +79,6 @@ expected_total() { wc -l < "$DATA"; }
 s1_lines() { { cat "$OUT"/s1_scores.*.jsonl 2>/dev/null || true; } | wc -l; }
 s2_lines() { { cat "$OUT"/s2_verdicts.*.jsonl 2>/dev/null || true; } | wc -l; }
 trans_lines() { { cat "$OUT"/s2_trans.*.jsonl 2>/dev/null || true; } | wc -l; }
-merged_lines() { { cat "$OUT"/s2_merged.*.jsonl 2>/dev/null || true; } | wc -l; }
 recap_lines() { { cat "$OUT"/recap5.*.jsonl "$OUT"/recap_struct.*.jsonl "$OUT"/recap_slot.*.jsonl 2>/dev/null || true; } | wc -l; }
 
 case "${1:-}" in
@@ -213,11 +193,6 @@ status)
     echo "---- S2-trans（文本-only 翻译重判）: $(trans_lines) / $s2t  存活进程: $tr_alive ----"
     echo "  体检（可中途跑，早发现修复没生效就不用等）: bash $0 trans-check"
   fi
-  if ls "$OUT"/s2_merged.*.jsonl >/dev/null 2>&1; then
-    mg_alive=$(pgrep -fc "vlm_audit_hf.py.*--mode merge" || true)
-    echo "---- S2-merge（候选融合 better_zh→1 条）: $(merged_lines) / $s2  存活进程: $mg_alive ----"
-    echo "  （总行数达 $s2 即全部处理完；只有 ≥2 候选的片真调模型，<2 候选秒过。落地: bash $0 s4-merged）"
-  fi
   if ls "$OUT"/recap5.*.jsonl >/dev/null 2>&1 || ls "$OUT"/recap_struct.*.jsonl >/dev/null 2>&1 \
      || ls "$OUT"/recap_slot.*.jsonl >/dev/null 2>&1; then
     rc_alive=$(pgrep -fc "vlm_audit_hf.py.*--mode recap" || true)
@@ -277,7 +252,7 @@ s2-trans)
   done
   echo "已后台启动（可续跑）。比 s2 快得多：S2 的瓶颈是视频解码，这一趟完全不解码。"
   echo "进度: for f in $OUT/s2_trans.*.jsonl; do wc -l \$f; done"
-  echo "跑完后: bash $0 xling-check   # 会自动优先用 s2_trans.*.jsonl"
+  echo "跑完后: bash $0 trans-check   # 重判体检；s3 会自动优先用 s2_trans.*.jsonl 算翻译差率"
   echo "中途随时: bash $0 trans-check # 早判修复有没有生效，没生效就别等它跑完"
   ;;
 # ------------------------------- ⑤d 重判体检（可中途跑：修复没生效就不必等跑完）
@@ -292,7 +267,7 @@ trans-check)
   [ -f "$OUT/s2_sample.jsonl" ] && TC_ARGS+=(--sample "$OUT/s2_sample.jsonl")
   python3 recaption/scripts/check_trans.py "${TC_ARGS[@]}" \
     --out-md "$OUT/trans_health.md" || {
-      echo; echo "== 重判体检未通过：先看上方结论，别把它喂给 xling-check =="; exit 1; }
+      echo; echo "== 重判体检未通过：先看上方结论，别把它喂给 s3 =="; exit 1; }
   ;;
 # ------------------------------------------------- ⑤b S2 判定体检（S2 跑完必做）
 s2-check)
@@ -304,183 +279,12 @@ s2-check)
   python3 recaption/scripts/check_s2.py "${SC_ARGS[@]}" \
     --out-md "$OUT/s2_health.md" || {
       echo
-      echo "== 体检未通过（详见上方「结论」与 $OUT/s2_health.md）：先处理再跑 xling-check/s3 =="
+      echo "== 体检未通过（详见上方「结论」与 $OUT/s2_health.md）：先处理再跑 s3 =="
       exit 1; }
   echo
-  echo "== 体检通过。下一步: bash $0 xling-check（裁决决策 1，阻塞 s3） =="
+  echo "== 体检通过。下一步: bash $0 s3（校准+分桶+诊断报告） =="
   ;;
-# ---------------------------------------------------------------- ⑥ 云端裁判（可选）
-s2-judge)
-  [ -n "$JUDGE_API_KEY" ] || { echo "export JUDGE_API_KEY=... （DashScope/OpenRouter 等）"; exit 1; }
-  need_clips; need_py
-  head -n "$JUDGE_N" "$OUT/s2_sample.jsonl" > "$OUT/s2_judge_sample.jsonl"
-  python recaption/scripts/vlm_audit.py --input "$OUT/s2_judge_sample.jsonl" \
-    --video-root "$CLIPS" --api-base "$JUDGE_API_BASE" --api-key "$JUDGE_API_KEY" \
-    --model "$JUDGE_MODEL" --frames "$S2_FRAMES" --concurrency 8 \
-    --output "$OUT/s2_verdicts_judge.jsonl"
-  exec "$0" judge-agree
-  ;;
-# ------------------------------------------- ⑥b 一致率 + Cohen's κ（可独立重算）
-judge-agree)
-  ls "$OUT"/s2_verdicts.*.jsonl >/dev/null 2>&1 || \
-    { echo "未找到 $OUT/s2_verdicts.*.jsonl（先跑: bash $0 s2）"; exit 1; }
-  [ -f "$OUT/s2_verdicts_judge.jsonl" ] || \
-    { echo "未找到 $OUT/s2_verdicts_judge.jsonl"
-      echo "  —— 跑 bash $0 s2-judge；或裁判在别的机器上跑完后把该文件拷回来"
-      echo "     （见 recaption/docs/archive/setup-judge-api.md §0 路线 A′「探针二不通时」）"; exit 1; }
-  python recaption/scripts/judge_agreement.py \
-    --main "$OUT/s2_verdicts.*.jsonl" --judge "$OUT/s2_verdicts_judge.jsonl" \
-    --out-md "$OUT/judge_agreement.md"
-  ;;
-# ------------------------------------------------- ⑥.5 xling 阈值裁决（跑 s3 前）
-xling-check)
-  python -c 'import numpy' 2>/dev/null || {
-    echo "错误：当前 Python（$(command -v python)）缺 numpy。"
-    echo "  多半是没激活虚拟环境：source ~/audit_env/bin/activate"; exit 1; }
-  # 优先用文本-only 重判的 trans_score：主力档的 trans_score 与 en_score 92.5%
-  # 逐条同值（halo，recaption/docs/data-issues.md 问题 8），拿它算差率是自证循环。
-  if ls "$OUT"/s2_trans.*.jsonl >/dev/null 2>&1; then
-    XV="$OUT/s2_trans.*.jsonl"
-    echo "[xling-check] 用文本-only 重判的 trans_score（s2_trans.*.jsonl）—— 独立测量，可信"
-    # 别在半成品上校准：s2-trans 是后台 8 分片，刚起步时只有几十条
-    if [ -f "$OUT/s2_sample.jsonl" ]; then
-      have=$(trans_lines); want=$(wc -l < "$OUT/s2_sample.jsonl")
-      alive=$(pgrep -fc "vlm_audit_hf.py.*--mode trans" || true)
-      if [ "$have" -lt "$(( want * 95 / 100 ))" ]; then
-        echo "⚠️ s2-trans 才写了 $have / $want 条（$(python3 -c "print(f'{$have/$want:.1%}')")）——**还没跑完**。"
-        echo "   在半成品上校准出来的阈值没有意义。存活进程: $alive"
-        [ "$alive" -gt 0 ] && echo "   还在跑，等着就行： bash $0 status" \
-                           || echo "   ⛔ 进程已退出且未跑完：查 $OUT/s2_trans_shard*.log 的 Traceback，重跑 s2-trans 可续跑"
-        echo "   想先看修复有没有生效： bash $0 trans-check"
-        exit 1
-      fi
-    fi
-  else
-    XV="$OUT/s2_verdicts.*.jsonl"
-    echo "⚠️ [xling-check] 未找到 $OUT/s2_trans.*.jsonl，退回主力档 s2_verdicts.*.jsonl。"
-    echo "   主力档的 trans_score 与 en_score 92.5% 逐条同值（halo，见 recaption/docs/data-issues.md 问题 8），"
-    echo "   **本次输出只能当参考，不足以裁决决策 1** —— 先跑: bash $0 s2-trans"
-  fi
-  ls $XV >/dev/null 2>&1 || \
-    { echo "未找到 $OUT/s2_verdicts.*.jsonl（先跑完: bash $0 s2）"; exit 1; }
-  python recaption/scripts/calibrate_xling.py \
-    --verdicts "$XV" --scores "$OUT/s1_scores.*.jsonl" \
-    --target-precision "${TARGET_PRECISION:-0.8}" \
-    --out-md "$OUT/xling_calibration.md"
-  echo
-  echo "== 把结论记进 recaption/docs/data-issues.md §4 决策 1，再跑 s3 =="
-  ;;
-# ------------------------------------------------- ⑧ 人工抽检表（P0/P1 效度测评）
-review)
-  [ -f "$OUT/s2_sample.jsonl" ] || { echo "缺 $OUT/s2_sample.jsonl"; exit 1; }
-  R=recaption/scripts/make_review_sheet.py
-  # ① better_zh 质量（P0，落地 v0.2 前必做）—— 需要 buckets，先跑过 s3
-  if [ -f "$OUT/buckets.jsonl" ]; then
-    python3 $R --kind better-zh --sample "$OUT/s2_sample.jsonl" \
-      --verdicts "$OUT/s2_verdicts.*.jsonl" --buckets "$OUT/buckets.jsonl" \
-      --video-root "$CLIPS" -n "${REVIEW_N:-50}" --out "$OUT/review_better_zh.tsv"
-  else
-    echo "跳过 better-zh 表：缺 $OUT/buckets.jsonl（先跑 bash $0 s3）"
-  fi
-  # ② S0 旗标 vs 实测翻译分 的冲突记录（P1）
-  if ls "$OUT"/s2_trans.*.jsonl >/dev/null 2>&1; then
-    python3 $R --kind conflicts --sample "$OUT/s2_sample.jsonl" \
-      --trans "$OUT/s2_trans.*.jsonl" --video-root "$CLIPS" \
-      -n "${CONFLICT_N:-15}" --out "$OUT/review_conflicts.tsv"
-  else
-    echo "跳过 conflicts 表：缺 $OUT/s2_trans.*.jsonl（先跑 bash $0 s2-trans）"
-  fi
-  # ③ 随机抽检，验证单一质量分（P1）
-  python3 $R --kind random --sample "$OUT/s2_sample.jsonl" \
-    --verdicts "$OUT/s2_verdicts.*.jsonl" --video-root "$CLIPS" \
-    -n "${RANDOM_N:-300}" --out "$OUT/review_random.tsv"
-  echo
-  echo "== 三张表已生成在 $OUT/ ；在 Excel/VSCode 里填最后几列，配合 §6 的 Gradio 看画面 =="
-  echo "== 填完统计： bash $0 review-score $OUT/review_better_zh.tsv =="
-  ;;
-review-bundle)
-  # 打离线评审包：视频 + 自带填写界面的 HTML，scp 到本地浏览器里评，
-  # 不需要在服务器上装 gradio（那会污染验证过的 audit_env，且它没有填写字段）
-  B=recaption/scripts/make_review_bundle.py
-  made=0
-  for k in better_zh conflicts random merge; do
-    [ -f "$OUT/review_$k.tsv" ] || continue
-    [ "$k" = "random" ] && [ -z "${BUNDLE_RANDOM:-}" ] && \
-      { echo "跳过 random（300 条视频较大）；需要就 BUNDLE_RANDOM=1 再跑"; continue; }
-    python3 $B --sheet "$OUT/review_$k.tsv" --out-dir "$OUT/bundle_$k" ${BUNDLE_LINK:+--link}
-    made=$((made+1)); echo
-  done
-  [ "$made" -gt 0 ] || { echo "没有可打包的表（先跑: bash $0 review）"; exit 1; }
-  echo "== 打包并取回本地 =="
-  echo "  服务器： tar czf ~/review_bundles.tgz -C $OUT \$(cd $OUT && ls -d bundle_* )"
-  echo "  本地：   scp vca1@10.235.31.101:~/review_bundles.tgz . && tar xzf review_bundles.tgz"
-  echo "           浏览器打开 bundle_better_zh/index.html —— 视频/字幕/选项同屏，进度自动保存"
-  echo "  填完点「导出 TSV」，传回服务器： bash $0 review-score $OUT/review_better_zh.tsv"
-  ;;
-review-score)
-  [ -n "${2:-}" ] || { echo "用法: bash $0 review-score <填好的.tsv>"; exit 1; }
-  python3 recaption/scripts/make_review_sheet.py --score "$2"
-  ;;
-# ------------------------------- ⑨ 粒度计数式重判（查 dense=0 是不是标签塌缩）
-s2-gran)
-  need_py
-  [ -f "$OUT/s2_sample.jsonl" ] || { echo "先跑 s2-sample"; exit 1; }
-  echo "[model] S2_MODEL=$S2_MODEL （文本模式：只看中文字幕，数信息点，不看画面）"
-  for i in $(seq 0 $((NGPU-1))); do
-    CUDA_VISIBLE_DEVICES=$i nohup python recaption/scripts/vlm_audit_hf.py \
-      --input "$OUT/s2_sample.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
-      --mode gran --num-shards "$NGPU" --shard-id "$i" \
-      --max-new-tokens "${GRAN_MAX_TOKENS:-512}" \
-      --output "$OUT/s2_gran.{shard}.jsonl" \
-      > "$OUT/s2_gran_shard$i.log" 2>&1 &
-    echo "shard $i -> GPU$i (log: $OUT/s2_gran_shard$i.log)"
-  done
-  echo "已后台启动（可续跑）。同样不解码视频，比 s2 快得多。"
-  echo "跑完后统计 n_info 分布："
-  echo "  python3 -c \"import json,glob;from collections import Counter;c=Counter(json.loads(l).get('verdict',{}).get('n_info') for f in glob.glob('$OUT/s2_gran.*.jsonl') for l in open(f));print(sorted(c.items(),key=lambda x:(x[0] is None,x[0])))\""
-  ;;
-# --------------------------------- ⑧c 合并 better_zh 多条候选为一条密字幕（纯文本）
-s2-merge)
-  need_py
-  ls "$OUT"/s2_verdicts.*.jsonl >/dev/null 2>&1 || \
-    { echo "未找到 $OUT/s2_verdicts.*.jsonl（先跑: bash $0 s2）"; exit 1; }
-  # 8 个分片的判定先合成一个输入文件（better_zh 在 verdict 里），再 8 卡分发
-  cat "$OUT"/s2_verdicts.*.jsonl > "$OUT/s2_verdicts_all.jsonl"
-  echo "[model] S2_MODEL=$S2_MODEL （合并模式：只读候选文本，不看视频）"
-  for i in $(seq 0 $((NGPU-1))); do
-    CUDA_VISIBLE_DEVICES=$i nohup python recaption/scripts/vlm_audit_hf.py \
-      --input "$OUT/s2_verdicts_all.jsonl" --video-root "$CLIPS" --model "$S2_MODEL" \
-      --mode merge --num-shards "$NGPU" --shard-id "$i" \
-      --max-new-tokens "${MERGE_MAX_TOKENS:-256}" \
-      --output "$OUT/s2_merged.{shard}.jsonl" \
-      > "$OUT/s2_merged_shard$i.log" 2>&1 &
-    echo "shard $i -> GPU$i (log: $OUT/s2_merged_shard$i.log)"
-  done
-  echo "已后台启动（可续跑）。不解码视频，比 s2 快得多。"
-  echo "跑完后：可视化人审  bash $0 merge-review   ；或直接落地  bash $0 s4-merged"
-  ;;
-# --------------- ⑧d 融合可视化人审：候选 vs 融合稿 + 视频，同 better_zh 的离线包
-merge-review)
-  need_py
-  ls "$OUT"/s2_merged.*.jsonl >/dev/null 2>&1 || \
-    { echo "缺 $OUT/s2_merged.*.jsonl（先跑: bash $0 s2-merge）"; exit 1; }
-  [ -f "$OUT/s2_sample.jsonl" ] || { echo "缺 $OUT/s2_sample.jsonl"; exit 1; }
-  python3 recaption/scripts/make_review_sheet.py --kind merge \
-    --sample "$OUT/s2_sample.jsonl" --verdicts "$OUT/s2_verdicts.*.jsonl" \
-    --merged "$OUT/s2_merged.*.jsonl" --video-root "$CLIPS" \
-    -n "${MERGE_REVIEW_N:-300}" --out "$OUT/review_merge.tsv"
-  python3 recaption/scripts/make_review_bundle.py \
-    --sheet "$OUT/review_merge.tsv" --out-dir "$OUT/bundle_merge" ${BUNDLE_LINK:+--link}
-  echo
-  echo "== 取回本地看画面评审 =="
-  echo "  服务器： tar czf ~/bundle_merge.tgz -C $OUT bundle_merge"
-  echo "  本地：   scp vca1@10.235.31.101:~/bundle_merge.tgz . && tar xzf bundle_merge.tgz"
-  echo "           浏览器打开 bundle_merge/index.html —— 视频/候选/融合稿/按钮同屏，进度自动保存"
-  echo "  填完点「导出 TSV」，传回服务器统计门： bash $0 review-score $OUT/review_merge.tsv"
-  ;;
-# --------------- ⑧e 落地 v0.2：融合稿(merged_zh)当主字幕写进训练 JSON
-# --------- ⑧e′ 落地（无融合稿依赖版；主计划 v1.1 D12: better_zh 已存档）
-# 与 s4-merged 的唯一区别 = 不传 --merged（主字幕退回清洗后的原 zh）。
+# --------- ⑧e 落地 v0.2：分桶结果写进训练 JSON + 重述任务队列
 # 产物里 pipeline/recap 真正需要的是 v0_2/recaption_tasks.jsonl 任务队列；
 # v0.2 训练数据的最终形态由重述视图给（主计划 §4），此处 out-data 仅为中间产物。
 s4)
@@ -500,24 +304,6 @@ s4)
   echo "== 队列已写出: $OUT/v0_2/recaption_tasks.jsonl（$(wc -l < "$OUT/v0_2/recaption_tasks.jsonl") 片）=="
   echo "下一步: N_SAMPLE=50 bash $0 pipeline-sample   # 或直接 bash $0 recap 放全桶"
   ;;
-s4-merged)
-  need_data
-  ls "$OUT"/s2_merged.*.jsonl >/dev/null 2>&1 || \
-    { echo "缺 $OUT/s2_merged.*.jsonl（先跑: bash $0 s2-merge；
-  若只是要 recaption_tasks.jsonl 队列，用无融合稿依赖的: bash $0 s4）"; exit 1; }
-  [ -f "$OUT/buckets.jsonl" ] || { echo "缺 $OUT/buckets.jsonl（先跑: bash $0 s3）"; exit 1; }
-  mkdir -p "$OUT/v0_2"
-  python3 recaption/scripts/apply_buckets.py \
-    --input "$DATA" --buckets "$OUT/buckets.jsonl" --verdicts "$OUT/s2_verdicts.*.jsonl" \
-    --merged "$OUT/s2_merged.*.jsonl" \
-    --out-data "$OUT/v0_2/internvid_zh_v0_2.jsonl" \
-    --out-retranslate "$OUT/v0_2/retranslate_tasks.jsonl" \
-    --out-recaption "$OUT/v0_2/recaption_tasks.jsonl" \
-    --out-drop "$OUT/v0_2/dropped.jsonl"
-  echo "== v0.2 训练 JSON 已写到 $OUT/v0_2/internvid_zh_v0_2.jsonl =="
-  echo "   融合稿(merged_zh)当主字幕，原字幕/候选保留为 captions 视图；"
-  echo "   下一步是 §6.3 消融（融合 vs best-single vs uniform-K），在训练机上做。"
-  ;;
 # --------------- ⑧f RECAPTION 桶前端：每片五样本独立重述（融合方案 S0）
 recap)
   need_clips; need_py
@@ -526,7 +312,7 @@ recap)
   RECAP_INPUT=${RECAP_INPUT:-$OUT/v0_2/recaption_tasks.jsonl}
   [ -f "$RECAP_INPUT" ] || { echo "缺重述输入队列：$RECAP_INPUT
   它是 apply_buckets 的 --out-recaption 产物（RECAPTION 桶）。先跑 s3 得 buckets，
-  再 s4-merged 落地即会写出 v0_2/recaption_tasks.jsonl；
+  再 s4 落地即会写出 v0_2/recaption_tasks.jsonl；
   或指向任意含 video 字段的 jsonl： RECAP_INPUT=xxx.jsonl bash $0 recap"; exit 1; }
   # 重述风格（§5.6）：dense(默认/方案A主线) = 整段稠密描述×N；struct(方案B平行备选) =
   # OwlCap 式 caption-set——每遍一次解码产 5-8 条带属性(subject/action/scene/text)短句
@@ -1019,15 +805,6 @@ summary-table)
   echo "   打包: tar czf $OUT/table.tgz -C $OUT table_compare"
   echo "   本地: scp rby@101vector:~/mobileclip/$OUT/table.tgz . && tar xzf table.tgz && 打开 table_compare/table.html"
   ;;
-# ------------------------------- ⑨b 粒度重判结果分析 + n_info=0 归因
-gran-check)
-  ls "$OUT"/s2_gran.*.jsonl >/dev/null 2>&1 || \
-    { echo "未找到 $OUT/s2_gran.*.jsonl（先跑: bash $0 s2-gran）"; exit 1; }
-  GC_ARGS=(--gran "$OUT/s2_gran.*.jsonl" --sample "$OUT/s2_sample.jsonl")
-  ls "$OUT"/s2_verdicts.*.jsonl >/dev/null 2>&1 && \
-    GC_ARGS+=(--verdicts "$OUT/s2_verdicts.*.jsonl")
-  python3 recaption/scripts/check_gran.py "${GC_ARGS[@]}" --out-md "$OUT/gran_health.md"
-  ;;
 # ------------------------------------------------ ⑩ 快照：一条命令打印全部状态
 snapshot)
   # 纯 stdlib，不需要 venv；任何文件缺失都不报错，只标 "-"
@@ -1073,8 +850,6 @@ rows = [("S0 旗标", "s0_flags.jsonl", "subset:仅命中旗标的记录"),
         ("S2 抽样", "s2_sample.jsonl", "whole"),
         ("S2 判定", "s2_verdicts.*.jsonl", "whole"),
         ("S2 翻译重判", "s2_trans.*.jsonl", "whole"),
-        ("S2 粒度重判", "s2_gran.*.jsonl", "whole"),
-        ("裁判档", "s2_verdicts_judge.jsonl", "subset:按设计只判 JUDGE_N 条"),
         ("S3 分桶", "buckets.jsonl", "whole")]
 print("| 阶段 | 产物 | 行数 | 进度 | 分片 |")
 print("|---|---|---|---|---|")
@@ -1114,140 +889,9 @@ if not hit:
     print("- （无后台任务在跑）")
 print()
 
-# 粒度重判结果
-gn, _ = lines("s2_gran.*.jsonl")
-if gn:
-    c, err = Counter(), 0
-    for f in glob.glob(os.path.join(OUT, "s2_gran.*.jsonl")):
-        for line in open(f, encoding="utf-8", errors="ignore"):
-            try:
-                v = (json.loads(line).get("verdict") or {})
-            except json.JSONDecodeError:
-                continue
-            if v.get("n_info") is None:
-                err += 1
-            else:
-                c[v["n_info"]] += 1
-    # n_info 是模型自报的总数，但五个列表也在 JSON 里——两者对不上就说明它没在数，
-    # 而是凭印象填了个数。重算一遍（列表长度之和）才知道该信哪个。
-    rc, agree, zero_but_listed, zero_total = Counter(), 0, 0, 0
-    LISTS = ("subjects", "actions", "scenes", "attributes", "temporal")
-    for f in glob.glob(os.path.join(OUT, "s2_gran.*.jsonl")):
-        for line in open(f, encoding="utf-8", errors="ignore"):
-            try:
-                v = (json.loads(line).get("verdict") or {})
-            except json.JSONDecodeError:
-                continue
-            if v.get("n_info") is None:
-                continue
-            k = sum(len(v.get(x) or []) for x in LISTS if isinstance(v.get(x), list))
-            rc[k] += 1
-            if k == v["n_info"]:
-                agree += 1
-            if v["n_info"] == 0:
-                zero_total += 1
-                if k > 0:
-                    zero_but_listed += 1
-    print(f"## 粒度重判 n_info 分布（{sum(c.values()):,} 条可用，失败 {err}）\n")
-    if c:
-        tt = sum(c.values())
-        ks = sorted(c)
-        print("| n_info | " + " | ".join(str(k) for k in ks) + " |")
-        print("|---" * (len(ks) + 1) + "|")
-        print("| 条数 | " + " | ".join(f"{c[k]:,}" for k in ks) + " |")
-        acc, med = 0, None
-        for k in ks:
-            acc += c[k]
-            if med is None and acc >= tt / 2:
-                med = k
-        print(f"\n- **中位数 {med}**，均值 {sum(k*v for k,v in c.items())/tt:.2f}"
-              "　（「一个男人在说话」= 主体1+动作1 = 2）")
-        coarse = sum(v for k, v in c.items() if k <= 2)
-        adeq = sum(v for k, v in c.items() if k in (3, 4))
-        dense = sum(v for k, v in c.items() if k >= 5)
-        print(f"- 分档：**≤2 粗 {coarse/tt:.1%}｜3–4 中 {adeq/tt:.1%}｜≥5 密 {dense/tt:.1%}**"
-              "　（原三档标签为 coarse 93.6% / adequate 6.4% / dense 0）")
-        z = c.get(0, 0)
-        if z / tt > 0.05:
-            # 零信息点的字幕本不该有这么多——先看它们长什么样，再决定是数据问题还是 rubric 问题
-            zh = {}
-            sp = os.path.join(OUT, "s2_sample.jsonl")
-            if os.path.exists(sp):
-                for line in open(sp, encoding="utf-8", errors="ignore"):
-                    try:
-                        r = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    zh[r.get("video")] = r.get("zh")
-            ex = []
-            for f in glob.glob(os.path.join(OUT, "s2_gran.*.jsonl")):
-                for line in open(f, encoding="utf-8", errors="ignore"):
-                    try:
-                        r = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if (r.get("verdict") or {}).get("n_info") == 0:
-                        t = (zh.get(r.get("video")) or "").strip()
-                        ex.append(t if t else "(原字幕为空)")
-                    if len(ex) >= 6:
-                        break
-                if len(ex) >= 6:
-                    break
-            print(f"\n- ⚠️ **`n_info=0` 占 {z/tt:.1%}** —— 字幕零信息点本不该这么多。样例原字幕：")
-            for t in ex:
-                print(f"  - `{t[:60]}`")
-        # 自报 vs 重算：区分"没在数"（列表也空）和"数错了"（列了却报 0）
-        rt = sum(rc.values())
-        if rt:
-            print(f"\n### 自报 `n_info` vs 按列表重算\n")
-            print(f"- 两者一致：**{agree:,} / {rt:,} = {agree/rt:.1%}**")
-            if zero_total:
-                r0 = zero_but_listed / zero_total
-                print(f"- 自报 0 的 {zero_total:,} 条里，列表其实非空的有 "
-                      f"**{zero_but_listed:,}（{r0:.1%}）**")
-                if r0 > 0.5:
-                    print("  → 主要是**算术错**（列了却报 0）：直接按列表重算即可救回，不必重跑")
-                elif r0 < 0.1:
-                    print("  → 模型**确实什么都没列出来**：这是判断失败，重算救不回。"
-                          "先人工看几条原字幕——若字幕本身明显有信息点，说明该批 prompt "
-                          "没生效（多半是静态/截图类内容触发了模型的某种拒答），需改 prompt 重跑")
-                else:
-                    print("  → 两种失败模式都有：能重算的先重算，剩下的按判断失败处理")
-            ks2 = sorted(rc)
-            print("\n| 重算 n_info | " + " | ".join(str(k) for k in ks2) + " |")
-            print("|---" * (len(ks2) + 1) + "|")
-            print("| 条数 | " + " | ".join(f"{rc[k]:,}" for k in ks2) + " |")
-            co2 = sum(v for k, v in rc.items() if k <= 2)
-            ad2 = sum(v for k, v in rc.items() if k in (3, 4))
-            de2 = sum(v for k, v in rc.items() if k >= 5)
-            print(f"\n- **按重算分档：≤2 粗 {co2/rt:.1%}｜3–4 中 {ad2/rt:.1%}｜"
-                  f"≥5 密 {de2/rt:.1%}**　← 与自报分档不同就以**这一版**为准")
-    print()
-
-print("## 人工抽检表")
-print("| 表 | 总行 | 已填 | 状态 |")
-print("|---|---|---|---|")
-import csv
-for f in ("review_better_zh.tsv", "review_conflicts.tsv", "review_random.tsv"):
-    p = os.path.join(OUT, f)
-    if not os.path.exists(p):
-        print(f"| `{f}` | - | - | 未生成 |")
-        continue
-    try:
-        rr = list(csv.DictReader(open(p, encoding="utf-8-sig"), delimiter="\t"))
-    except Exception:
-        print(f"| `{f}` | ? | ? | 读取失败 |")
-        continue
-    cols = [c for c in (rr[0] if rr else {}) if c and "[" in c]
-    filled = sum(1 for r in rr if any((r.get(c) or "").strip() for c in cols))
-    st = "✅ 可统计" if filled else "⬜ 待填"
-    print(f"| `{f}` | {len(rr)} | **{filled}** | {st} |")
-print()
-
 print("## 关键结论回显（来自不入库的 outputs/）")
 for f, pats in [("s2_health.md", ["逐条完全同值", "视频含多个先后事件", "字幕根本没描述顺序"]),
                 ("trans_health.md", ["差率（≤2）", "锚定已解除"]),
-                ("xling_calibration.md", ["基准差率", "lift ="]),
                 ("report.md", ["| KEEP |", "| RECAPTION |", "| RETRANSLATE |"])]:
     p = os.path.join(OUT, f)
     if not os.path.exists(p):
@@ -1264,7 +908,7 @@ print()
 
 print("## 未完成任务的日志尾行")
 any_log = False
-for pat in ("s2_gran_shard*.log", "s2_trans_shard*.log", "s2_shard*.log"):
+for pat in ("s2_trans_shard*.log", "s2_shard*.log"):
     fs = sorted(glob.glob(os.path.join(OUT, pat)))
     if not fs:
         continue

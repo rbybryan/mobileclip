@@ -446,11 +446,14 @@ lift < 2.0 → 退出分桶规则，无真标签的记录改由 sig_* 决定。
 > **P0 与「落地」的先后关系是硬的**：`apply_buckets.py` 会把未验证的 `better_zh`
 > 直接写进 v0.2 训练数据。**先抽检，再落地。**
 
+> ⚠️ 本节记录的是 10k 轮**当时**跑的命令。`review` / `review-score` / `s2-gran`
+> 等人工抽检与粒度重判子命令已于 2026-08-05 随该轮收官下线（主计划 §6 ❌ D14），
+> 要复现从 `git log` 取删除前的 `run_v100.sh`。
+
 ```bash
-bash recaption/scripts/run_v100.sh review      # 一次生成三张抽检表
-# 填完（Excel/VSCode 填最后几列，配合 Gradio 看画面）：
+bash recaption/scripts/run_v100.sh review      # 一次生成三张抽检表（已下线）
 bash recaption/scripts/run_v100.sh review-score outputs/audit_10k/review_better_zh.tsv
-bash recaption/scripts/run_v100.sh s2-gran     # 粒度改计数式重判
+bash recaption/scripts/run_v100.sh s2-gran     # 粒度改计数式重判（已下线）
 ```
 
 **全量（10M）开跑前必须先做的两件事**：
@@ -474,8 +477,8 @@ bash recaption/scripts/run_v100.sh s2          # VLM 判定
 bash recaption/scripts/run_v100.sh s2-check    # 判定体检（含维度独立性检查）
 bash recaption/scripts/run_v100.sh s2-trans    # 文本-only 翻译重判
 bash recaption/scripts/run_v100.sh trans-check # 重判体检
-bash recaption/scripts/run_v100.sh xling-check # xling 阈值裁决
-bash recaption/scripts/run_v100.sh judge-agree # 交叉裁判一致率
+bash recaption/scripts/run_v100.sh xling-check # xling 阈值裁决（已下线，决策 1 已裁决）
+bash recaption/scripts/run_v100.sh judge-agree # 交叉裁判一致率（已下线，决策 2b 已落地）
 TARGET_PRECISION=0.3 bash recaption/scripts/run_v100.sh s3   # 校准 + 分桶 + 报告
 ```
 

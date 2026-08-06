@@ -116,77 +116,6 @@ TRANS_PROMPT = """你是严格的中英翻译质检员。下面给你一条英�
 
 TRANS_KEYS = {"trans_score", "mismatches"}
 
-# ---------------------------------------------------------------------------
-# Text-only granularity rubric (--mode gran).
-#
-# WHY THIS EXISTS. The combined rubric's three-way granularity label came back
-# coarse 93.6% / adequate 6.4% / dense 0. A count of exactly zero for one of
-# three categories is the signature of label-space collapse, not of the data:
-# the same run's trans_score only ever used {0,2,3,5} -- 1 and 4 never appeared.
-# If `dense` was simply unreachable, 93.6% is an overestimate of "coarse".
-#
-# The fix is to ask for a COUNT rather than a band. A count is a continuous
-# quantity, so it cannot collapse onto a label the way a 3-way choice can, and
-# the bands can be re-derived afterwards from whatever cut we want. No frames
-# either: how much information a sentence carries is a property of the sentence.
-GRAN_PROMPT = """你是中文视频字幕的信息量分析员。下面给你一条中文字幕。
-
-**你看不到视频，也不需要看。** 只分析这句话本身**携带了多少可检索的信息点**。
-
-中文字幕：
-{zh}
-
-「信息点」= 一个能用来检索、且能与别的视频区分开的具体要素。分五类清点：
-- 主体（谁/什么东西，含数量、属性：「两个穿红衣的女人」记 1 个主体 + 2 个属性）
-- 动作（在做什么）
-- 场景（在哪里、什么环境）
-- 属性（颜色、材质、大小、表情等修饰）
-- 时序（先…后…、然后、接着 —— 只有明确表达先后关系才算）
-
-**先逐项列出，再计数。** 输出一个 JSON 对象（不要输出任何其他文字）：
-{{
-  "subjects": [...],     // 逐个列出，没有则 []
-  "actions": [...],
-  "scenes": [...],
-  "attributes": [...],
-  "temporal": [...],     // 明确的先后关系表述
-  "n_info": 0            // 上面五个列表的元素总数
-}}
-
-注意：「一个男人在说话」= 主体 1 + 动作 1 = `n_info` 2，属于典型的低信息量字幕。"""
-
-GRAN_KEYS = {"n_info", "subjects", "actions"}
-
-# ---------------------------------------------------------------------------
-# Text-only caption merge rubric (--mode merge).
-#
-# WHY THIS EXISTS. `better_zh` gives 2-3 candidates that the PROMPT deliberately
-# asked to cover DIFFERENT facets ("描述不同侧面：主体动作/场景/时序"). They are
-# complementary, not redundant. A human review found them accurate with few
-# hallucinations, so combining them into one dense caption directly attacks the
-# thin-caption problem (median 3 info points; problem 14) -- without any new
-# visual claim, so no new hallucination risk. Text-only: it only reorganises
-# already-verified text, never looks at the video.
-MERGE_PROMPT = """你是中文视频字幕编辑。下面是针对**同一个视频**、由质检模型生成的
-2-3 条候选字幕，每条各描述画面的不同侧面（主体动作／场景／时序）。
-
-候选：
-{cands}
-
-把它们合并成**一条**通顺、信息完整的中文字幕：
-- **只能用候选里已有的信息，绝不新增任何候选中没有的细节**（这条最重要，防幻觉）；
-- 去重，按「主体＋动作＋场景（＋时序）」自然组织成一句话；
-- 若候选之间冲突（同一属性给了不同值），保留更具体的那个，别硬凑两个都写；
-- 长度 ≤50 字，检索风格，不要引号／编号／解释。
-
-只输出一个 JSON 对象（不要输出任何其他文字）：
-{{"merged_zh": "合并后的中文字幕"}}"""
-
-MERGE_KEYS = {"merged_zh"}
-
-# ---------------------------------------------------------------------------
-# Five-sample recaption prompt (--mode recap in vlm_audit_hf.py).
-#
 # WHY THIS EXISTS. The RECAPTION bucket needs a caption written FROM the frames,
 # not translated from the broken English source. The fusion scheme
 # (recaption/docs/archive/fusion-scheme.md) then decomposes several such captions into
@@ -386,53 +315,6 @@ REFINE_PROMPT = """下面每条中文短句是同一段视频的候选字幕，�
 {items}"""
 
 
-def salvage_struct_items(text):
-    """(§5.8-2a) Best-effort per-item rescue from malformed struct JSON: find
-    each {...} object and keep the ones that parse with a non-empty text."""
-    items = []
-    for m in re.finditer(r"\{[^{}]*\}", text or ""):
-        try:
-            o = json.loads(m.group(0))
-        except json.JSONDecodeError:
-            continue
-        if isinstance(o, dict) and isinstance(o.get("text"), str) \
-                and o["text"].strip():
-            items.append(o)
-    return items
-
-
-# --mode recap-struct: OwlCap-style caption-SET output (arXiv 2508.18634's
-# set idea, adopted offline -- §5.6): ONE decode emits 5-8 attribute-tagged
-# short captions (subject/action/scene/text) with inline en_gloss, so the
-# derive stage is subsumed (D8's gloss rides this call). The prompt is used
-# RAW (no .format), so JSON braces below are single, not doubled. Passes stay
-# independent (temperature + frame jitter) -- the cross-pass vote (§5.5)
-# only means something over independent samples.
-STRUCT_KEYS = {"captions"}
-STRUCT_RECAP_PROMPT = """你是一个严谨的视频画面描述助手。下面是从同一段视频中按时间先后均匀抽取的若干帧画面。
-请把画面内容拆成 5-8 条不同侧面的中文短描述，合起来尽量覆盖所有真实可见的信息，同时绝不编造。
-
-严格遵守以下规则：
-1. 每条不超过 28 个字，语法完整、可独立成句，不用"他/她/它/这"开头；每条标注一个属性 attr：
-   subject（主体及外观特征）/ action（动作及先后）/ scene（场景与背景环境）/ text（画面文字）。
-   同一属性可以出现多条（如多个主体、先后两个动作）；画面中不存在的属性完全不要输出。
-2. 只描述画面中清晰可见的内容。看不清、不确定、被遮挡或需要推测的一律省略，不要猜测。
-3. 不要描述画面之外的信息：不推断拍摄地点、时间、人物身份、情绪动机、前因后果。禁止出现
-   帧号、秒数、时间戳或"第几张图/第几帧/视频/画面/图片"这类元描述词；动作的先后用
-   "先""接着""随后""最后"表达。
-4. 屏幕上的文字（字幕、标题、标牌、水印等）只有清晰可辨时才用中文引号“”原样照抄，
-   不翻译、不补全、不猜测残缺文字；无法辨认就不输出 text 条目。
-5. 数量只有在很少且能明确数清时才给具体数字，否则用"几""一些""一群"等模糊量词。
-6. gloss：该条里能在画面中被检测到的具体名词的英文（小写，1-4 个），如 ["man", "kitchen"]；
-   抽象概念、动词、顺序词不要放；没有可检测名词就给 []。
-7. 只输出一个 JSON 对象，不要任何解释或多余文字，格式：
-{"captions": [{"attr": "subject", "text": "……", "gloss": ["…"]}, {"attr": "action", "text": "……", "gloss": []}]}"""
-
-# --mode derive: per-recap S7-style view derivation (master plan D5 A_llm).
-# Text-only (the dense recap is the sole evidence; showing frames again would
-# let the deriver inject NEW details, breaking the closed-set rule). gloss =
-# detectable English noun phrases per view -- the GroundingDINO query handle
-# (master plan D8: en_gloss rides the derivation call, not S1).
 DERIVE_KEYS = {"views"}
 DERIVE_PROMPT = """你会看到一段视频的中文稠密描述。请把它改写成 2-3 条互补的中文检索短句，并给每条短句配英文检测标签。
 
