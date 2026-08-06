@@ -1,7 +1,7 @@
 # 怎么跑:训练 → 补评 → 配对比较
 
 > 复现 6 个方案的**唯一入口**是 [`run_model_opt.sh`](../scripts/run_model_opt.sh)——
-> 一条脚本三段。本文给一键跑法 + 分段跑法 + 手动兜底 + 判读规则。
+> 一条脚本三段。本文给一键跑法 + 分段跑法 + 判读规则。
 > 机制见 [`model-changes.md`](model-changes.md),数字见 [`retrospective-brief.md`](retrospective-brief.md)。
 > 命令细节的权威是 `COMMANDS.md` §3.8 / §3.9,本文与之一致、不重复解释每个坑。
 
@@ -47,42 +47,9 @@ bash model-optimization/scripts/run_model_opt.sh 0,1,2,3 sub1m_r0_s42 sub1m_P1tr
 | `eval` | 补评 MSR-VTT 1k、落 `ranks_*.npz`(纯前向 ~1 min/臂,已有 ranks 则跳) | `experiments/evals/sub1m/<臂>/`(含 `eval_res.json`) |
 | `compare` | 每条非基线臂减**同 seed 的 `r0`**,raw + DSL 两口径配对 bootstrap | stdout(可 `--out` 落 md) |
 
-## 3. 手动兜底(想单独跑某一步 / 排错时)
+单臂 / 单步的手动命令(单独训练、离线补评、配对比较、自比对自检)见 `COMMANDS.md` §3.8 / §3.9。
 
-**训练单臂**(冒烟先加 `debug True` 几十步即停):
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 bash experiments/run_pretrain.sh \
-    experiments/configs/sub1m_P1trained_s42.py 4 use_bf16 True bf16 True auto_resume True
-```
-
-**补评单臂**(ckpt 指到**目录** `ckpt_02.pth`,不是里面的 `.pt`):
-```bash
-export CUDA_VISIBLE_DEVICES=3
-RUN=experiments/runs/sub1m_P1trained_s42
-bash experiments/run_eval.sh small msrvtt "${RUN}/ckpt_02.pth" \
-     experiments/evals/sub1m/$(basename ${RUN}) num_frames_test 8 batch_size_test 32
-# ⚠️ 必做自检:没看到 "Load pretrained model from" = 权重没加载、数字无效(未加载也会打印像样的 r_mean)
-grep -E "Load pretrained model from|training from scratch" \
-     experiments/evals/sub1m/$(basename ${RUN})/train.log
-```
-
-**配对比较单对**(`--compare` 两参数就是**装着 npz 的目录**;ranks 可能在 `runs/` 或 `evals/`,`ls` 一眼再传):
-```bash
-python experiments/collect_results.py --compare \
-       experiments/evals/sub1m/sub1m_P1trained_s42 \
-       experiments/evals/sub1m/sub1m_r0_s42                    # raw 主口径
-python experiments/collect_results.py --compare \
-       experiments/evals/sub1m/sub1m_P1trained_s42 \
-       experiments/evals/sub1m/sub1m_r0_s42 --prefix 'ret_test/'   # DSL 口径
-```
-
-**自比对自检**(拿到第一份 ranks 后必做一次:同一目录既当臂又当基线,每指标 Δ 必须恰好 0.00):
-```bash
-python experiments/collect_results.py --compare \
-    experiments/evals/sub1m/sub1m_r0_s42 experiments/evals/sub1m/sub1m_r0_s42 --prefix ret_test_emb/
-```
-
-## 4. 怎么判读(veto-only,别再套 ±1.6)
+## 3. 怎么判读(veto-only,别再套 ±1.6)
 
 1. **一律减同 seed 的 `r0`**,看**配对 bootstrap 95% CI 是否含 0**(默认 `--n-boot 10000`)。
 2. **两口径都要看**:raw(`ret_test_emb/`)与 DSL(`ret_test/`)——sigmoid 那臂就是 raw 卡边界、
@@ -94,7 +61,7 @@ python experiments/collect_results.py --compare \
 5. **新池化头必须连门的范数一起报**:`alpha`(surprise)/ `‖W2‖`(stats)仍≈0 ⇒ 退化成均值,
    「打平基线」不代表方向错,只代表没学动(见 [`model-changes.md`](model-changes.md) §4/§5)。
 
-## 5. 常见坑(详见 COMMANDS §3.7–§3.9 / TROUBLESHOOTING)
+## 4. 常见坑(详见 COMMANDS §3.7–§3.9 / TROUBLESHOOTING)
 
 - **训练跑完却没有任何评测数字**(`Empty DataFrame`):环内评测被跳过,靠 `eval` 段离线补评收官;
   别只看 `runs/` 就判「中断」。
