@@ -424,7 +424,7 @@ def main():
                      "`profile_jsonl.py` 已加 `strip_shared_latin()` 修正；"
                      "**若本行数字仍然很大，说明跑的是修复前的 `s0_flags.jsonl`，"
                      "重跑 `run_v100.sh s0` 即可**。"
-                     "见 `recaption/docs/archive/audit-findings.md` 结论 14。")
+                     "见 `recaption/docs/audit-report.md` 结论 14。")
     if calib:
         lines.append("\n## VLM 审核样本（Stage-2）校准\n")
         lines.append(f"- 有效判定数: {calib['n_verdicts']:,}")

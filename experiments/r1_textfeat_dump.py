@@ -2,7 +2,7 @@
 """R1 Part B 前置:把 InternVid 字幕用**冻结文本塔**编码成投影后归一化特征,存 .npy。
 
 配合 `experiments/r1_fn_density.py --feats` 量化**近重复密度**(idx 掩码抓不到、
-但对比损失会当假负例的那部分)。见 `notes/r1-examination.md` §5/§7。
+但对比损失会当假负例的那部分)。见 `notes/r1-implementation-plan.md` §5/§7。
 
 **为什么这样构建模型(不重造轮子):** 直接 `Config.from_file(<eval 配置>)` +
 `MobileViCLIP_Small(config, is_pretrain=False)` —— 这正是 GATE-0 评测在服务器上跑通的同一条

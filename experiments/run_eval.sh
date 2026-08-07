@@ -16,7 +16,7 @@
 #
 # 结果落盘 <out_dir>/eval_res.json,主键 `ret_test/` 为 DSL(dual-softmax)
 # 口径、`ret_test_emb/` 为原始余弦口径 —— 对比时两个口径都要看
-# (见 notes/script-level-optimizations-zh.md H3)。
+# (见 tasks_clip/retrieval_utils.py 的 raw/DSL 两口径)。
 set -euo pipefail
 
 MODEL=${1:?usage: run_eval.sh <small|tiny> <benchmark> <ckpt> <out_dir> [key value ...]}

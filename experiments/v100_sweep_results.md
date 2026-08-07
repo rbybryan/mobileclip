@@ -54,7 +54,7 @@ raw 口径还给出 `img_r1 +1.70 [+0.40, +3.10]` 显著 —— 增益不是靠�
 ⚠️ 仍然成立的边界:**这是精度侧结论,不是「删了变快」** —— 效率数(440 ONNX 节点等)
 需要 `RepMixer.forward` 里的**结构性旁路**;✅ 该代码已落(2026-08-04「写吧」轮,§7-7),
 全尺寸 diff 等服务器跑 `COMMANDS.md` §3.6 尾段两条导出命令。背景见
-[`notes/v100-10k-advance-tests.md`](../notes/v100-10k-advance-tests.md) §7。
+[`experiments/v100_sweep_results.md`](v100_sweep_results.md) §7。
 
 ## §3. 🔴 AC9 —— 按**它自己的预登记判据**关闭
 
@@ -278,7 +278,7 @@ python experiments/collect_results.py --compare experiments/frame_agg/T8_lse_tau
 
 - **不是 transductive**:LSE 只对**单个视频自己的 T 帧**做 logsumexp,不需要 gallery 统计
   —— 与 DSL 本质不同(DSL 要整个 gallery,端上单查询用不了,见
-  `notes/dsl-internalization-zh.md`)。**端上逐查询可用。**
+  DSL 内化设计稿)。**端上逐查询可用。**
 - 成本:检索索引存 **T 份逐帧嵌入**(×T 存储;打分 ×T 点积后一个 logsumexp)。
 - 模型内部的 mean 池化**未动** —— 这是纯打分侧改动,任何已训 ckpt 直接受益。
 - 与 P5(gate4)可否叠加未测:probe 尚不吃 config 覆盖(等 `--set` 透传,回「写吧」)。

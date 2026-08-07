@@ -86,7 +86,7 @@ PHASE=eval,compare bash model-optimization/scripts/run_model_opt.sh 3
 | **模型改动代码** | 三种池化头 + softmax/sigmoid 损失 + 删分支开关都在 `models/mobileviclip_small.py` / `models/criterions.py` / `neural_inspired/`——嵌在核心文件里,不外挪。**类名与 file:line 见 [`docs/model-changes.md`](docs/model-changes.md) 各节**(单一出处,免两处维护) |
 | **config** | `experiments/configs/sub1m_*.py`(与 nR1/r1both/C1kd/lean 等**非本报告**的 sub1m 臂同族,拆开反而割裂) |
 | **共享跑批/评测器** | `experiments/`:`run_pretrain.sh` / `run_eval.sh` / `collect_results.py` / `paired_bootstrap.py`(gate / v100 / frame_agg / KD 各线都在用,搬走会全断) |
-| **判据设计 + 状态工具** | `notes/verification-tier-1m-zh.md`(13 个 config 与 ROADMAP 都引它)、`experiments/status_1m.py` / `run_verify_1m.sh`(通用 1M 层设施,非本报告 6 臂专属) |
+| **判据设计 + 状态工具** | `notes/verification-tier-1m-zh.md`(13 个 config 都引它)、`experiments/status_1m.py` / `run_verify_1m.sh`(通用 1M 层设施,非本报告 6 臂专属) |
 | **服务器⇄Claude 交接** | [`../notes/live/`](../notes/live/)(`from-server.md` / `from-claude.md`,还带别的训练/评测流量) |
 
 产物(`experiments/runs/`、`experiments/evals/`)与权重、标注**不进 git**,在服务器上就地生成。

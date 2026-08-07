@@ -1,4 +1,4 @@
-"""nA1 — 脑启发组件 A/B:预测编码「惊奇池化」(notes/neural-inspired-directions.md N2 池化半).
+"""nA1 — 脑启发组件 A/B:预测编码「惊奇池化」(neural_inspired/README.md N2 池化半).
 
 相对 R0 的唯一变化:model.vision_encoder.temporal_pooling="surprise"。
 - 视频 embedding 从「8 帧简单平均」换成 neural_inspired.TemporalSurprisePool:

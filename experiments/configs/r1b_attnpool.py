@@ -1,4 +1,4 @@
-"""R1b — 组件 A/B:时间维注意力池化(paper-plan C3 / 旧提案 P3)。
+"""R1b — 组件 A/B:时间维注意力池化(C3 组件)。
 
 相对 R0 的唯一变化:model.vision_encoder.temporal_pooling="attn"。
 - 视频 embedding 从"8 帧简单平均"换成一个零初始化的 cross-attention 池化

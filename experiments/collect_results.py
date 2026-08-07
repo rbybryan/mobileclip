@@ -6,7 +6,7 @@ eval_res*.json(由 tasks_clip/{pretrain,retrieval,retrieval_mc}.py 落盘,
 pandas orient="columns" 格式:{"<protocol>": {"<metric>": value}}),
 按「评测协议 × 指标」整理成对比表。
 
-两个打分口径(见 notes/script-level-optimizations-zh.md H3):
+两个打分口径(见 tasks_clip/retrieval_utils.py 的 raw/DSL 两口径):
   - `.../`      DSL(dual-softmax,测试集级先验)—— 原 repo 主报口径
   - `..._emb/`  原始余弦相似度 —— 无测试集先验
 对比结论必须两个口径同时成立才可信,故两个口径都输出。
@@ -132,7 +132,7 @@ def run_compare_mc(arm_dir, base_dir, n_boot, seed, out_path=None):
 
 
 def run_compare(arm_dir, base_dir, prefix, n_boot, seed, out_path=None):
-    """配对 bootstrap 比较两条臂(评审 U10-1 / ROADMAP 自查 G4)。
+    """配对 bootstrap 比较两条臂(评审 U10-1 / 评审 U10-1)。
 
     为什么不能直接拿 ±1.6 判:那是**无配对**带。两条臂评的是同一批查询,
     配对做差会抵消共享方差 —— 2026-07-29 的 1M 结果显示「10× 数据」的效应

@@ -1,4 +1,4 @@
-"""C2 · 弹性 T 训练的采样工具(ROADMAP 2.1)。
+"""C2 · 弹性 T 训练的采样工具(C2 · T 无关化)。
 
 两个纯函数,配合 tasks_clip/pretrain.py 里的 elastic_t 开关使用:
 

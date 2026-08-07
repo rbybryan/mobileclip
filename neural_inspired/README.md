@@ -1,11 +1,17 @@
 # `neural_inspired/` — opt-in brain-inspired add-ons
 
-These are **optional research add-ons**, not part of the baseline model. They are
-the "may-or-may-not-make-the-cut" ideas from
-[`notes/neural-inspired-directions.md`](../notes/neural-inspired-directions.md):
-each is motivated by neuroscience but justified only by measured gain. If an
-add-on's improvement turns out minor, it is meant to be **removed wholesale**
-without touching the baseline.
+These are **optional research add-ons**, not part of the baseline model. Each is
+motivated by neuroscience but justified only by measured gain. If an add-on's
+improvement turns out minor, it is meant to be **removed wholesale** without
+touching the baseline.
+
+> **Measured verdict (1M verification tier, 2026-08-03): `TemporalSurprisePool`
+> did not earn its place.** Against the `sub1m_r0` baseline at equal steps it is a
+> clean zero — the pool degenerates back to mean pooling. Numbers and the paired
+> bootstrap CI are in
+> [`../model-optimization/docs/retrospective-brief.md`](../model-optimization/docs/retrospective-brief.md).
+> It is kept only as an ablation row; see "How to remove an add-on" at the bottom
+> if you want the baseline back byte-for-byte.
 
 ## Isolation guarantees
 
@@ -19,15 +25,14 @@ without touching the baseline.
 
 ## Components
 
-| class | replaces | config knob | notes-directions ref |
+| class | replaces | config knob | idea |
 |---|---|---|---|
-| `TemporalSurprisePool` | mean / attention temporal pooling | `model.vision_encoder.temporal_pooling = "surprise"` | N2 (predictive-coding surprise pooling), pool half |
+| `TemporalSurprisePool` | mean / attention temporal pooling | `model.vision_encoder.temporal_pooling = "surprise"` | predictive-coding surprise pooling |
 
 ### `TemporalSurprisePool`
 
 > ⚠️ **Novelty verdict (2026-08-04): not novel — ablation row only.** A literature
-> check ([`notes/surprise-pooling-novelty.md`](../notes/surprise-pooling-novelty.md))
-> found the mechanism is a *constrained* attention pool (score = residual energy;
+> check found the mechanism is a *constrained* attention pool (score = residual energy;
 > cf. AdaScan, Attentive Statistics Pooling, NetVLAD residuals) and the concept
 > ("informative frame = frame that deviates from a prediction") is already taken by
 > SPIKE-RL (arXiv:2509.23433) and Swift Sampling (arXiv:2605.22678). Keep it as an

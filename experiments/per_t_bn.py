@@ -1,6 +1,6 @@
-"""per-T BatchNorm 诊断与校准工具(计划评审 U3;ROADMAP 2.1 验收件)。
+"""per-T BatchNorm 诊断与校准工具(计划评审 U3;C2 · T 无关化 验收件)。
 
-背景(`notes/plan-review-upgrades.md` §2.2):时序 Conv1d 分支遍布所有 RepMixer
+背景(评审 U3):时序 Conv1d 分支遍布所有 RepMixer
 块,FastViT 主干与时序分支都是 BatchNorm;随机 T 训练会把 BN running stats 变成
 「跨 T 的混合物」,推理固定某个 T 时统计失配(FFN, CVPR'23 的 temporal frequency
 deviation)。修法 = 训练照旧,**训练后对每个 T 只前向刷新一遍 BN buffer**,评测/

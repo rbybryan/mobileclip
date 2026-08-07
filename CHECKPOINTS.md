@@ -25,7 +25,7 @@ checkpoints
 
 - **MobileViCLIP + MobileCLIP weights (Google Drive):** https://drive.google.com/drive/folders/1ROJYwQeO8lt4mEfNjEIAIDWj736WIQq7?usp=drive_link
 - **Apple MobileCLIP (official):** https://github.com/apple/ml-mobileclip
-- **Apple MobileCLIP2-S2 (optional student init, see `notes/plan-review-upgrades.md` U8):**
+- **Apple MobileCLIP2-S2 (optional student init, see 评审 U8):**
   https://huggingface.co/apple/MobileCLIP2-S2 — architecture identical to MobileCLIP-S2
   (verified 2026-07-23: same per-tower param counts, HF card instantiates the
   `MobileCLIP-S2` OpenCLIP config), so it loads wherever `mobileclip_s2.pt` does after
@@ -37,7 +37,7 @@ checkpoints
     "https://huggingface.co/apple/MobileCLIP2-S2/resolve/main/mobileclip2_s2.pt"
   ```
   ⚠️ Before training with it, run the **key-set identity gate** in
-  `notes/next-training-round-zh.md` §0 (the loader is `strict=False` — a key mismatch
+  `notes/verification-tier-1m-zh.md` §0 (the loader is `strict=False` — a key mismatch
   silently loads nothing). Consumed by `experiments/configs/sub1m_mc2init_s42.py`
   (both towers swapped — the frozen text tower defines the output space, so a
   vision-only swap would break step-0 alignment).
@@ -48,7 +48,7 @@ checkpoints
   InternVideo2 家族**最后一代保有真对比空间**的模型,`vtc_kd`(相似度矩阵 KD)才算得出来;
   IV3 / IV2.5 / InternVideo-Next 均无对比空间,**不可**作 vtc_kd 教师。参考数字:
   1B 版 ZS MSR-VTT T2V R@1 ≈ **51.9**(6B 版 ≈ 55.9),核验见
-  [`recaption/docs/archive/kd-review.md`](recaption/docs/archive/kd-review.md)。
+  [`recaption/docs/master-plan.md`](recaption/docs/master-plan.md) §0.7。
   - 该权重原生 **4 帧**;我们按 T=16 抽取,时间位置编码由脚本用
     `interpolate_pos_embed(..., orig_t_size=4)` 插值(与 `mobileviclip_small.py` 载
     stage2 视觉塔的那条分支同一套处理)。改用别的 ckpt 时记得同步 `--vision-ckpt-t-size`。

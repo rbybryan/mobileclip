@@ -278,7 +278,7 @@ python recaption/scripts/apply_buckets.py ... --merged 'outputs/audit_10k/s2_mer
 
 各节 📎 例子由 `recaption/scripts/extract_examples.py` 从审查产物提取，**逐字、无截断、无随机**
 （按给定规则取前 N 条）。完整附录（每节更多例、可重跑刷新）见
-[`final_report_examples.md`](final_report_examples.md)：
+[`caption-quality-examples.md`](caption-quality-examples.md)：
 
 ```bash
 python recaption/scripts/extract_examples.py       # 全量、完整 caption

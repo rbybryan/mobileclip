@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""C1 教师嵌入库(ROADMAP 2.2c)—— 训练时按 anno 行号查教师视频嵌入。
+"""C1 教师嵌入库(C1 KD)—— 训练时按 anno 行号查教师视频嵌入。
 
 数据来源是 `experiments/extract_teacher.py` **merge 之后**的目录布局:
 

@@ -1,6 +1,6 @@
 # P11 逐块深度敏感度扫描 —— **全 40 块测完,判据②触发,该线关闭**(2026-07-31)
 
-任务与判据:[`notes/architecture-round4.md`](../notes/architecture-round4.md) §8.3 **P11**;
+任务与判据:架构第四轮报告 §8.3 **P11**;
 命令 [`COMMANDS.md`](../COMMANDS.md) §3.14;跑法 `experiments/run_dropblock_sweep.sh`;
 全量汇总 `experiments/dropblock_all40.md`。
 

@@ -6,7 +6,7 @@
 > 机器：`101vector` 8×V100-32G ｜ 数据：`/home/vca1/datasets/internvid_zh_10k` ｜ 更新：2026-07-22
 >
 > 流水线状态与问题登记：[`data-issues.md`](data-issues.md) ·
-> 统计细节与推理：[`audit-findings.md`](archive/audit-findings.md) ·
+> 统计细节与推理：[`audit-findings.md`](audit-report.md) ·
 > 复现命令：[`setup-v100.md`](setup-v100.md)
 
 ---
@@ -126,7 +126,7 @@ rubric 把时序拆成两问：`temporal_order_relevant` = **视频本身**有�
 > - **~~「8/55 顺序写反」~~ 已撤下** —— 抽查那 8 条 `temporal_order_correct=false`，
 >   **没有一条真的描述了顺序**（如「蓝色糖霜正倒入锅中」「士兵站在屋顶」，皆单一/静态动作）。
 >   rubric 明写「未描述顺序则记 `null`」，所以这 8 条是模型**乱填了 `false`**，不是真写反
->   （例子见 [`final_report.md`](../../docs/final_report.md) §一.2）。
+>   （例子见 [`caption-quality-report.md`](../../docs/caption-quality-report.md) §一.2）。
 >
 > 换句话说：**「数据缺时序监督」这个结论站得住，`correct` 那一维的细判（写没写反）不可靠。**
 

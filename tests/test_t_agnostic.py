@@ -1,4 +1,4 @@
-"""C2 · T 无关化(ROADMAP 2.1)的验收单测。
+"""C2 · T 无关化(C2 · T 无关化)的验收单测。
 
     python -m pytest tests/test_t_agnostic.py -v
 

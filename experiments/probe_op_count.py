@@ -1,6 +1,6 @@
 """Count aten dispatches (≈ CUDA kernel launches) per training step of the vision tower.
 
-Zero-GPU diagnostic for the 0.67%-MFU question (notes/architecture-round4.md §0.2).
+Zero-GPU diagnostic for the 0.67%-MFU question.
 Runs the *training-mode* (non-reparameterized) FastViT tower on CPU at a small
 spatial size and counts every aten op that a step dispatches, split into
 forward / backward and bucketed by op family. Layout ops (copy_/clone/contiguous)

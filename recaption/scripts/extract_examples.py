@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pull REAL examples out of the audit outputs, one block per finding.
 
-docs/final_report.md states rates; a reader cannot check a rate. This emits the
+docs/caption-quality-report.md states rates; a reader cannot check a rate. This emits the
 actual records behind each claim so the findings can be spot-checked -- and so
 nobody is tempted to illustrate a data-quality report with invented captions.
 
@@ -109,7 +109,7 @@ def block(f, title, rule, rows, cols):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("-n", "--per-block", type=int, default=3)
-    ap.add_argument("--out", default="docs/final_report_examples.md")
+    ap.add_argument("--out", default="docs/caption-quality-examples.md")
     args = ap.parse_args()
     N = args.per_block
     src, verd, trans, s1, flags = load()
@@ -125,7 +125,7 @@ def main():
                 "> 每条都是审查产物里的**原始记录**，逐字摘录、未经改写。"
                 "唯一的编辑行为是「挑哪几条」，而挑选规则印在每个小节标题下，"
                 "且是确定性的（按给定顺序取前 N 条，无随机）。\n>\n"
-                f"> 配套结论见 [`final_report.md`](final_report.md)。"
+                f"> 配套结论见 [`caption-quality-report.md`](caption-quality-report.md)。"
                 f"样本 = {len(src):,} 条 ｜ 每节 {N} 例。\n")
 
         f.write("\n---\n\n## 一、英文源 caption 的问题\n")
@@ -177,7 +177,7 @@ def main():
                          len(src[v][1].split()), x.get("granularity") or "—"])
         block(f, "3. 描述笼统（粒度粗）",
               "英文 caption **最短**的前 N 条 —— 用**长度**这个不依赖模型的客观量挑选，"
-              "因为 `granularity` 那一维已作废（被质量分闸住，见 final_report §1.3）",
+              "因为 `granularity` 那一维已作废（被质量分闸住，见 caption-quality-report §1.3）",
               rows, ["clip", "英文源 caption", "中文译文", "英文词数", "VLM 粒度判定"])
 
         # 4. error types
@@ -269,7 +269,7 @@ def main():
                          " ／ ".join(short(c) for c in cands[:3])])
         block(f, "9. RECAPTION 桶的候选字幕（原文 vs 重写）",
               "`zh_score≤2` 且 `sig_zh` 最低的前 N 条 —— 即最该被重写的那批。"
-              "⚠️ **这些候选的质量从未被评估**（final_report §5 的 P0 硬门），"
+              "⚠️ **这些候选的质量从未被评估**（caption-quality-report §5 的 P0 硬门），"
               "此处仅供**肉眼预览形态**，不构成质量证据",
               rows, ["clip", "原中文字幕", "better_zh 候选（≤30 字）"])
 

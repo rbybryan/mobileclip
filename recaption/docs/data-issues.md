@@ -5,11 +5,11 @@
 >
 > 分工：
 > - **本文件** = 状态 + 问题登记 + 待决策（一眼看全局）
-> - [`audit-findings.md`](archive/audit-findings.md) = 各阶段的统计细节与推理过程
+> - [`audit-findings.md`](audit-report.md) = 各阶段的统计细节与推理过程
 > - `outputs/audit_10k/report.md` = S3 自动生成的正式诊断报告（**不入库**，gitignore）
 >
 > 问题类别 A–H 沿用
-> [`audit-plan.md`](archive/audit-plan.md) §1 的分类学。
+> [`audit-plan.md`](master-plan.md) §1 的分类学。
 
 ---
 
@@ -86,7 +86,7 @@ bash recaption/scripts/run_v100.sh status        # S1/S2 行数 + 存活进程 +
 | # | 动作 | 为什么是这个顺序 |
 |---|---|---|
 | 1 | `git pull` 后 `bash recaption/scripts/run_v100.sh trans-check` | 补跑留档。差率 19.6%→3.6% 已是「锚定解除」的强证据，这一步给出逐条同值率的直接数字，并核对模型守不守自己的评分规则（`mismatches` 空 → 必须给 5） |
-| 2 | ~~裁判走中转机 `10.55.87.68`~~ ✅ **已完成**（500 条 / 0 失败 / `judge-agree` 已出） | 二值门 **87.2% κ=0.720 通过** → S3 分桶站得住；五类门 49.2% ❌ 但那是主力 `action` 不可信。见 §4 决策 2b |
+| 2 | ~~裁判走中转机 `<RELAY_HOST>`~~ ✅ **已完成**（500 条 / 0 失败 / `judge-agree` 已出） | 二值门 **87.2% κ=0.720 通过** → S3 分桶站得住；五类门 49.2% ❌ 但那是主力 `action` 不可信。见 §4 决策 2b |
 | **2b** | ~~查 `granularity` 真分歧~~ ✅ **已完成** | 裁判 **42.4%** vs 主力 **92.6%**（同一批 500 条）。**93.6% 已从 §0 头条撤下**，「重心是 RECAPTION」改挂 `zh_bad` 19.6%（κ=0.628，裁判证实）。见问题 13 |
 | **2c** | ~~验证 `granularity` 是否质量分的投影~~ ✅ **已完成** | **被质量分单向闸住**：`P(adequate\|score≤4)`=0.146% vs `P(adequate\|score=5)`=19.9%（**136×**，Cramér's V 0.375），`dense` 全库 0 条。**73% 的 coarse 是「因分≤4 而自动 coarse」→ 该维作废**，全量前 rubric 须拆开。见问题 13 |
 | 3 | ~~S3 校准 + 分桶~~ ✅ **已完成**（`TARGET_PRECISION=0.3`） | KEEP 71.9% / **RECAPTION 24.6%** / RETRANSLATE 3.3% / DROP 0.15%，与结论 10 的预测一致 |
@@ -96,14 +96,14 @@ bash recaption/scripts/run_v100.sh status        # S1/S2 行数 + 存活进程 +
 | 5a | ~~`review_conflicts.tsv`~~ ✅ **全部完成** | 15/15 判 `vlm` → 问题 12 结案；`strip_shared_latin` 两阶段已修（+标点归一化 2026-07-23）；**`s0` 已重跑复核通过**：327→8→**7** / 280→13→**8**，污染类合计 **≤35** vs 实测 33，双向验收过（未塌到 0）|
 | **5c** | **`TARGET_PRECISION=0.3 bash recaption/scripts/run_v100.sh s3`** ⚠️ **务必带这个变量** | ② 验证门已出数（1.80×，门槛保留 2.0，见决策 3 补记）；① 分桶表还欠一版。**`s3` 默认 `TARGET_PRECISION=0.8`，而 19.6% 基准率下可达上限只有 59% —— 默认跑出来 RECAPTION 必然空桶、96.3% KEEP，那不是数据结论**（2026-07-22 已踩过一次）。终稿用的就是 0.3 |
 | 5b | `review_random.tsv` 那 300 条要配 Gradio（[`setup-v100.md`](setup-v100.md) §6） | 这批要看画面才判得了（s≈3 的片子到底什么样） |
-| 6 | 把 `s2_health.md` / `trans_health.md` / `xling_calibration.md` / `report.md` 的结论抄进本文件和 [`audit-findings.md`](archive/audit-findings.md) | `outputs/` 是 gitignore 的，**不落库就随会话丢失**（CLAUDE.md §0） |
+| 6 | 把 `s2_health.md` / `trans_health.md` / `xling_calibration.md` / `report.md` 的结论抄进本文件和 [`audit-findings.md`](audit-report.md) | `outputs/` 是 gitignore 的，**不落库就随会话丢失**（CLAUDE.md §0） |
 
 > ⚠️ **本地 32B 下载（路线 C）是兜底，不是主线**——中转机（A′）没排除之前别耗在它上面：
 > 那是 64GB / 数小时，而 A′ 的预检只要几分钟。**且 C 买不到 A′ 没给的东西**——
 > 主力 8B、A′ 裁判 27B、C 裁判 32B **同厂同族**，共有盲区会让两边一起错。
 > 真要走 C 时值得改选 `InternVL3_5-38B-HF`（视觉塔跨族；但语言塔仍是 Qwen3-32B，
 > **`trans_score` 一维仍需人工兜底**）。选型对比、探针实测、ModelScope 下载命令
-> 全部见 [`setup-v100.md`](setup-v100.md) §4.3 与 [`setup-judge-api.md`](archive/setup-judge-api.md) §0。
+> 全部见 [`setup-v100.md`](setup-v100.md) §4.3 与 `setup-judge-api.md` §0。
 
 ---
 
@@ -123,14 +123,14 @@ bash recaption/scripts/run_v100.sh status        # S1/S2 行数 + 存活进程 +
 | **7** | — | **VLM `action` 与自身分数矛盾**（rubric 问题，非数据问题） | **4098 条 = 99.5% 的 `retranslate` 自身 `trans_score≥3`**（该行 `trans≤2` 仅 0.5%）。`recaption` 反而几乎自洽（矛盾 2 条） | S2 体检 §6 | **已确认** |
 | **8** | — | 🔴 **三个分数根本不是三个测量：模型只给了一个数、复制三份**，`action` 是该数上的固定阶梯 | 逐条同值率：`en=zh` **93.4%**、`en=trans` **92.5%**、`zh=trans` **98.9%**、**三者全同 92.5%**；平均绝对差 0.08／0.09／**0.01** | S2 体检 §6 | **已坐实** → 见「问题 8 详解」 |
 | **10** | — | **`--target-precision 0.8` 对 `sig_zh` 也不可达 → S3 首跑 RECAPTION 桶为空** | `zh_bad` 基准 19.6%、十分位 lift 仅 2.77×（34.1%→12.3%）；要 80% 精度需 ≈4× lift | S3 首跑 | **已处置**：报告现在给可达上限+覆盖率曲线；`TARGET_PRECISION=0.3` 重跑正常 |
-| **12** | — | ✅ **10× 缺口是 S0 误报**：`zh_low_cjk_ratio`/`zh_mostly_english` 在惩罚**正确保留的专有名词**（工具问题，非数据问题） | 15 条抽检 **15/15 判 `vlm`**（译文没问题）。全是品牌/画面文字主导的字幕：`华硕 P8Z77-V BM 主板`、`Windows 10 开始菜单`、`Sun Cool 官方网站`……译文把该译的都译了（连 ASUS→华硕），只留不该翻的型号名 | 人工定性（模型辅助+人工确认） | ✅ **已处置**：`strip_shared_latin()` 修误报。**抽检还带出第二个发现——评审者确认译文 15/15 没问题的同时，指出部分英文源 caption 本身有问题：这是「毛病在源不在译」的首个人类证据**（见 `final_report.md` §三 证据 4） |
+| **12** | — | ✅ **10× 缺口是 S0 误报**：`zh_low_cjk_ratio`/`zh_mostly_english` 在惩罚**正确保留的专有名词**（工具问题，非数据问题） | 15 条抽检 **15/15 判 `vlm`**（译文没问题）。全是品牌/画面文字主导的字幕：`华硕 P8Z77-V BM 主板`、`Windows 10 开始菜单`、`Sun Cool 官方网站`……译文把该译的都译了（连 ASUS→华硕），只留不该翻的型号名 | 人工定性（模型辅助+人工确认） | ✅ **已处置**：`strip_shared_latin()` 修误报。**抽检还带出第二个发现——评审者确认译文 15/15 没问题的同时，指出部分英文源 caption 本身有问题：这是「毛病在源不在译」的首个人类证据**（见 `../../docs/caption-quality-report.md` §三 证据 4） |
 | **11** | C | **`RETRANSLATE` 桶若用 S0 旗标/xling 代理构建，与它命名的问题近乎无关** | 该代理精度 **6.6%**、召回 **7.0%**（`xling_calibration.md` §F）→ 333 条的桶里真正翻译坏的约 **22 条**，且漏掉约 **333 条**。**旗标修好后仍成立**：精度 6.4% / 召回 0.8% / lift 1.80×（见下方补记） | `xling-check` + S3 | **已处置（10k）**：`aggregate_report.py` 优先用 `s2_trans` 真标签分桶，且代理须过决策 3 的验证门（**实测 1.80× 未通过，已停用**）|
 | **13** | E | 🔴 **「粒度粗 93.6%」不成立——主力在过度判 coarse，三方不收敛** | **同一批 500 条**上：主力 coarse **92.6%** vs 裁判 **42.4%**（排除了抽样差异）。第三方客观锚定：rubric 的 coarse 范例「一个人在说话」=6 字，而实测中文 caption **中位 13 字（2.2×）、p25 已 10 字**，只有 **~5%** 短到与范例相当 | `judge-agree` + `s0_summary` 长度分位 + 交叉表 | ✅ **已查明**：93.6% 不可引用；§0 头条已改挂 `zh_bad` 19.6%。**机制**：`granularity` 被质量分单向闸住（136×，V=0.375），73% 的 coarse 是自动产生的 → **该维作废，全量前须拆 rubric** |
 | **16** | — | ✅ **`better_zh` 候选质量人工抽检通过（2026-07-23）** | 评审确认**比原 caption 更准确、更具体、幻觉很少**，P0-1 硬门通过，可入 v0.2 正样本。原风险（9951×3 条从未被评估）解除 | 人工抽检 | ✅ **已处置**：候选可用；三候选各写一侧面，已提供 `--mode merge` 合并为密字幕（主 caption），三候选仍作额外正样本 |
 | **14** | E | **`granularity` 三档标签塌缩，`coarse 93.6%` 被大幅高估** | 计数式重判实测分档 **≤2 粗 13.8–17.8%｜3–4 中 58–62%｜≥5 密 24%**（剔除零值后）；中位数 3 个信息点 | `s2-gran` + `gran-check` | **已确认**：方向不变（粒度仍偏薄），但**规模数字须以计数版为准** |
 | **16** | E/H | **静态/屏幕类内容占 16.3%** —— 截图/网页/文字/标牌 | 关键词直接统计 1,632/10,000。**与时序缺失互为佐证**：静态画面本就没有时序、也谈不上动作 | `gran-check` | **已确认**（关键词口径，为下界） |
 | **17** | — | **粒度重判有 1,871 条（18.7%）未能测量** | 模型五个列表全空、`n_info=0`；静态内容只能解释其中 ~35%，其余 ~65% 为模型故障。字幕长度、主力档标签均与其余组无异 → 字幕本身没问题 | `gran-check` | ⬜ **待定向重跑**（改 prompt 去掉「事件/动作」预设，只跑这 1871 条） |
-| **15** | F | 🔴 **时序监督信号几乎为零**（原以为「没测到」，实测是「测到了，结果更糟」） | **69.1% 的视频含多个先后事件**（6913 条），但其中 **99.2%（6858 条）字幕对顺序只字未提**；全库仅 **55 条（0.55%）**被标为描述了事件顺序 | `s2-check` §7 | **已确认** —— 对视频模型是最要紧的一条，见报告 §3.5。⚠️ 原「8 条写反」已撤：抽查那 8 条 `correct=false` 无一真描述了顺序，是模型乱填（见 `final_report.md` §一.2）|
+| **15** | F | 🔴 **时序监督信号几乎为零**（原以为「没测到」，实测是「测到了，结果更糟」） | **69.1% 的视频含多个先后事件**（6913 条），但其中 **99.2%（6858 条）字幕对顺序只字未提**；全库仅 **55 条（0.55%）**被标为描述了事件顺序 | `s2-check` §7 | **已确认** —— 对视频模型是最要紧的一条，见报告 §3.5。⚠️ 原「8 条写反」已撤：抽查那 8 条 `correct=false` 无一真描述了顺序，是模型乱填（见 `../../docs/caption-quality-report.md` §一.2）|
 | **9** | E | **粒度粗是压倒性主症状** | `granularity`：**coarse 9362（93.6%）/ adequate 638 / dense 0** | S2 | **已确认**（规模最大的一类） |
 
 ### 问题 13 已查明（2026-07-22）：主力在过度判 `coarse`
@@ -312,7 +312,7 @@ rubric 要求的因子分解（源头错 vs 翻译错、画面对齐 vs 文本�
 字幕，8B 会退化成「先定总体印象、再让所有字段服从它」。**修法是拆调用而非改措辞**——
 已落地 `s2-trans`（文本-only 重判：不给帧 + 先列 `mismatches` 再打分）。
 命令与设计理由见 [`setup-v100.md`](setup-v100.md) §4.6，推理全文见
-[`audit-findings.md`](archive/audit-findings.md) 结论 8'。
+[`audit-findings.md`](audit-report.md) 结论 8'。
 
 > ⚠️ **裁判档（T4）按现状裁不出这个问题**：裁判用的是**同一个合并 prompt**，
 > 27B 很可能复现同样的阶梯——`action` 一致率会很高，但那是**共同盲区**不是效度。
@@ -416,7 +416,7 @@ p75 **16 字**；`en_word_len_pctl` p50 **9 词**。这是**不依赖任何模�
 > ⚠️ **「重复 caption 率」这个门抽样判不了**：10k 是 10M 的 0.1% 抽样，一组 k=2 的
 > 重复要两条都被抽中（概率 1e-6），10k 上报的 0.0% 对全量毫无约束力。另注意口径：
 > 该字段数的是 **zh** 侧重复，而试点训练喂的是 **en** 侧。推导见
-> [`audit-findings.md`](archive/audit-findings.md) 结论 5。
+> [`audit-findings.md`](audit-report.md) 结论 5。
 
 ---
 
@@ -518,11 +518,11 @@ p75 **16 字**；`en_word_len_pctl` p50 **9 词**。这是**不依赖任何模�
 **语言污染判据仍归 S0 旗标**（问题 1 结论未变），但它召回只有 7.0%，兜底靠 RECAPTION。
 
 > 完整校准表见 `outputs/audit_10k/xling_calibration.md`（不入库），
-> 推理见 [`audit-findings.md`](archive/audit-findings.md) 结论 9。
+> 推理见 [`audit-findings.md`](audit-report.md) 结论 9。
 
 ### ✅ 决策 2b 已跑完（2026-07-22）：裁判 500 条落地，问题 8 被独立证实
 
-中转机 `10.55.87.68` / `Qwen3.6-27B` / opencv 后端 / **500 条，0 失败 0 重复**。
+中转机 `<RELAY_HOST>` / `Qwen3.6-27B` / opencv 后端 / **500 条，0 失败 0 重复**。
 
 | | 主力 8B（10k） | 裁判 27B（500） |
 |---|---|---|
@@ -584,17 +584,17 @@ p75 **16 字**；`en_word_len_pctl` p50 **9 词**。这是**不依赖任何模�
 
 ### 🔄 决策 2b 的执行背景：裁判为什么在 7 卡 V100 中转机上跑
 
-没有云端 API key，走 [`setup-judge-api.md`](archive/setup-judge-api.md) §0 **路线 A′**：
+没有云端 API key，走 `setup-judge-api.md` §0 **路线 A′**：
 复用 B100 集群上已起好的 `Qwen3.6-27B` vLLM 端点（已确认支持视觉输入）。
 
 **101vector 和 H100 都连不上那些端点**（`172.30.x.x` 不同网段，2026-07 实测），
-所以裁判改在 **`root@10.55.87.68 -p 31179`（7 卡 V100）** 上跑——该机能访问
+所以裁判改在 **`root@<RELAY_HOST> -p <SSH_PORT>`（7 卡 V100）** 上跑——该机能访问
 `/workspace/mount/b100_zaip_data`，**同一份 10k 子集也在其中**，只需搬一个 500 行的
 `s2_judge_sample.jsonl`，**不用拷视频、不占 GPU、零下载**。
 
-已就绪：端点连通性（`172.30.85.198:8000` / `172.30.62.177:8000` 返回 200，4 卡那个不通）、
+已就绪：端点连通性（`<JUDGE_ENDPOINT_A>` / `<JUDGE_ENDPOINT_B>` 返回 200，4 卡那个不通）、
 环境（该机 pip 出不去，但 conda `base` 自带 `numpy/PIL/requests/cv2`，靠 `--frame-backend opencv`）。
-**全部已跑完**（结果见上一节）。逐条命令见 [`setup-judge-relay.md`](archive/setup-judge-relay.md)。
+**全部已跑完**（结果见上一节）。逐条命令见 `setup-judge-relay.md`。
 
 > ⚠️ **两个必须记进 T4 结论的折扣**：
 > ① **解码器不同**——裁判用 opencv、主力用 decord，同一文件若报出的总帧数不同，
@@ -688,5 +688,5 @@ validate_proxy(flags_by_video, trans_scores, RETRANSLATE_FLAGS)
 
 每完成一个阶段：① 更新 §1 状态表；② 新问题登记进 §2（带量化证据和发现阶段）；
 ③ 已裁决的从 §3/§4 移走并写明结论；④ commit 推送，服务器 `git pull` 即可看到。
-统计细节和推理过程写进 [`audit-findings.md`](archive/audit-findings.md)，
+统计细节和推理过程写进 [`audit-findings.md`](audit-report.md)，
 本文件只保留结论和状态。

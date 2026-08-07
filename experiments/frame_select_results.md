@@ -2,7 +2,7 @@
 
 **状态:** ✅ 已跑完(2026-07-27) · **机器:** 101vector(V100) · **权重:** 官方 `mobileviclip_small.pt`
 **命令:** [`COMMANDS.md`](../COMMANDS.md) §3.4 · **实现:** `utils/frame_select.py`
-**背景:** [`experiments/gate0_results.md`](gate0_results.md) + [`ROADMAP.md`](ROADMAP.md) 1.6
+**背景:** [`experiments/gate0_results.md`](gate0_results.md) + [`experiments/README.md`](README.md) 1.6
 
 ---
 
@@ -15,7 +15,7 @@
 
 - GATE-0:打乱 8 帧顺序 t2v R@1 42.50 → 42.6(**顺序值 ~0**);8 帧全换成中间帧
   42.50 → 29.5(**多样性值 ~13 个 R@1**)。
-- ROADMAP 1.6:官方权重 t2v R@1 在 T=2/4/8/16 上为 35.7/39.6/40.8/42.2
+- B0 多 T 曲线:官方权重 t2v R@1 在 T=2/4/8/16 上为 35.7/39.6/40.8/42.2
   ——**T=2 相对 T=8 掉 5.1 个点**,这正是 C2 要弥合的缺口。
 
 多样性值 13 个点、顺序值 0,那么在只能喂 2 帧的时候,**喂哪 2 帧**理应很要紧。
@@ -45,7 +45,7 @@
 
 ### 2.0 兼容性核对(先看这个)
 
-三个参照臂**逐位复现** ROADMAP 1.6 的官方读数 ⇒ 评测链路未被改动,且
+三个参照臂**逐位复现** B0 多 T 曲线 的官方读数 ⇒ 评测链路未被改动,且
 `MVC_FRAME_SELECT` 未设时钩子确为零操作。
 
 | 臂 | raw t2v R@1 | 1.6 期望 | raw r_mean | 期望 |
@@ -185,7 +185,7 @@
 
 ## 6. 与计划的关系
 
-这不是要开一条新贡献线 —— `notes/paper-plan.md` 已把 whitespace §4(帧选择)
+这不是要开一条新贡献线 —— 论文线计划 已把 whitespace §4(帧选择)
 判为**被 C2 吸收**,round-2 §4 也把"任何新的 token 合并/剪枝/选择"判为**赛道已关闭**
 (TempMe *ICLR* 2025、ResidualViT *ICCV* 2025、EVS、FluxViT)。本实验的定位是
 **C2 的对照臂**,产出是论文里的一行基线,不是一个新方法。

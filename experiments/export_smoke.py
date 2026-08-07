@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""导出冒烟(ROADMAP 1.5 / 评审 U1)——零训练、零 GPU、随机权重。
+"""导出冒烟(导出冒烟 / 评审 U1)——零训练、零 GPU、随机权重。
 
-## 任务与验收(`notes/plan-review-upgrades.md` U1,原文照抄要点)
+## 任务与验收(评审 U1)
 
 - 用**随机权重**实例化带全部时序算子的视觉塔,分别走
   **ONNX(→ onnxruntime 加载)/ TFLite / coremltools 转换**,
@@ -286,7 +286,7 @@ def run_one(name, fn, ext, deps, model, example, outdir, t, opset):
 
 # ---------------------------------------------------------------- 报告
 def render(results, ts, meta):
-    L = [f"# 导出冒烟结果(ROADMAP 1.5 / U1)\n",
+    L = [f"# 导出冒烟结果(导出冒烟 / U1)\n",
          f"- 模型:{meta['model']}(随机权重,`inference_mode={meta['inference_mode']}`,"
          f"`skip_temporal={meta.get('skip_temporal', False)}`)",
          f"- 输入:`[{meta['batch']}, T, 3, {meta['img']}, {meta['img']}]`,ONNX opset {meta['opset']}",

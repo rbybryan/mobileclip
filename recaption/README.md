@@ -34,10 +34,10 @@ DO_VERIFY=1 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-sample
 
 报错先查仓库根的 [`TROUBLESHOOTING.md`](../TROUBLESHOOTING.md)。
 
-## 留档（`docs/archive/`，八份，平时不用读）
-
-已完成、已被 `master-plan.md` 取代、或要等后续阶段才启用的文档。链接仍然有效，但
-**不再随代码更新**——清单与归档理由见 [`docs/archive/README.md`](docs/archive/README.md)。
+> 已完成或已被 `master-plan.md` 取代的旧设计稿（审计方法论、融合方案、CapRL 路线、
+> KD 评审、H100/裁判端点配置等八份）已在 2026-08-07 的仓库清理中删除。要取回其中某份：
+> `git log --diff-filter=D --summary -- 'recaption/docs/archive/*'` 找到删除提交，再
+> `git show <commit>^:recaption/docs/archive/<file>`。
 
 ## 脚本（`scripts/`）
 
@@ -66,7 +66,7 @@ DO_VERIFY=1 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-sample
 - 服务器⇄Claude 的交接通道在 [`notes/live/`](../notes/live/)（不只谈重述，故未并入本目录），
   约定见 [`notes/git-handoff-workflow.md`](../notes/git-handoff-workflow.md)。
 - 产物（`outputs/`）、视频与标注**不进 git**，按 `docs/setup-v100.md` 在服务器上就地生成。
-- 审计报告的对外精简版是 [`docs/final_report.md`](../docs/final_report.md)（在仓库根的 `docs/`，不在本目录）。
+- 审计报告的对外精简版是 [`docs/caption-quality-report.md`](../docs/caption-quality-report.md)（在仓库根的 `docs/`，不在本目录）。
 
 > 本目录 2026-08-05 由 `docs/` `notes/` `tools/data_audit/` 合并而来：旧路径一律
 > `tools/data_audit/xxx` → `recaption/scripts/xxx`，文档另有改名。旧名对照用

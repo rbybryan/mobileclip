@@ -2,12 +2,24 @@
 
 **目的:** 拿到数据集路径后,不改任何代码、按下面的步骤顺序执行,就能
 (1)锁定原 repo 模型的基线数字,(2)逐个 A/B 我们的优化组件,(3)自动汇总成
-与基线的对比表。实验设计对应 `notes/paper-plan-zh.md` 的第 1–2 周
-(卫生闸门 + C3 组件 A/B)。
+与基线的对比表。
 
-> **当前该做哪一步 → 看 `experiments/ROADMAP.md`(总入口)。**
-> 数据集/权重到位了没有 → `python experiments/check_readiness.py`
+> **数据集/权重到位了没有 → `python experiments/check_readiness.py`**
 > 自动检查全部基准、训练语料和 checkpoints,并报告已解锁的步骤。
+
+## 结果报告一览(已跑完的,直接看数字)
+
+| 报告 | 回答什么 |
+|---|---|
+| [`gate0_results.md`](gate0_results.md) | GATE-0 时间维容量审计 —— 这个模型编不编码时间方向?(结论:不编码) |
+| [`pilot_10k_results.md`](pilot_10k_results.md) | V100/10k 试点的链路 go/no-go 记录 |
+| [`v100_sweep_results.md`](v100_sweep_results.md) | V100 上的零训练扫描(分辨率、算子计数等) |
+| [`frame_select_results.md`](frame_select_results.md) | 选帧基线 —— C2 必须打赢的那条平凡基线 |
+| [`dropblock_results.md`](dropblock_results.md) | 逐块深度敏感度扫描(P11) |
+| [`export_smoke_results.md`](export_smoke_results.md) | ONNX / Core ML / TFLite 导出冒烟 |
+
+1M 验证层 6 个模型改造方案的结果在
+[`../model-optimization/docs/retrospective-brief.md`](../model-optimization/docs/retrospective-brief.md)。
 
 ---
 
@@ -18,7 +30,7 @@
 
 | 机器 | 数据 | 角色 | 判据 |
 |---|---|---|---|
-| **101vector · 8×V100** | 只有 10k 预抽样(`/home/vca1/datasets/internvid_zh_10k`) | 每个方案的**链路 / 稳定性 go-no-go**:能不能跑通、loss 正不正常降、新参数是否真收到梯度 | ROADMAP 1.3「只看动力学」:loss 下降、`logit_scale/logit_bias` 离开初值、`temporal_pool.proj` 非零。**过 = 值得拿去 H100;不等于这个方案更好。** |
+| **101vector · 8×V100** | 只有 10k 预抽样(`/home/vca1/datasets/internvid_zh_10k`) | 每个方案的**链路 / 稳定性 go-no-go**:能不能跑通、loss 正不正常降、新参数是否真收到梯度 | 试点动力学档「只看动力学」:loss 下降、`logit_scale/logit_bias` 离开初值、`temporal_pool.proj` 非零。**过 = 值得拿去 H100;不等于这个方案更好。** |
 | **b100 主机 · 8×H100(默认前 4 张)** | 全量 10M(`/workspace/mount/.../InternVid-10M-FLT`) | 方案之间**真正排序**(R0 vs r1a/r1b/r1_both 的 A/B)+ 胜者的**终训** | 真检索基准 + 足够步数下的方向性差异(§3 的 B0 口径) |
 
 **为什么 10k 不能给方案排序**(关键,别拿它选型):试点的 held-out 自检索在开训前
@@ -32,8 +44,7 @@ query 的二项标准误就有 1.3pp,再叠加 BN running-stats 适应的混淆,
 
 ⇒ **流程**:在 V100/10k 上逐个方案做 go/no-go 筛查(链路对不对、稳不稳)→ 把过筛的
 方案拿到 H100 上做真 A/B 排序 → 只把胜者跑完整训。各机怎么跑:
-V100/10k 见 **§2b** + `make_pilot_anno.py`;H100/全量见 [`SETUP_B100.md`](SETUP_B100.md) + **§4**;
-闸门顺序(R0→R1→R2→R3)见 `ROADMAP.md` 汇合点。
+V100/10k 见 **§2b** + `make_pilot_anno.py`;H100/全量见 [`SETUP_B100.md`](SETUP_B100.md) + **§4**。
 
 ---
 
@@ -75,7 +86,7 @@ export MVC_ANNO_DIR=/path/to/anno_downstream   # 标注 json 根目录
 # 单测:sigmoid 损失默认行为不变 + 注意力池化零初始化 == mean
 python -m pytest tests/test_optimization_components.py -v
 
-# 单测:C2 T 无关化(ROADMAP 2.1)——T=8 与旧硬编码路径逐位一致、任意 T 前向、
+# 单测:C2 T 无关化(C2 · T 无关化)——T=8 与旧硬编码路径逐位一致、任意 T 前向、
 # temporal_embedding 插值、弹性 T 采样器、per-T BN 工具(纯 CPU 可跑,~4 分钟)
 python -m pytest tests/test_t_agnostic.py -v
 
@@ -105,10 +116,10 @@ H100 之前都该先在这里过一遍——但只测得了**实现,不是效果
 |---|---|---|
 | C3 注意力池化(`temporal_pool`) | ✅ 完整 plumbing:zero-init==mean 单测、建模、梯度、稳定性 | 已在 r1 跑过 |
 | C3 sigmoid 多正例损失 | ✅ 建模、可学 t/b 离开初值、稳定性 | 已在 r1 跑过 |
-| C2 T 无关化(动态 T / `temporal_embedding` 插值 / 随机 T) | ✅ **代码已落地(2026-07-24)**:单测 `tests/test_t_agnostic.py` 18 项全过(T=8 逐位一致 ✓);V100 随机 T 冒烟:`bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r3e.py 8 debug True` | ROADMAP 2.1;开关 `elastic_t=dict(enable,choices)`,默认关=零改动 |
+| C2 T 无关化(动态 T / `temporal_embedding` 插值 / 随机 T) | ✅ **代码已落地(2026-07-24)**:单测 `tests/test_t_agnostic.py` 18 项全过(T=8 逐位一致 ✓);V100 随机 T 冒烟:`bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r3e.py 8 debug True` | C2 · T 无关化;开关 `elastic_t=dict(enable,choices)`,默认关=零改动 |
 | **C3 `caption_idx` 多正例掩码** | ⚠️ **10k 上测不了**:全库仅 1 对共享字幕,掩码触发不了。要 plumbing 测得自造「字幕故意重复」的小合成集,否则等 H100 全量 | 见下方 07-21 共享字幕说明 |
-| C1 教师蒸馏(DR) | ✅ 但测的是**成本不是效果**:10k 上试点教师每 clip 耗时/存储,定 L vs 1B | ROADMAP 2.2 |
-| **C2 per-T BN 漂移诊断 + 校准**(U3) | ✅ 工具已落地:`experiments/per_t_bn.py`(snapshot / reset+recalibrate / drift report / per-T bank),单测在 `tests/test_t_agnostic.py`;对真 ckpt 的诊断随 r3e/R3 试点跑(用法见该文件 docstring,CPU/单卡即可) | `notes/plan-review-upgrades.md` U3;随机 T 训练的 BN 统计混淆正是 10k 排序禁令的原因之一,这里只测机械正确性 |
+| C1 教师蒸馏(DR) | ✅ 但测的是**成本不是效果**:10k 上试点教师每 clip 耗时/存储,定 L vs 1B | C1 教师管线 |
+| **C2 per-T BN 漂移诊断 + 校准**(U3) | ✅ 工具已落地:`experiments/per_t_bn.py`(snapshot / reset+recalibrate / drift report / per-T bank),单测在 `tests/test_t_agnostic.py`;对真 ckpt 的诊断随 r3e/R3 试点跑(用法见该文件 docstring,CPU/单卡即可) | 评审 U3;随机 T 训练的 BN 统计混淆正是 10k 排序禁令的原因之一,这里只测机械正确性 |
 
 **V100 硬件红线**(决定改动**能不能跑起来**,与选型无关):必须用带 `sm_70` 的
 cu118 torch(否则第一个 `barrier()` 全崩,见 §2b 第 3 步预检);**无 bf16、无
@@ -544,7 +555,7 @@ python experiments/collect_results.py --baseline r0_baseline --out experiments/R
 # 与官方权重对照:--baseline baseline_official
 ```
 
-## 6. 判据(与 paper-plan 一致,07-20 审核后加严)
+## 6. 判据(07-20 审核后加严)
 
 - **保留组件**:等步数下相对 R0 的 **多基准聚合 R-Sum**(MSR-VTT + DiDeMo +
   ANet)提升同向,且 DSL 与 raw 两口径同向;单基准 +0.3 R-Sum 量级低于
@@ -552,7 +563,7 @@ python experiments/collect_results.py --baseline r0_baseline --out experiments/R
 - 论文**主口径 = raw 余弦**(`_emb/`),DSL 仅用于与原论文数字对齐;
 - R1 叠加若低于单项最优 → 取单项最优作为后续 DR 实验(R2/R3)的底座;
 - R0 若无法逼近官方权重的量级 → 先排查复现问题,不进入组件结论;
-- R0 启动第一天记录**单 epoch wall-clock**,据此校准 paper-plan 的
+- R0 启动第一天记录**单 epoch wall-clock**,据此校准论文线的
   Wk4–6 排期(并实测 `gradient_checkpointing False` 能否放下、省多少时间)。
 
 ### 6.1 MSR-VTT 1K 上的噪声带:**±1.6 是下界,不是阈值**
@@ -575,7 +586,7 @@ python experiments/collect_results.py --baseline r0_baseline --out experiments/R
 | **阴性**(「没有效应」) | 保守 —— 真带更宽只会让阴性更稳 | 照用,结论有效 |
 | **阳性**(「有增益」) | **偏松** —— 可能把噪声读成效应 | 必须两口径同向,且优先要求 \|Δ\| 明显大于 2.4 |
 
-> ⚠️ **2.4 的适用面(2026-07-29 收窄,见 `notes/plan-review-upgrades.md` §6.1.1)。**
+> ⚠️ **2.4 的适用面(2026-07-29 收窄,见 评审 §6.1.1)。**
 > 这条 2.4 来自 `nativeT2` vs `seluniform_K2` —— 两条臂**抽样时刻不同**(输入本就不同)、
 > 且是**绝对值**比较。它量的是「**模型对无关输入扰动的敏感度** + 查询间相关性」。
 > ⇒ **适用于非配对 / 跨抽样的阳性主张;不适用于配对的同 T 比较。**
@@ -599,7 +610,7 @@ python experiments/collect_results.py --baseline r0_baseline --out experiments/R
 
 ## 7. 后续(本框架预留、尚未实现)
 
-- **R2**(+ 视频 DR 蒸馏损失,paper-plan C1)与 **R3**(+ 随机 T 弹性训练,C2)
+- **R2**(+ 视频 DR 蒸馏损失,C1)与 **R3**(+ 随机 T 弹性训练,C2)
   需要新增教师 embedding 管线与 T 无关化改造,作为下一批 PR 进入本目录
   (届时新增 `r2_dr.py` / `r3_elastic.py` 配置,复用同一套 run/collect 脚本);
 - 评测按 rank 分片(H5)在扩展到 ActivityNet/DiDeMo 大规模评测前加入。

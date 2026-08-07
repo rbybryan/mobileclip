@@ -1,4 +1,4 @@
-"""配对 bootstrap 的单测(评审 U10-1 / ROADMAP 自查 G4)。
+"""配对 bootstrap 的单测(评审 U10-1 / 评审 U10-1)。
 
 只依赖 numpy —— 本地无 torch/decord 也能全跑。
 """

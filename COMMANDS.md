@@ -5,6 +5,54 @@ Run everything from the repo root unless noted. See [CHECKPOINTS.md](CHECKPOINTS
 
 ---
 
+## 目录
+
+- [0. Clone / repo](#0-clone--repo)
+- [1. Environment](#1-environment)
+  - [Option 0 — one shot (recommended, validated)](#option-0--one-shot-recommended-validated)
+  - [Option A — create from the yml (fastest, may need a machine with CUDA 11.7 toolchain)](#option-a--create-from-the-yml-fastest-may-need-a-machine-with-cuda-117-toolchain)
+  - [Option B — manual, step by step (more robust across machines)](#option-b--manual-step-by-step-more-robust-across-machines)
+  - [Notes / gotchas](#notes--gotchas)
+  - [Export your working env (for reproducibility)](#export-your-working-env-for-reproducibility)
+- [2. Download checkpoints & data](#2-download-checkpoints--data)
+- [3. Evaluation (zero-shot)](#3-evaluation-zero-shot)
+  - [MobileViCLIP-Tiny](#mobileviclip-tiny)
+  - [MobileViCLIP-Small](#mobileviclip-small)
+  - [Run a single eval manually (bypass the .sh)](#run-a-single-eval-manually-bypass-the-sh)
+  - [3.1 GATE-0 — 时间维容量审计(零训练;做任何时序改动之前先跑)](#31-gate-0--时间维容量审计零训练做任何时序改动之前先跑)
+  - [3.2 R1 前置探针 — 假负例 / 近重复密度(零训练;`notes/r1-implementation-plan.md` §5)](#32-r1-前置探针--假负例--近重复密度零训练notesr1-implementation-planmd-5)
+  - [3.3 R1 下一步 — 精确命令(三档,按信息价值排序)](#33-r1-下一步--精确命令三档按信息价值排序)
+  - [3.3.1 R1 建池 A/B(2.4c)—— go/no-go 判 GO 之后建的臂](#331-r1-建池-ab24c-gono-go-判-go-之后建的臂)
+  - [3.3.2 R1 大数据 A/B —— 放到 1M 验证层跑(H100;真正发威档)](#332-r1-大数据-ab--放到-1m-验证层跑h100真正发威档)
+  - [3.4 选帧基线 — C2 必须打赢的那条平凡基线(零训练,V100 一晚)](#34-选帧基线--c2-必须打赢的那条平凡基线零训练v100-一晚)
+  - [3.5 选帧诊断 —— divmax 为什么失败(零 GPU,~10 min)](#35-选帧诊断--divmax-为什么失败零-gpu10-min)
+  - [3.6 导出冒烟(评审 U1)—— 零 GPU,零训练,随机权重](#36-导出冒烟评审-u1-零-gpu零训练随机权重)
+  - [3.7 未见过的 T 泛化—— 零训练,答「C2 能不能无上限 T」](#37-未见过的-t-泛化-零训练答c2-能不能无上限-t)
+  - [3.7b 🔺 排 H100 新任务之前:先看 1M 层现状(30 秒,纯只读)](#37b--排-h100-新任务之前先看-1m-层现状30-秒纯只读)
+  - [3.8 离线补评测 —— 训练跑完但评测被跳过时,救回已存的 ckpt(零重训)](#38-离线补评测--训练跑完但评测被跳过时救回已存的-ckpt零重训)
+  - [3.9 配对 bootstrap 比较两条臂(评审 U10-1 / 自查 G4)—— 零 GPU](#39-配对-bootstrap-比较两条臂评审-u10-1--自查-g4-零-gpu)
+  - [3.10 C1 教师嵌入离线提取(评审 U7)—— 主线,GPU](#310-c1-教师嵌入离线提取评审-u7-主线gpu)
+  - [3.11 架构零 GPU 闸门 —— 时序支路 / `temporal_embedding` 到底值不值得留](#311-架构零-gpu-闸门--时序支路--temporal_embedding-到底值不值得留)
+  - [3.12 SSv2-MC —— 唯一能证伪「删 `temporal_embedding`」的时序基准](#312-ssv2-mc--唯一能证伪删-temporal_embedding的时序基准)
+  - [3.13 环境实况自检 + SDPA 可用性(零 GPU,~10 秒)](#313-环境实况自检--sdpa-可用性零-gpu10-秒)
+  - [3.14 P11 逐块深度敏感度扫描(零训练,~1 GPU-小时)](#314-p11-逐块深度敏感度扫描零训练1-gpu-小时)
+  - [3.15 C-2/C-4 聚合判别 v2 —— τ 扫描 + 配对 CI + 两口径(零训练,单卡 ~40 min)](#315-c-2c-4-聚合判别-v2--τ-扫描--配对-ci--两口径零训练单卡-40-min)
+  - [3.18 C1 KD 训练侧(2026-08-04 落地)—— 闸门与冒烟](#318-c1-kd-训练侧2026-08-04-落地-闸门与冒烟)
+  - [3.16 全减法闸门 + 混合预算 (T×R) 评测(零训练;C2-2D 闸门 1)](#316-全减法闸门--混合预算-tr-评测零训练c2-2d-闸门-1)
+  - [3.17 BN 重校准 CLI —— 阶段 3/5 分辨率数从趋势筛升级为正式数(2026-08-04 落地)](#317-bn-重校准-cli--阶段-35-分辨率数从趋势筛升级为正式数2026-08-04-落地)
+- [4. Training (pretraining)](#4-training-pretraining)
+  - [Single-node manual launch](#single-node-manual-launch)
+  - [长跑运维:选空卡、后台挂、ETA、断点续训(b100 共用节点)](#长跑运维选空卡后台挂eta断点续训b100-共用节点)
+- [4.5 InternVid-zh 重述流水线（A/B 两方案，V100 审计机）](#45-internvid-zh-重述流水线ab-两方案v100-审计机)
+- [5. Git workflow (this repo)](#5-git-workflow-this-repo)
+- [6. Live handoff with Claude (server ⇄ Claude via git)](#6-live-handoff-with-claude-server--claude-via-git)
+  - [6.1 把改好的 `from-server.md` 推上 `main`(服务器端,复制即用)](#61-把改好的-from-servermd-推上-main服务器端复制即用)
+- [Reference results (from upstream, MSR-VTT retrieval, tiny)](#reference-results-from-upstream-msr-vtt-retrieval-tiny)
+
+---
+
+
+
 ## 0. Clone / repo
 
 ```bash
@@ -30,17 +78,17 @@ extensions (flash-attn, apex, deepspeed). Note the yml's internal env name is `i
 > | machine | torch | why | source |
 > |---|---|---|---|
 > | **b100 / 8×H100 (sm_90)** — main training clock | **2.5.1+cu124** | system torch already has `sm_90`; repo pin "从没被装上" | `experiments/SETUP_B100.md` §2 (measured 2026-07-24) |
-> | **101vector / 8×V100 (sm_70)** — eval + export | **2.5.1+cu118** | pinned *at 2.5.1* deliberately, for the sm_70 kernels | `experiments/ROADMAP.md:126`, `experiments/export_smoke_results.md` §env |
+> | **101vector / 8×V100 (sm_70)** — eval + export | **2.5.1+cu118** | pinned *at 2.5.1* deliberately, for the sm_70 kernels | `experiments/README.md:126`, `experiments/export_smoke_results.md` §env |
 >
 > Consequences, because several docs still reason from the 1.13.1 premise:
 > - **`F.scaled_dot_product_attention` (torch ≥2.0) is available on both boxes, and has been
 >   since at least 2026-07-24.** Backlog item **P1 is therefore not blocked** — see
->   `notes/architecture-round4.md` §8.1.
-> - The DeepSpeed-compatibility risk that demoted P1 (`notes/paper-plan.md` §6.8 item 8) is
+>   架构第四轮报告 §8.1.
+> - The DeepSpeed-compatibility risk that demoted P1 (论文线计划 §6.8 item 8) is
 >   **already discharged**: the 1M-tier arms trained ~15 h under DeepSpeed on torch 2.5.1
->   (`ROADMAP.md` G9), and both R1 arms ran on `2.5.1+cu118` (`ROADMAP.md:304`).
+>   (`experiments/README.md` G9), and both R1 arms ran on `2.5.1+cu118`.
 > - `torch.compile`, `channels_last`, and CUDA graphs are likewise available — relevant to the
->   open **MFU 0.67%** question (`architecture-round4.md` §0.2).
+>   open **MFU 0.67%** question (架构第四轮报告 §0.2).
 >
 > **Do not "upgrade" anything to act on this** — the upgrade already happened. What is missing is
 > code that *uses* it, plus a `hasattr` guard so the CPU-node 1.13.1 recipe keeps importing.
@@ -203,7 +251,7 @@ python -m torch.distributed.run --nproc_per_node=1 --master_port=$((10000 + RAND
 ### 3.1 GATE-0 — 时间维容量审计(零训练;做任何时序改动之前先跑)
 
 回答"这个模型到底有没有编码时间方向,以及我们的基准能不能测出来"。
-背景、判读表与后续决策见 [`notes/neural-inspired-round2.md`](notes/neural-inspired-round2.md) §2。
+背景、判读表与后续决策见 `experiments/gate0_results.md` §2。
 
 **(a) 静态审计 —— 只读 checkpoint,不用 GPU、不用数据、几秒钟出结果**
 
@@ -230,8 +278,7 @@ python experiments/temporal_capacity_audit.py checkpoints/mobileviclip_small.pt
 在 **MSR-VTT(外观向)与 SSv2-MC(时序向)两边都要跑**,和干净基线对比:
 
 ⚠️ 这是**评测**,按 README §3.0 的**双根规则**必须先 `unset MVC_DATA_DIR`(训练/试点 shell
-才 export;混用会把仓库 `data/` 下已下好的评测集重定向到不存在的路径,详见
-`notes/live/from-claude.md` (13))。走既有的 `experiments/run_eval.sh` 包装
+才 export;混用会把仓库 `data/` 下已下好的评测集重定向到不存在的路径)。走既有的 `experiments/run_eval.sh` 包装
 ——它会按基准自动选任务入口(**`ssv2_mc` 走 `retrieval_mc.py`,其余走 `retrieval.py`**),
 并把结果写进各自的 `eval_res.json`:
 
@@ -270,22 +317,22 @@ PY
 > ⚠️ `MVC_FRAME_PERTURB` **只在审计评测时设置,绝不要在训练时打开**。打开时日志会打印
 > 一行 `帧顺序正在被人为扰动(GATE-0 审计模式)` 的 warning —— 训练日志里出现这行就是配置错了。
 
-判读(`notes/neural-inspired-round2.md` §2c):
+判读(`experiments/gate0_results.md` §2c):
 
 - MSR-VTT 与 SSv2-MC **都**几乎不变 ⇒ 模型时间盲**且**基准测不出来 ⇒ 只有 R2(可恢复顺序的
   读出头)值得投,且必须上 RTime 才能测;
 - MSR-VTT 不变、**SSv2-MC 掉** ⇒ 模型有顺序信息,是**基准**的问题 ⇒ 推进 R2,补 RTime/Vinoground,
   按 Pareto 结果汇报。
 
-无论哪个结果都是一张论文图(在自己的模型上测出的"可测性上界",与 ROADMAP 1.6 的多 T 退化
+无论哪个结果都是一张论文图(在自己的模型上测出的"可测性上界",与 B0 多 T 曲线 的多 T 退化
 曲线同一格)。
 
 ---
 
-### 3.2 R1 前置探针 — 假负例 / 近重复密度(零训练;`notes/r1-examination.md` §5)
+### 3.2 R1 前置探针 — 假负例 / 近重复密度(零训练;`notes/r1-implementation-plan.md` §5)
 
 在动手建 R1 文本负例库之前,先量化机会与风险。**A 部分现在就能跑**(不用 GPU / 权重 /
-decord,只要 anno JSON);判读见 `notes/r1-examination.md` §5/§6。
+decord,只要 anno JSON);判读见 `notes/r1-implementation-plan.md` §5/§6。
 
 **A · 精确重复密度(秒级,模型无关)** —— 用仓库自己的 `caption_to_idx` 统计字幕碰撞,
 这正是损失多正例掩码 `get_mask` 用的键:
@@ -533,7 +580,7 @@ python experiments/frame_select_diag.py             # 全量 1000 条
 
 ---
 
-### 3.6 导出冒烟(ROADMAP 1.5 / 评审 U1)—— 零 GPU,零训练,随机权重
+### 3.6 导出冒烟(评审 U1)—— 零 GPU,零训练,随机权重
 
 **产出决定 P9(分离注意力变体)是否提前触发**,进而决定弹性模型要不要直接用
 可导出形态训练(免得第 8 周再单独微调一个部署变体)。**本表不含延迟** —— 真机
@@ -566,7 +613,7 @@ python experiments/export_smoke.py --inference-mode --skip-temporal --outdir exp
 文本塔不导 —— 端侧文本 embedding 通常离线算好。
 
 产出:`experiments/exports/export_smoke.{json,md}`。按 U1 验收,把 md 那张表贴进
-`notes/live/from-claude.md` 或 `TROUBLESHOOTING.md`。
+`TROUBLESHOOTING.md`。
 
 **读表三条规则:**
 
@@ -582,9 +629,9 @@ python experiments/export_smoke.py --inference-mode --skip-temporal --outdir exp
 
 ---
 
-### 3.7 未见过的 T 泛化(ROADMAP 1.9)—— 零训练,答「C2 能不能无上限 T」
+### 3.7 未见过的 T 泛化—— 零训练,答「C2 能不能无上限 T」
 
-分析与判读见 [`notes/c2-arbitrary-t.md`](notes/c2-arbitrary-t.md)。官方权重上评**训练
+官方权重上评**训练
 从没见过的 T**:内插 T∈{3,5,6,12}(16 帧锚点内)、外推 T∈{24,32}(锚点外)。
 单卡串行、可续跑;每个 T 就是一次普通 MSR-VTT 零样本评测。
 
@@ -603,10 +650,10 @@ done
 
 - 主指标 **t2v R@1**,`ret_test/`(DSL)与 `ret_test_emb/`(raw)**两口径同向**才算数;
   阴性用 ±1.6 带(保守,照用),**阳性主张要求 |Δ| 明显大于 2.4**;`r_mean` 仅描述性。
-- **参照行**:ROADMAP 1.6 已锁 T=2/4/8/16 的 raw r_mean = 55.4/60.0/61.6/62.3。
+- **参照行**:B0 多 T 曲线 已锁 T=2/4/8/16 的 raw r_mean = 55.4/60.0/61.6/62.3。
   新的 T 应当落在这条曲线上 —— **落在线上 = 泛化成立**;某个 T 明显掉出线 = 那里有问题。
 - ⚠️ **T=24/32 可能 OOM**:stage-4 联合注意力是 O(T²)(N=64·T)。评测 batch 小,
-  大概率放得下;**崩了也是结果** —— 那就是 `c2-arbitrary-t.md` 墙 1 的直接证据,照样记账,
+  大概率放得下;**崩了也是结果** —— 那就是「T 无上限」第一堵墙的直接证据,照样记账,
   别去调 batch 硬扛。
 ### 3.7b 🔺 排 H100 新任务之前:先看 1M 层现状(30 秒,纯只读)
 
@@ -710,7 +757,7 @@ done
 跑完对**每条**臂做一次上面那个 `grep "Load pretrained model from"` 自检 —— 权重没加载
 也会打印出一套很像样的数字(实测 r_mean 54.82),不查就会当真。
 
-### 3.9 配对 bootstrap 比较两条臂(评审 U10-1 / ROADMAP 自查 G4)—— 零 GPU
+### 3.9 配对 bootstrap 比较两条臂(评审 U10-1 / 自查 G4)—— 零 GPU
 
 **为什么不能直接拿 ±1.6 判 A/B**:那是**无配对**带(「一个绝对 R@1 的抽样误差」)。
 两条臂评的是**同一批**查询,做差会抵消共享方差。实测差距极大 —— 同一对臂:
@@ -769,7 +816,7 @@ python experiments/collect_results.py \
 出现任何非零 Δ 或非零宽 CI ⇒ 配对下标没对齐(npz 里 i2t/t2i 顺序被打乱、或两侧
 查询数不一致),**此时所有 A/B 结论作废**,先修再比。这一步零 GPU、约 10 秒,
 `tests/test_paired_bootstrap.py` 里也钉了同一条不变式。
-### 3.10 C1 教师嵌入离线提取(ROADMAP 2.2 / 评审 U7)—— 主线,GPU
+### 3.10 C1 教师嵌入离线提取(评审 U7)—— 主线,GPU
 
 `experiments/extract_teacher.py`。教师 = **InternVideo2-stage2**(U7-4 定案;换 Qwen 已否决,
 换 IV3/IV2.5/Next 均无对比空间不可用)。学生训练时只读盘,不跑教师。
@@ -892,16 +939,10 @@ python experiments/extract_teacher.py verify --out experiments/teacher/iv2s2_1m
 3. **文本阶段(`--stage text`)依赖重** —— IV2-stage2 文本塔是 LLaMA 系,要 `peft`;
    仓库刻意不 eager import 它。视频阶段完全不碰这条链,先把视频跑完再说。
 
-### 3.11 架构第四轮 · 零 GPU 闸门(`notes/architecture-round4.md` §3)
+### 3.11 架构零 GPU 闸门 —— 时序支路 / `temporal_embedding` 到底值不值得留
 
-> ⚠️ **2026-07-29 首跑修订。** 本节最初给的是几段 heredoc,在服务器上**三条全废**,
-> 其中一条是**静默失败**:`layer_scale_1d = 0` 匹配到 0 个键却照样存了 ckpt ⇒ `_ablate.pt`
-> 与原文件逐位相同,评测会「通过」但什么都没消融。
-> **根因(实测更正)**:~~发布权重是重参数化(推理态)~~ —— **错**。`inspect` 实测是
-> **训练态**(40 个 `layer_scale_1d`、80 个 `layer_scale`、4 个 `temporal_embedding`、
-> **0** 个 `reparam_conv*`)。真正的原因是 heredoc 写了 `sd.get("model", sd)`,而这份 ckpt
-> 的顶层包装键**不叫 `model`**,于是回退到原始 dict、去遍历 `epoch`/`optimizer` 了。
-> 现在全部走 `experiments/gate_checks.py`:**先探测形态,匹配到 0 个键立刻抛错、绝不落盘。**
+全部走 `experiments/gate_checks.py`:**先探测 ckpt 形态,匹配到 0 个键立刻抛错、绝不落盘**
+(早期的 heredoc 版本会静默产出一个和原文件逐位相同的「消融」ckpt)。
 
 ```bash
 # 0) 永远先跑这个 —— 看清 ckpt 是训练态还是推理态、各类键各有多少
@@ -910,7 +951,7 @@ python experiments/gate_checks.py inspect --ckpt checkpoints/mobileviclip_small.
 # ⑤ INT8 会不会把融合核里的时序项抹掉(~10 s,零 GPU)
 python experiments/gate_checks.py gate5 --ckpt checkpoints/mobileviclip_small.pt
 
-# ③ 删时序分支 = 融合核置为单位核 δ、bias 置零(等价 layer_scale_1d=0,也是该支路的精确 INT8 模拟)
+# ③ 删时序分支 = 融合核置为单位核 δ、bias 置零(等价 layer_scale_1d=0)
 python experiments/gate_checks.py gate3 \
     --ckpt checkpoints/mobileviclip_small.pt --out checkpoints/_ablate_temporal.pt
 
@@ -929,11 +970,8 @@ python experiments/gate_checks.py self-test
 ③④ 产出的 ckpt 按下面的评测跑 MSR-VTT。**判据**:③ Δr_mean > 1.0(raw 与 DSL 同向)
 才保留该支路;④ Δ > 0.5 才保留 embedding。
 
-> 🔴 **每个臂必须给独立的 `output_dir`。** 首跑三个臂全写进同一个目录,
-> `ranks_ret_test{,_emb}.npz`(配对 bootstrap 的输入)被后一个臂覆盖,只剩最后一个臂的秩,
-> 配对 CI 因此做不了。下面的命令已带 `output_dir` 覆盖 ——
-> ✅ **2026-07-30 已按此重跑,`eval_base/`、`eval_gate3/`、`eval_gate4/` 各自的两个
-> `ranks_*.npz` 都已落地,配对 CI 现在可跑**(命令见本节末尾)。
+> 🔴 **每个臂必须给独立的 `output_dir`** —— 否则 `ranks_ret_test{,_emb}.npz`
+> (配对 bootstrap 的输入)会被后一个臂覆盖,配对 CI 就做不了。
 
 ```bash
 export PYTHONPATH=${PYTHONPATH}:. ; export CUDA_VISIBLE_DEVICES=0
@@ -947,138 +985,53 @@ run gate3   ./checkpoints/_ablate_temporal.pt
 run gate4   ./checkpoints/_ablate_tempemb.pt
 ```
 
-**实测结果(2026-07-29 首跑;2026-07-30 分臂重跑**逐位复现**):**
-
-> ⚠️ **2026-07-30 更正:本表首版把两个口径写反了。** `tasks_clip/retrieval_utils.py:154-160`
-> 返回 `(dsl, dsl_T, raw, raw_T)`,`:84-85` 把第 1 位映射到 `ret_test/`、第 3 位映射到
-> `ret_test_emb/` ⇒ **`ret_test/` 是 DSL、`ret_test_emb/` 是 raw,而 raw 才是论文主口径**
-> (§3.7 / `experiments/README.md` §6.1 / `experiments/gate0_results.md` §1 一直是对的,
-> 写反的只有本节和 `notes/architecture-round4.md` §3.0)。**判定不变**(两口径同向),
-> 变的是**主口径的 Δ 反而更大**:③ −0.43、④ +0.70。
-
-| 臂 | r_mean raw(`_emb/`,主口径) | r_mean DSL(`ret_test/`) | Δ raw(95% CI) | Δ DSL(95% CI) | 判定 |
-|---|---|---|---|---|---|
-| base | 61.55 | 62.28 | — | — | 与文档记载逐位一致 |
-| ③ 时序支路置零 | 61.12 | 61.95 | **−0.43** [−0.82, −0.03] 显著 | −0.33 [−0.72, +0.05] n.s. | **CI 整段都在 1.0 以下**(两口径皆然)⇒ 支路上界 0.82,判据要 >1.0 ⇒ **不保留** |
-| ④ `temporal_embedding` 置零 | **62.25** | **62.95** | **+0.70** [+0.20, +1.20] 显著 | **+0.67** [+0.17, +1.15] 显著 | 两口径**都显著** ⇒ 删掉**确实更好**(r_mean 口径)⇒ **不保留** |
-
-> ✅ **配对 CI 已跑(2026-07-30,10000 次重采样,seed 0)**,上表 CI 即其输出。
-> ③ 不是「没差别」而是**等价性结论**:支路有作用,但 95% CI 上界 0.82 < 判据 1.0。
-> ④ 「删了更好」现在**站得住**(r_mean 两口径同时显著)。
->
-> ⚠️ **但主指标 t2v R@1 没过两口径判据**:④ 的 `img_r1` raw **+1.70** [+0.40, +3.10] 显著,
-> DSL 仅 +1.30 [−0.10, +2.70] **不显著**。可写的结论是「**r_mean 显著提升**」,
-> **不能**写「t2v R@1 显著提升」。
->
-> 📏 **本次实测配对分辨率**:R-Sum 95% CI 半宽 配对 **±2.30~3.00** vs 无配对 ±14.50~14.70
-> ⇒ **约 4.9~6.3 倍**。G4 记录的「约 11 倍(±1.5 vs ±17)」来自另一对耦合更紧的臂 ——
-> **把 5~11 倍当作可达区间,而不是把 11 倍当常数。**
-
-**配对 bootstrap 命令(三个臂的 `ranks_*.npz` 都已就位):**
+**配对 bootstrap(两口径同向才算数):**
 
 ```bash
 # 主口径(raw = ret_test_emb/,--prefix 的默认值)
 python experiments/collect_results.py --compare eval_gate3 eval_base
 python experiments/collect_results.py --compare eval_gate4 eval_base
-# 第二口径(DSL)—— 两口径同向才算数
+# 第二口径(DSL)
 python experiments/collect_results.py --compare eval_gate3 eval_base --prefix 'ret_test/'
 python experiments/collect_results.py --compare eval_gate4 eval_base --prefix 'ret_test/'
 ```
-> ⚠️ MSR-VTT 的字幕以外观为主,是弱时序探针。**`ssv2_mc_val` 才是能证伪「删 `temporal_embedding`」
-> 的基准**,批准前先跑它。
 
 ```bash
-# ⑤-fused:重参数化之后量 |w_1d − δ| —— 这才是 P2 的 INT8 直接判据(λ 本身不是)
-# ✅ 2026-07-30 已跑,结论:P2 机制被证伪(见下方红框)
+# ⑤-fused:重参数化之后量 |w_1d − δ| —— P2 的 INT8 直接判据(λ 本身不是)
 python experiments/gate_checks.py gate5-fused \
     --ckpt checkpoints/mobileviclip_small.pt --config "$C"
 ```
 
-> ⚠️ **`gate1` 可能给出「无法判定」** —— 若两份 ckpt 一份推理态一份训练态,键空间对不上。
-> 脚本会**如实报告并退出码 2**,而不是打印 `0 / 0` 假装成结论(首跑就踩了这个)。
-> 实测结果:80 个可比空间张量**逐位相同 0 个** ⇒ 空间塔确实训过 ⇒ GATE-0 腿②③ 前提成立。
+#### 已跑的结论(2026-07-29/30,10000 次重采样 seed 0)
 
-> ✅ **λ 的「未核实」标记已撤回**:`gate5` 从发布权重里逐位复现出
-> `layer_scale_1d` median **7.973e-04** / p95 **2.762e-03**,与 §2 P2 引用的 8e-4 / 2.8e-3 吻合。
-> 但 **λ 本身不是 INT8 判据**(融合核是 `δ + λ·Δ`,要比的是 `λ·|Δ|`)—— 这个方法学判断被
-> `gate5-fused` 证实了,而且差得很远。
->
-> 🔴 **`gate5-fused` 结果(2026-07-30):P2 的 INT8 机制被证伪。** 融合后 `|w_1d − δ|`
-> 逐通道最大值(n=9920):p05 4.695e-04 / p25 2.531e-03 / **p50 6.178e-03** / p75 1.252e-02 /
-> p95 2.880e-02。INT8 抹零阈值 **3.937e-03**,**只有 36.2% 的通道被抹零,中位数比阈值高 1.57 倍**
-> ⇒ **时序项在 INT8 下存活(约 64% 通道)**,不是「低于 LSB 被删掉」。
-> **失效原因**:P2 用 `λ·|Δ|` 估算时假设 BN 折叠后的 depthwise 核是 O(0.1–1),
-> 实测反推 `|Δ| ≈ 7.7`,**差了一到两个数量级**。λ 是对的,乘的那一项错了。
-> **连带作废**:①「INT8 抹掉时序支路」机制;②「AC5/AC9 在 INT8 被兑现掉」的 pillar-2 反转;
-> ③「`layer_scale_1d = 0` 就是精确的 INT8 模拟」(它比 INT8 更狠);
-> ④ 口诀 `SNR ∝ 127·λ` 应为 **`SNR ∝ 127·λ·|Δ|`**。
-> **仍成立**:该支路不值得保留 —— 但依据换成消融(上界 0.82 r_mean vs 27.8% ONNX 图),
-> 不再是量化。详见 `notes/architecture-round4.md` §2 P2 的改写。
->
-> ✅ **~~「对不上的数」~~ 已撤回(2026-07-30):6.1% 是对的,错的是我的 `gate5`。**
-> 两个脚本的**分母**取法不同:
-> - `temporal_capacity_audit.py:178` 只取 **`token_mixer.layer_scale`**(40 个)——
->   它缩放的是**空间 mixer** 支路,与 `layer_scale_1d` 缩放时序 mixer 支路**一一对应**。
->   中位 ≈ **1.3e-2**(正是 round4 §2 P2 独立引用的那个数)⇒ 7.973e-04 / 1.3e-2 = **6.1%** ✅
-> - 我 07-29 版的 `gate5` 池化了**全部 80 个** `layer_scale`,把**块级**(缩放 ConvFFN
->   残差,另一个模块)也算了进去 ⇒ 分母被抬到 3.296e-02 ⇒ 假的 **2.42%**。
->
-> **腿③ 原样成立。** `gate5` 已改:主报可比比值,池化比值只作**明确标注为不可比**的参考。
->
-> ✅ **2026-07-30 服务器实测确认**:`temporal_capacity_audit.py` 输出
-> **闸门比 = 0.0613**,时序中位 0.0008、空间中位 **0.0130**,且**两侧 n 都是 9920**
-> (40 块 × 通道)⇒ 逐通道一一对应,这就是「可比」的定义。
-> 该脚本 2026-07-24 的全部输出本次**逐位复现**,见 `experiments/gate0_results.md` §7。
->
-> ✅ **2026-07-30 交叉验证:改好的 `gate5` 跑出同一个数。**
-> `layer_scale_1d (时序 mixer) n=9920 median=7.973e-04` /
-> `layer_scale (空间 mixer) n=9920 median=1.300e-02` ⇒ **0.0613** ——
-> 与静态审计**由完全独立的代码路径**得到、四位小数一致;空间中位 1.300e-02 也正是
-> §2 P2 一开始就引用的 1.3e-2。**三个来源、一个数。**
-> 池化值仍会打印但标注为「**勿用于腿③** … 0.0242 … 混进了块级 ConvFFN 门」,
-> ⇒ 这个错误现在被记录在**工具自己的输出里**,不只是散文里。
+| 臂 | r_mean raw(主口径) | r_mean DSL | Δ raw(95% CI) | Δ DSL(95% CI) | 判定 |
+|---|---|---|---|---|---|
+| base | 61.55 | 62.28 | — | — | 与文档记载逐位一致 |
+| ③ 时序支路置零 | 61.12 | 61.95 | **−0.43** [−0.82, −0.03] | −0.33 [−0.72, +0.05] n.s. | CI 上界 0.82 < 判据 1.0 ⇒ **不保留** |
+| ④ `temporal_embedding` 置零 | **62.25** | **62.95** | **+0.70** [+0.20, +1.20] | **+0.67** [+0.17, +1.15] | 两口径都显著,删了更好 ⇒ **不保留** |
 
-**② 训练到底卡在哪?(30 分钟,零 GPU 训练)** —— ✅ **已定案:不是 dataloader**(见下),
-剩下的是 GPU 侧。**全部在 b100(H100)上跑** —— 101vector 是 8×V100 且没有训练数据,见下 ③:
+三个必须一起记住的限定:
 
-> 🔴 **2026-07-30 修正:本节原先的两段 heredoc 都是坏的,一段都跑不了。**
-> ① 解码那段读 `data/anno_pretrain/internvid_v1.jsonl` —— **该路径不存在**,真实标注是
-> `anno_downstream/InternVid/InternVid-10M-flt_1.json`(**JSON 列表**,不是 JSONL),
-> 且记录里的文件名键是 **`image`**(本仓库 video 也用 `image`,见
-> `dataset/base_dataset.py:139-156`),还得和 `data_root` 拼起来才是完整路径。
-> ② 吞吐那段调 `setup_main()` —— 它会**读 argv 里的 config** 并执行
-> `init_distributed_mode()` + `dist.barrier()`,**裸 `python` / heredoc 根本起不来**。
-> 现已合并为一个受版本管理的脚本 `experiments/probe_decode_bound.py`(A/B 两段都在里面,
-> 路径全部从 config 自己解析,不硬编码)。
+- **只能写「r_mean 显著提升」**,不能写「t2v R@1 显著提升」:④ 的 `img_r1` raw +1.70 显著,
+  DSL +1.30 不显著。
+- **MSR-VTT 是弱时序探针**,批准删 `temporal_embedding` 之前先跑 `ssv2_mc_val`(§3.12)。
+- **配对分辨率是区间不是常数**:本次实测配对相对无配对约 **4.9~6.3 倍**(R-Sum 95% CI 半宽
+  ±2.30~3.00 vs ±14.50~14.70);别把别处记的「约 11 倍」当常数。
 
-> ✅ **2026-07-30 定案(第二次实测,四段版):`dataloader 根本不是约束`。**
->
-> | 段 | 实测(06:24) | 含义 |
-> |---|---|---|
-> | A 热解码 | ~20 ms/片 | 解码本身很快 |
-> | A2 冷读 | I/O 占冷解码 **≈0%**,冷/热 1.2× | **挂载盘不慢** ⇒ H2 死 |
-> | B loader-only(单卡 6 workers) | **132.7 样本/s** | 训练每卡只消费 **13.9** ⇒ **富余 9.5×** |
-> | C 扫描 1→24 workers | 7.5 → 324.6 样本/s,**没饱和** | 机器 **192 核 / 可用 176** ⇒ H1 死 |
->
-> ⇒ **`notes/architecture-round4.md` §0.2「训练是解码瓶颈」不成立。**
-> MFU 0.67% 仍是真的,但原因在 **GPU 侧/训练循环**(depthwise 小核的 kernel-launch、
-> 低占用率、DeepSpeed/通信),不在读数据。「6.6 天/轮」大概率仍可大幅压缩,
-> 但**不是靠 `num_workers`、也不是靠预解码**。
->
-> 🔴 **同一天里这个结论被推翻过两次,两次都是方法错,记在这里防第三次:**
-> 1. **只比一个基准 ⇒ 判反。** 第一版把「单卡 6 workers 的 loader」直接和
->    「4 卡 24 workers 的训练」相比,算出「workers ×4 只换 +14%」,据此宣布
->    「共享资源饱和、加 workers 没用」。两边 workers 总数不同,**根本不可比**。
->    真扫描一跑,1→24 workers 一路线性到底,没有任何饱和。
-> 2. **预热没排空 prefetch 队列 ⇒ 高档位虚高。** DataLoader 预取
->    `num_workers × prefetch_factor`(默认 2)个 batch;第一版预热 1 个 batch、
->    最多测 40 个,而 24 workers 的队列有 48 个 ⇒ 几乎全在吃存货,测出 **43× 超线性**、
->    每 worker 吞吐反随 workers 上升(物理上讲不通)。脚本现已预热
->    `2 × workers × prefetch_factor`,并对超线性直接打警告 —— 所以 324.6 那个数
->    **别引用**,只引用「还在爬、没饱和」这个方向。
+🔴 **`gate5-fused`:P2 的 INT8 机制被证伪。** 融合后 `|w_1d − δ|` 逐通道最大值(n=9920)
+中位 **6.178e-03**,而 INT8 抹零阈值 **3.937e-03** ⇒ **只有 36.2% 的通道被抹零,时序项在
+INT8 下存活约 64%**。失效原因:P2 用 `λ·|Δ|` 估算时假设 BN 折叠后的 depthwise 核是
+O(0.1–1),实测反推 `|Δ| ≈ 7.7`,差一到两个数量级 —— λ 是对的,乘的那一项错了。
+连带作废「`layer_scale_1d = 0` 就是精确的 INT8 模拟」(它比 INT8 更狠),口诀应为
+**`SNR ∝ 127·λ·|Δ|`**。**该支路仍不值得保留 —— 但依据是消融(上界 0.82 r_mean vs
+27.8% ONNX 图),不再是量化。**
 
-`nproc` 不用单独跑 —— 脚本末尾会打印 `os.cpu_count()` 和**本进程实际可用核**
-(容器里两者常常不一样,`nproc` 只告诉你其中一个;本机 192 / 176)。
+✅ **闸门比 0.0613 三源一致**:`temporal_capacity_audit.py` 与改好的 `gate5` 由完全独立的
+代码路径都给出时序中位 7.973e-04 / 空间中位 1.300e-02(两侧 n 都是 9920,逐通道一一对应)。
+⚠️ 分母只能取 `token_mixer.layer_scale`(40 个,缩放空间 mixer 支路);池化全部 80 个
+会把块级 ConvFFN 门也算进去,得到假的 2.42% —— `gate5` 现在会把池化值明确标注为不可比。
+
+#### 训练卡在哪:不是 dataloader
 
 ```bash
 # A 热解码 + A2 冷读 + B loader-only + C workers 扫描 —— 一个脚本跑完,自带交叉判读
@@ -1089,42 +1042,36 @@ python -m torch.distributed.run --nproc_per_node=1 --master_port=$((10000+RANDOM
     output_dir probe_decode_bound
 ```
 
-> 必须走 `torch.distributed.run`(理由见上 ②)。约 15 分钟。可选参数:
-> `--batches N`(B 段迭代多少 batch,默认 50)、`--sweep 1,2,6,12,24`(C 段档位,
-> 给 `none` 跳过)、`--cold-files N`(A2 每组取几个互不相同的文件,默认 25)。
-> **任何一段失败都不挡后面的段。** 判读只有 **④** 定瓶颈:比较「同样 workers 下
-> loader 供得起多少」与「训练每卡实际消费多少」,富余 ≥2× 就说明输入管线无罪。
+必须走 `torch.distributed.run`(脚本会 `init_distributed_mode()` + `dist.barrier()`,
+裸 `python` 起不来)。约 15 分钟。可选参数:`--batches N`、`--sweep 1,2,6,12,24`(给 `none` 跳过)、
+`--cold-files N`。任何一段失败都不挡后面的段。
 
-**③ 证伪 / 证实「dataloader 无罪」—— 真训练(必须在 b100/H100 上跑)**
-
-> ❌ **不能拿 101vector(V100)代跑**,两条独立的硬理由:
-> 1. **那台机器没有训练数据。** `recaption/docs/setup-v100.md` 开篇即写:本机只有
->    `/home/vca1/datasets/internvid_zh_10k` 这 1 万条抽样,**11 个 InternVid 训练分片一个都没有**
->    (7 个下游评测基准的视频也都没有,见 TROUBLESHOOTING「这台机器上根本没有下游评测数据」)。
->    `config.py` 的 `train_file` 指向 `data/video_sample/InternVId-FLT_*`,在 V100 上直接建不出 dataset。
-> 2. **要检验的那个数本身是 H100 的数。** 基准 9.1821 s/it、MFU 0.67% 都是 4×H100 上测的
->    (峰值 ~990 TFLOP/s bf16);V100 是 sm70、无 bf16、fp16 峰值 ~125 TFLOP/s,差约 **8×**。
->    同样的 loader 吞吐在 V100 上算出来的 MFU 会高一个量级,**V100 的 s/it 既证实不了也证伪不了 H100 的结论**。
+> ✅ **实测定案(4 段版):dataloader 根本不是约束。**
 >
-> V100 能做的是另一件事:用 `internvid_zh_10k_pilot` 语料给**那台机器自己**做一份
-> 解码/IO 画像(`train_corpus internvid_zh_10k_pilot`,并先确认 `data/internvid_zh_10k/videos`
-> 指向 `/home/vca1/datasets/internvid_zh_10k`)。那是「以后能不能挪到 V100 训」的问题,**不是闸②**。
+> | 段 | 实测 | 含义 |
+> |---|---|---|
+> | A 热解码 | ~20 ms/片 | 解码本身很快 |
+> | A2 冷读 | I/O 占冷解码 ≈0%,冷/热 1.2× | 挂载盘不慢 |
+> | B loader-only(单卡 6 workers) | **132.7 样本/s** | 训练每卡只消费 13.9 ⇒ 富余 9.5× |
+> | C 扫描 1→24 workers | 7.5 → 324.6 样本/s,没饱和 | 机器 192 核 / 可用 176 |
+>
+> ⇒ MFU 0.67% 是真的,但原因在 **GPU 侧/训练循环**(depthwise 小核的 kernel-launch、
+> 低占用率、DeepSpeed/通信),不在读数据。
+>
+> 🔴 **两个方法坑,记在这里防重犯:**(1) 只比一个基准会判反 —— 拿「单卡 6 workers 的
+> loader」比「4 卡 24 workers 的训练」,workers 总数不同,根本不可比;(2) 预热没排空
+> prefetch 队列会让高档位虚高(队列有 `workers × prefetch_factor` 个 batch),脚本现已
+> 预热 `2 × workers × prefetch_factor` 并对超线性打警告 —— **324.6 那个数别引用**,
+> 只引用「还在爬、没饱和」这个方向。
 
-> ⚠️ **2026-07-30 首次尝试直接崩了,先 `git pull` 再跑。** 基线 config 的
-> `test_file` 键是 `act_val` 而 `test_types = ["ret_test"]`,2026-07-29 加的守卫
-> (`pretrain.py:248`)会在第一个 step 之前 `raise ValueError` ⇒ **预训练当时谁都跑不起来**。
-> 两个基线 config(`mobileviclip_small` / `_tiny`)已改成 `dict(ret_test=…)`,
-> 见 TROUBLESHOOTING「训练跑完但没有任何评测数字」。
+真训练侧的复核**必须在 b100(H100)上跑**:101vector 没有 11 个 InternVid 训练分片,
+且要检验的 9.1821 s/it、MFU 0.67% 本身就是 4×H100 的数(V100 无 bf16,峰值差约 8×)。
 
-🔴 **别和历史基准比 —— b100 是共享机。** 8 张 H100 常年被别的租户占到 ~87%
-(TROUBLESHOOTING「b100 is a shared, multi-tenant node」),而 `9.1821 s/it` 是**另一天**、
-未知负载下测的。拿今天的 `num_workers=16` 去比它,等于把机器负载差异算到 workers 头上 ——
-**这正是本节 ② 刚刚栽过的「只和一个陈旧基准比」那个错。**
-
-所以**两档要背靠背在同一个会话里各跑一次**,顺序 6 → 16,中间不要隔夜:
+🔴 **b100 是共享机,别和历史基准比。** 8 张 H100 常年被别的租户占到 ~87%,而 9.1821 s/it
+是**另一天**未知负载下测的。两档要**背靠背在同一个会话里**各跑一次,顺序 6 → 16:
 
 ```bash
-# 先记录此刻的争抢情况(两档各跑前都记一次,便于事后判断负载是否变了)
+# 先记录此刻的争抢情况(两档各跑前都记一次)
 nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total --format=csv
 
 export PYTHONPATH=${PYTHONPATH}:. ; export OMP_NUM_THREADS=1
@@ -1141,30 +1088,20 @@ python -m torch.distributed.run --nproc_per_node=4 --master_port=$((10000+RANDOM
     num_workers 16 output_dir probe_train_nw16
 ```
 
-另开一个终端,在**任一档**跑的时候看 GPU(**两种读法相反,别只记一种**):
-
-```bash
-nvidia-smi dmon -s u -c 60
-```
+另开一个终端看 GPU(`nvidia-smi dmon -s u -c 60`),**两种读法相反,别只记一种**:
 
 | sm 列 | 读法 |
 |---|---|
 | 持续 **<25%** | GPU 在等数据/等同步 ⇒ 还是喂不饱(输入或通信) |
 | 持续 **>70% 而 MFU 仍 0.67%** | 核在跑但几乎不干活 ⇒ **kernel-launch / 低占用率**,这才是要修的 |
 
-**判读**:比的是**今天这两档之间**的 s/it,不是和 9.1821 比。
-两档基本持平 ⇒ **坐实 loader 无罪**,瓶颈在 GPU 侧;
-16 档明显更快 ⇒ 单卡外推不成立(4 卡会互抢 CPU),回到调 workers 那条路。
-历史基准 9.1821 s/it 只用来**旁证机器负载**:若今天的 6 档和它差很多,说明当时/现在的争抢不同,
-更要以今天的两档对比为准。
+**判读**:比的是**今天这两档之间**的 s/it,不是和 9.1821 比。两档基本持平 ⇒ 坐实 loader
+无罪;16 档明显更快 ⇒ 单卡外推不成立(4 卡会互抢 CPU),回到调 workers 那条路。
 
-**⑥⑦⑧** 仍见 `notes/architecture-round4.md` §3(⑥ 需让 `encode_vision` 别提前折叠 T,
-打分路径 `get_sim` 已支持;⑦ 视觉塔分辨率无关,改 `img_size` 免插值免重训;
-⑧ 随机权重即可导出计时,**延迟与权重无关**)。
+> ⚠️ 值得单独记一句:**时序分支 = 0.20% MACs 却占 27.8% 的 ONNX 图**、18% 的 CPU mixer
+> 墙钟(约 75% 是 permute 而非算术)。**这个仓库以后判效率,数的是全特征图 transpose 的
+> 个数,不是 FLOPs。**
 
-> ⚠️ 实测结论,值得单独记一句:**时序分支 = 0.20% MACs 却占 27.8% 的 ONNX 图**、
-> 18% 的 CPU mixer 墙钟(约 75% 是 permute 而非算术)。
-> **这个仓库以后判效率,数的是全特征图 transpose 的个数,不是 FLOPs。**
 
 ### 3.12 SSv2-MC —— 唯一能证伪「删 `temporal_embedding`」的时序基准
 
@@ -1204,7 +1141,7 @@ python experiments/collect_results.py --compare-mc ssv2_gate3 ssv2_base
 > 合成数据上实测配对半宽 ±0.72 vs 无配对 ±2.99(**4.2×**)。
 > 单测见 `tests/test_paired_bootstrap.py`(多选部分 7 项,共 18 项)。
 
-### 3.13 环境实况自检 + SDPA 可用性(零 GPU,~10 秒;round-5 §8.1)
+### 3.13 环境实况自检 + SDPA 可用性(零 GPU,~10 秒)
 
 **为什么要跑**:仓库多处文档按 `mobileviclip.yml` 的 **torch 1.13.1** 推理,断言
 「SDPA 用不了、P1 被环境卡住」。**那个 pin 描述的机器一台都不存在** —— 两台 GPU 机
@@ -1222,8 +1159,8 @@ print("has compile:", hasattr(torch, "compile"))
 PY
 ```
 
-**判读**:`has SDPA = True` ⇒ **P1 不再有环境阻塞**,`architecture-round4.md` §5 里
-「torch 1.13.1 没有 SDPA、只能手写分块」那句作废(已划掉),`paper-plan` §六.8 的
+**判读**:`has SDPA = True` ⇒ **P1 不再有环境阻塞**,架构第四轮报告 §5 里
+「torch 1.13.1 没有 SDPA、只能手写分块」那句作废(已划掉),论文线 §六.8 的
 降级理由也只剩半条。`arch_list` 含 `sm_90` = H100 走完整 Flash 路径;只含 `sm_70`
 = V100 走 memory-efficient 内核(仍然消掉 N×N 物化)。
 
@@ -1249,9 +1186,9 @@ PY
 基准,所以走 `if hasattr(F, "scaled_dot_product_attention"): ... else: <现有朴素路径>`,
 不要无条件调用。开关沿用仓库既有的 `use_flash_attn` 旗标(现在被接进来却**从不读**)。
 
-### 3.14 P11 逐块深度敏感度扫描(零训练,~1 GPU-小时;round-5 §8.3 P11)
+### 3.14 P11 逐块深度敏感度扫描(零训练,~1 GPU-小时)
 
-**目的**:`architecture-round4.md` §8.2 证明**每个 RepMixerBlock 的 MACs 完全相同
+**目的**:架构第四轮报告 §8.2 证明**每个 RepMixerBlock 的 MACs 完全相同
 (157.29 M = 逐帧 2.04%)**,「stage 3 占一半」其实只是 `layers[2]=24`。⇒ 删**深度**是
 第一次真正作用在 86.5% 主导项上的杠杆,而且**可以零训练地量出每一块值多少分**。
 
@@ -1400,7 +1337,7 @@ python experiments/collect_results.py --compare \
 ③ 报收益必须连部署成本一起报 —— 相似度级聚合 ⇒ 索引存 **T 份**逐帧嵌入(×T 存储/点积)。
 ⚠️ probe 自建前向,绝对值与 `retrieval.py` 管线差 ~0.8 ⇒ **脚本内差值可判,跨管线绝对值不可比**。
 
-### 3.12 C1 KD 训练侧(ROADMAP 2.2c,2026-08-04 落地)—— 闸门与冒烟
+### 3.18 C1 KD 训练侧(2026-08-04 落地)—— 闸门与冒烟
 
 完整执行单(闸门顺序、判读、预登记)= **`notes/c1-kd-training-manual-zh.md`**。速查:
 
@@ -1421,7 +1358,7 @@ python utils/teacher_bank.py verify --out experiments/teacher/iv2s2_1m \
 `caption_idx`、多语料拼接、去掉 `jump_filter` 都会被 `build_teacher_bank` 拒绝;
 ③ 教师 `teacher_dim` 以抽取 manifest 的 `embed_dim` 为准,IV2-1B 预期 768。
 
-### 3.16 全减法闸门 + 混合预算 (T×R) 评测(零训练;§11.7-2 / §11.8-N1 / C2-2D 闸门 1)
+### 3.16 全减法闸门 + 混合预算 (T×R) 评测(零训练;C2-2D 闸门 1)
 
 **逐帧独立域三开关**(评测用环境变量,训练一律走 config 键;实现在
 `models/mobileviclip_small.py`,缺省全关、off-path 不变):
@@ -1462,7 +1399,7 @@ python experiments/collect_results.py --compare \
 ```
 
 **判读**:某个混合分配在 ≤ 自己 cost 的所有均匀分配上 Pareto 胜出且配对 CI 不含 0
-⇒ **闸门 1 PASS,C2-2D 升级成立**(`publishability-assessment.md` §1.1);
+⇒ **闸门 1 PASS,C2-2D 升级成立**(发表可行性自评 §1.1);
 全档均匀不输 ⇒ 记 null,C2 保持 1D,零损失。
 **为什么组合是精确的**:三开关下整塔逐帧独立、clip 嵌入 = 帧嵌入线性平均、
 落盘的是未归一化嵌入 ⇒ 分组加权平均逐位等于真跑混合分配。

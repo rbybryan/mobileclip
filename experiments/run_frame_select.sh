@@ -62,7 +62,7 @@ run_arm () {  # run_arm <arm_name> <num_frames_test> [env assignments...]
 }
 
 # --- 参照臂:不选帧 ------------------------------------------------------
-# pool<POOL> 复现 ROADMAP 1.6 的 T=16 读数 ⇒ 兼作"钩子未开启时逐位等价"的验证
+# pool<POOL> 复现 B0 多 T 曲线 的 T=16 读数 ⇒ 兼作"钩子未开启时逐位等价"的验证
 run_arm "pool${POOL}" "${POOL}"
 # native_T<K>:整段视频上直接 middle 采 K 帧。与 uniform 臂的差别只在**采样支撑**
 # (整段 vs 16 帧母序列),用来判断"池子本身"有没有影响 —— 别把两者混为一谈

@@ -1,5 +1,5 @@
 """1M 验证层 —— **lean**:P1trained + 删 `temporal_embedding`(两个减法合体,seed 42)。
-见 `notes/next-training-round-zh.md` / `verification-tier-1m-zh.md` §11.3、§11.6-2。
+见 `notes/verification-tier-1m-zh.md` / `verification-tier-1m-zh.md` §11.3、§11.6-2。
 
 相对 sub1m_r0 的变化(两项都是**减法**,零新增参数):
   1. `disable_temporal_branch=True`   —— P1trained,1M 已非劣通过(§10.3(c))

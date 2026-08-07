@@ -7,10 +7,10 @@
 > 撤销。终审载荷见 §0.6，流程图见 §3。）
 >
 > **角色**：本文是重字幕工作的**唯一执行层**——
-> [`fusion-scheme.md`](archive/fusion-scheme.md)（五样本重述+融合）与
-> [`caprl-scheme.md`](archive/caprl-scheme.md)（CapRL 数据强化）两份设计
+> [`fusion-scheme.md`](master-plan.md)（五样本重述+融合）与
+> [`caprl-scheme.md`](master-plan.md)（CapRL 数据强化）两份设计
 > 各自的分阶段清单（其 §6.2 / §7）**均被本文取代**；两份原文保留为设计依据与方法论论证，
-> 不再照其执行。审计事实底座见 [`audit-findings.md`](archive/audit-findings.md)。
+> 不再照其执行。审计事实底座见 [`audit-findings.md`](audit-report.md)。
 >
 > **一句话**：**S0 五样本重述照跑（已实现）；训练验证前置、验真与融合后置、人力标注归零**——
 > 先用零工具风险的句切富集过训练门 G1，G1 过后由全自动 Panel-V 验真面板产出 C_v 臂做 G2
@@ -38,9 +38,9 @@
 
 | # | 问题 | 裁决 |
 |---|---|---|
-| C1 | **两条训练线混写**：方案按英文线（MobileCLIP-S2 / MSR-VTT / CapRL-Video-4B 英文字幕器）立论，但重字幕的当下主战场是中文线（NebulaCV-24M / MiniRBT 冻结文本塔 / InternVid-zh） | 两线**分开钉**（§2 D1）：zh=Qwen3-VL-8B 直出中文（已实现、已论证）；EN=CapRL-Video-4B（paper 线 C1，归 `paper-plan.md` U7 所有） |
+| C1 | **两条训练线混写**：方案按英文线（MobileCLIP-S2 / MSR-VTT / CapRL-Video-4B 英文字幕器）立论，但重字幕的当下主战场是中文线（NebulaCV-24M / MiniRBT 冻结文本塔 / InternVid-zh） | 两线**分开钉**（§2 D1）：zh=Qwen3-VL-8B 直出中文（已实现、已论证）；EN=CapRL-Video-4B（paper 线 C1，归 论文线计划 U7 所有） |
 | C2 | **P0 一步到 3M×K≈9M 次生成**，缺中间决策门 | 改为 300k 子集 → G1 训练门 → 全量（§3 Stage 3/5）；全量前必须有子集级证据 |
-| C3 | Pillar C（tags/硬负）、Pillar D（教师嵌入/KD）的所有权已被 `paper-plan.md` §7 / U7 / U9 收编 | 本计划**不重复规划**，只保留接口（§6 砍掉清单、§2 D9） |
+| C3 | Pillar C（tags/硬负）、Pillar D（教师嵌入/KD）的所有权已被 论文线计划 §7 / U7 / U9 收编 | 本计划**不重复规划**，只保留接口（§6 砍掉清单、§2 D9） |
 | C4 | §8 「原始字幕保留为采样视图之一」被当成普适护栏 | 只对 **KEEP 桶**成立；**RECAPTION 桶成员的原字幕是实测差的字幕，不得回流为训练视图**（§4） |
 
 ### 0.3 对 `fusion-scheme.md` 的修正
@@ -138,7 +138,7 @@ LoRA 也不涨 → 才是数据/任务本身无头寸。不做这步就下结论
    任何一项跳过都不阻塞任何门）。裁判纪律沿审计教训：拆分单一判据调用、绝不合并 rubric、
    Qwen3.6-27B 只用于纯文本轴（它看不见画面，且与字幕器同族）。
 
-### 0.7 检索增补（2026-07-27，两路带网络检索专家评审；完整证据见 recaption/docs/archive/kd-review.md）
+### 0.7 检索增补（2026-07-27，两路带网络检索专家评审）
 
 约 55 篇 arXiv 逐一取原文核验。头条：**阶梯无更优替代**——A′ 32-token 恰是 CLIPS
 （2411.16828）实测最优 token 长度；融合降级获视频原生新证（2401.06129：全语料重述
@@ -168,7 +168,7 @@ LoRA 也不涨 → 才是数据/任务本身无头寸。不做这步就下结论
    覆盖 25% 偏置桶（成对信号 ~6%）、生成式→对比式特征蒸馏零发表先例、省下的
    ~17 H100·h 与 InternVideo2-1B 全语料 pass（~21 H100·h，4×H100 实际 1–2 天）
    同量级。**白捡字节做 U9 一行 `+geo(Qwen)` 消融 = 有条件可**（CKA 前置门 +
-   不得迫使重述离开 vLLM），归 paper-plan U7/U9 所有（§6 边界不变：zh 线不做 KD）。
+   不得迫使重述离开 vLLM），归论文线 U7/U9 所有（§6 边界不变：zh 线不做 KD）。
 7. **自证无虞**：A− 打分器已是多语言 `google/siglip2-so400m`（英文打分器乱选
    top-3 的风险不存在）；bundle 回来看 5 重述分差区分度即闭环。
 
@@ -314,14 +314,14 @@ B v2 至今零样本生成；A 的 prompt 一改**白费全部 A 缓存**（§5.
 
 | 项 | 事实 | 出处 |
 |---|---|---|
-| 两条训练线 | **zh 线**：NebulaCV-CLIP-24M（FastViT-MCI0 + MiniRBT-H288 中文文本塔，冻结、仅 MLP 投影可训，max_txt 32），InternVid-zh 11 分片，b100 与 wky/zyc 协作；**EN 线**：MobileViCLIP 复现+论文（CVPR'27，R0–R3，4×H100） | `b100-local-changes.md`、`paper-plan.md` |
+| 两条训练线 | **zh 线**：NebulaCV-CLIP-24M（FastViT-MCI0 + MiniRBT-H288 中文文本塔，冻结、仅 MLP 投影可训，max_txt 32），InternVid-zh 11 分片，b100 上与中文线/翻译线协作；**EN 线**：MobileViCLIP 复现+论文（CVPR'27，R0–R3，4×H100） | — |
 | 审计定论 | 粒度粗 93.6% / 质量差 19.6% / 翻译差 3.6% / RECAPTION 桶 25.3% / RETRANSLATE 并入 RECAPTION（结论 13）| `audit-findings.md` |
 | 已实现 | S0 五样本重述全链：`RECAP_PROMPT` + `vlm_audit_hf.py --mode recap`（N=5、temp 0.9、帧抖动）+ `run_v100.sh recap`（8 卡分发、可续跑）；输入队列 `$OUT/v0_2/recaption_tasks.jsonl`（`apply_buckets --out-recaption` 产物） | #215/#216 |
 | 已实现（2026-07-24 晚补） | `split_views.py`（A′ 句切+单测）、`recap_diag.py`（坍缩诊断+侧批对照）、`make_recap_tsv.py`/`recap-tsv`；**全链条样本档**：`--mode derive`（A_llm 派生+en_gloss）、`score_alignment --tag` 透传（A− 选择）、`fuse_verify.py` v0（Panel-V 检测器档：GDINO fp32 + RapidOCR，缺件自动降级）、`make_pipeline_tsv.py` + `run_v100.sh pipeline-sample`（50 片端到端 ~1h，全景 TSV） | Stage 2-1/2/5/6 样本档；`recaption/docs/audit-workflow.md` |
 | 未实现 | Panel-V **VLM 二审档**（InternVL2.5-8B venv + 路由/升级/噪声自校准，§5.4 完整版）、`fuse_captions.py --mode decompose`（S1–S2 冒烟；S3–S7 仅 pass-2）、中转压测、D11 探针脚本、300k 生产档编排 | Stage 2 清单剩余 |
 | 消费端 | `pt_dataset.py` uniform 模式**只读 `captions` 列表**；原字幕想当视图必须显式放进列表。⚠️ `min_caption_length` 按 `split()` 数词——**中文无空格恒为 1**，zh 配置必须 ≤1，否则静默全滤 | `pt_dataset.py:173-201` |
-| 算力 | 101vector 8×V100（HF 后端、审计/试点）；b100 8×H100（论文线默认前 4 卡；vLLM 可用；**优先级=EN 论文线**，zh 大批量用空档并先打招呼） | `SETUP_B100.md`、`plan-review-upgrades.md` U6 |
-| EN 线接口 | C1 需每片 ≥2 条合成短字幕（CapRL-Video-4B，10M ≈ 3–6 天 @4×H100，vLLM） | `plan-review-upgrades.md` §3.6、U7-3 |
+| 算力 | 101vector 8×V100（HF 后端、审计/试点）；b100 8×H100（论文线默认前 4 卡；vLLM 可用；**优先级=EN 论文线**，zh 大批量用空档并先打招呼） | `SETUP_B100.md`、评审清单 U6 |
+| EN 线接口 | C1 需每片 ≥2 条合成短字幕（CapRL-Video-4B，10M ≈ 3–6 天 @4×H100，vLLM） | 评审清单 §3.6、U7-3 |
 
 ---
 
@@ -329,7 +329,7 @@ B v2 至今零样本生成；A 的 prompt 一改**白费全部 A 缓存**（§5.
 
 | # | 决策 | 理由 |
 |---|---|---|
-| D1 | **前端分线钉死**：zh = Qwen3-VL-8B `RECAP_PROMPT`、N=5、temp 0.9、帧抖动（不动）；EN = CapRL-Video-4B（形态经 1k 试点在「prompt 约束 K 条短句」vs「稠密+句切」二选一，归 paper-plan 执行） | zh 直出避开翻译级联且已实现；EN 器为论文故事与吞吐最优 |
+| D1 | **前端分线钉死**：zh = Qwen3-VL-8B `RECAP_PROMPT`、N=5、temp 0.9、帧抖动（不动）；EN = CapRL-Video-4B（形态经 1k 试点在「prompt 约束 K 条短句」vs「稠密+句切」二选一，归论文线 执行） | zh 直出避开翻译级联且已实现；EN 器为论文故事与吞吐最优 |
 | D2 | **融合不上任何关键路径**：EN 论文线 C1 不引入融合；zh 线融合只在 G1+诊断双绿灯后启动 | deadline 红线；未经验证的机器不背关键路径 |
 | D3 | **G1 = 300k 均匀子集「富集」试验**，不是「只修 25% 桶」试验 | 粒度粗 93.6% 是全语料病，富集测的才是主效应；均匀抽样免除桶置信度混淆；12.8M 样本/臂对齐仓库消融惯例 |
 | D4 | **N=5 一次产齐**（300k×5，不为 G1 单独产 N=2）；字幕器经 Stage 3 预飞 bake-off（8B vs 30B-A3B @H100+vLLM）后定 | 同一批产物喂 G1（arm A）+ G2（arm A−/C）+ 规模化 support 诊断；重跑比一次产齐更贵；评审分歧见 0.5-5 |
@@ -337,7 +337,7 @@ B v2 至今零样本生成；A 的 prompt 一改**白费全部 A 缓存**（§5.
 | D6 | **原字幕去留按桶**：KEEP=保留为唯一/其一视图；RECAPTION 桶=不回流 | 见 0.2-C4 |
 | D7 | **F0 高风险类别守恒策略**：`onscreen_text` 不进融合稿；`count` 一律模糊量词 | 见 0.3-F5；无验真器期的精确优先 |
 | D8 | **`en_gloss` 随视图产**（v1.1：从 S7/派生调用顺带输出，而非 S1）——每条视图附英文名词短语表，GroundingDINO 验真用它查询 | 见 0.3-F3；C_v 是视图级验真，gloss 挂视图比挂单元更直接 |
-| D9 | RETRANSLATE 并入 RECAPTION（全量不再维护独立通道）；FIX_TEXT/DROP 照旧文本侧；tags/硬负/教师嵌入归 paper-plan U7/U9，本计划只保证 schema 兼容 | 审计结论 13；所有权单一 |
+| D9 | RETRANSLATE 并入 RECAPTION（全量不再维护独立通道）；FIX_TEXT/DROP 照旧文本侧；tags/硬负/教师嵌入归论文线 U7/U9，本计划只保证 schema 兼容 | 审计结论 13；所有权单一 |
 | D10 | **zh 评测集钉死**：门控指标 = 2k held-out **KEEP 桶**片内检索（字幕经审计、干净）；报告指标 = MSR-VTT-1k 查询一次性机翻中文，QC **全自动**（v1.1）：确定性检查（数字/实体存活，复用 `strip_shared_latin` 修复版）+ 27B 走 s2-trans 已验证调用形态 + NLLB 异族回译 + LaBSE 极尾离群规则（尊重审计结论 2/9：LaBSE 只在极尾有信号）→ 离群自动重翻，二次失败即弃（预期 <2%）；**评测集在任何臂比较前冻结**（翻译噪声两臂共享 → 只损灵敏度不偏 Δ）。维护者可选 ~30 分钟抽掠，无约束力 | 用 v0.1 噪声字幕当验证集会系统性低估富集收益；KEEP 桶是现成的干净集；QC 自动化见 0.6-7/D14 |
 | D11 | **三个 10 分钟级探针（v1.1：`hfl/minirbt-h288` 可直接 HF 下载，101vector CPU 即可跑，不等 b100）**：(i) MiniRBT 对重述样本的实测 token/字比（钉视图字预算）；(ii) 冻结文本塔顺序敏感探针（1k 对顺序互换句余弦）——zh(MiniRBT) 与 EN(MobileCLIP-S2) 各一次；(iii) **视图可分性探针**：冻结 MiniRBT 编码 ~1k 片的候选短视图（用 Stage 0 产物 + split_views），报片内视图两两余弦与「视图↔原字幕」余弦分布 | (i) 决定 D5 阈值；(ii) 决定 temporal_order/硬负线是否需 LoRA（caprl §6.3 提出后一直没人跑）；(iii) 预登记：片内两两余弦中位 >0.9 = 塔已饱和 → G1 直接带 LoRA 臂（0.4/0.5-4）。注：(ii)(iii) 的 NebulaCV 投影头若不易取，仅 MiniRBT 裸塔近似即可（结论只用于触发 LoRA 臂，非精密测量） |
 | D12 | **better_zh 存档**：不再生产分面候选；10k 轮 s4-merged 落地产物仅供回归对照 | fusion §0.1 论证其投票机制自相矛盾 |
@@ -384,7 +384,7 @@ Stage 2  (Claude)       工具: split_views / recap_diag / 派生+验真面板 /
 Stage 3  (H100 空档=硬前置) 300k×5 重述 → A′ 数据 → 12.8M 样本×2 臂 → G1: 富集 vs 基线
 Stage 4  (G1 过后)      A_llm/A−/C_v 数据 + Panel-V → 自适应消融   → G2: 验真/融合是否成立
 Stage 5  (G2 裁决后)    全量生产: 胜者配方, 桶优先级 rollout        → G3 自动验收
-Stage 6  (paper 线)     CapRL-Video-4B 英文字幕 pass — 归 paper-plan, 本计划仅供 schema
+Stage 6  (论文线)     CapRL-Video-4B 英文字幕 pass — 归论文线, 本计划仅供 schema
 ```
 
 ### Stage 0 — 10k 试点重述 + 诊断（V100，本周可跑，零人力）
@@ -427,7 +427,7 @@ CUDA_VISIBLE_DEVICES=1 python recaption/scripts/vlm_audit_hf.py \
 
 ### Stage 1 — zh v0.1 基线（b100，已在途）→ **G0**
 
-按 `notes/live/from-claude.md` 的 §2 返工指引继续：conda py3.10 环境 → 11 分片数据装配 →
+按 §2 返工指引继续：conda py3.10 环境 → 11 分片数据装配 →
 NebulaCV 基线训练。**G0 = 基线训练收敛且在 D10 两个评测集上出数**。没有 G0，后面一切比较无锚。
 （检查项：zh 配置 `min_caption_length ≤ 1`，见 §1 消费端陷阱。）
 
@@ -533,7 +533,7 @@ N=5。
   按长度比分桶报；幻觉轴不走偏好裁判，用 Panel-V verified-false 率、两臂同面板一阶抵消；
   27B 只裁纯文本轴）。分歧样本人工抽掠 ~15 分钟，无约束力（D14）。
 
-### Stage 6 — EN 论文线接口（所有权在 paper-plan，此处只钉两点）
+### Stage 6 — EN 论文线接口（所有权在论文线，此处只钉两点）
 
 1. 产物 schema 与 §4 相同（`captions` 列表、≤32 token、无时间戳、原 FLT 字幕保留为视图——
    EN 线无逐片审计标签，MobileCLIP2 同款混合先例）；
@@ -1044,7 +1044,7 @@ views → MISS 哨兵仅 B 臂可用（登记）。
 
 净效果：`run_v100.sh` 1316 → 959 行、脚本 27 → 23 个、`vlm_audit.py` 747 → 629、
 `vlm_audit_hf.py` 713 → 601；`setup-v100.md` 1527 → 639（裁判端点部署实录与 P0–P2
-效度测评两节随之删除，前者的完整记录在 `archive/setup-judge-*.md`）。
+效度测评两节随之删除，前者的完整记录见 git 历史）。
 同时新增 `tests/test_prompt_docs_in_sync.py`：把 `ab-pipeline_zh.md` §5 的 prompt
 全文与 `vlm_audit.py` 逐字钉死——服务器没有 Claude，文档漂移在结果里看不出来。
 
@@ -1055,7 +1055,7 @@ views → MISS 哨兵仅 B 臂可用（登记）。
 - ❌ N∈{3,8} 采样数消融、温度消融——G2 后可选项，不占主线；
 - ❌ RETRANSLATE 独立通道 @全量、`xling_cos` 分桶（决策 1）、better_zh 续产（D12）；
 - ❌ CapRL-MCQ 当事实门（fusion §3.5 已限定其为完整性排序器）；
-- ❌ zh 线新增任何 KD/教师嵌入工作——归 paper-plan U7/U9，勿双头；
+- ❌ zh 线新增任何 KD/教师嵌入工作——归论文线 U7/U9，勿双头；
 - ❌ **任何有约束力的人力标注**（D14）——含已撤销的 ~600 判定 k\* 标定与 300 片人评盲评；
 - ❌ 完整 CFU（S3–S7 单元投票融合）作为默认路线——只作 pass-2 条件项（0.6-1）。
   （2026-07-27：其**轻量实现**已按维护者指令提前为 G2 附加臂 **C_fuse**，见 §5.5；
@@ -1077,7 +1077,7 @@ views → MISS 哨兵仅 B 臂可用（登记）。
 | 卡期冲突 | EN 论文线 R0–R3 占满 H100 | zh Stage 3 降 V100 后备档或顺延；论文优先（§1） |
 | 8B 幻觉底噪偏高 | Stage 0 目检 / Stage 4 标定的单例（support=1）错误率 | k\* 上调；Stage 3 预飞若 30B-A3B 质量明显更好则换器重估 |
 
-## 8. 服务器下一步（copy-paste；也会同步到 notes/live/from-claude.md）
+## 8. 服务器下一步（copy-paste）
 
 ```bash
 # 101vector (V100 审计机):
@@ -1094,11 +1094,11 @@ bash recaption/scripts/run_v100.sh recap        # Stage 0 ①; 前置=s3+s4 已�
 
 ## 9. 锚点
 
-审计：[`audit-findings.md`](archive/audit-findings.md) ·
+审计：[`audit-findings.md`](audit-report.md) ·
 [`../recaption/docs/data-issues.md`](data-issues.md)。
-设计依据（执行层已由本文取代）：[`fusion-scheme.md`](archive/fusion-scheme.md) ·
-[`caprl-scheme.md`](archive/caprl-scheme.md)。
-论文线：[`paper-plan.md`](../../notes/paper-plan.md)（§7）· [`plan-review-upgrades.md`](../../notes/plan-review-upgrades.md)（U6/U7/U9）。
+设计依据（执行层已由本文取代）：[`fusion-scheme.md`](master-plan.md) ·
+[`caprl-scheme.md`](master-plan.md)。
+论文线：论文线计划（§7）· 评审清单（U6/U7/U9）。
 代码：`recaption/scripts/vlm_audit_hf.py`（`--mode recap`）· `recaption/scripts/run_v100.sh`（`recap`）·
 `recaption/scripts/apply_buckets.py` · `dataset/pt_dataset.py:173-201`。
 
