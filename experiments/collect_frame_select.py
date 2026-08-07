@@ -193,7 +193,7 @@ def main():
             print(" ".join(out))
 
         print()
-        print("**兼容性核对(必看)**:`pool16` 应复现 ROADMAP 1.6 的 T=16 读数,")
+        print("**兼容性核对(必看)**:`pool16` 应复现 B0 多 T 曲线 的 T=16 读数,")
         print("`nativeT2/T4` 应复现 1.6 的 T=2/T=4 读数。对不上说明评测链路被改动了,")
         print("先查这个再读上面的结论。")
         print()

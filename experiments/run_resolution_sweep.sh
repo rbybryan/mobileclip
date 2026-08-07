@@ -5,7 +5,7 @@
 #   bash experiments/run_resolution_sweep.sh 224 256          # 只跑这两个
 #
 # 为什么这条线能零训练跑:视觉塔**与分辨率无关**已核实 —— 无绝对位置嵌入、
-# `RepCPE` 是卷积核不是网格、head 是 `GlobalPool` mean(见 v100-10k-advance-tests.md A7)。
+# `RepCPE` 是卷积核不是网格、head 是 `GlobalPool` mean(见 experiments/v100_sweep_results.md A7)。
 # ⇒ 改 `img_size` **不需要插值、不需要重训**,直接换权重前向即可。
 #
 # 两个键**必须同时改**(只改一个会静默不一致):
@@ -104,5 +104,5 @@ cat <<'EOF'
 
 配对 CI(两口径同向 + CI 不含 0):
     python experiments/collect_results.py --compare eval_res224 eval_res256
-成本轴(免费、零数据,和精度轴配成前沿):v100-10k-advance-tests.md **A7**。
+成本轴(免费、零数据,和精度轴配成前沿):experiments/v100_sweep_results.md **A7**。
 EOF

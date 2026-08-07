@@ -4,7 +4,7 @@
 [`README.md` §2b](README.md) 用于 10k 试点训练）**并行**的另一条线：在 b100 主机上跑
 **全量 10M** 预训练（`internvid_all` 语料，R0→R1 等步 A/B）。两条线互不共享状态、
 互不阻塞。**试点数字一律不外推**（见 `README.md` §2b）；全量这条才是真实实验，
-按 [`ROADMAP.md`](ROADMAP.md) 第三线 3.2 的门控推进（R0 → R1 → R2 → R3）。
+按 [`experiments/README.md`](README.md) 第三线 3.2 的门控推进（R0 → R1 → R2 → R3）。
 
 > **两级分工**（见 [`README.md`「两级实验」](README.md)）：V100/10k 只做每个方案的
 > 链路/稳定性 go-no-go，**排不了序**（试点评测饱和 + 噪声）；**方案之间真正排序（A/B）
@@ -12,30 +12,29 @@
 
 > **⚠️ 先认清这台机器（否则装错 torch、开错卡）：**
 > - 主机昵称叫 **`b100`**（挂载都是 `/workspace/mount/b100_zaip_data*`），但**GPU 是
->   8×H100-80G（Hopper / sm_90）**，不是 Blackwell。这跟
->   [`../recaption/docs/archive/setup-h100.md`](../recaption/docs/archive/setup-h100.md) 是**同一台物理机**
->   （只是那份用于数据审查、这份用于训练）。
+>   8×H100-80G（Hopper / sm_90）**，不是 Blackwell。别和
+>   [`../recaption/docs/setup-v100.md`](../recaption/docs/setup-v100.md) 里的 V100 审计机搞混：
+>   那台用于数据审查，这台用于训练。
 > - **默认只用前 4 张卡**（`CUDA_VISIBLE_DEVICES=0,1,2,3`，`NUM_GPUS=4`）——后 4 张留给别的任务。
 >   要用满 8 张必须有维护者的**明确指示**。
 > - **⚠️ 这台机器是共用 root 账号，杀进程只准按 PID，禁止 `pkill -f` / `killall` 之类的
->   模式匹配。** 中文线（wky）跑的是**同一个** `tasks_clip/pretrain.py`，zyc 也在这台机上
->   干活；`pkill -f "tasks_clip/pretrain.py"` 会把**别人的训练一起杀掉**。
+>   模式匹配。** 同机上还有别的团队线在跑**同一个** `tasks_clip/pretrain.py`；`pkill -f "tasks_clip/pretrain.py"` 会把**别人的训练一起杀掉**。
 >   正确姿势：记下自己启动时打印的 PID（`nohup ... &` 后那行 `[1] <PID>`），
 >   用 `ps -p <PID> -o pid,etime,cmd` 确认还活着、用 `ls -l /proc/<PID>/cwd` 确认是自己的
 >   目录，再 `kill <PID>`。同理 `nvidia-smi` 里别人的进程一律不要碰。
 > - **⚠️ 找数据集只准在 `/workspace/mount/b100_zaip_data/video_datasets/` 里找**（维护者
 >   2026-07-24 明确要求）。**不要**对 `/workspace/mount/b100_zaip_data`、
 >   `/workspace/mount/b100_zaip_data*` 这种整挂载点跑 `find` —— 那底下是别人的工作目录
->   （wky / zyc / model_zoo / …），既是在翻别人的东西，几百万文件也会把机器拖慢。
+>   （别人的工作目录 / model_zoo / …），既是在翻别人的东西，几百万文件也会把机器拖慢。
 >   本文所有探盘命令都先 `VD=/workspace/mount/b100_zaip_data/video_datasets` 再限定
 >   `find "$VD" -maxdepth N`。**唯一例外**是预训练数据 `b100_zaip_data_luan/InternVid-10M-FLT`
 >   这个已知的确切路径（§4）——那是直接 `ls` 一个具体目录，不是全盘搜索。
-> - 入口/联网与 `recaption/docs/archive/setup-h100.md` §0 相同（`root@10.55.84.132 -p 31103`）。
+> - 入口/联网：`root@<H100_HOST> -p <SSH_PORT>`。
 >   全量视频在 `/workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT/`；
 >   工作区 `/workspace/mount/b100_zaip_data/rby/`。
 > - **⚠️ rby/ 下有两个并排的项目目录，别搞混**（2026-07-23 起）：
 >   - `rby/MobileViCLIP` —— **中文 NebulaCV 线**（上游 MCG-NJU 的 clone + 本地改动，
->     与 wky 协作；改动记录 + 中文标注源 caption 路径见 `notes/b100-local-changes.md`）。
+>     与中文线协作）。
 >     **本手册不管它，别动。**
 >   - `rby/mobileclip` —— **本 fork（英文原版模型改进线）**，R0–R3 全量预训练都在这里跑。
 >     本手册下文的「项目根」都指它。
@@ -54,7 +53,7 @@
       `python experiments/check_imports.py`，已知缺 `termcolor`）
 - [x] §3 权重 —— `mobileclip_s2.pt`(398MB) / `mobileviclip_small.pt`(74MB) /
       `mobileclip_s0.pt`(216MB) 均 `[OK ]`
-- [x] §4 数据 —— **走了方案 C**（zyc 合并 jsonl 的 `abs_path`+`caption` 生成 11 片 anno，
+- [x] §4 数据 —— **走了方案 C**（翻译线合并 jsonl 的 `abs_path`+`caption` 生成 11 片 anno，
       全量 10,647,458 条）+ 软链 `data/video_sample/InternVId-FLT_i`
 - [x] §5 预检 —— 11 个 `internvid_v*` 全 `[OK ]`（抽查 20/20 在、真解码 OK）；权重齐
 - [ ] **§6 冒烟（2 卡 debug）→ R0 真跑（4 卡）→ R1 三臂 ⟵ 从这里继续**
@@ -76,7 +75,7 @@ b100 主机本身不直连外网，靠一条**反向隧道**从能上网的操�
 
 ```bash
 # 在能上网的操作机上起隧道（保持这个 ssh 会话开着；掉了就重连）
-ssh -R 3390:proxyhk.zte.com.cn:80 root@10.55.84.132 -p 31103 -o ServerAliveInterval=240
+ssh -R 3390:<HTTP_PROXY_HOST>:80 root@<H100_HOST> -p <SSH_PORT> -o ServerAliveInterval=240
 
 # —— 进到 b100 后，这个 shell 里设代理（下载才走它）——
 export http_proxy=http://127.0.0.1:3390
@@ -138,7 +137,7 @@ wheel 都带 sm_90（cu118 里就有；cu124 对 Hopper 更快，作稳妥起点
    上面那条 Hopper 顾虑在这台机器上**本来就不成立**（仓库钉的 1.13.1+cu117 从没被装上）。
 2. deepspeed / transformers / decord / open_clip 这些重依赖系统里都有：2026-07-24 的冒烟
    日志里 deepspeed 已起、`models` 也 import 成功，peft 与 open_clip 两关都过了。
-3. 但 **b100 是共用 root 账号**，`/usr/local/lib/python3.10/dist-packages` 是 wky / zyc
+3. 但 **b100 是共用 root 账号**，`/usr/local/lib/python3.10/dist-packages` 是其他团队线
    共用的。往里 `pip install <包>==<版本>` 会把别人在用的 transformers / numpy / timm
    **降级**——事故级操作。**已经装进去的就到此为止，别再往系统里装。**
 
@@ -355,9 +354,9 @@ print(len(out),"records ->",dst)
 PY
 ```
 
-### 方案 C：用 zyc 的合并 jsonl 里的**源 caption** 直接生成 anno（免 gdown）
+### 方案 C：用翻译线合并 jsonl 里的**源 caption** 直接生成 anno（免 gdown）
 
-zyc 的翻译产物**同时含原始英文源 caption**，可以据此直接生成 11 个训练 anno，
+翻译线的产物**同时含原始英文源 caption**，可以据此直接生成 11 个训练 anno，
 **省掉 §4 里 gdown 下作者 anno 包这一步**。文件（b100 绝对路径）：
 
 ```
@@ -651,7 +650,7 @@ batch_size=64/卡、lr=1e-5、deepspeed stage-1。
 > R0 复现少一个解释变量）**——H100-80G 显存大概率放得下（V100 峰值 23.2 GiB @bs=64
 > ⇒ bs=128 估算 ~46–50 GiB），首光冒烟时先验一次显存/吞吐再定；不行则全臂统一 256，
 > 并在论文实现细节里声明与上游 512 的差异。定了就全臂一致，禁混。
-> **首日拿到单 epoch 墙钟后，按 `notes/plan-review-upgrades.md` U6 的预算阶梯排队**
+> **首日拿到单 epoch 墙钟后，按 评审 U6 的预算阶梯排队**
 > （常态档：排序臂各 1 epoch 等步，R0 + 胜者跑满 3 epoch）。
 
 > 🚫 **下面三步分成三个代码块是刻意的——不要一次性整段粘贴。**
@@ -734,7 +733,7 @@ done
 > 不同，就不再是等步对照。本机是共享的：起跑前 `nvidia-smi` 看清前 4 张卡有没有被别的
 > 任务占着，别急着改配置去凑显存、更别顺手开到后 4 张。
 >
-> **首日先量一个 epoch 的墙钟**（`ROADMAP.md` 3.2）：用它推算全量 3 个 epoch 的总时长
+> **首日先量一个 epoch 的墙钟**（`experiments/README.md` 3.2）：用它推算全量 3 个 epoch 的总时长
 > 和是否需要缩 epoch，再决定 R1 三臂怎么排。
 
 装上了 `deepspeed>=0.14` 之后，真跑可以去掉 `deepspeed.enable False`（基础配置

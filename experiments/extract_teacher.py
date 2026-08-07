@@ -1,7 +1,7 @@
-"""C1 教师嵌入离线提取(ROADMAP 2.2「R2 教师管线」;评审 U7;paper-plan §6 修正 9)。
+"""C1 教师嵌入离线提取(C1 教师管线;评审 U7)。
 
 C1(视频数据强化)的做法:**用 InternVideo2-stage2 教师离线过一遍语料,把嵌入存下来**,
-学生训练时只读盘、不跑教师。本文件就是那个「过一遍」。ROADMAP **G1** 长期标红的
+学生训练时只读盘、不跑教师。本文件就是那个「过一遍」。长期标红的
 「提取脚本至今未写」指的正是它。
 
 教师身份(U7-4,2026-07-27 定案,勿改):**InternVideo2-stage2**。它有对比式共享空间,
@@ -28,12 +28,12 @@ InternVideo3 / 2.5 / Next 同样不可用作 vtc_kd 教师 —— 更强教师�
   subset_emb    f16    [N, S, D]  可选(--per-frame,低 T 子集池化,见下)
 
 **失败条一律保留占位行、绝不静默丢弃** —— 一旦丢行,`rows` 与嵌入的对齐就悄悄错位,
-而这种错位在下游只表现为「蒸馏没效果」,极难归因。相关教训见 ROADMAP G10
+而这种错位在下游只表现为「蒸馏没效果」,极难归因
 (训练内评测被静默跳过,白跑 15 小时)。本脚本另设 `--fail-rate-abort`:
 单块失败率超阈值直接抛错,不让一个半空的 shard 混进语料。
 
 --------------------------------------------------------------------------------
-三条设计决策(paper-plan §6 修正 9)在这里的落点
+三条设计决策在这里的落点
 --------------------------------------------------------------------------------
 1. **教师维度 ≠ 学生 512** —— 本脚本不投影,原样存 D(IV2-1B 的 `clip_embed_dim=768`)。
    投影方案是**训练侧**的事;manifest 里记了 `embed_dim`,接线时照读即可。
@@ -96,7 +96,7 @@ logger = logging.getLogger(__name__)
 
 SCRIPT_VERSION = "1.0"
 
-#: 教师默认帧预算。C2 的全部 T∈{2,4,8,16} 都对齐这一份 T=16 锚点(paper-plan C2)。
+#: 教师默认帧预算。C2 的全部 T∈{2,4,8,16} 都对齐这一份 T=16 锚点(C2)。
 DEFAULT_NUM_FRAMES = 16
 
 #: 默认抽帧协议。`middle` = 把视频均分 T 段、各取**段中点**,确定性、与评测口径一致。
@@ -238,7 +238,7 @@ def shard_rows(n_total: int, shard_id: int, num_shards: int, limit: int = 0) -> 
 
 
 def build_manifest(args, embed_dim: int, n_rows: int, subset_ts: Sequence[int]) -> dict:
-    """把「这批嵌入是怎么来的」完整写死。复现性要求(paper-plan §6 修正 9-2)。"""
+    """把「这批嵌入是怎么来的」完整写死。复现性要求。"""
     return {
         "script": os.path.basename(__file__),
         "script_version": SCRIPT_VERSION,
@@ -814,7 +814,7 @@ def self_test() -> None:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     p = argparse.ArgumentParser(
-        description="C1 教师嵌入离线提取(InternVideo2-stage2;ROADMAP 2.2)")
+        description="C1 教师嵌入离线提取(InternVideo2-stage2;C1 教师管线)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     def common(q):

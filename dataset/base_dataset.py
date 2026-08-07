@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # 未设置 / 设为 none 时函数**原样返回同一个对象**,不做任何算子。
 #
 # ⚠️ 只在审计评测时设置,**绝不要在训练时打开**。
-# 背景与判读见 notes/neural-inspired-round2.md §2。
+# 背景与判读见 experiments/gate0_results.md §2。
 # --------------------------------------------------------------------------
 _PERTURB_WARNED = False
 

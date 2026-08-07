@@ -1,6 +1,6 @@
 # 8×V100-32G 数据审查配置与执行手册（10k 抽样专用）
 
-> 目标机器：`101vector`（10.235.31.101），8×V100-SXM2-32GB（Volta，CC 7.0）。
+> 目标机器：`101vector`（`<V100_HOST>`），8×V100-SXM2-32GB（Volta，CC 7.0）。
 > **本机只有预抽取的 1 万条样本**（`/home/vca1/datasets/internvid_zh_10k`），
 > 没有全量 10M 数据——所以本手册的全部测试都在这 1 万条上做，产出
 > **10k 版诊断报告**；全量 10M 的审查在 H100 机上跑（`setup-h100.md`）。
@@ -172,7 +172,7 @@ python recaption/scripts/show_flags.py --flags outputs/audit_10k/s0_flags.jsonl 
 ~~从 101vector 直接打内网端点~~：**实测 101vector 连不上 `172.30.x.x`**
 （2026-07，见 §4.3-端点），所以这一步在本机无法进行。
 裁判链路的冒烟改在中转机上做，见
-[`setup-judge-relay.md`](archive/setup-judge-relay.md) §5（那边 `--limit 5`，同样 5 条）。
+`setup-judge-relay.md` §5（那边 `--limit 5`，同样 5 条）。
 
 > 仍想在本机验证 `vlm_audit.py` 的**非网络**部分（路径解析→抽帧→base64）时，
 > 指一个本机能连的端点即可；纯粹验证抽帧的话直接看 §4.5 `s2-check` 更省事。
@@ -341,7 +341,7 @@ bash recaption/scripts/run_v100.sh s1-report      # -> outputs/audit_10k/s1_anal
 问题概率。真正的问题率只有 §5 的 `report.md` 说了算。
 
 > **本机 10k 的实测结论已归档到
-> [`audit-findings.md`](archive/audit-findings.md)**
+> [`audit-findings.md`](audit-report.md)**
 > （`outputs/` 被 gitignore，报告本身不入库）。要点：`xling_cos` 在本批是
 > **弱工具**（ρ(sig_zh,xling)=0.04、动态范围窄），语言污染要看 S0 旗标而非
 > xling；且 S3 默认 `--xling-threshold=0.7` 正落在本批 p25 附近，**跑 s3 前
@@ -532,8 +532,7 @@ bash recaption/scripts/run_v100.sh trans-check    # 中途随时可跑
 [`data-issues.md`](data-issues.md) §4）。`s2-judge` / `judge-agree` 两个子命令与
 `judge_agreement.py` 随之下线；端点部署的三份完整记录（内网 Qwen3.6-27B、本机
 Qwen3-VL-32B、InternVL3.5-38B）保留在
-[`archive/setup-judge-api.md`](archive/setup-judge-api.md) 与
-[`archive/setup-judge-relay.md`](archive/setup-judge-relay.md)。要在新一批数据上
+裁判端点配置文档（已随子命令一并删除，见 git 历史）。要在新一批数据上
 重开这条线，从那两份文档恢复命令即可（`git log` 里有删除前的脚本）。
 
 ## 5. S3 校准 + 分桶 + 10k 诊断报告（CPU 秒级）〖不可并行：需 S0+S1+S2 全部产物，最后跑〗
@@ -545,11 +544,11 @@ bash recaption/scripts/run_v100.sh s3
 **这份 10k 报告的两个用途**：① 第一份可汇报的问题率数字（抽样是分层随机的，
 比例可外推到全量）；② 校准出的 `sig_zh` 阈值直接作为 H100 机全量 S3 的
 `--sig-zh-threshold` 先验。审查到此为止；后续优化见
-`recaption/docs/archive/audit-plan.md` §5、§7.6+。
+`recaption/docs/master-plan.md` §5。
 
 ## 6. 人工查看工具（Gradio，本机已就位）〖可并行：不依赖任何流水线步骤，随时可用，不占 GPU〗
 
-抽样目录（`10.235.31.101:/home/vca1/datasets/internvid_zh_10k`）内容：
+抽样目录（`<V100_HOST>:/home/vca1/datasets/internvid_zh_10k`）内容：
 
 | 文件 | 说明 |
 |---|---|
@@ -563,16 +562,16 @@ bash recaption/scripts/run_v100.sh s3
 
 - 启动：
   ```bash
-  ssh vca1@10.235.31.101        # 或本机直接 cd
+  ssh <USER>@<V100_HOST>        # 或本机直接 cd
   cd /home/vca1/datasets/internvid_zh_10k
   python gradio_video_text_review.py
   ```
 - 访问：Gradio 默认端口 7860。本地浏览器打开需 SSH 端口转发：
   ```bash
-  ssh -L 7860:localhost:7860 vca1@10.235.31.101   # 然后浏览器开 http://localhost:7860
+  ssh -L 7860:localhost:7860 <USER>@<V100_HOST>   # 然后浏览器开 http://localhost:7860
   ```
-  （若脚本以 `server_name="0.0.0.0"` 启动且办公网与 10.235.31.101 互通，
-  可直接访问 `http://10.235.31.101:7860`。）
+  （若脚本以 `server_name="0.0.0.0"` 启动且办公网与 `<V100_HOST>` 互通，
+  可直接访问 `http://<V100_HOST>:7860`。）
 
 **定位：看数据，不是标数据。** 不要试图把 1 万条标完——量化结论一律以
 S0–S3 的自动化产出为准，这个工具只承担三个定性任务：

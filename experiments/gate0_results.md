@@ -1,8 +1,8 @@
 # GATE-0 时间维容量审计 —— 结果(动态审计 MSR-VTT 半边已结案)
 
 **日期:** 2026-07-24 · **机器:** 101vector · **权重:** 官方 `mobileviclip_small.pt`
-**背景与判读表:** [`notes/neural-inspired-round2.md`](../notes/neural-inspired-round2.md) §2
-**命令:** [`COMMANDS.md`](../COMMANDS.md) §3.1 · **交接:** `notes/live/from-claude.md` (16)
+**判读表:** §2(本文)
+**命令:** [`COMMANDS.md`](../COMMANDS.md) §3.1 (16)
 
 ---
 
@@ -152,7 +152,7 @@ done
 > (混入缩放 ConvFFN 残差的**块级**门),而可比分母只有 40 个 `token_mixer.layer_scale`。
 > 本次输出给出决定性证据:两侧 **n 都是 9920**(40 块 × 通道),是**逐通道一一对应**的;
 > 空间中位 **0.0130**,`0.0008 / 0.0130 = 0.0613` ✅。**腿③ 的 6.1% 原样成立**,
-> `gate5` 已改为主报可比比值(见 `notes/architecture-round4.md` §0.1)。
+> `gate5` 已改为主报可比比值(见 架构第四轮报告 §0.1)。
 
 ### 7.1 `temporal_embedding`:**不是零**(与"它可能从未被使用"的假设相反)
 
@@ -235,7 +235,7 @@ done
 
 **⇒ 决策:先别买顺序敏感基准。** R2 的前提(模型时间盲)在参数和行为两侧都成立;
 R2 的成败可以先用「反转敏感度」自测,RTime 只在需要证明**下游任务收益**时才必需。
-(判读表见 [`notes/order-sensitive-eval.md`](../notes/order-sensitive-eval.md) §3。)
+
 
 ### 7.4 `layer_scale_1d`(时序支路总闸门)—— **已测,且是最强的一条**
 

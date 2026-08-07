@@ -100,7 +100,7 @@ def train(
     # dtype 就绕开了这个雷;非半精度时它是 float32,下面的 .to() 即为空操作。
     param_dtype = next(model_without_ddp.parameters()).dtype
 
-    # --- C2 弹性 T(ROADMAP 2.1;默认关)---
+    # --- C2 弹性 T(C2 · T 无关化;默认关)---
     # config.elastic_t = dict(enable=True, choices=[2,4,8,16]) 时启用:数据侧按
     # num_frames(建议 16)解码母序列,这里每个 step 用 (seed, global_step) 决定性
     # 地选一个 T 并均匀子采样 ⇒ 所有 rank 同 T(模块级帧数上下文的要求),教师/

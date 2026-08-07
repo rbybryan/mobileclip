@@ -5,7 +5,7 @@
     python experiments/v100_micro_checks.py a12          # 只跑一项
 
 每一项都**自带判据**并以退出码表示 PASS/FAIL,好让 `run_v100_all.sh` 直接汇总。
-出处:notes/v100-10k-advance-tests.md A2 / A7 / A11 / A12 + B1。
+出处:notes/experiments/v100_sweep_results.md A2 / A7 / A11 / A12 + B1。
 """
 import argparse
 import sys

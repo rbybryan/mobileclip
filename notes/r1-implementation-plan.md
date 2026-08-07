@@ -1,7 +1,7 @@
 # R1 — SigLIP-regime negative-pool arm: implementation plan
 
 **Date:** 2026-07-27
-**Reframed per** [`notes/r1-examination.md`](r1-examination.md) §6: sell this as **"contrastive
+**Reframed per** [`notes/r1-implementation-plan.md`](r1-implementation-plan.md) §6: sell this as **"contrastive
 training at small batch, fixed with a SigLIP-regime large negative pool"**, *not* as "the
 mathematically-exact bank". The exactness is a real but **v2t-side** engineering nicety
 (examination §1); the number we lead with (t2v) still rides a stale video queue.
@@ -153,7 +153,7 @@ that our aligned-init 3-epoch regime may already be near its own saturation.
 
 ---
 
-## 5. Sequencing (extends `experiments/ROADMAP.md` 2.4)
+## 5. Sequencing (extends `experiments/README.md` 2.4)
 
 ```
 2.4a  Part B near-dup density  DONE (§7.6): low -> dedup_cos = 0.90 (a sparse, ~free mask)
@@ -500,8 +500,7 @@ more steps" question is addressed by the next experiment (§9.3, longer schedule
 and the genuine payoff regime (more data) still needs the maintainer to confirm what larger InternVid
 subset is staged on the server.
 
-**Verdict stands: GO, scale up.** See [`notes/live/from-claude.md`](live/from-claude.md) for the
-next server step.
+**Verdict stands: GO, scale up.**
 
 ### 9.3 Next experiment — longer schedule (does the control catch up with more steps?)
 
@@ -643,7 +642,7 @@ only +0.82 (well inside the ±1.6 band), so the unpaired absolute band cannot re
 effect at 1M. The R1 A/B escapes this in the one way that matters: `nR1` and `r1both` are scored on the
 **same 1000 MSR-VTT queries**, so it is a **paired** comparison, and the paired-Δ variance is far below
 the unpaired band. Read it with the **query-level bootstrap CI** on the paired difference (U10-1 /
-ROADMAP **G4** — the CI the tier now *requires*, being added to `collect_results.py`), backed by
+**G4** — the CI the tier now *requires*, being added to `collect_results.py`), backed by
 **multi-benchmark aggregation** (MSR-VTT + DiDeMo + ANet, same direction). Report **both directions** —
 the bank hardens v2t (`txt_r1`); t2v benefits only indirectly (examination §1).
 

@@ -2,8 +2,8 @@
 
 §11.2 阶梯 ③④⑤ 的**逐步执行单**:训练侧接线代码已全部落地(本轮 PR),
 本手册按闸门顺序把 `sub1m_C1kd_s42` 送上 H100。设计依据:
-[`verification-tier-1m-zh.md`](verification-tier-1m-zh.md) §11.2、ROADMAP 2.2c、
-评审 U7/U9(`plan-review-upgrades.md`)。
+[`verification-tier-1m-zh.md`](verification-tier-1m-zh.md) §11.2、C1 KD、
+评审 U7/U9(评审清单)。
 
 **判读纪律不变**:1M 层只有否决权;配对 bootstrap 两口径;单指标显著性不作数
 (§10.2 的实测教训);种子地板 δ=2.5(保守 5.5)。
@@ -129,6 +129,6 @@ P9 那条命令改个路径即可)—— 若训完 ‖W‖ 几乎没离开初始
 ```
 ① 1M 抽取(块 79 已排,~1.6 天)──> §0c 库体检 ──> §1 冒烟 ──> §2 排队
 ② §0a/0b(单测 + anno 对齐)——现在就能做,不等抽取
-③ round-2 臂(mc2init/lean,next-training-round-zh.md)与本臂共享队列,
+③ round-2 臂(mc2init/lean,notes/verification-tier-1m-zh.md)与本臂共享队列,
    谁先过完自己的闸门谁先上;C1kd 依赖抽取完成,大概率排在它们后面
 ```

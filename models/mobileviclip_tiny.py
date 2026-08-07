@@ -25,7 +25,7 @@ from .backbones.internvideo2.mobileclip.modules.image.replknet import ReparamLar
 
 from .backbones.internvideo2.pos_embed import get_3d_sincos_pos_embed,get_1d_sincos_pos_embed
 
-# C2 · T 无关化(ROADMAP 2.1):与 Small 共用同一份帧数上下文与插值助手,
+# C2 · T 无关化(C2 · T 无关化):与 Small 共用同一份帧数上下文与插值助手,
 # 说明见 mobileviclip_small.py 顶部注释。
 from .mobileviclip_small import (
     set_num_frames,
@@ -1303,7 +1303,7 @@ class FastViT(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.permute(2,0,1,3,4)
         T,B,_,H,W=x.shape
-        set_num_frames(T)  # C2:向所有时序算子广播当前帧数(ROADMAP 2.1)
+        set_num_frames(T)  # C2:向所有时序算子广播当前帧数(C2 · T 无关化)
         x = x.reshape(T*B,3,H,W)
         x_temp = self.forward_embeddings(x)
         x_temp = self.forward_tokens(x_temp)

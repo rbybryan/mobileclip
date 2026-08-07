@@ -1,4 +1,4 @@
-"""`experiments/extract_teacher.py` 的单测(C1 教师提取,ROADMAP 2.2)。
+"""`experiments/extract_teacher.py` 的单测(C1 教师提取,C1 教师管线)。
 
 全部 CPU、不需要教师权重、不需要视频文件。分两层:
 
@@ -198,7 +198,7 @@ class TestBlocksAndMerge:
             assert np.array_equal(np.load(os.path.join(d, "rows.npy")), np.arange(5))
 
     def test_failed_rows_are_kept_as_placeholders(self):
-        """**核心不变量**:失败条保留占位行。丢行 ⇒ 下游对齐悄悄错位(ROADMAP G10 类事故)。"""
+        """**核心不变量**:失败条保留占位行。丢行 ⇒ 下游对齐悄悄错位(下游对齐类事故)。"""
         with tempfile.TemporaryDirectory() as tmp:
             d = os.path.join(tmp, "all")
             os.makedirs(d)

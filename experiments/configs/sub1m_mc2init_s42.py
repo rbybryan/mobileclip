@@ -1,5 +1,5 @@
 """1M 验证层 —— **MC2-init**:视觉+文本双塔换 MobileCLIP2-S2 初始化(seed 42)。
-见 `notes/next-training-round-zh.md` / `verification-tier-1m-zh.md` §11.6-3。
+见 `notes/verification-tier-1m-zh.md` / `verification-tier-1m-zh.md` §11.6-3。
 
 相对 sub1m_r0 的唯一变化:`vision_ckpt_path` / `text_ckpt_path` →
 `checkpoints/mobileclip2_s2.pt`(架构与 v1 完全一致,CHECKPOINTS.md 已核)。

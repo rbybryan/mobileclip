@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# C2 · T 无关化(ROADMAP 2.1)—— 运行期帧数上下文
+# C2 · T 无关化(C2 · T 无关化)—— 运行期帧数上下文
 #
 # 视频张量在塔内被展平成 (T*B, C, H, W)(T 在外维),时序算子无法从形状反推 T,
 # 旧代码因此把 T=8 写死在各处 reshape 里。现在:FastViT.forward 在展平前从输入
@@ -171,7 +171,7 @@ class MobileViCLIP_Small(nn.Module):
         # R1 SigLIP-regime text negative pool (default OFF; notes/r1-implementation-plan.md §2/§7.6).
         self._init_text_bank()
 
-        # C1 KD:教师视频嵌入蒸馏(默认 OFF;ROADMAP 2.2c / notes/c1-kd-training-manual-zh.md)。
+        # C1 KD:教师视频嵌入蒸馏(默认 OFF;C1 KD / notes/c1-kd-training-manual-zh.md)。
         # 关着时本段不建任何参数、不碰 RNG ⇒ r0 路径连初始化随机流都逐位不变。
         self._init_vtc_kd()
 
@@ -332,7 +332,7 @@ class MobileViCLIP_Small(nn.Module):
     def _init_vtc_kd(self):
         """C1 KD 初始化(config: `criterion.vtc_kd`,默认 OFF ⇒ 整段休眠)。
 
-        形态(ROADMAP 2.2c「D→512 投影 + vtc_kd」的视频专用版 —— 抽取管线目前只出
+        形态(C1 KD「D→512 投影 + vtc_kd」的视频专用版 —— 抽取管线目前只出
         **视频**教师嵌入,§6.2 的 video-text 相似度矩阵 KD 要等文本阶段,这里不冒充它):
 
         - ``loss_kd_feat`` —— 嵌入蒸馏:`1 − cos(student_512, W·teacher_D)`,
@@ -1658,7 +1658,7 @@ class FastViT(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.permute(2,0,1,3,4)
         T,B,_,H,W=x.shape
-        set_num_frames(T)  # C2:向所有时序算子广播当前帧数(ROADMAP 2.1)
+        set_num_frames(T)  # C2:向所有时序算子广播当前帧数(C2 · T 无关化)
         #尝试直接将bs和T混在一块
         x = x.reshape(T*B,3,H,W)
         x_temp = self.forward_embeddings(x)

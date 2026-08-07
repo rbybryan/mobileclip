@@ -1,4 +1,4 @@
-# 导出冒烟结果(ROADMAP 1.5 / 评审 U1)
+# 导出冒烟结果(导出冒烟 / 评审 U1)
 
 **状态:** 🟡 ONNX / Core ML 已结论(全 pass),TFLite 受 torch 版本阻塞待独立 venv 补测 · **日期:** 2026-07-27 · **机器:** 101vector(CPU)
 **脚本:** `experiments/export_smoke.py` · **命令:** [`COMMANDS.md`](../COMMANDS.md) §3.6

@@ -1,4 +1,4 @@
-"""C1 KD 教师库 + U9 权重求和的单测(ROADMAP 2.2c)。
+"""C1 KD 教师库 + U9 权重求和的单测(C1 KD)。
 
 只依赖 numpy —— 本地无 torch/decord 也能全跑(与 test_paired_bootstrap 同一约定)。
 """

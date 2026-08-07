@@ -229,7 +229,7 @@ def main():
     else:
         emit("✅ 重判可用。下一步：")
         emit("1. `bash recaption/scripts/run_v100.sh s3` —— s2_trans 会被自动采用算翻译差率")
-        emit("2. 结论抄进 `recaption/docs/data-issues.md` §4 与 `recaption/docs/archive/audit-findings.md`")
+        emit("2. 结论抄进 `recaption/docs/data-issues.md` §4")
     emit()
 
     if args.out_md:

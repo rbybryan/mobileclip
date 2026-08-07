@@ -141,7 +141,7 @@ def main():
     # 这份结论只对**当前这个 MVC_DATA_DIR** 成立。该机上评测数据在仓库 data/、
     # 试点语料在 /home/vca1/datasets,不在一个根下,所以单跑一次必然有一半误报。
     root_desc = os.environ.get("MVC_DATA_DIR", "data(默认)")
-    print(f"\n== 已解锁的步骤(experiments/ROADMAP.md)== [仅基于 MVC_DATA_DIR={root_desc}]")
+    print(f"\n== 已解锁的步骤(experiments/README.md)== [仅基于 MVC_DATA_DIR={root_desc}]")
     steps = [
         ("10k 试点(§2b:pilot_10k_r0/r1)", pilot and ckpt_ready["mobileclip_s2.pt"]),
         ("B0 锁基线(§3,至少 MSR-VTT)", results["msrvtt"] and ckpt_ready["mobileviclip_small.pt"]),

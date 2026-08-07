@@ -78,7 +78,7 @@ VERDICT_KEYS = {"video_readable", "en_score", "zh_score", "trans_score", "action
 # `action` turned out to be a fixed ladder on that single number
 # (5->keep, 4->fix_text, 3->retranslate, <=2->recaption/drop). "Did the
 # translation break" was therefore never measured -- see recaption/docs/data-issues.md
-# problem 8 and recaption/docs/archive/audit-findings.md conclusion 8.
+# problem 8 and recaption/docs/audit-report.md conclusion 8.
 #
 # Two deliberate design choices here, both aimed at that failure:
 #   1. NO FRAMES. Translation fidelity is a text-vs-text property; the rubric
@@ -118,7 +118,7 @@ TRANS_KEYS = {"trans_score", "mismatches"}
 
 # WHY THIS EXISTS. The RECAPTION bucket needs a caption written FROM the frames,
 # not translated from the broken English source. The fusion scheme
-# (recaption/docs/archive/fusion-scheme.md) then decomposes several such captions into
+# (recaption/docs/master-plan.md) then decomposes several such captions into
 # atomic units and trusts a unit by cross-sample AGREEMENT (support voting).
 # That voting is a self-consistency estimator (SelfCheckGPT, arXiv 2303.08896):
 # it is only valid if the captions are INDEPENDENT samples of the SAME content.

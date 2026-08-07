@@ -1,5 +1,69 @@
 # Troubleshooting
 
+每一条是「症状 → 原因 → 修法」。用浏览器/编辑器搜索报错原文通常最快。
+
+## 目录
+
+- [粘贴的命令「什么都没发生」:`cd ~/mobileclip` 失败让 `&&` 整条链短路](#粘贴的命令什么都没发生cd-mobileclip-失败让--整条链短路)
+- [评测出了数字,但模型根本没加载权重:`No pretrained checkpoint provided, training from scratch`](#评测出了数字但模型根本没加载权重no-pretrained-checkpoint-provided-training-from-scratch)
+- [venv 里明明装了的包报 `ModuleNotFoundError`(如 `termcolor`)—— 裸 `torchrun` 跑到系统 python 去了](#venv-里明明装了的包报-modulenotfounderror如-termcolor-裸-torchrun-跑到系统-python-去了)
+- [训练跑完但没有任何评测数字:`Empty DataFrame` + `Skip eval act_val split`](#训练跑完但没有任何评测数字empty-dataframe--skip-eval-act_val-split)
+- [`sqlite3.OperationalError: attempt to write a readonly database`（Gradio 审阅工具）](#sqlite3operationalerror-attempt-to-write-a-readonly-databasegradio-审阅工具)
+- [`libtorchaudio.so` / `libtorch_cuda_cpp.so: cannot open shared object file`](#libtorchaudioso--libtorch_cuda_cppso-cannot-open-shared-object-file)
+- [`ImportError: cannot import name 'Cache' from 'transformers'`](#importerror-cannot-import-name-cache-from-transformers)
+- [`ImportError: cannot import name '_cast_Long' from 'torch.onnx.symbolic_opset9'`](#importerror-cannot-import-name-_cast_long-from-torchonnxsymbolic_opset9)
+- [Missing `anno_downstream/*.json` (e.g. `msrvtt_1k_test.json`)](#missing-anno_downstreamjson-eg-msrvtt_1k_testjson)
+- [HMDB51 download: `FileMetadataError: Distant resource does not seem to be on huggingface.co`](#hmdb51-download-filemetadataerror-distant-resource-does-not-seem-to-be-on-huggingfaceco)
+- [`modelscope download` keeps failing: `IncompleteRead(... bytes read, ... more expected)` / `Max retries exceeded`](#modelscope-download-keeps-failing-incompleteread-bytes-read--more-expected--max-retries-exceeded)
+- [hf-mirror + new `huggingface_hub`: `Error: Local entry not found` on every retry](#hf-mirror--new-huggingface_hub-error-local-entry-not-found-on-every-retry)
+- [Weight download is *slow but stable* (constant few hundred kB/s, no errors)](#weight-download-is-slow-but-stable-constant-few-hundred-kbs-no-errors)
+- [Running the next retrieval dataset (DiDeMo, ActivityNet)](#running-the-next-retrieval-dataset-didemo-activitynet)
+- [`import deepspeed` crashes: pydantic `root_validator` error, or `cannot import name 'log' from torch.distributed.elastic`](#import-deepspeed-crashes-pydantic-root_validator-error-or-cannot-import-name-log-from-torchdistributedelastic)
+- [`CUDA error: no kernel image is available for execution on the device` on V100](#cuda-error-no-kernel-image-is-available-for-execution-on-the-device-on-v100)
+- [`FileNotFoundError: anno_downstream/internvid_zh_10k_pilot.json` (10k pilot)](#filenotfounderror-anno_downstreaminternvid_zh_10k_pilotjson-10k-pilot)
+- [`MVC_DATA_DIR` root collision: fixing the 10k pilot breaks every MSR-VTT eval](#mvc_data_dir-root-collision-fixing-the-10k-pilot-breaks-every-msr-vtt-eval)
+- [DeepSpeed startup dies in `FusedAdamBuilder().load()`: `parameter packs not expanded with ‘...’`](#deepspeed-startup-dies-in-fusedadambuilderload-parameter-packs-not-expanded-with-)
+- [Training dies on the first forward: `Input type (torch.cuda.FloatTensor) and weight type (torch.cuda.HalfTensor) should be the same`](#training-dies-on-the-first-forward-input-type-torchcudafloattensor-and-weight-type-torchcudahalftensor-should-be-the-same)
+- [Same run, one layer deeper: `RuntimeError: expected scalar type Float but found Half` in `LayerNormFP32`](#same-run-one-layer-deeper-runtimeerror-expected-scalar-type-float-but-found-half-in-layernormfp32)
+- [Pilot dies with `torch.OutOfMemoryError` — but the card is shared, not too small](#pilot-dies-with-torchoutofmemoryerror--but-the-card-is-shared-not-too-small)
+- [`RuntimeError: Function 'DivBackward0' returned nan values in its 1th output.`](#runtimeerror-function-divbackward0-returned-nan-values-in-its-1th-output)
+- [`no_weight_decay()` is dead code — wd 0.2 hits `temp` / `logit_scale` / `logit_bias`](#no_weight_decay-is-dead-code--wd-02-hits-temp--logit_scale--logit_bias)
+- [§3 B0 五个评测全部失败 —— 本机没有下游评测数据](#3-b0-五个评测全部失败--本机没有下游评测数据)
+- [下过的数据集被预检报成缺失(`data_root 缺失`)—— 先别重下](#下过的数据集被预检报成缺失data_root-缺失-先别重下)
+- [Training dies with `RecursionError: maximum recursion depth exceeded` on one rank](#training-dies-with-recursionerror-maximum-recursion-depth-exceeded-on-one-rank)
+- [b100 上一切 git 命令都报 `fatal: not a git repository (or any parent up to mount point /workspace/mount)`](#b100-上一切-git-命令都报-fatal-not-a-git-repository-or-any-parent-up-to-mount-point-workspacemount)
+- [b100 §2：pip 装错解释器——venv 提示符亮着，包却全进了共用 conda base；tokenizers 还编不出来](#b100-2pip-装错解释器venv-提示符亮着包却全进了共用-conda-basetokenizers-还编不出来)
+- [冒烟 import 崩在 peft / `cannot import name 'Cache' from 'transformers'`（且路径是 `/usr/local/lib`）](#冒烟-import-崩在-peft--cannot-import-name-cache-from-transformers且路径是-usrlocallib)
+- [`ModuleNotFoundError: No module named 'open_clip'`——装成了 `openai-clip`](#modulenotfounderror-no-module-named-open_clip装成了-openai-clip)
+- [`criterion.loss_weight` 是日志开关,不是损失权重 —— 改它不影响优化](#criterionloss_weight-是日志开关不是损失权重--改它不影响优化)
+- [大负例池 + `temp=1/100` 在 fp16 下会溢出(设计期预警,尚未实测)](#大负例池--temp1100-在-fp16-下会溢出设计期预警尚未实测)
+- [b100 共用系统 site-packages：缺包别再往系统里装，用私有 user-site](#b100-共用系统-site-packages缺包别再往系统里装用私有-user-site)
+- [评测时打印 `sim_v2t has nan` / `sim_t2v has nan`(fp16,偶发)](#评测时打印-sim_v2t-has-nan--sim_t2v-has-nanfp16偶发)
+- [`ModuleNotFoundError: No module named 'scripts.pretraining'`——被别的包顶掉了名字](#modulenotfounderror-no-module-named-scriptspretraining被别的包顶掉了名字)
+- [pipeline-sample 步③ 打分全崩：`ERROR opening .../videos/videos/...`（双重前缀）](#pipeline-sample-步③-打分全崩error-opening-videosvideos双重前缀)
+- [预检报"抽查 N 条视频全部缺失"—— anno 的 `video` 带子目录，视频却被拍平软链了](#预检报抽查-n-条视频全部缺失-anno-的-video-带子目录视频却被拍平软链了)
+- [冒烟 CUDA OOM——共用机上别人占了卡（不是模型太大）](#冒烟-cuda-oom共用机上别人占了卡不是模型太大)
+- [pipeline-sample：GDINO / MiniRBT 拉不下来（hf-mirror 也不通）→ 本地下载后 scp 模型缓存](#pipeline-samplegdino--minirbt-拉不下来hf-mirror-也不通-本地下载后-scp-模型缓存)
+- [服务器 `git pull origin main` 报 `fatal: Need to specify how to reconcile divergent branches`](#服务器-git-pull-origin-main-报-fatal-need-to-specify-how-to-reconcile-divergent-branches)
+- [训练一启动就 `AttributeError: 'EasyDict' object has no attribute 'debug'`](#训练一启动就-attributeerror-easydict-object-has-no-attribute-debug)
+- [`torch.OutOfMemoryError` immediately in `patch_embed` on b100 — but `nvidia-smi` shows 0% util](#torchoutofmemoryerror-immediately-in-patch_embed-on-b100--but-nvidia-smi-shows-0-util)
+- [DDP crash: `Parameter ... layer_scale_2 has been marked as ready twice` (gradient checkpointing)](#ddp-crash-parameter--layer_scale_2-has-been-marked-as-ready-twice-gradient-checkpointing)
+- [`run_v100.sh <子命令>` 只打印用法帮助、不执行；紧接着 `tar: Cannot stat: No such file or directory`](#run_v100sh-子命令-只打印用法帮助不执行紧接着-tar-cannot-stat-no-such-file-or-directory)
+- [补记(2026-07-29):上两条「pull 没生效/divergent」的共同病根 —— 服务器长期站在滞留工作分支上](#补记2026-07-29上两条pull-没生效divergent的共同病根--服务器长期站在滞留工作分支上)
+- [`FileNotFoundError: anno_downstream/ssv2_mc_val.json` —— 兼:SSv2-MC 的入口脚本用错了](#filenotfounderror-anno_downstreamssv2_mc_valjson--兼ssv2-mc-的入口脚本用错了)
+- [训练日志尾部 `torch.distributed.elastic...SignalException: Process NNNN got signal:` —— 训练被信号打断,不是代码 bug](#训练日志尾部-torchdistributedelasticsignalexception-process-nnnn-got-signal--训练被信号打断不是代码-bug)
+- [`run_dropblock_sweep.sh` 的 raw/DSL 两列全打 `?`(而 `collect_results.py` 明明读得到)](#run_dropblock_sweepsh-的-rawdsl-两列全打-而-collect_resultspy-明明读得到)
+- [`AssertionError: ${available_corpus[${train_corpus}]}` —— 自写脚本里 `Config.from_file` 没做插值](#assertionerror-available_corpustrain_corpus--自写脚本里-configfrom_file-没做插值)
+- [阶段 0 假 FAIL:`MSRVTT 视频根 没有 mp4 ⇒ 阶段 2/3/4/5/10 必炸`,同一轮阶段 10 却照常出数](#阶段-0-假-failmsrvtt-视频根-没有-mp4--阶段-234510-必炸同一轮阶段-10-却照常出数)
+- [`status_1m.py` 把已收官的臂报成 🔴/⚠️;`--compare` 对着 `runs/` 报 `找不到逐查询 rank`](#status_1mpy-把已收官的臂报成-️--compare-对着-runs-报-找不到逐查询-rank)
+- [`git status` 冒出一堆中文词当文件名(`**07-23`、`⇒`、`与`、`所以`…)—— markdown 被粘进了 bash](#git-status-冒出一堆中文词当文件名07-23与所以-markdown-被粘进了-bash)
+- [按 §6.1 推 `from-server.md`,push 被拒:`! [rejected] ... (non-fast-forward)`](#按-61-推-from-servermdpush-被拒-rejected--non-fast-forward)
+- [改了选帧 / 融合 prompt / 步骤开关后重跑，结果一个字没变](#改了选帧--融合-prompt--步骤开关后重跑结果一个字没变)
+
+---
+
+
+
 ## 粘贴的命令「什么都没发生」:`cd ~/mobileclip` 失败让 `&&` 整条链短路
 
 ### Symptom
@@ -585,7 +649,7 @@ Then verify `data/hmdb51/videos_test/` holds ~6766 `.avi` and that
 ## `modelscope download` keeps failing: `IncompleteRead(... bytes read, ... more expected)` / `Max retries exceeded`
 
 Seen while pre-downloading Qwen3-VL weights for the data audit
-(`recaption/docs/setup-v100.md` §0 / `recaption/docs/archive/setup-h100.md` §0):
+(`recaption/docs/setup-v100.md` §0):
 
 ```
 WARNING | modelscope_hub.download | Download failed for model-00002-of-00004.safetensors:
@@ -739,8 +803,7 @@ wait. The ladder, cheapest first:
 4. **Copy over the LAN from a machine that already has the weights.** Gigabit
    intranet ≈ 110 MB/s puts 64 GB at ~10 minutes, beating any public channel:
    `rsync -avP --partial user@host:.../Qwen3-VL-32B-Instruct/ ckpts/Qwen3-VL-32B-Instruct/`
-   (search the other machine first with the recipe in
-   `recaption/docs/archive/setup-judge-api.md` §1.2).
+   (search the other machine first with the recipe in).
 5. **Downsize the model.** If every channel still says 5+ hours, a 17 GB
    alternative that runs tonight beats a 64 GB one that lands tomorrow.
 
@@ -2239,10 +2302,10 @@ return out
 `loss + 0.0 * aux`:乘 0 仍会执行算子,可能改变 fp16 归约顺序(破坏与基线的逐位
 一致),辅助分支里若有 dropout 还会消耗 RNG 状态。
 
-**影响范围.** `notes/neural-inspired-implementation.md` 的 B1 geometry-KD 方案里
+**影响范围.** B1 geometry-KD 方案里
 `criterion["loss_weight"].update(dict(kd_cos=1.0, kd_geo=1.0))` 就踩了这个坑
 (1.0 恰好无害,但一旦想调权重就会静默失效)。已在
-`notes/neural-inspired-round2.md` §5 P2 记录。**上游代码,此处未改动。**
+`experiments/gate0_results.md` §5 P2 记录。**上游代码,此处未改动。**
 
 ## 大负例池 + `temp=1/100` 在 fp16 下会溢出(设计期预警,尚未实测)
 
@@ -2254,7 +2317,7 @@ loss scale 一路退避,或直接出 `inf`/`nan`。
 
 **Fix.** logit 矩阵与 log-softmax 一律在 **fp32** 中计算并显式减最大值;把
 matmul 沿负例维**分块**;每步记录 `max|logit|` 与 DeepSpeed 的 skipped-step 计数。
-详见 `notes/neural-inspired-round2.md` §3 R1。
+详见 `experiments/gate0_results.md` §3 R1。
 ---
 
 ## b100 共用系统 site-packages：缺包别再往系统里装，用私有 user-site
@@ -2271,7 +2334,7 @@ matmul 沿负例维**分块**;每步记录 `max|logit|` 与 DeepSpeed 的 skippe
    `/usr/bin/python`。凡是 `python -m pip install` 装的东西，全落进**系统**
    site-packages。
 2. **b100 的 root 账号是多人共用的**，`/usr/local/lib/python3.10/dist-packages`
-   同时被 wky（中文 NebulaCV 线）和 zyc（翻译流水线）使用。往里装包 = 改别人的环境；
+   同时被中文 NebulaCV 线和翻译流水线使用。往里装包 = 改别人的环境；
    带版本号装（`pip install transformers==4.28.1 numpy==1.26.4 timm==0.5.4`，也就是
    `scripts/setup_env.sh` Stage 4 那串）会把他们在用的版本**降级**，属于事故级操作。
 

@@ -1,9 +1,9 @@
-# 10k 试点结果 · go/no-go 记录（ROADMAP 1.3）
+# 10k 试点结果 · go/no-go 记录（试点动力学档）
 
 V100 服务器（`rby@101vector`，8×V100）上 `pilot_10k_r0` / `pilot_10k_r1` 两条
 链路的**正跑**结果与判据核对。运行日期 2026-07-23。
 
-> 判据是**只看动力学**（ROADMAP 1.3）：损失正常下降、r1 的
+> 判据是**只看动力学**（试点动力学档）：损失正常下降、r1 的
 > `logit_scale/logit_bias` 离开初始值、`temporal_pool.proj` 非零。
 > **不看** held-out 检索分数——10k 的评测在训练前就近饱和，无法给方案排序
 > （见 README §2b 与顶部两级实验说明）。
@@ -101,7 +101,7 @@ PY
 **init 时 `proj≡0`、池化输出严格等于帧均值(退化为 mean-pool)**。所以实测 L2=0.1775
 是它**从零练起来**的证据,判据三比"随机 init 本就非零"强得多。
 
-`pytest tests/test_optimization_components.py` 亦按 ROADMAP 1.3 补跑(链路层面已通过)。
+`pytest tests/test_optimization_components.py` 亦按 试点动力学档 补跑(链路层面已通过)。
 
 ## 给 H100 阶段的设计提示（不改 V100 判据）
 
@@ -115,7 +115,7 @@ PY
   已知:`r1b`(attn 池化)从 mean 起步、安全;`r1a`(sigmoid)是扰动源,是重点观察对象。
 
 相关：`experiments/README.md` §2b（试点 runbook）、§4（R0→R1 全量 A/B）、
-`experiments/ROADMAP.md` 1.3 / 3.2、`experiments/SETUP_B100.md`（H100 runbook）。
+`experiments/README.md` 1.3 / 3.2、`experiments/SETUP_B100.md`（H100 runbook）。
 
 ---
 
