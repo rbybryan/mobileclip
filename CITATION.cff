@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use this code, cite this repository and its commit, along with the original methods and datasets."
+type: software
+title: "MobileViCLIP experiments: efficient video-text representations"
+authors:
+  - family-names: Rong
+    given-names: Boyan
+repository-code: "https://github.com/rbybryan/mobileclip"
+license: MIT

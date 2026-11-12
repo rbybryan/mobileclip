@@ -17,11 +17,11 @@
 
 > **想「用」这 1 万条训练、而不是「审」它？走另一条路。** 本工具集只做质量审核
 > （字幕↔视频对齐打分/分桶）。要拿 101vector 上的
-> `/home/vca1/datasets/internvid_zh_10k` **跑 10k 试点训练**（`pilot_10k_r0/r1`），
+> `/path/to/user/datasets/internvid_zh_10k` **跑 10k 试点训练**（`pilot_10k_r0/r1`），
 > 见 [`experiments/README.md`](../../experiments/README.md) §2b。三步：
 > ① 用 [`tools/make_pilot_anno.py`](../../tools/make_pilot_anno.py) 从 `internvid_zh_10k.jsonl`
 > 建出 `anno_downstream/internvid_zh_10k_pilot{,_val}.json`（约 9k 训 + 1k 评）；
-> ② `export MVC_DATA_DIR=/home/vca1/datasets`，让 corpus 的 `data_root`
+> ② `export MVC_DATA_DIR=/path/to/user/datasets`，让 corpus 的 `data_root`
 > （`configs/data.py` 里的 `internvid_zh_10k/videos`）直接对上那个 `videos/` 目录，
 > 免软链；③ `python experiments/check_readiness.py` 确认 pilot 亮灯后启动。
 > ⚠️ **字幕默认取英文**（`make_pilot_anno.py --caption-field en`）：文本塔是
@@ -35,7 +35,7 @@
 |---|---|---|---|---|
 | 8×H100-80G | **[`setup-h100.md`](setup-v100.md)** | **全量 10M** | vLLM 服务（8B dp=8 + 235B-FP8 裁判本地 tp8） | ~1.5 天 |
 | 7×V100（`<RELAY_HOST>`，中转机） | **`setup-judge-relay.md`** | 只跑 **4.3 裁判档** | 内网 `Qwen3.6-27B` 端点（101vector/H100 都连不上，只有它连得到） | ~1 小时 |
-| 8×V100-32G（101vector） | **[`setup-v100.md`](setup-v100.md)** | **仅 1 万条预抽样**（`/home/vca1/datasets/internvid_zh_10k`，本机没有全量数据） | transformers 后端 `run_v100.sh`（无 bf16/vLLM；torch 须用 cu118 构建；裁判走云端 API；S2 推荐 10k 全覆盖） | ~3–4 小时 |
+| 8×V100-32G（101vector） | **[`setup-v100.md`](setup-v100.md)** | **仅 1 万条预抽样**（`/path/to/user/datasets/internvid_zh_10k`，本机没有全量数据） | transformers 后端 `run_v100.sh`（无 bf16/vLLM；torch 须用 cu118 构建；裁判走云端 API；S2 推荐 10k 全覆盖） | ~3–4 小时 |
 
 推荐节奏：先在 V100 机把 10k 全流程跑完（半天内出 10k 报告 + 调好 rubric
 和 `sig_zh` 阈值），再在 H100 机开全量，校准结果直接复用、避免 10M 规模返工。

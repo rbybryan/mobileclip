@@ -3,7 +3,7 @@
 > 对 InternVid-zh v0.1 中文字幕数据的四阶段自动化审查（规则画像 → 嵌入打分 → VLM 判定 →
 > 校准分桶）。样本 = 10,000 条 clip，**全覆盖**（非抽样中的抽样）。
 >
-> 机器：`101vector` 8×V100-32G ｜ 数据：`/home/vca1/datasets/internvid_zh_10k` ｜ 更新：2026-07-22
+> 机器：`101vector` 8×V100-32G ｜ 数据：`/path/to/user/datasets/internvid_zh_10k` ｜ 更新：2026-07-22
 >
 > 流水线状态与问题登记：[`data-issues.md`](data-issues.md) ·
 > 统计细节与推理：[`audit-findings.md`](audit-report.md) ·

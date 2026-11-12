@@ -116,16 +116,16 @@ if has 0; then
   #    阶段 1 随后连崩两次,真因就是它(解码器去读不存在的 data/internvid_zh_10k/videos)。
   #    **能自动判定的事,不许只打印。** 现在:能自动补就补,补不上就 FAIL。
   # 🔴 2026-07-31 第二课(同一天栽两次):上一版「MVC_DATA_DIR 未设就自动
-  #    export=/home/vca1/datasets」修好了 10k,却把 MSR-VTT 顶掉了 ——
-  #    阶段 10 当场 `No such file: /home/vca1/datasets/MSRVTT_Videos/video7020.mp4`。
+  #    export=/path/to/user/datasets」修好了 10k,却把 MSR-VTT 顶掉了 ——
+  #    阶段 10 当场 `No such file: /path/to/user/datasets/MSRVTT_Videos/video7020.mp4`。
   #    因为 configs/data.py 用**同一个** __data() 根拼所有数据集:
   #        10k 训练集 → $ROOT/internvid_zh_10k/videos   (:107,:114)
   #        MSR-VTT    → $ROOT/MSRVTT_Videos             (:50)
-  #    而 101vector 上这两份**不在一个地方**(10k 在 /home/vca1/datasets,
+  #    而 101vector 上这两份**不在一个地方**(10k 在 /path/to/user/datasets,
   #    MSR-VTT 在仓库本地 data/),所以任何单一 MVC_DATA_DIR 都会顶掉另一个。
   #    唯一正确解:在仓库本地 data/ 里给缺的那个补一条软链,**不设** MVC_DATA_DIR。
   #    教训:预检要验完**这一轮用到的全部**数据根,不能只验刚出过事的那一个。
-  ALT_10K=/home/vca1/datasets/internvid_zh_10k
+  ALT_10K="${MVC_10K_DIR:-data/internvid_zh_10k}"
   if [ ! -d "data/internvid_zh_10k/videos" ] && [ -d "$ALT_10K/videos" ] \
      && { [ ! -e "data/internvid_zh_10k" ] || [ -L "data/internvid_zh_10k" ]; }; then
     mkdir -p data && ln -sfn "$ALT_10K" data/internvid_zh_10k 2>/dev/null \
@@ -207,7 +207,7 @@ if has 1; then
       sed -n 's/^/   | /p' <(tail -n 25 "$L")
       # 最常见的三类原因,直接在这里点名,省一轮往返
       grep -qiE "MVC_DATA_DIR|No such file|FileNotFoundError" "$L" && \
-        echo "   💡 像是数据/路径:两个数据集必须在同一个根下,修法 ln -sfn /home/vca1/datasets/internvid_zh_10k data/internvid_zh_10k && unset MVC_DATA_DIR"
+        echo "   💡 像是数据/路径:两个数据集必须在同一个根下,修法 ln -sfn /path/to/user/datasets/internvid_zh_10k data/internvid_zh_10k && unset MVC_DATA_DIR"
       grep -qiE "ModuleNotFoundError|ImportError" "$L" && \
         echo "   💡 像是缺包:看上一行是哪个模块"
       grep -qiE "AssertionError.*layer_scale_1d" "$L" && \

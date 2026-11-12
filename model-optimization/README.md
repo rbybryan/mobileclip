@@ -1,5 +1,8 @@
 # model-optimization/ —— 1M 验证层的模型改造(6 个方案)
 
+> **Release interpretation correction:** historical “非劣” / “non-inferior” labels below describe exploratory screening, not a confirmatory non-inferiority test. A CI containing zero is insufficient; the observed seed-noise threshold was retrospective. See [results and limitations](../docs/RESULTS.md). Measurements are retained as historical records.
+
+
 精简结果报告设计的那 6 个模型更改都汇总在这个目录里:**每个方案改了什么、为什么、
 怎么一条脚本复现、结论如何**。2026-08-05 从 `notes/` 整理过来(映射表见文末)。
 
@@ -87,7 +90,6 @@ PHASE=eval,compare bash model-optimization/scripts/run_model_opt.sh 3
 | **config** | `experiments/configs/sub1m_*.py`(与 nR1/r1both/C1kd/lean 等**非本报告**的 sub1m 臂同族,拆开反而割裂) |
 | **共享跑批/评测器** | `experiments/`:`run_pretrain.sh` / `run_eval.sh` / `collect_results.py` / `paired_bootstrap.py`(gate / v100 / frame_agg / KD 各线都在用,搬走会全断) |
 | **判据设计 + 状态工具** | `notes/verification-tier-1m-zh.md`(13 个 config 都引它)、`experiments/status_1m.py` / `run_verify_1m.sh`(通用 1M 层设施,非本报告 6 臂专属) |
-| **服务器⇄Claude 交接** | [`../notes/live/`](../notes/live/)(`from-server.md` / `from-claude.md`,还带别的训练/评测流量) |
 
 产物(`experiments/runs/`、`experiments/evals/`)与权重、标注**不进 git**,在服务器上就地生成。
 

@@ -1,0 +1,5 @@
+# Verified false positive: TRAIN_STATE_KERNEL_KEY is the layer path
+# "mixer_1d.rbr_conv.0.conv", not a credential. Suppress only this historical finding.
+5aa8af49320ad4a4e5b234009e94b19de2672ba9:experiments/temporal_capacity_audit.py:generic-api-key:44
+# Same reviewed model-layer constant in a directory scan.
+experiments/temporal_capacity_audit.py:generic-api-key:44

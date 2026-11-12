@@ -1,7 +1,7 @@
 # 8×V100-32G 数据审查配置与执行手册（10k 抽样专用）
 
 > 目标机器：`101vector`（`<V100_HOST>`），8×V100-SXM2-32GB（Volta，CC 7.0）。
-> **本机只有预抽取的 1 万条样本**（`/home/vca1/datasets/internvid_zh_10k`），
+> **本机只有预抽取的 1 万条样本**（`/path/to/user/datasets/internvid_zh_10k`），
 > 没有全量 10M 数据——所以本手册的全部测试都在这 1 万条上做，产出
 > **10k 版诊断报告**；全量 10M 的审查在 H100 机上跑（`setup-h100.md`）。
 > 本机双任务：① 10k 样本跑完整 S0–S3 流水线；② Gradio 人工查看（§6）。
@@ -107,8 +107,8 @@ export S2_MODEL=ckpts/Qwen3-VL-8B-Instruct
 cd "$(git rev-parse --show-toplevel)"                            # 仓库根目录
 
 # 内置默认（想覆盖时才 export；注意变量要在同一 shell 里生效）：
-#   DATA =/home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl
-#   CLIPS=/home/vca1/datasets/internvid_zh_10k/videos
+#   DATA =/path/to/user/datasets/internvid_zh_10k/internvid_zh_10k.jsonl
+#   CLIPS=/path/to/user/datasets/internvid_zh_10k/videos
 #   OUT  =outputs/audit_10k
 # 路径不对时脚本会立刻报 "错误：DATA 文件不存在：..." 并退出（快速失败），
 # 不会再让后续步骤连锁崩溃。
@@ -130,8 +130,8 @@ import json, sys, os, collections
 sys.path.insert(0, "recaption/scripts")
 from vlm_audit import resolve_video_path
 import decord
-DATA="/home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl"
-ROOT="/home/vca1/datasets/internvid_zh_10k/videos"
+DATA="/path/to/user/datasets/internvid_zh_10k/internvid_zh_10k.jsonl"
+ROOT="/path/to/user/datasets/internvid_zh_10k/videos"
 stats=collections.Counter(); bad=[]
 for i,line in enumerate(open(DATA)):
     rec=json.loads(line)
@@ -197,7 +197,7 @@ S2 在 GPU0 审 8 条（首次会下载模型）。
 视频为 `videos/InternVId-FLT_N/shard_XXXXX/` 两级目录，工具按三级顺序自动
 解析路径：`$CLIPS/<video>` → `$CLIPS/<abs_path 中 InternVId-FLT... 起的后缀>`
 → 记录里的 `abs_path` 原值，取第一个存在的。若冒烟解码失败率仍高，把
-`head -1 /home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl | python -m json.tool`
+`head -1 /path/to/user/datasets/internvid_zh_10k/internvid_zh_10k.jsonl | python -m json.tool`
 的 `video`/`abs_path` 两个值发出来排查。
 
 ## 2. S0 规则画像（1 万条，CPU 秒级）〖可并行：零依赖纯 CPU，t0 就能跑，先于装环境执行〗
@@ -548,7 +548,7 @@ bash recaption/scripts/run_v100.sh s3
 
 ## 6. 人工查看工具（Gradio，本机已就位）〖可并行：不依赖任何流水线步骤，随时可用，不占 GPU〗
 
-抽样目录（`<V100_HOST>:/home/vca1/datasets/internvid_zh_10k`）内容：
+抽样目录（`<V100_HOST>:/path/to/user/datasets/internvid_zh_10k`）内容：
 
 | 文件 | 说明 |
 |---|---|
@@ -563,7 +563,7 @@ bash recaption/scripts/run_v100.sh s3
 - 启动：
   ```bash
   ssh <USER>@<V100_HOST>        # 或本机直接 cd
-  cd /home/vca1/datasets/internvid_zh_10k
+  cd /path/to/user/datasets/internvid_zh_10k
   python gradio_video_text_review.py
   ```
 - 访问：Gradio 默认端口 7860。本地浏览器打开需 SSH 端口转发：

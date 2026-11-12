@@ -11,8 +11,8 @@ recaption/scripts/make_audit_sample.py 同一套 key 列表);
 
 用法(101vector 上):
     python tools/make_pilot_anno.py \
-        --input /home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl \
-        --clips-root /home/vca1/datasets/internvid_zh_10k/videos \
+        --input /path/to/user/datasets/internvid_zh_10k/internvid_zh_10k.jsonl \
+        --clips-root /path/to/user/datasets/internvid_zh_10k/videos \
         --out-train anno_downstream/internvid_zh_10k_pilot.json \
         --out-eval anno_downstream/internvid_zh_10k_pilot_val.json
 """

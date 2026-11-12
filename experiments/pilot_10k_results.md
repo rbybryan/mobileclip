@@ -1,6 +1,6 @@
 # 10k 试点结果 · go/no-go 记录（试点动力学档）
 
-V100 服务器（`rby@101vector`，8×V100）上 `pilot_10k_r0` / `pilot_10k_r1` 两条
+V100 服务器（`USER@GPU_HOST`，8×V100）上 `pilot_10k_r0` / `pilot_10k_r1` 两条
 链路的**正跑**结果与判据核对。运行日期 2026-07-23。
 
 > 判据是**只看动力学**（试点动力学档）：损失正常下降、r1 的
@@ -198,7 +198,7 @@ ep9 0.28;无 NaN;retrieval r_mean 最好 93.33@ep7)——链路层面全绿,但*
 `output ≈ mean`,retrieval 自然不动。"曲线相同"同时兼容【修复生效】与【没 pull 到修复】,
 **只有上面那段读 ckpt 能区分**:`gamma` 判修复在不在(≈1 = 在;恰好 0 = 跑的还是旧代码),
 `alpha` 判模块动没动(≠0 = 判据通过)。命令与判读表同步在
-[`notes/live/from-claude.md`](../notes/live/from-claude.md) 第 (7) 块。
+[private operational notes](../notes/git-handoff-workflow.md) 第 (7) 块。
 
 ## 结案(2026-07-24 服务器实测):A1 链路判据通过 ✅
 

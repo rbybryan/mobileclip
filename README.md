@@ -1,110 +1,114 @@
-# MobileViCLIP — replication & improvement
+# MobileViCLIP experiments: efficient video–text representations
 
-A working replication of **MobileViCLIP** (*An Efficient Video-Text Model for Mobile
-Devices*, ICCV 2025) plus an ongoing effort to improve it for on-device deployment.
+Research code exploring **which temporal components help video–text retrieval, what they cost,
+and how caption quality affects the questions we can test**. Built on
+[MobileViCLIP (ICCV 2025)](https://openaccess.thecvf.com/content/ICCV2025/html/Yang_MobileViCLIP_An_Efficient_Video-Text_Model_for_Mobile_Devices_ICCV_2025_paper.html).
 
-- Paper: [arXiv:2508.07312](https://arxiv.org/abs/2508.07312) · [ICCV 2025 Open Access](https://openaccess.thecvf.com/content/ICCV2025/html/Yang_MobileViCLIP_An_Efficient_Video-Text_Model_for_Mobile_Devices_ICCV_2025_paper.html)
-- Upstream code this repo is seeded from: [MCG-NJU/MobileViCLIP](https://github.com/MCG-NJU/MobileViCLIP)
-  (upstream README kept verbatim at [`docs/UPSTREAM_README.md`](docs/UPSTREAM_README.md))
-- 中文分步运行指南（从零在一台新 Linux 机器上跑起来）：**[README_zh.md](README_zh.md)**
+**Status:** experimental replication and ablation study. A 1M-clip experiment round is
+reported; the proposed 10M-clip training and end-to-end mobile latency evaluation are not
+established by this release. [Results and limitations](docs/RESULTS.md).
 
----
+[CPU demo](#try-the-evaluator-on-a-cpu) · [Reported results](docs/RESULTS.md) ·
+[Full reproduction](#reproduce-model-experiments) · [中文指南](README_zh.md)
 
-## Status
+## Contributions in this repository
 
-**The baseline is reproduced and the evaluation pipeline is verified.** One round of
-model-side changes has been run and scored; the full-scale (10M) training run has not.
+The base architecture, core training code, and original paper belong to
+[MCG-NJU/MobileViCLIP](https://github.com/MCG-NJU/MobileViCLIP).
+This repository adds and evaluates:
 
-| | |
-|---|---|
-| ✅ Baseline reproduced | MSR-VTT zero-shot **t2v R@1 = 42.50** with the official `mobileviclip_small.pt`, against ≈42.5 reported in the paper |
-| ✅ Model-optimization round | 6 schemes A/B-tested at the 1M verification tier — **1 passed, 5 rejected** (below) |
-| ✅ Training-data audit | 10k-clip full-coverage audit of the InternVid-zh corpus + a VLM recaption pipeline |
-| ⬜ Full-scale run | 10M pretraining (R0→R3) not yet executed |
+- **Controlled model changes:** temporal-branch removal, attention/statistics/surprise
+  pooling, and sigmoid-loss variants, with isolated experiment configurations.
+- **Evaluation tooling:** saved per-query ranks, paired bootstrap comparisons,
+  cross-seed checks, and diagnostics for frame selection and temporal sensitivity.
+- **Data analysis:** a model-assisted audit of a 10,000-clip InternVid-zh sample and a
+  frame-based recaptioning pipeline.
+- **Engineering checks:** regression tests for model components and evaluation utilities,
+  plus export and component-cost experiments.
 
-### What the model-optimization round found
+See [model changes](model-optimization/docs/model-changes.md),
+[evaluator](experiments/paired_bootstrap.py), and [recaptioning](recaption/README.md)
+for the implementation. The [upstream README](docs/UPSTREAM_README.md) is retained for attribution.
 
-Six single-change variants against the `sub1m_r0` baseline, each bit-for-bit equal to
-the baseline at step 0, judged by paired bootstrap (10,000 resamples) on MSR-VTT 1k:
+## What the experiments found
 
-| Scheme | Change vs baseline | Verdict |
-|---|---|---|
-| **Drop the temporal branch** | remove the cross-frame 1D-conv branch entirely | **✅ non-inferior** — and ~27.8% fewer exported ops, −18% CPU mixer |
-| Attention pooling | learned per-frame weights instead of mean | ❌ does not replicate across seeds |
-| Second-order stats pooling | add inter-frame std to the mean | ❌ significantly negative |
-| Surprise pooling | weight frames by prediction error | ❌ clean zero (degenerates to mean) |
-| SigLIP sigmoid loss | softmax → sigmoid | ❌ significantly negative (DSL) |
+![Reported paired differences from the ablation study](docs/assets/ablation-summary.svg)
 
-**Reading:** on this dataset the model is largely insensitive to temporal information,
-so the temporal conv block can be deleted for a free efficiency win. A separate audit
-explains why — see below. Full numbers, CIs and mechanism analysis:
-[`model-optimization/`](model-optimization/README.md).
+Temporal-branch removal is a candidate for further efficiency testing: the reported
+raw R-sum change is **+1.40, 95% CI [−1.10, +3.90]** at the 1M tier.
+This does not demonstrate improved accuracy, equivalence, or formal non-inferiority.
+Attention pooling's initial gain did not persist in a second seed; second-order pooling
+and sigmoid loss have negative reported comparisons. These findings help identify which
+changes deserve more compute and which need a different hypothesis.
 
-### Why: the training captions carry almost no temporal signal
+The chart transcribes existing reports; it does not rerun the benchmark. Raw and
+DSL scores use different protocols. Operator-count and CPU-component savings are not
+end-to-end mobile speedups. See [the evidence, provenance, and limits](docs/RESULTS.md)
+before quoting a result.
 
-A full-coverage audit of 10,000 InternVid-zh clips
-([`docs/caption-quality-report.md`](docs/caption-quality-report.md)):
+## Try the evaluator on a CPU
 
-- **69.1%** of videos contain multiple sequential events, but **99.2%** of their captions
-  say nothing about order — only 0.55% of the corpus describes event sequence at all.
-- **~16%** of the *English source* captions do not match the video; the Chinese
-  translation itself is healthy (**3.6%** error rate). The problem is upstream of translation.
-
-That is the motivation for the recaption line in [`recaption/`](recaption/README.md):
-rewrite captions from the frames with a VLM rather than re-translate.
-
----
-
-## Quick start
+Python 3.10–3.12. No GPU, credentials, model weights, or dataset downloads are needed.
+Run from the repository root:
 
 ```bash
-# 1. environment (Python 3.10 / PyTorch 1.13.1 + CUDA 11.7)
-ENV_NAME=mobileviclip bash scripts/setup_env.sh
-conda activate mobileviclip
-
-# 2. weights, annotations and videos — see CHECKPOINTS.md for every link and target path
-
-# 3. zero-shot eval (edit CUDA_VISIBLE_DEVICES inside the .sh first)
-bash scripts/evaluation/clip/zero_shot/mobileviclip_tiny/eval_msrvtt.sh
-
-# 4. pretraining
-bash scripts/pretraining/clip/mobileviclip_tiny/run.sh
+git clone https://github.com/rbybryan/mobileclip.git
+cd mobileclip
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-demo.txt
+python examples/paired_bootstrap_demo.py
+python -m pytest -q tests/test_paired_bootstrap.py tests/test_collect_frame_select.py tests/test_release_environment.py
 ```
 
-Two recurring traps: install `open_clip_torch` with `--no-deps` (otherwise torch is
-silently upgraded to 2.x), and keep `torch`/`torchvision`/`torchaudio` versions matched.
-Both are covered in [`COMMANDS.md`](COMMANDS.md) §1.
+The demo creates deterministic **synthetic** query ranks, compares a deliberately improved
+candidate with its baseline using the real evaluator, and writes
+`outputs/demo/paired_comparison.json`. It also checks that comparing a model with itself
+returns a zero difference and a zero-width interval. These numbers are not research results.
 
-Run every command from the repo root unless a doc says otherwise.
+To redraw the reported figure from the supplied summary table:
 
-## Where things are
+```bash
+python scripts/plot_reported_results.py
+```
 
-| Path | What |
+## Reproduce model experiments
+
+Full training/evaluation uses a separate NVIDIA/Linux environment and requires licensed
+weights, annotations, and videos obtained from their original providers.
+
+```bash
+ENV_NAME=mobileviclip bash scripts/setup_env.sh
+conda activate mobileviclip
+```
+
+Then follow [CHECKPOINTS.md](CHECKPOINTS.md) for data and weight preparation,
+[the experiment guide](experiments/README.md) for evaluation, and
+[the ablation runbook](model-optimization/docs/run.md) for training and paired comparisons.
+The CPU demo environment is not a replacement for the historical GPU environment.
+`requirements.lock.txt` records a historical machine environment; it is not a portable
+installation recipe. The setup script is the documented training recipe.
+
+## Repository guide
+
+| Area | Contents |
 |---|---|
-| [`COMMANDS.md`](COMMANDS.md) | **Command cheat sheet** — setup, downloads, eval, training, probes |
-| [`CHECKPOINTS.md`](CHECKPOINTS.md) | Every weight / annotation / video download link and its target path |
-| [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) | Known error → cause → fix |
-| [`README_zh.md`](README_zh.md) | 中文全流程运行指南（新机器从零开始） |
-| [`experiments/`](experiments/README.md) | A/B framework, run configs, and the measured result reports |
-| [`model-optimization/`](model-optimization/README.md) | The 6-scheme model-change round: what changed, how to rerun, what it scored |
-| [`recaption/`](recaption/README.md) | InternVid-zh VLM recaption + data-audit line (self-contained: docs + scripts) |
-| [`docs/`](docs/) | Upstream README, CLIP landscape survey, dataset survey, caption-quality report |
-| `models/` `tasks/` `tasks_clip/` `dataset/` | Model definitions and training / eval loops (from upstream, with this repo's changes) |
-| `neural_inspired/` | Opt-in research add-ons, off by default |
-| `tests/` | `pytest tests/` from the repo root |
+| `models/`, `tasks_clip/`, `dataset/` | Upstream model/training components with this study's changes |
+| `experiments/` | Configurations, evaluation, paired statistics, and diagnostic reports |
+| `model-optimization/` | Model-change explanations and experiment retrospectives |
+| `recaption/` | Caption audit and recaption pipeline |
+| `tests/` | CPU utility tests and model-component tests with heavier dependencies |
+| `docs/RESULTS.md` | Public result interpretation and reproducibility limits |
+| `COMMANDS.md`, `TROUBLESHOOTING.md` | Detailed historical runbooks |
 
-Weights, annotations and videos are **gitignored** — they are downloaded on the machine
-per [`CHECKPOINTS.md`](CHECKPOINTS.md), never committed.
+## Attribution and license
 
-## Background reading
+[MIT license](LICENSE), retaining the upstream copyright notice. Changes and experiment
+tooling in this repository are by Boyan Rong. Third-party model weights, datasets, and
+vendored components remain subject to their own terms and notices. No dataset or checkpoint
+license is granted by this repository's code license.
 
-A survey placing MobileViCLIP in the 2025 CLIP landscape (on-device ↔ frontier: MobileCLIP2,
-SigLIP 2, MetaCLIP 2, Perception Encoder …), including a source-level walk-through of this
-repo's temporal structural reparameterization and its InternVid-10M-FLT data pipeline:
-[`docs/clip-2025-progress-report.md`](docs/clip-2025-progress-report.md).
+For the underlying method, cite the [MobileViCLIP paper](https://arxiv.org/abs/2508.07312).
+For this experimental extension, cite the repository and the exact commit used.
 
-## License
-
-[MIT](LICENSE), inherited from upstream MobileViCLIP (© Multimedia Computing Group,
-Nanjing University). This repo is a fork: most of `models/`, `tasks/`, `tasks_clip/`,
-`dataset/` and `configs/` is upstream code with this project's changes on top.
+[Release-preparation scope and publication notes](docs/RELEASE_PREPARATION.md).

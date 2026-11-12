@@ -23,7 +23,7 @@ affected checks record status "unverified" and the pipeline continues.
 Example (sample scale, single GPU):
     python recaption/scripts/fuse_verify.py \
         --views 'outputs/audit_10k/pipe_views.*.jsonl' \
-        --video-root /home/vca1/datasets/internvid_zh_10k/videos \
+        --video-root /path/to/user/datasets/internvid_zh_10k/videos \
         --output outputs/audit_10k/pipe_verified.jsonl --verifiers gdino,ocr
 """
 

@@ -1,0 +1,5 @@
+variant,protocol,seed,delta_r_sum,ci_low,ci_high
+Remove temporal branch,raw,42,1.40,-1.10,3.90
+Attention pooling,raw,43,0.10,-3.10,3.40
+Second-order pooling,raw,42,-4.30,-8.30,-0.30
+Sigmoid loss,DSL,42,-5.70,-10.10,-1.20

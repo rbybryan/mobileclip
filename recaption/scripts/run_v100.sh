@@ -32,8 +32,8 @@ cd "$(dirname "$0")/../.."   # 仓库根目录
 
 # ---------------- 配置（可用环境变量覆盖） ----------------
 # 默认即本机（101vector）的 1 万条抽样——不 export 任何变量也能直接跑
-DATA=${DATA:-/home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl}
-CLIPS=${CLIPS:-/home/vca1/datasets/internvid_zh_10k/videos}   # 视频根目录（video 字段相对它）
+DATA=${DATA:-data/internvid_zh_10k/internvid_zh_10k.jsonl}
+CLIPS=${CLIPS:-data/internvid_zh_10k/videos}   # 视频根目录（video 字段相对它）
 OUT=${OUT:-outputs/audit_10k}
 NGPU=${NGPU:-8}
 S1_FRAMES=${S1_FRAMES:-4}
@@ -790,7 +790,7 @@ pipeline-compare)
   echo "✅ A/B 对比包: $OUT/bundle_compare/（每片: en源|原zh|A重述|A长稿|A直融|B重述(属性徽标)|B长稿|B直融 + 单选;"
   echo "   直融=一条≤30字训练字幕, 长稿=不限字数细节参考; 投票版不上页面）"
   echo "   打包: tar czf $OUT/compare.tgz -C $OUT bundle_compare"
-  echo "   本地: scp rby@101vector:~/mobileclip/$OUT/compare.tgz . && tar xzf compare.tgz"
+  echo "   本地: scp USER@GPU_HOST:~/mobileclip/$OUT/compare.tgz . && tar xzf compare.tgz"
   echo "   表格版总结(GIF+九列): bash $0 summary-table"
   ;;
 # ------------------------------- ⑧i 表格版总结（维护者 2026-07-28）：GIF + 九列静态表
@@ -803,7 +803,7 @@ summary-table)
   echo "✅ 表格总结: $OUT/table_compare/table.html（每行: GIF|en源|原zh|A重述|A长稿|A短稿|B重述|B长稿|B短稿）"
   echo "   同目录: table.csv（Excel/WPS 直开）· table.xlsx（openpyxl 装了才出, 首列 GIF 首帧缩略图）"
   echo "   打包: tar czf $OUT/table.tgz -C $OUT table_compare"
-  echo "   本地: scp rby@101vector:~/mobileclip/$OUT/table.tgz . && tar xzf table.tgz && 打开 table_compare/table.html"
+  echo "   本地: scp USER@GPU_HOST:~/mobileclip/$OUT/table.tgz . && tar xzf table.tgz && 打开 table_compare/table.html"
   ;;
 # ------------------------------------------------ ⑩ 快照：一条命令打印全部状态
 snapshot)

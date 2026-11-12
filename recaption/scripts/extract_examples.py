@@ -27,7 +27,7 @@ import sys
 
 OUT = os.environ.get("OUT", "outputs/audit_10k")
 DATA = os.environ.get(
-    "DATA", "/home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl")
+    "DATA", "data/internvid_zh_10k/internvid_zh_10k.jsonl")
 
 # S0 flags whose *nominal* meaning is language contamination. Kept here so the
 # "false positive" block can show what the pre-fix rule was firing on.

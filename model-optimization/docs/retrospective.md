@@ -1,8 +1,11 @@
 # 1M 验证层复盘报告:五个精度改进为何全部落空
 
+> **Release interpretation correction:** historical “非劣” / “non-inferior” labels below describe exploratory screening, not a confirmatory non-inferiority test. A CI containing zero is insufficient; the observed seed-noise threshold was retrospective. See [results and limitations](../../docs/RESULTS.md). Measurements are retained as historical records.
+
+
 **日期:** 2026-08-03 · **档位:** 1M 子集验证层(`sub1m_*`,8 个 config)· **算力:** H100
 **权威判决表:** [`verification-tier-1m-zh.md`](../../notes/verification-tier-1m-zh.md) §10 · **机制证据:** [`../experiments/gate0_results.md`](../../experiments/gate0_results.md)
-**可执行的下一步:** [`live/from-claude.md`](../../notes/live/from-claude.md) (77)
+**可执行的下一步:** [private operational notes](../../notes/git-handoff-workflow.md) (77)
 
 ---
 
@@ -278,7 +281,7 @@ batch 仅 512(128×4),而 sigmoid 类损失的理论饱和点在 3 万量级,相
 2. **主时钟转向教师蒸馏(C1)。** 这是目前唯一既未被检验、又有明确上行空间,且改动的是「数据与监督信号」
    而非「模型结构」的方向。首个吞吐已跑通(§10.5,教师提取管线健康、零解码失败),但 1.8 clip/s 是与 P9 训练
    **共卡**时测得的污染值;P9 已结束,应在**独占算力**下重测,再据此决定语料规模(精选 2–3M vs 全量 10M)。
-3. **三项收尾(可执行命令见 [`live/from-claude.md`](../../notes/live/from-claude.md) (77)):** ① 独占算力重测教师提取吞吐,
+3. **三项收尾(可执行命令见 [private operational notes](../../notes/git-handoff-workflow.md) (77)):** ① 独占算力重测教师提取吞吐,
    定语料规模;② 补 P1trained 第二个 seed(配置已建 `sub1m_P1trained_s43`),坐实唯一存活的结论;
    ③ 读取 P9 的 `W₂` 范数,闭合其失败归因。
 4. **不再在 1M 档尝试小改动。** 排队新任务前先运行 `experiments/status_1m.py`,确认无在跑臂、无异常臂。
@@ -308,7 +311,7 @@ batch 仅 512(128×4),而 sigmoid 类损失的理论饱和点在 3 万量级,相
 | 时序池化为何对帧序不敏感(GATE-0 三证据) | [`../experiments/gate0_results.md`](../../experiments/gate0_results.md) §5 / §8 |
 | P1 效率数字 / 结构性删算子缺口 | [`experiments/v100_sweep_results.md`](../../experiments/v100_sweep_results.md) §7 |
 | V100 侧的同向证据(P5 / P1 / P7 / AC9) | [`../experiments/v100_sweep_results.md`](../../experiments/v100_sweep_results.md) |
-| 可执行的下一步命令 | [`live/from-claude.md`](../../notes/live/from-claude.md) (77) |
+| 可执行的下一步命令 | [private operational notes](../../notes/git-handoff-workflow.md) (77) |
 
 ---
 

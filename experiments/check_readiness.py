@@ -139,7 +139,7 @@ def main():
     full = all(train_ready[f"internvid_v{i}"] for i in range(1, 12))
     pilot = train_ready["internvid_zh_10k_pilot"] and train_ready["internvid_zh_10k_pilot_val"]
     # 这份结论只对**当前这个 MVC_DATA_DIR** 成立。该机上评测数据在仓库 data/、
-    # 试点语料在 /home/vca1/datasets,不在一个根下,所以单跑一次必然有一半误报。
+    # 试点语料在 /path/to/user/datasets,不在一个根下,所以单跑一次必然有一半误报。
     root_desc = os.environ.get("MVC_DATA_DIR", "data(默认)")
     print(f"\n== 已解锁的步骤(experiments/README.md)== [仅基于 MVC_DATA_DIR={root_desc}]")
     steps = [
@@ -160,10 +160,10 @@ def main():
                   "先跑 tools/make_pilot_anno.py(README §2b)。")
         else:
             print(f"\n提示:pilot anno 是好的,缺的是**视频目录**。"
-                  f"\n      该机试点语料在 /home/vca1/datasets,评测数据在仓库 data/ —— "
+                  f"\n      该机试点语料在 /path/to/user/datasets,评测数据在仓库 data/ —— "
                   "两批不在一个根下。"
                   f"\n      换个根再跑一遍:"
-                  "MVC_DATA_DIR=/home/vca1/datasets python experiments/check_readiness.py")
+                  "MVC_DATA_DIR=/path/to/user/datasets python experiments/check_readiness.py")
 
 
 if __name__ == "__main__":

@@ -63,7 +63,7 @@ DO_VERIFY=1 N_SAMPLE=50 bash recaption/scripts/run_v100.sh pipeline-sample
 
 ## 与仓库其他部分的关系
 
-- 服务器⇄Claude 的交接通道在 [`notes/live/`](../notes/live/)（不只谈重述，故未并入本目录），
+- 服务器⇄Claude 的交接通道在 [private operational notes](../notes/git-handoff-workflow.md)（不只谈重述，故未并入本目录），
   约定见 [`notes/git-handoff-workflow.md`](../notes/git-handoff-workflow.md)。
 - 产物（`outputs/`）、视频与标注**不进 git**，按 `docs/setup-v100.md` 在服务器上就地生成。
 - 审计报告的对外精简版是 [`docs/caption-quality-report.md`](../docs/caption-quality-report.md)（在仓库根的 `docs/`，不在本目录）。
