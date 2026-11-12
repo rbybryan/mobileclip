@@ -1,6 +1,6 @@
 # b100 主机全量预训练配置与执行手册（InternVid-10M-FLT）
 
-> Historical GPU runbook. Machine paths are illustrative; private handoff files are excluded. Start with the [public quickstart](../README.md) for the CPU demo. For a custom user-site, set `MVC_PYTHONUSERBASE` explicitly.
+> 以下是 GPU 实验的运行记录，机器路径需按实际环境修改。CPU 示例见 [README](../README.md)；自定义 Python user-site 需设置 `MVC_PYTHONUSERBASE`。
 
 
 与 V100 试点（[`../recaption/docs/setup-v100.md`](../recaption/docs/setup-v100.md) 用于审查、

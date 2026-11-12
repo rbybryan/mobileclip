@@ -1,6 +1,6 @@
 # 1M 验证层复盘报告:五个精度改进为何全部落空
 
-> **Release interpretation correction:** historical “非劣” / “non-inferior” labels below describe exploratory screening, not a confirmatory non-inferiority test. A CI containing zero is insufficient; the observed seed-noise threshold was retrospective. See [results and limitations](../../docs/RESULTS.md). Measurements are retained as historical records.
+> 这里把删时序分支保留为后续实验候选。配对区间包含零，尚不能据此判定非劣；具体判读见[实验总结](../../docs/RESULTS.md)。
 
 
 **日期:** 2026-08-03 · **档位:** 1M 子集验证层(`sub1m_*`,8 个 config)· **算力:** H100

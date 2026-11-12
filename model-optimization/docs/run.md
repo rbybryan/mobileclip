@@ -1,6 +1,6 @@
 # 怎么跑:训练 → 补评 → 配对比较
 
-> **Release interpretation correction:** historical “非劣” / “non-inferior” labels below describe exploratory screening, not a confirmatory non-inferiority test. A CI containing zero is insufficient; the observed seed-noise threshold was retrospective. See [results and limitations](../../docs/RESULTS.md). Measurements are retained as historical records.
+> 这里把删时序分支保留为后续实验候选。配对区间包含零，尚不能据此判定非劣；具体判读见[实验总结](../../docs/RESULTS.md)。
 
 
 > 复现 6 个方案的**唯一入口**是 [`run_model_opt.sh`](../scripts/run_model_opt.sh)——

@@ -1,6 +1,6 @@
 # 1M 验证层(sub1m_*)—— 在子集上「真·验证」臂能否赢基线
 
-> **Release interpretation correction:** historical “非劣” / “non-inferior” labels below describe exploratory screening, not a confirmatory non-inferiority test. A CI containing zero is insufficient; the observed seed-noise threshold was retrospective. See [results and limitations](../docs/RESULTS.md). Measurements are retained as historical records.
+> 这里把删时序分支保留为后续实验候选。配对区间包含零，尚不能据此判定非劣；具体判读见[实验总结](../docs/RESULTS.md)。
 
 
 介于两个已有档位之间的**中间层**:
