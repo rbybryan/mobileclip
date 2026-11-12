@@ -1,6 +1,6 @@
 # Troubleshooting
 
-> Historical GPU runbook. Machine paths are illustrative; private handoff files are excluded. Start with the [public quickstart](README.md) for the CPU demo. For a custom user-site, set `MVC_PYTHONUSERBASE` explicitly.
+> 以下是 GPU 实验的运行记录，机器路径需按实际环境修改。CPU 示例见 [README](README.md)；自定义 Python user-site 需设置 `MVC_PYTHONUSERBASE`。
 
 
 每一条是「症状 → 原因 → 修法」。用浏览器/编辑器搜索报错原文通常最快。

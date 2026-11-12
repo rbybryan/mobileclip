@@ -1,6 +1,6 @@
 # model-optimization/ —— 1M 验证层的模型改造(6 个方案)
 
-> **Release interpretation correction:** historical “非劣” / “non-inferior” labels below describe exploratory screening, not a confirmatory non-inferiority test. A CI containing zero is insufficient; the observed seed-noise threshold was retrospective. See [results and limitations](../docs/RESULTS.md). Measurements are retained as historical records.
+> 这里把删时序分支保留为后续实验候选。配对区间包含零，尚不能据此判定非劣；具体判读见[实验总结](../docs/RESULTS.md)。
 
 
 精简结果报告设计的那 6 个模型更改都汇总在这个目录里:**每个方案改了什么、为什么、

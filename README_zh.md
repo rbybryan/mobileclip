@@ -1,6 +1,6 @@
 # MobileViCLIP 运行指南（中文）
 
-> 公开版本入口与 CPU 演示见 [README](README.md)；实验结论的适用范围及非劣性措辞修正见 [结果说明](docs/RESULTS.md)。本文保留历史 GPU 运行指南。
+> 这是训练与评测的 GPU 运行指南。CPU 统计示例见 [README](README.md)，模型改造的结果见[实验总结](docs/RESULTS.md)。
 
 
 本文档介绍如何在**一台全新的 Linux 机器**上，从零开始一步步把本仓库（MobileViCLIP 复现项目）跑起来，

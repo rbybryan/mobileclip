@@ -1,6 +1,6 @@
 # Commands Cheat Sheet
 
-> Historical GPU runbook. Machine paths are illustrative; private handoff files are excluded. Start with the [public quickstart](README.md) for the CPU demo. For a custom user-site, set `MVC_PYTHONUSERBASE` explicitly.
+> These are the commands from the GPU experiments. Adjust the machine paths for your setup. The CPU example is in the [README](README.md); set `MVC_PYTHONUSERBASE` if you use a custom Python user-site.
 
 
 All command lines needed to set up, download assets, replicate, train, and evaluate MobileViCLIP.
