@@ -13,9 +13,17 @@ removal, alternative pooling heads, and a sigmoid-loss option, with separate con
 for the comparisons. I also added per-query rank logging and paired bootstrap
 comparisons so I could look at the uncertainty in small retrieval differences.
 
-The [model-change notes](model-optimization/docs/model-changes.md) describe each
-variant. The [evaluation code](experiments/paired_bootstrap.py) and
-[experiment configs](experiments/configs/) are useful starting points for the implementation.
+The main changes are easiest to follow through these files:
+
+| Change | Implementation | Check |
+|---|---|---|
+| Disable the temporal branch, then bypass its computation | [Model switches](models/mobileviclip_small.py) | [Zero-gate and bypass comparisons](tests/test_skip_temporal.py) |
+| Compare pooling heads and a sigmoid loss | [Pooling heads](models/mobileviclip_small.py), [loss](models/criterions.py), [configs](experiments/configs/) | [Initialization and multi-positive loss checks](tests/test_optimization_components.py) |
+| Compare retrieval runs query by query | [Paired bootstrap](experiments/paired_bootstrap.py) | [Resampling and scoring checks](tests/test_paired_bootstrap.py) |
+
+The [model-change notes](model-optimization/docs/model-changes.md) explain the choices
+behind each variant. The checks above test the implementation; the measured retrieval
+comparisons are below.
 
 ## Results so far
 
