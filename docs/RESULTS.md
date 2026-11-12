@@ -40,8 +40,8 @@ the figure because the summary doesn't contain a paired interval for it.
 Some earlier tables use in-training evaluations and others use offline reevaluations.
 Their point estimates differ slightly. The figure uses the paired-comparison table
 throughout, without mixing estimates and intervals from different evaluation runs.
-Older notes also use “six schemes” inconsistently; the README names the five distinct
-changes summarized here.
+This summary covers five model changes. The longer retrospective also includes a
+text-negative-bank experiment; the baseline is a reference, not another modification.
 
 ## Efficiency and caption analysis
 
