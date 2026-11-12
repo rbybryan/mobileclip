@@ -1,5 +1,8 @@
 # Commands Cheat Sheet
 
+> Historical GPU runbook. Machine paths are illustrative; private handoff files are excluded. Start with the [public quickstart](README.md) for the CPU demo. For a custom user-site, set `MVC_PYTHONUSERBASE` explicitly.
+
+
 All command lines needed to set up, download assets, replicate, train, and evaluate MobileViCLIP.
 Run everything from the repo root unless noted. See [CHECKPOINTS.md](CHECKPOINTS.md) for asset details.
 
@@ -389,7 +392,7 @@ python experiments/r1_fn_density.py --feats /tmp/txtfeats.npy --thresholds 0.9,0
 
 ```bash
 cd "$(git rev-parse --show-toplevel)" && git pull origin main
-export MVC_DATA_DIR=/home/vca1/datasets          # 试点视频根(训练/试点要 export)
+export MVC_DATA_DIR=/path/to/user/datasets          # 试点视频根(训练/试点要 export)
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7       # 按空卡改
 # 重跑一轮读新指标(~180 步,10 epoch),每 20 步打一行 [SAT]:
 MVC_LOG_SAT=20 bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r1.py 8
@@ -450,7 +453,7 @@ python experiments/r1_fn_density.py --anno anno_downstream/InternVid/InternVid-1
 
 ```bash
 cd "$(git rev-parse --show-toplevel)" && git pull origin main      # 若报 "divergent branches",见下方 TROUBLESHOOTING
-export MVC_DATA_DIR=/home/vca1/datasets
+export MVC_DATA_DIR=/path/to/user/datasets
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 # ① 建缓存(投影前文本特征 + caption_to_idx;单卡、纯前向、几分钟)。一行,勿折行。
@@ -477,7 +480,7 @@ SigLIP 饱和点(~32k),bank 补 +16384 正好推进甜区,且 1M×3 epoch 不过
 
 ```bash
 cd "$(git rev-parse --show-toplevel)" && git fetch origin main && git reset --hard origin/main   # divergent 见 TROUBLESHOOTING
-export MVC_DATA_DIR=/home/vca1/datasets
+export MVC_DATA_DIR=/path/to/user/datasets
 
 # ① 建 1M 文本负例库缓存(单卡、纯前向、~10–30 min、~1GB;一行,勿折行)。与试点缓存互不覆盖。
 python experiments/r1_build_textbank.py --anno anno_downstream/InternVid/InternVid-10M-flt_1.json --out-feats experiments/cache/textbank_1m_feats.fp16.npy --out-idx experiments/cache/textbank_1m_idx.npy
@@ -1670,7 +1673,7 @@ vim notes/live/from-server.md    # 或 nano;非要命令行追加就用带引号
 > [TROUBLESHOOTING.md](TROUBLESHOOTING.md#git-status-冒出一堆中文词当文件名07-23与所以--markdown-被粘进了-bash)。
 
 ```bash
-cd /workspace/mount/b100_zaip_data/rby/mobileclip   # 仓库根目录,按你的实际路径改
+cd /path/to/workspace/mobileclip   # 仓库根目录,按你的实际路径改
 git fetch origin main
 
 # 分支名带时分,同一天重跑也不会撞名(只带月日会撞,见 §6.1 末尾)

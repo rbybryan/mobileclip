@@ -1,5 +1,8 @@
 # b100 主机全量预训练配置与执行手册（InternVid-10M-FLT）
 
+> Historical GPU runbook. Machine paths are illustrative; private handoff files are excluded. Start with the [public quickstart](../README.md) for the CPU demo. For a custom user-site, set `MVC_PYTHONUSERBASE` explicitly.
+
+
 与 V100 试点（[`../recaption/docs/setup-v100.md`](../recaption/docs/setup-v100.md) 用于审查、
 [`README.md` §2b](README.md) 用于 10k 试点训练）**并行**的另一条线：在 b100 主机上跑
 **全量 10M** 预训练（`internvid_all` 语料，R0→R1 等步 A/B）。两条线互不共享状态、
@@ -31,7 +34,7 @@
 >   这个已知的确切路径（§4）——那是直接 `ls` 一个具体目录，不是全盘搜索。
 > - 入口/联网：`root@<H100_HOST> -p <SSH_PORT>`。
 >   全量视频在 `/workspace/mount/b100_zaip_data_luan/InternVid-10M-FLT/`；
->   工作区 `/workspace/mount/b100_zaip_data/rby/`。
+>   工作区 `/path/to/workspace/`。
 > - **⚠️ rby/ 下有两个并排的项目目录，别搞混**（2026-07-23 起）：
 >   - `rby/MobileViCLIP` —— **中文 NebulaCV 线**（上游 MCG-NJU 的 clone + 本地改动，
 >     与中文线协作）。
@@ -105,8 +108,8 @@ source `.gitenv`**（首次生成见 `TROUBLESHOOTING.md`「共用账号的隔�
 首次 push 存进 `rby/.git-credentials`，之后 clone/pull/push 不再询问）：
 
 ```bash
-source /workspace/mount/b100_zaip_data/rby/.gitenv
-cd /workspace/mount/b100_zaip_data/rby
+source /path/to/workspace/.gitenv
+cd /path/to/workspace
 # 首次（走代理 clone；注意目标目录是 mobileclip，与中文线的 MobileViCLIP 并排）：
 git clone https://github.com/rbybryan/mobileclip.git mobileclip
 cd mobileclip
@@ -144,7 +147,7 @@ wheel 都带 sm_90（cu118 里就有；cu124 对 Hopper 更快，作稳妥起点
 于是：**不重建 torch，缺的小包装进自己的 user-site**。每次开新 shell 先 source 一次：
 
 ```bash
-cd /workspace/mount/b100_zaip_data/rby/mobileclip
+cd /path/to/workspace/mobileclip
 source experiments/env_b100.sh          # 只设 PYTHONUSERBASE / PYTHONPATH / MVC_*，不装任何东西
 python experiments/check_imports.py     # 一次列全缺哪些包，并打印可直接复制的 pip 命令
 ```
@@ -181,8 +184,8 @@ venv 建出来**没有自带 pip**——shell 里的 `pip` 于是落到共用 co
 ```bash
 # Python 3.10 + cu124 的 torch 2.x（自带 sm_90；cu118/cu121 也都行）
 source /root/miniforge3/etc/profile.d/conda.sh
-conda create -y -p /workspace/mount/b100_zaip_data/rby/mvc_env310 python=3.10
-conda activate /workspace/mount/b100_zaip_data/rby/mvc_env310
+conda create -y -p /path/to/workspace/mvc_env310 python=3.10
+conda activate /path/to/workspace/mvc_env310
 which python && which pip   # 必须都在 .../rby/mvc_env310/bin/ 下；不是就停，别继续装
 python -m pip install --upgrade pip
 python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
@@ -274,7 +277,7 @@ find "$FULL" /workspace/mount/b100_zaip_data/video_datasets/vd-foundation___Inte
 下面按探盘结果填 `SRC[i]` = 第 i 个分片视频目录的真实绝对路径：
 
 ```bash
-WORK=/workspace/mount/b100_zaip_data/rby/mvc_stage
+WORK=/path/to/workspace/mvc_stage
 mkdir -p "$WORK/data/video_sample"
 
 # —— 情况 A：$FULL 下就是 11 个分片目录，名字规整（如 InternVId-FLT_1 或 1）——
@@ -561,7 +564,7 @@ PY
 且 `TestVideo/` 已覆盖 1000/1000，`TrainValVideo/` 覆盖 0）：
 
 ```bash
-cd /workspace/mount/b100_zaip_data/rby/mobileclip
+cd /path/to/workspace/mobileclip
 MSRVTT=/workspace/mount/b100_zaip_data/video_datasets/MSR-VTT
 
 mkdir -p anno_downstream data/MSRVTT_Videos
@@ -759,7 +762,7 @@ done
 
 ## 8. 交回（服务器 → Claude）
 
-把结果/报错写进 [`../notes/live/from-server.md`](../notes/live/from-server.md)（顶部新增
+把结果/报错写进 [private operational notes](../notes/git-handoff-workflow.md)（顶部新增
 日期块），Claude 从那里读、据此改指令。至少回这几项，好让下一轮有据可依：
 - §2 arch 自检的 `get_arch_list()` 实际输出、最终装成的 torch 版本；
 - §4 探盘看到的 `$FULL` 真实布局（分片目录名、每片 mp4 数、anno json 在哪）；

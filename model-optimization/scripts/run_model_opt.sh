@@ -73,7 +73,9 @@ fi
 #（未加载也会打印一套很像样的 r_mean，不查就当真）。
 if _has eval; then
   export CUDA_VISIBLE_DEVICES="${GPUS%%,*}"   # 补评单卡即可,取第一张
-  [[ -f experiments/env_b100.sh ]] && source experiments/env_b100.sh >/dev/null 2>&1 || true
+  if [[ -n "${MVC_PYTHONUSERBASE:-}" ]]; then
+    source experiments/env_b100.sh
+  fi
   for c in "${ARMS[@]}"; do
     run="experiments/runs/${c}"
     [[ -e "$run/ckpt_02.pth" ]] || { echo "!! ${c}: 无 ckpt_02.pth,先跑训练 —— 跳过"; continue; }

@@ -1,5 +1,8 @@
 # 6 个模型更改 · 逐个说清
 
+> **Release interpretation correction:** historical “非劣” / “non-inferior” labels below describe exploratory screening, not a confirmatory non-inferiority test. A CI containing zero is insufficient; the observed seed-noise threshold was retrospective. See [results and limitations](../../docs/RESULTS.md). Measurements are retained as historical records.
+
+
 > 精简结果报告设计的 6 个方案,每个一节:**改了什么(代码钩子)/ config 一处改动 /
 > 为什么这么设计 / 结果与为什么 / 怎么读**。数字见
 > [`retrospective-brief.md`](retrospective-brief.md);怎么跑见 [`run.md`](run.md)。

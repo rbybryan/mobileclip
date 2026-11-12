@@ -30,7 +30,7 @@
 
 | 机器 | 数据 | 角色 | 判据 |
 |---|---|---|---|
-| **101vector · 8×V100** | 只有 10k 预抽样(`/home/vca1/datasets/internvid_zh_10k`) | 每个方案的**链路 / 稳定性 go-no-go**:能不能跑通、loss 正不正常降、新参数是否真收到梯度 | 试点动力学档「只看动力学」:loss 下降、`logit_scale/logit_bias` 离开初值、`temporal_pool.proj` 非零。**过 = 值得拿去 H100;不等于这个方案更好。** |
+| **101vector · 8×V100** | 只有 10k 预抽样(`/path/to/user/datasets/internvid_zh_10k`) | 每个方案的**链路 / 稳定性 go-no-go**:能不能跑通、loss 正不正常降、新参数是否真收到梯度 | 试点动力学档「只看动力学」:loss 下降、`logit_scale/logit_bias` 离开初值、`temporal_pool.proj` 非零。**过 = 值得拿去 H100;不等于这个方案更好。** |
 | **b100 主机 · 8×H100(默认前 4 张)** | 全量 10M(`/workspace/mount/.../InternVid-10M-FLT`) | 方案之间**真正排序**(R0 vs r1a/r1b/r1_both 的 A/B)+ 胜者的**终训** | 真检索基准 + 足够步数下的方向性差异(§3 的 B0 口径) |
 
 **为什么 10k 不能给方案排序**(关键,别拿它选型):试点的 held-out 自检索在开训前
@@ -131,13 +131,13 @@ A/B 两臂 batch size 必须一致(=批内负例数=对比学习任务本身)。
 # 1) jsonl -> 训练 anno(9k train + 1k held-out 自检索 eval;
 #    同时打印共享字幕统计 = caption_idx 多正例的实际影响面)
 python tools/make_pilot_anno.py \
-    --input /home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl \
-    --clips-root /home/vca1/datasets/internvid_zh_10k/videos \
+    --input /path/to/user/datasets/internvid_zh_10k/internvid_zh_10k.jsonl \
+    --clips-root /path/to/user/datasets/internvid_zh_10k/videos \
     --out-train anno_downstream/internvid_zh_10k_pilot.json \
     --out-eval  anno_downstream/internvid_zh_10k_pilot_val.json
 
-# 2) 数据路径:videos 在 /home/vca1/datasets/internvid_zh_10k/videos
-export MVC_DATA_DIR=/home/vca1/datasets   # anno 用默认 anno_downstream/ 即可
+# 2) 数据路径:videos 在 /path/to/user/datasets/internvid_zh_10k/videos
+export MVC_DATA_DIR=/path/to/user/datasets   # anno 用默认 anno_downstream/ 即可
 
 # 3) 开跑前必做的 V100 预检:torch 必须带 sm_70 内核
 #    (env 里若是 cu126/cu128/CUDA-13 构建,8 卡会在第一个 barrier 就全部
@@ -271,7 +271,7 @@ held-out 自检索 R@1 相对方向仅作参考。评测走 `ret_test`(1k 自检
 
 > 🚩 **2026-07-22 实测:这一步在 101vector 上跑不了 —— 5 个评测全崩,一个数字都没出。**
 > 不是配置问题,是**本机没有下游评测数据**。`recaption/docs/setup-v100.md` 开篇
-> 就写明该机只有 `/home/vca1/datasets/internvid_zh_10k` 这 1 万条预抽样,
+> 就写明该机只有 `/path/to/user/datasets/internvid_zh_10k` 这 1 万条预抽样,
 > **没有全量数据**。崩溃日志与两类失败的区分见
 > [`TROUBLESHOOTING.md`](../TROUBLESHOOTING.md) 的
 > 「§3 B0 五个评测全部失败 —— 本机没有下游评测数据」。
@@ -284,7 +284,7 @@ held-out 自检索 R@1 相对方向仅作参考。评测走 `ret_test`(1k 自检
 > | 数据 | 落在哪 | 怎么让预检看到 |
 > |---|---|---|
 > | **评测数据集**(msrvtt / hmdb51 / ucf101 …) | 仓库的 `data/` —— 各下载脚本写死的相对路径,如 `tools/download_hmdb51.sh` 的 `DEST_DIR="data/hmdb51/videos_test"` | **`unset MVC_DATA_DIR`** |
-> | **10k 试点语料** | `/home/vca1/datasets/internvid_zh_10k` | `export MVC_DATA_DIR=/home/vca1/datasets` |
+> | **10k 试点语料** | `/path/to/user/datasets/internvid_zh_10k` | `export MVC_DATA_DIR=/path/to/user/datasets` |
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
@@ -294,7 +294,7 @@ unset MVC_DATA_DIR
 python experiments/check_readiness.py
 
 # ② 试点语料(§2b 用的)—— 要 export
-MVC_DATA_DIR=/home/vca1/datasets python experiments/check_readiness.py
+MVC_DATA_DIR=/path/to/user/datasets python experiments/check_readiness.py
 ```
 
 它逐个数据集报「anno 在不在、data_root 在不在、抽查的视频在不在」,末尾直接列出
@@ -308,8 +308,8 @@ MVC_DATA_DIR=/home/vca1/datasets python experiments/check_readiness.py
 
 > ✅ **更正(2026-07-22 晚,全盘搜索实测):101vector 上这四个基准的视频
 > 早就下好了,一个字节都不用再下。** 本节此前两版都说"要下 ~15 GB",是错的 ——
-> 错因是预检带着 `MVC_DATA_DIR=/home/vca1/datasets` 跑,而数据全在
-> **`~/mobileclip/data/`**(即 `/home/vca1/rby/mobileclip/data/`)。
+> 错因是预检带着 `MVC_DATA_DIR=/path/to/user/datasets` 跑,而数据全在
+> **`~/mobileclip/data/`**(即 `/path/to/user/rby/mobileclip/data/`)。
 
 盘上实测(2026-07-22 全盘 `find` 聚合):
 
@@ -324,8 +324,8 @@ MVC_DATA_DIR=/home/vca1/datasets python experiments/check_readiness.py
 另有全量 `data/kinetics-dataset/k400/{train,val,test}`(train 约 24 万条)与
 `data/hmdb51_hf/hmdb51.zip`(2117581749 字节,与下载脚本的期望值一致)。
 
-> 📖 **读 `find` 输出时当心重复计数。** 若命令写成 `find ~ /home/vca1 ...`,
-> 而 `~` = `/home/vca1/rby` 正是 `/home/vca1` 的子目录,**同一棵树会被遍历两遍**,
+> 📖 **读 `find` 输出时当心重复计数。** 若命令写成 `find ~ /path/to/user ...`,
+> 而 `~` = `/path/to/user/rby` 正是 `/path/to/user` 的子目录,**同一棵树会被遍历两遍**,
 > 命中行重复、计数翻倍。上表已折半。
 
 anno 的补法见 `TROUBLESHOOTING.md`「Missing `anno_downstream/*.json`」与
@@ -353,7 +353,7 @@ anno 的补法见 `TROUBLESHOOTING.md`「Missing `anno_downstream/*.json`」与
 > ```
 
 **统一规则:B0 全程 `unset MVC_DATA_DIR`。** 评测数据都在仓库默认的 `data/` 下,
-而 `/home/vca1/datasets` 是 10k 试点的地盘 —— 分开放,互不干扰。
+而 `/path/to/user/datasets` 是 10k 试点的地盘 —— 分开放,互不干扰。
 (`configs/data.py` 只是按 `MVC_DATA_DIR` 拼路径,不导出就落回 `data/`。)
 
 **101vector 上的全部操作就这几行**(其余三个基准的目录名已经和 config 一致):

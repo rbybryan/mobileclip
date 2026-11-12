@@ -58,7 +58,7 @@
 
 ## 1. 流水线状态
 
-机器：`101vector` 8×V100-32G ｜ 数据：`/home/vca1/datasets/internvid_zh_10k`（10000 条）
+机器：`101vector` 8×V100-32G ｜ 数据：`/path/to/user/datasets/internvid_zh_10k`（10000 条）
 
 | 阶段 | 状态 | 产物 | 一句话结论 |
 |---|---|---|---|

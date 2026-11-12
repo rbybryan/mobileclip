@@ -1,5 +1,8 @@
 # Troubleshooting
 
+> Historical GPU runbook. Machine paths are illustrative; private handoff files are excluded. Start with the [public quickstart](README.md) for the CPU demo. For a custom user-site, set `MVC_PYTHONUSERBASE` explicitly.
+
+
 每一条是「症状 → 原因 → 修法」。用浏览器/编辑器搜索报错原文通常最快。
 
 ## 目录
@@ -89,7 +92,7 @@
 | 机器 | 仓库路径 |
 |---|---|
 | 101vector(V100) | `~/mobileclip` ✅ |
-| b100(H100) | `/workspace/mount/b100_zaip_data/rby/mobileclip`(`~` = `/root`,**没有** `mobileclip`) |
+| b100(H100) | `/path/to/workspace/mobileclip`(`~` = `/root`,**没有** `mobileclip`) |
 
 `cd` 失败返回非零 ⇒ **`&&` 短路,链上后续全部跳过**,而且**不报错、不退出**。
 
@@ -289,7 +292,7 @@ ckpt 是存好的(DeepSpeed 目录式,`ckpt_02.pth/mp_rank_00_model_states.pt`),
 
 ### Symptom
 
-以非 `vca1` 账号（如 `rby`）启动 `/home/vca1/datasets/internvid_zh_10k/gradio_video_text_review.py`：
+以非 `vca1` 账号（如 `rby`）启动 `/path/to/user/datasets/internvid_zh_10k/gradio_video_text_review.py`：
 
 ```
 File ".../gradio_video_text_review.py", line 95, in _initialize
@@ -306,7 +309,7 @@ db_path     = result_dir / "review_annotations.sqlite3"
 export_path = result_dir / "review_results.jsonl"
 ```
 
-`result_dir` 位于 `/home/vca1/...`，其他账号只有读权限；SQLite 打开 WAL 需要在库文件
+`result_dir` 位于 `/path/to/user/...`，其他账号只有读权限；SQLite 打开 WAL 需要在库文件
 **所在目录**里创建 `-wal` / `-shm`，因此即便库文件本身可读也会失败。
 （这也解释了为什么报错发生在 `PRAGMA journal_mode=WAL` 这一行而不是 `connect()`。）
 
@@ -335,11 +338,11 @@ python gradio_video_text_review.py --result-dir ~/review_out
 **③ 脚本拷到自己目录再跑**（`result_dir` 多半是相对脚本/工作目录推导的）：
 
 ```bash
-mkdir -p ~/review_gui && cp /home/vca1/datasets/internvid_zh_10k/gradio_video_text_review.py ~/review_gui/
+mkdir -p ~/review_gui && cp /path/to/user/datasets/internvid_zh_10k/gradio_video_text_review.py ~/review_gui/
 cd ~/review_gui
 python gradio_video_text_review.py \
-  --data /home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl \
-  --video-root /home/vca1/datasets/internvid_zh_10k/videos
+  --data /path/to/user/datasets/internvid_zh_10k/internvid_zh_10k.jsonl \
+  --video-root /path/to/user/datasets/internvid_zh_10k/videos
 ```
 
 ### Notes
@@ -1067,7 +1070,7 @@ The V100 torch fix above worked — the run gets past CUDA init, model build and
 `init_distributed_mode`, then dies in dataset construction:
 
 ```
-File "/home/vca1/rby/mobileclip/dataset/pt_dataset.py", line 88, in __init__
+File "/path/to/user/rby/mobileclip/dataset/pt_dataset.py", line 88, in __init__
     with open(self.label_file, 'r') as f:
 FileNotFoundError: [Errno 2] No such file or directory: 'anno_downstream/internvid_zh_10k_pilot.json'
 ```
@@ -1084,12 +1087,12 @@ The paths involved all agree already (verified against `recaption/scripts/`):
 
 | Thing | Value on 101vector | Where it comes from |
 |---|---|---|
-| audit jsonl | `/home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl` | `recaption/scripts/run_v100.sh` `$DATA`, `recaption/docs/setup-v100.md` §0 |
-| clips root | `/home/vca1/datasets/internvid_zh_10k/videos` | `run_v100.sh` `$CLIPS` |
+| audit jsonl | `/path/to/user/datasets/internvid_zh_10k/internvid_zh_10k.jsonl` | `recaption/scripts/run_v100.sh` `$DATA`, `recaption/docs/setup-v100.md` §0 |
+| clips root | `/path/to/user/datasets/internvid_zh_10k/videos` | `run_v100.sh` `$CLIPS` |
 | `data_root` | `$MVC_DATA_DIR/internvid_zh_10k/videos` | `configs/data.py` `internvid_zh_10k_pilot` |
 | `anno_path` | `$MVC_ANNO_DIR/internvid_zh_10k_pilot.json` | same entry; `MVC_ANNO_DIR` defaults to `anno_downstream` |
 
-So with `MVC_DATA_DIR=/home/vca1/datasets` the `data_root` resolves to the same
+So with `MVC_DATA_DIR=/path/to/user/datasets` the `data_root` resolves to the same
 `videos/` directory the audit tooling uses, and the `video` field written by
 `make_pilot_anno.py` is relative to that root — consistent by construction,
 because the script validates every record against `--clips-root` and drops
@@ -1102,8 +1105,8 @@ Run §2b step 1 once, from the repo root:
 ```bash
 cd "$(git rev-parse --show-toplevel)"
 python tools/make_pilot_anno.py \
-    --input /home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl \
-    --clips-root /home/vca1/datasets/internvid_zh_10k/videos \
+    --input /path/to/user/datasets/internvid_zh_10k/internvid_zh_10k.jsonl \
+    --clips-root /path/to/user/datasets/internvid_zh_10k/videos \
     --out-train anno_downstream/internvid_zh_10k_pilot.json \
     --out-eval  anno_downstream/internvid_zh_10k_pilot_val.json
 
@@ -1116,7 +1119,7 @@ Read the two lines it prints before moving on:
   video is missing on disk.** A large M means the `video` field is not relative to
   `--clips-root` (e.g. it carries a subdirectory or an absolute path); inspect the
   schema with
-  `head -1 /home/vca1/datasets/internvid_zh_10k/internvid_zh_10k.jsonl | python -m json.tool`
+  `head -1 /path/to/user/datasets/internvid_zh_10k/internvid_zh_10k.jsonl | python -m json.tool`
   and adjust `--clips-root` accordingly. If *every* record is dropped the script
   exits with `没有可用记录——检查 --input 字段名或 --clips-root`.
 - `共享字幕: … 组 / 覆盖 … 条 clip (…%)` — the share of clips with duplicate
@@ -1126,7 +1129,7 @@ Read the two lines it prints before moving on:
 Then continue with §2b steps 2–4 (`export MVC_DATA_DIR`, the sm_70 pre-flight,
 smoke, and the equal-step r0/r1 A/B pair).
 
-> ⚠️ **Do not `export MVC_DATA_DIR=/home/vca1/datasets` on 101vector.** It fixes the
+> ⚠️ **Do not `export MVC_DATA_DIR=/path/to/user/datasets` on 101vector.** It fixes the
 > 10k pilot and simultaneously breaks every MSR-VTT eval — see the next section.
 > Symlink instead.
 
@@ -1189,9 +1192,9 @@ single `export`:
 # MVC_DATA_DIR unset — training dies, eval fine
 Caught exception Error reading data/internvid_zh_10k/videos/InternVId-FLT_9/shard_00063/...
 
-# MVC_DATA_DIR=/home/vca1/datasets — training fine, eval dies
-RuntimeError: Error reading /home/vca1/datasets/MSRVTT_Videos/video7020.mp4...
-ERROR opening: /home/vca1/datasets/MSRVTT_Videos/video9021.mp4, No such file or directory
+# MVC_DATA_DIR=/path/to/user/datasets — training fine, eval dies
+RuntimeError: Error reading /path/to/user/datasets/MSRVTT_Videos/video7020.mp4...
+ERROR opening: /path/to/user/datasets/MSRVTT_Videos/video9021.mp4, No such file or directory
 ```
 
 In `run_v100_all.sh` terms: stages 1/6 (10k training) and stages 2/3/4/5/10
@@ -1204,7 +1207,7 @@ In `run_v100_all.sh` terms: stages 1/6 (10k training) and stages 2/3/4/5/10
 
 | Dataset | Config path | Real location on 101vector |
 |---|---|---|
-| 10k pilot | `$ROOT/internvid_zh_10k/videos` (`:107`, `:114`) | `/home/vca1/datasets/internvid_zh_10k/videos` |
+| 10k pilot | `$ROOT/internvid_zh_10k/videos` (`:107`, `:114`) | `/path/to/user/datasets/internvid_zh_10k/videos` |
 | MSR-VTT 1K-A | `$ROOT/MSRVTT_Videos` (`:50`) | repo-local `data/MSRVTT_Videos` |
 
 The two corpora live under **different parents**, so no single `$ROOT` covers
@@ -1218,7 +1221,7 @@ Give the repo-local `data/` root a symlink to the 10k corpus, then leave
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
-ln -sfn /home/vca1/datasets/internvid_zh_10k data/internvid_zh_10k
+ln -sfn /path/to/user/datasets/internvid_zh_10k data/internvid_zh_10k
 unset MVC_DATA_DIR
 
 # verify both roots under the same parent before running anything
@@ -1510,7 +1513,7 @@ not what caused this.
   fits in the ~14.7 GiB S2 leaves behind:
 
   ```bash
-  export MVC_DATA_DIR=/home/vca1/datasets
+  export MVC_DATA_DIR=/path/to/user/datasets
   export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True   # 654 MiB was reserved-but-unallocated
   bash experiments/run_pretrain.sh experiments/configs/pilot_10k_r0.py 8 \
       batch_size 16 debug True
@@ -1695,19 +1698,19 @@ FileNotFoundError: [Errno 2] No such file or directory: 'anno_downstream/didemo_
 
 ```
 [...] /github/workspace/src/video/video_reader.cc:83: ERROR opening:
-      /home/vca1/datasets/MSRVTT_Videos/video7020.mp4, No such file or directory
+      /path/to/user/datasets/MSRVTT_Videos/video7020.mp4, No such file or directory
 ...
-RuntimeError: Error reading /home/vca1/datasets/MSRVTT_Videos/video7020.mp4...
+RuntimeError: Error reading /path/to/user/datasets/MSRVTT_Videos/video7020.mp4...
 ```
 
 ### Cause
 
 **这台机器上根本没有下游评测数据。** `recaption/docs/setup-v100.md` 第一段就写着:
 
-> 本机只有预抽取的 1 万条样本(`/home/vca1/datasets/internvid_zh_10k`),
+> 本机只有预抽取的 1 万条样本(`/path/to/user/datasets/internvid_zh_10k`),
 > 没有全量 10M 数据
 
-`MVC_DATA_DIR=/home/vca1/datasets` 下只有 `internvid_zh_10k/`。**7 个评测基准的视频
+`MVC_DATA_DIR=/path/to/user/datasets` 下只有 `internvid_zh_10k/`。**7 个评测基准的视频
 一个都不在**,11 个 InternVid 训练分片的视频也一个都不在;其中 DiDeMo / ANet /
 SSv2 连 anno 都没有(在受限的作者 Google Drive 里,见本文件
 「Missing `anno_downstream/*.json`」一节),另外 4 个(msrvtt / k400 / ucf101 /
@@ -1722,7 +1725,7 @@ B 类之所以显得像"配置对了",是因为 `data_root` 只在**真正读视
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
-export MVC_DATA_DIR=/home/vca1/datasets
+export MVC_DATA_DIR=/path/to/user/datasets
 python experiments/check_readiness.py
 ```
 
@@ -1818,11 +1821,11 @@ DEST_DIR="data/hmdb51/videos_test"
 ```
 
 而 `configs/data.py` 的 `data_root` 是 `$MVC_DATA_DIR/hmdb51/videos_test`。
-一旦 `export MVC_DATA_DIR=/home/vca1/datasets`(10k 试点需要它),预检就跑去
-`/home/vca1/datasets/hmdb51/videos_test` 找 —— 那里从来没放过评测数据。
+一旦 `export MVC_DATA_DIR=/path/to/user/datasets`(10k 试点需要它),预检就跑去
+`/path/to/user/datasets/hmdb51/videos_test` 找 —— 那里从来没放过评测数据。
 
 **这台机器上两批数据不在一个根下**:评测集在仓库 `data/`,试点语料在
-`/home/vca1/datasets`。所以预检要**跑两遍**,见 `experiments/README.md` §3.0。
+`/path/to/user/datasets`。所以预检要**跑两遍**,见 `experiments/README.md` §3.0。
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
@@ -1859,7 +1862,7 @@ cd "$(git rev-parse --show-toplevel)"
 ANNO=anno_downstream/hmdb51_act_test.json       # 换成任何数据集的 anno 即可
 NAME=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))[0]['video'])" "$ANNO")
 echo "找这个文件:$NAME"
-find ~ /home/vca1 -name "$NAME" 2>/dev/null
+find ~ /path/to/user -name "$NAME" 2>/dev/null
 ```
 
 找到后,`data_root` 就是**该文件所在目录**(分类数据集是平铺的,检索数据集同理);
@@ -1868,7 +1871,7 @@ find ~ /home/vca1 -name "$NAME" 2>/dev/null
 找不到单个文件时,按目录聚合统计**视频文件都堆在哪**,一眼看出数据集位置:
 
 ```bash
-for d in ~ /home/vca1 /data /mnt; do
+for d in ~ /path/to/user /data /mnt; do
   [ -d "$d" ] && find "$d" \( -name '*.avi' -o -name '*.mp4' \) -printf '%h\n' 2>/dev/null
 done | sort | uniq -c | sort -rn | head -20
 ```
@@ -1876,7 +1879,7 @@ done | sort | uniq -c | sort -rn | head -20
 顺带找找原始压缩包(还在就不用重下,`download_hmdb51.sh` 会校验字节数后跳过下载):
 
 ```bash
-find ~ /home/vca1 -name 'hmdb51*.zip' -size +1G -printf '%10s  %p\n' 2>/dev/null
+find ~ /path/to/user -name 'hmdb51*.zip' -size +1G -printf '%10s  %p\n' 2>/dev/null
 # 期望 2117581749 字节;放回 data/hmdb51_hf/hmdb51.zip 再跑脚本即可(幂等)
 ```
 
@@ -1895,7 +1898,7 @@ HMDB51 实例:split-1 测试集 51 类 × 30 = **1530**,盘上 anno 是 **1511**
 ### 已确证的实例(2026-07-22,101vector)
 
 按上面的手法搜完,结论是**四个基准的视频全都在,一个都没丢**,全部位于
-`~/mobileclip/data/`(即 `/home/vca1/rby/mobileclip/data/`):
+`~/mobileclip/data/`(即 `/path/to/user/rby/mobileclip/data/`):
 
 | 基准 | 盘上目录 | 数量 | 与 `configs/data.py` |
 |---|---|---|---|
@@ -1911,12 +1914,12 @@ HMDB51 实例:split-1 测试集 51 类 × 30 = **1530**,盘上 anno 是 **1511**
 不一致(`MSRVTT/videos/all` vs `MSRVTT_Videos`)。修法就是 `unset MVC_DATA_DIR`
 加一条软链,零下载。
 
-> ⚠️ **`find ~ /home/vca1 ...` 会重复计数。** 该机 `~` = `/home/vca1/rby`,
-> 正是 `/home/vca1` 的**子目录**,所以同一棵树被遍历两遍:命中行成对重复、
+> ⚠️ **`find ~ /path/to/user ...` 会重复计数。** 该机 `~` = `/path/to/user/rby`,
+> 正是 `/path/to/user` 的**子目录**,所以同一棵树被遍历两遍:命中行成对重复、
 > 目录计数**翻倍**。上表已折半。写这类搜索时,要么只给互不包含的根,
 > 要么最后 `| sort -u`。
 
-> 另注:`/home/vca1/datasets`(10k 试点数据)**没有**出现在按目录聚合的结果里,
+> 另注:`/path/to/user/datasets`(10k 试点数据)**没有**出现在按目录聚合的结果里,
 > 尽管预检确认那 1 万条视频存在。最可能的原因是它是个**软链**,而 `find`
 > 默认不跟随软链(要跟随得用 `find -L`)。排查数据位置时记住这一条,
 > 否则会误判成"那批数据也没了"。
@@ -2040,7 +2043,7 @@ the missing path directly.
 
 ## b100 上一切 git 命令都报 `fatal: not a git repository (or any parent up to mount point /workspace/mount)`
 
-**Symptom** — 在 `/workspace/mount/b100_zaip_data/rby/MobileViCLIP` 里跑任何 git 命令
+**Symptom** — 在 `/path/to/workspace/MobileViCLIP` 里跑任何 git 命令
 （`git status`、`git diff`、`git stash create`…）都得到：
 
 ```
@@ -2060,7 +2063,7 @@ git 自然一路向上找到挂载点也找不到仓库。
 可见，`git pull` 也恢复可用：
 
 ```bash
-cd /workspace/mount/b100_zaip_data/rby
+cd /path/to/workspace
 git clone --no-checkout https://github.com/rbybryan/mobileclip.git MobileViCLIP_gitref
 mv MobileViCLIP_gitref/.git MobileViCLIP/.git
 rm -rf MobileViCLIP_gitref
@@ -2074,11 +2077,11 @@ git status -sb                   # 至此本地改动现形
 `~/.gitconfig`。每个用 git 的 shell 先 source 这份环境（文件生成一次即可）：
 
 ```bash
-cat > /workspace/mount/b100_zaip_data/rby/.gitenv <<'EOF'
-export GIT_CONFIG_GLOBAL=/workspace/mount/b100_zaip_data/rby/.gitconfig
+cat > /path/to/workspace/.gitenv <<'EOF'
+export GIT_CONFIG_GLOBAL=/path/to/workspace/.gitconfig
 export GIT_CONFIG_SYSTEM=/dev/null
 EOF
-source /workspace/mount/b100_zaip_data/rby/.gitenv
+source /path/to/workspace/.gitenv
 ```
 
 之后 `git config --global …`（`safe.directory`、`user.name/email`、代理等）都只写进
@@ -2089,7 +2092,7 @@ token 写进 `$HOME/.git-credentials`，正好落在共用的 root 家目录里�
 token 都锁进 `rby/`，并用 `includeIf gitdir:` 门控，使它**只对 `rby/` 下的仓库生效**：
 
 ```bash
-RBY=$(cd /workspace/mount/b100_zaip_data/rby && pwd -P)   # 取真实路径，软链已解析
+RBY=$(cd /path/to/workspace && pwd -P)   # 取真实路径，软链已解析
 
 # ① 身份 + 凭据 helper：单独一个文件，只放 rby/ 内
 cat > "$RBY/.gitconfig-cred" <<EOF
@@ -2126,7 +2129,7 @@ safe.directory` 看得见该值，同一仓库仍报 `detected dubious ownership
 把它直接写进共用 `$HOME/.gitconfig`（只有路径、无 token），此后永久免 source：
 
 ```bash
-git config --global --add safe.directory /workspace/mount/b100_zaip_data/rby/MobileViCLIP
+git config --global --add safe.directory /path/to/workspace/MobileViCLIP
 ```
 
 `.gitenv` 里的 `GIT_CONFIG_SYSTEM=/dev/null`（屏蔽 `/etc/gitconfig`）同样只在 source 后生效。
@@ -2167,7 +2170,7 @@ git config --global --add safe.directory /workspace/mount/b100_zaip_data/rby/Mob
 ```bash
 # ① 退出坏 venv 并删除
 deactivate 2>/dev/null || true
-rm -rf /workspace/mount/b100_zaip_data/rby/mvc_env
+rm -rf /path/to/workspace/mvc_env
 
 # ② 清理误装进共用 base 的包（这些在装前都不存在，卸载即还原原状）
 /root/miniforge3/bin/python -m pip uninstall -y \
@@ -2180,8 +2183,8 @@ rm -rf /workspace/mount/b100_zaip_data/rby/mvc_env
 
 # ③ conda 建 python=3.10 环境（目录在 rby/ 内），此后全程 `python -m pip`
 source /root/miniforge3/etc/profile.d/conda.sh
-conda create -y -p /workspace/mount/b100_zaip_data/rby/mvc_env310 python=3.10
-conda activate /workspace/mount/b100_zaip_data/rby/mvc_env310
+conda create -y -p /path/to/workspace/mvc_env310 python=3.10
+conda activate /path/to/workspace/mvc_env310
 which python && which pip    # 都必须在 .../rby/mvc_env310/bin/ 下，否则停
 ```
 
@@ -2346,7 +2349,7 @@ b100**：b100 的系统 torch 是 2.5.1+cu124（`get_arch_list()` 含 `sm_90`，
 `experiments/SETUP_B100.md` §2「现行方案」）。
 
 ```bash
-cd /workspace/mount/b100_zaip_data/rby/mobileclip
+cd /path/to/workspace/mobileclip
 source experiments/env_b100.sh          # 只 export PYTHONUSERBASE / PYTHONPATH / MVC_*
 python experiments/check_imports.py     # 一次列全缺哪些包 + 打印可复制的 pip 命令
 python -m pip install --user --no-deps <上一步列出的包>
@@ -2355,7 +2358,7 @@ python experiments/check_imports.py     # 直到打印“全部 [OK]”
 
 为什么这样安全：
 
-- `--user` 配合 `PYTHONUSERBASE=/workspace/mount/b100_zaip_data/rby/pyuser`，包落到
+- `--user` 配合 `PYTHONUSERBASE=/path/to/workspace/pyuser`，包落到
   rby 自己的目录，**系统 site-packages 一个字节都不动**；user-site 在 `sys.path` 里
   优先于系统目录，所以补的包（乃至更高版本）只对 source 过 `env_b100.sh` 的 shell 生效。
 - `--no-deps` 挡住 pip 顺手升/降级 torch、transformers、numpy 这些共用重依赖。
@@ -2606,9 +2609,9 @@ nvidia-smi --query-gpu=index,memory.free,memory.used,utilization.gpu \
 pip install -U huggingface_hub
 huggingface-cli download IDEA-Research/grounding-dino-base   # ~700MB
 huggingface-cli download hfl/minirbt-h288                    # ~40MB
-ssh rby@101vector 'mkdir -p ~/.cache/huggingface/hub'
-scp -r ~/.cache/huggingface/hub/models--IDEA-Research--grounding-dino-base rby@101vector:~/.cache/huggingface/hub/
-scp -r ~/.cache/huggingface/hub/models--hfl--minirbt-h288    rby@101vector:~/.cache/huggingface/hub/
+ssh USER@GPU_HOST 'mkdir -p ~/.cache/huggingface/hub'
+scp -r ~/.cache/huggingface/hub/models--IDEA-Research--grounding-dino-base USER@GPU_HOST:~/.cache/huggingface/hub/
+scp -r ~/.cache/huggingface/hub/models--hfl--minirbt-h288    USER@GPU_HOST:~/.cache/huggingface/hub/
 ```
 
 之后在服务器重跑前必须清掉"GDINO 缺席"时代的旧判定（验真按 video 续跑，不清则永不重验）：
@@ -3162,7 +3165,7 @@ Untracked files:
 **第 1 步:先看,别急着删。** 垃圾全是**仓库根目录下的 0 字节文件**:
 
 ```bash
-cd /workspace/mount/b100_zaip_data/rby/mobileclip
+cd /path/to/workspace/mobileclip
 find . -maxdepth 1 -type f -empty -print        # 只列,不删
 ```
 

@@ -41,3 +41,14 @@ experiments/frame_agg/
 
 # Claude Code worktrees (other sessions; never commit)
 .claude/worktrees/
+
+# Local environments, credentials, and private operational notes
+.venv/
+venv/
+.pytest_cache/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+notes/live/

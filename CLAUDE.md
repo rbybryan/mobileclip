@@ -50,13 +50,9 @@ If the chat recommends a command but it never lands in a tracked `.md`, the job 
 
 ### Branches / where the server pulls from
 
-Two kinds of branch, so no rotating name has to be remembered:
-
-- **`handoff`** — the standing, long-lived branch for the live server⇄Claude loop
-  (`notes/live/from-*.md`). Both sides always pull and push *this* branch.
-  See [`notes/git-handoff-workflow.md`](notes/git-handoff-workflow.md).
-- **`claude/<topic>`** — short-lived feature branches for substantive work (code changes,
-  new docs, experiments). One per topic, merged into `main` by PR, then deleted.
+Live handoffs stay in local ignored `notes/live/` files or a private channel. They must
+not be committed to public branches. See [private operational notes](notes/git-handoff-workflow.md).
+Use a feature branch for code, documentation, and publishable experiment results.
 
 Push to whichever branch is checked out. For the server to pull instructions from `main`, the
 branch has to be **merged** into it.
@@ -88,10 +84,10 @@ before any merge.
 | `CHECKPOINTS.md` | Checkpoint & dataset download links and expected layout |
 | `TROUBLESHOOTING.md` | Known errors → cause → fix |
 | `experiments/` | A/B framework + run configs + the measured result reports (`*_results.md`) |
-| `notes/` | Only what code still depends on: the 1M-tier criteria (`verification-tier-1m-zh.md`), the R1 component spec (`r1-implementation-plan.md`), the C1 KD manual, the handoff workflow, and `live/` |
+| `notes/` | Only what code still depends on: the 1M-tier criteria (`verification-tier-1m-zh.md`), the R1 component spec (`r1-implementation-plan.md`), the C1 KD manual, the private-note policy |
 | `docs/` | Upstream README, landscape survey, dataset survey, caption-quality report |
 | `recaption/` | **Self-contained**: the InternVid-zh recaption + data-audit line — `docs/` (six live docs) and `scripts/` (all code, entry point `run_v100.sh`). Start at [`recaption/README.md`](recaption/README.md) |
-| `model-optimization/` | **Self-contained**: the 1M-round model-optimization schemes (6 方案) — its own `docs/` (per-scheme changes, run recipe, result reports) and `scripts/` (entry `run_model_opt.sh`). The model code / configs / shared runners stay in `models/` `experiments/` (cross-cutting); this folder gathers the docs + entry. Start at [`model-optimization/README.md`](model-optimization/README.md) |
+| `model-optimization/` | **Self-contained**: the 1M-round model-optimization schemes (模型改造) — its own `docs/` (per-scheme changes, run recipe, result reports) and `scripts/` (entry `run_model_opt.sh`). The model code / configs / shared runners stay in `models/` `experiments/` (cross-cutting); this folder gathers the docs + entry. Start at [`model-optimization/README.md`](model-optimization/README.md) |
 
 When in doubt about *how* to run something, `COMMANDS.md` is the source of truth; when something
 breaks, check `TROUBLESHOOTING.md` first and append to it. Anything about recaption/data-audit
@@ -112,9 +108,9 @@ experiments/        A/B 框架、configs/、探针脚本、结果报告 *_result
 neural_inspired/    可选研究组件（默认关；见其 README 的实测判决）
 tests/              pytest tests/（从仓库根跑）
 recaption/          InternVid-zh 重述+数据审计全线（docs/ 文档 · scripts/ 代码，入口 run_v100.sh）
-model-optimization/ 1M 层 6 个模型改造方案（docs/ 说明+报告 · scripts/ 入口 run_model_opt.sh）
+model-optimization/ 1M 层模型改造方案（docs/ 说明+报告 · scripts/ 入口 run_model_opt.sh）
 mobileviclip.yml    conda environment (internal env name: `internvideo`)
-requirements.lock.txt   validated `pip freeze` from the working env
+requirements.lock.txt   historical machine snapshot; not the CPU installation recipe
 ```
 
 Assets (`checkpoints/`, `anno_downstream/`, `data/`) are **gitignored** — they are downloaded on

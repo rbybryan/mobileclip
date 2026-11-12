@@ -1,5 +1,8 @@
 # 1M 验证层 · 精简结果报告(6 个方案)
 
+> **Release interpretation correction:** historical “非劣” / “non-inferior” labels below describe exploratory screening, not a confirmatory non-inferiority test. A CI containing zero is insufficient; the observed seed-noise threshold was retrospective. See [results and limitations](../../docs/RESULTS.md). Measurements are retained as historical records.
+
+
 **测试集:MSR-VTT 1k 零样本文本-视频检索**(标准 1000 视频-文本对,`num_frames_test=8`,fp32,middle 采样)。
 **训练数据** = InternVid 的 1M 子分片(全量约 10%);测试集不缩,始终是完整 MSR-VTT 1k。
 **判据** = 配对 bootstrap(10000 次)。
